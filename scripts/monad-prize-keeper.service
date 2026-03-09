@@ -1,0 +1,24 @@
+[Unit]
+Description=Monad Prize executeNext Keeper
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=c
+WorkingDirectory=/home/c/.openclaw/workspace/monad-prize
+EnvironmentFile=/home/c/.openclaw/workspace/monad-prize/scripts/keeper.env
+ExecStart=/usr/bin/node /home/c/.openclaw/workspace/monad-prize/scripts/keeper-execute-next.js
+Restart=always
+RestartSec=5
+StandardOutput=append:/home/c/.openclaw/workspace/monad-prize/logs/keeper.out.log
+StandardError=append:/home/c/.openclaw/workspace/monad-prize/logs/keeper.err.log
+
+# Hardening (optional but sensible)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=false
+
+[Install]
+WantedBy=multi-user.target

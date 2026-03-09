@@ -1,0 +1,26 @@
+{
+  "name": "monad-prize",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "hardhat compile",
+    "clean": "hardhat clean",
+    "test": "hardhat test",
+    "deploy:testnet": "hardhat run scripts/deploy-ticket-prize-pool-shmon-shmonad.js --network monadTestnet",
+    "deploy:mainnet": "hardhat run scripts/deploy-ticket-prize-pool-shmon-shmonad.js --network monadMainnet",
+    "keeper:dry": "KEEPER_DRY_RUN=true node scripts/keeper-execute-next.js",
+    "keeper:start": "node scripts/keeper-execute-next.js",
+    "keeper:health": "bash scripts/keeper-health.sh",
+    "keeper:alert-test": "bash scripts/keeper-alert-test.sh",
+    "keeper:ops-check": "bash scripts/keeper-ops-check.sh",
+    "keeper:env-check": "bash scripts/keeper-env-check.sh",
+    "keeper:install-systemd": "bash scripts/keeper-install-systemd.sh"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-ethers": "^3.0.8",
+    "dotenv": "^16.4.5",
+    "ethers": "^6.13.4",
+    "hardhat": "^2.22.16"
+  }
+}

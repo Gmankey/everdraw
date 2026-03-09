@@ -1,0 +1,44 @@
+##################################
+# Foundry
+##################################
+out/
+cache/
+broadcast/
+
+##################################
+# Environment
+##################################
+.env
+
+##################################
+# Frontend (future)
+##################################
+node_modules/
+dist/
+build/
+
+##################################
+# OS / Editor
+##################################
+.DS_Store
+.vscode/
+.idea/
+
+##################################
+# Docs (optional)
+##################################
+docs/
+
+.env
+scripts/keeper.env
+logs/
+artifacts/
+cache-hardhat/
+node_modules/
+.env
+scripts/keeper.env
+memory/
+logs/
+node_modules/
+artifacts/
+cache-hardhat/
