@@ -595,8 +595,8 @@ export default function App() {
   const buyDisabledReason = useMemo(() => {
     if (loading) return 'Transaction in progress'
     if (!salesOpen) {
-      if (!isOpenState) return 'Sales not open in current round state'
-      return 'Sales window closed; waiting for keeper processing'
+      if (!isOpenState) return 'Deposits not open — round in progress'
+      return 'Deposit window closed — next round opening soon'
     }
     if (!account) return 'Connect wallet to deposit'
     if (wrongNetwork) return `Wrong network (need ${expectedChainId})`
@@ -657,20 +657,20 @@ export default function App() {
       const emptyRound = Number(roundInfo.totalTickets ?? 0) === 0 || BigInt(roundInfo.totalPrincipalMON ?? 0n) === 0n
       if (emptyRound) {
         return {
-          heading: 'Round Closed - Awaiting Keeper Skip',
+          heading: 'Round Complete — No Entries',
           value: '00:00:00',
-          sub: 'No tickets sold. Keeper will advance to next round.',
-          metaLabel: 'Next action',
-          metaValue: ACTION_LABELS[nextAction] ?? 'Skip'
+          sub: 'No deposits this round. Next vault opens shortly.',
+          metaLabel: 'Round status',
+          metaValue: 'Complete'
         }
       }
 
       return {
-        heading: 'Winner Drawn - Vault Awaiting Settlement',
+        heading: 'Deposits Closed — Drawing Winner',
         value: '00:00:00',
-        sub: 'Keeper is progressing settlement',
-        metaLabel: 'Next action',
-        metaValue: ACTION_LABELS[nextAction] ?? 'Processing'
+        sub: 'Round closed. Winner selection in progress.',
+        metaLabel: 'Round status',
+        metaValue: 'In progress'
       }
     }
 
@@ -678,20 +678,20 @@ export default function App() {
       const targetBlock = roundInfo ? Number(roundInfo.targetBlockNumber ?? 0) : 0
       if (settlementSecondsRemaining > 0) {
         return {
-          heading: 'Winner Drawn - Vault Awaiting Settlement',
+          heading: 'Drawing Winner',
           value: formatCountdown(settlementSecondsRemaining),
-          sub: `Draw unlock at block ${targetBlock.toLocaleString()}`,
-          metaLabel: 'Next action',
-          metaValue: ACTION_LABELS[nextAction] ?? 'Draw'
+          sub: 'Winner selection in progress',
+          metaLabel: 'Round status',
+          metaValue: 'In progress'
         }
       }
 
       return {
-        heading: 'Winner Drawn - Vault Awaiting Settlement',
-        value: 'Awaiting Settle',
-        sub: targetBlock > 0 ? `Waiting for draw at block ${targetBlock.toLocaleString()}` : 'Keeper is progressing settlement',
-        metaLabel: 'Next action',
-        metaValue: ACTION_LABELS[nextAction] ?? 'Settle'
+        heading: 'Drawing Winner',
+        value: 'IN PROGRESS',
+        sub: targetBlock > 0 ? 'Selecting a winner from all depositors' : 'Selecting a winner from all depositors',
+        metaLabel: 'Round status',
+        metaValue: 'In progress'
       }
     }
 
@@ -702,32 +702,32 @@ export default function App() {
 
       if (settlementSecondsRemaining > 0) {
         return {
-          heading: 'Winner Drawn - Vault Awaiting Settlement',
+          heading: 'Winner Selected — Settling Vault',
           value: formatCountdown(settlementSecondsRemaining),
           sub: epochBased
-            ? `Unstake epoch ${currentInternalEpoch}/${completionEpoch}`
-            : `Estimated settle at block ${targetBlock.toLocaleString()}`,
-          metaLabel: 'Next action',
-          metaValue: ACTION_LABELS[nextAction] ?? 'Settle'
+            ? 'Unstaking deposits and calculating prize'
+            : 'Unstaking deposits and calculating prize',
+          metaLabel: 'Round status',
+          metaValue: 'Finalizing'
         }
       }
 
       return {
-        heading: 'Winner Drawn - Vault Awaiting Settlement',
-        value: 'Finalizing…',
+        heading: 'Winner Selected — Settling Vault',
+        value: 'IN PROGRESS',
         sub: epochBased
-          ? `Unstake epoch ${currentInternalEpoch}/${completionEpoch}`
-          : (targetBlock > 0 ? `Target block ${targetBlock.toLocaleString()}` : 'Unstake requested, waiting for settlement'),
-        metaLabel: 'Next action',
-        metaValue: ACTION_LABELS[nextAction] ?? 'Settle'
+          ? 'Unstaking deposits and calculating prize'
+          : (targetBlock > 0 ? 'Unstaking deposits and calculating prize' : 'Unstaking deposits and calculating prize'),
+        metaLabel: 'Round status',
+        metaValue: 'Finalizing'
       }
     }
 
     if (currentState === 3) {
       return {
-        heading: 'Settled — Withdraw Available',
+        heading: 'Round Complete — Claim Your Winnings',
         value: 'Settled',
-        sub: 'Winner claim and principal withdraw are now available',
+        sub: 'Winner can claim prize. All depositors can withdraw.',
         metaLabel: 'Vault status',
         metaValue: 'Complete'
       }
@@ -794,7 +794,7 @@ export default function App() {
     const st = Number(previousRoundInfo.state)
     if (st === 3) return '00:00:00:00'
     if (salesOpen && secondsRemaining > 0) return formatCountdown(secondsRemaining)
-    return 'Awaiting settlement'
+    return 'Settling vault'
   }, [previousRoundInfo, salesOpen, secondsRemaining])
 
   const winnersRoundId = winnersSource?.rid || roundId
@@ -944,7 +944,7 @@ export default function App() {
             winnerTickets={winnerTicketsDisplay}
             canClaim={canClaimPrize}
             canWithdraw={canWithdrawPrincipal}
-            settlementLabel={Number(winnersSource?.info?.state ?? -1) === 3 ? 'Settled — Withdraw Available' : 'Winner Drawn - Vault Awaiting Settlement'}
+            settlementLabel={Number(winnersSource?.info?.state ?? -1) === 3 ? 'Round Complete — Claim Your Winnings' : 'Winner Selected — Settling Vault'}
             settlementCountdown={previousSettlementCountdown}
             onClaimPrize={handleClaimPrize}
             onWithdraw={handleWithdraw}
@@ -1082,8 +1082,8 @@ export default function App() {
               <div className="card-header vault-layer">
                 <div className="card-title">
                   {mainView === 'previous'
-                    ? (Number(previousRoundInfo?.state ?? -1) === 3 ? 'Settled — Withdraw Available' : 'Winner Drawn - Vault Awaiting Settlement')
-                    : (drawFinished ? 'Draw Finished' : timerCard.heading)}
+                    ? (Number(previousRoundInfo?.state ?? -1) === 3 ? 'Round Complete — Claim Your Winnings' : 'Winner Selected — Settling Vault')
+                    : (drawFinished ? 'Round Complete' : timerCard.heading)}
                 </div>
                 <div className="card-icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24">
@@ -1124,7 +1124,7 @@ export default function App() {
           <StatCard
             label="Total TVL"
             value={`${tvlMON} MON`}
-            sub="SHMON Deposited"
+            sub="Total deposits this round"
             icon={(
               <svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
             )}
