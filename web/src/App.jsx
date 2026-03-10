@@ -126,92 +126,42 @@ function VaultDoorBackground({ progressPct, salesOpen }) {
   const progressColor = salesOpen ? '#22c55e' : '#9B6DFF'
 
   return (
-    <svg viewBox="0 0 320 320" className="vault-door" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <defs>
-        <mask id="armAccentMask">
-          <rect x="0" y="0" width="320" height="320" fill="white" />
-          <circle cx="160" cy="160" r="66" fill="black" />
-        </mask>
-      </defs>
-
-      <rect x="0" y="0" width="320" height="320" fill="#141026" />
-
-      <circle cx="160" cy="160" r="155" fill="none" stroke="#1D1836" strokeWidth="0.5" strokeDasharray="1 3" />
-      <circle cx="160" cy="160" r="150" fill="none" stroke="#1D1836" strokeWidth="0.5" strokeDasharray="1 2" />
-
-      <circle cx="160" cy="160" r="142" fill="none" stroke="#251F45" strokeWidth="12" />
-      <circle cx="160" cy="160" r="136" fill="none" stroke="#3D2E6B" strokeWidth="2" />
-
-      {/* Original arm geometry (unchanged) */}
-      <g stroke="#3D2E6B" strokeWidth="1" fill="#1C1533">
-        <rect x="145" y="20" width="30" height="80" rx="2" />
-        <rect x="153" y="20" width="14" height="80" fill="#251C42" />
-        <rect x="145" y="220" width="30" height="80" rx="2" />
-        <rect x="153" y="220" width="14" height="80" fill="#251C42" />
-        <rect x="20" y="145" width="80" height="30" rx="2" />
-        <rect x="20" y="153" width="80" height="14" fill="#251C42" />
-        <rect x="220" y="145" width="80" height="30" rx="2" />
-        <rect x="220" y="153" width="80" height="14" fill="#251C42" />
-        <rect x="75" y="75" width="30" height="50" rx="2" transform="rotate(-45 90 100)" />
-        <rect x="215" y="75" width="30" height="50" rx="2" transform="rotate(45 230 100)" />
-        <rect x="75" y="195" width="30" height="50" rx="2" transform="rotate(45 90 220)" />
-        <rect x="215" y="195" width="30" height="50" rx="2" transform="rotate(-45 230 220)" />
-      </g>
-
-      {/* Subtle green border overlay only during sales-open; no geometry changes */}
-      {salesOpen ? (
-        <g
+    <>
+      <svg id="vault-ring" viewBox="0 0 320 320" className="vault-door" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <circle cx="160" cy="160" r="150" fill="none" stroke="#1D1836" strokeWidth="0.5" strokeDasharray="1 2" />
+        <circle cx="160" cy="160" r="142" fill="none" stroke="#251F45" strokeWidth="20" />
+        <circle
+          cx="160"
+          cy="160"
+          r="142"
           fill="none"
-          stroke="rgba(34, 197, 94, 0.58)"
-          strokeWidth="0.9"
-          mask="url(#armAccentMask)"
-          style={{ filter: 'drop-shadow(0 0 2px rgba(34, 197, 94, 0.14))' }}
-        >
-          <rect x="145" y="20" width="30" height="80" rx="2" />
-          <rect x="145" y="220" width="30" height="80" rx="2" />
-          <rect x="20" y="145" width="80" height="30" rx="2" />
-          <rect x="220" y="145" width="80" height="30" rx="2" />
-          <rect x="75" y="75" width="30" height="50" rx="2" transform="rotate(-45 90 100)" />
-          <rect x="215" y="75" width="30" height="50" rx="2" transform="rotate(45 230 100)" />
-          <rect x="75" y="195" width="30" height="50" rx="2" transform="rotate(45 90 220)" />
-          <rect x="215" y="195" width="30" height="50" rx="2" transform="rotate(-45 230 220)" />
-        </g>
-      ) : null}
+          stroke={progressColor}
+          strokeWidth="8"
+          strokeLinecap="round"
+          strokeDasharray={c}
+          strokeDashoffset={offset}
+          transform="rotate(-90 160 160)"
+          style={{ filter: salesOpen ? 'drop-shadow(0 0 10px rgba(34, 197, 94, 0.16))' : 'drop-shadow(0 0 20px rgba(155, 109, 255, 0.4))' }}
+        />
+      </svg>
 
-      <g opacity="0.15">
-        <line x1="100" y1="100" x2="220" y2="100" stroke="#9B6DFF" strokeWidth="0.5" />
-        <line x1="100" y1="105" x2="220" y2="105" stroke="#9B6DFF" strokeWidth="0.5" />
-        <line x1="100" y1="215" x2="220" y2="215" stroke="#9B6DFF" strokeWidth="0.5" />
-        <line x1="100" y1="220" x2="220" y2="220" stroke="#9B6DFF" strokeWidth="0.5" />
-      </g>
+      <svg id="vault-wheel" viewBox="0 0 320 320" className="vault-door" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style={{ zIndex: 3 }}>
+        <circle cx="160" cy="160" r="130" fill="#141026" />
 
-      <circle cx="160" cy="160" r="65" fill="#120E22" stroke="#3D2E6B" strokeWidth="4" />
-      <circle cx="160" cy="160" r="58" fill="none" stroke={salesOpen ? 'rgba(74, 222, 128, 0.45)' : '#9B6DFF'} strokeWidth="1.5" opacity="0.3" />
+        <g id="arm-0" style={{ transformOrigin: '160px 160px' }}><rect x="145" y="20" width="30" height="80" rx="2" fill="#1C1533" stroke="#3D2E6B" /></g>
+        <g id="arm-1" style={{ transformOrigin: '160px 160px' }}><rect x="215" y="75" width="30" height="50" rx="2" fill="#1C1533" stroke="#3D2E6B" transform="rotate(45 230 100)" /></g>
+        <g id="arm-2" style={{ transformOrigin: '160px 160px' }}><rect x="220" y="145" width="80" height="30" rx="2" fill="#1C1533" stroke="#3D2E6B" /></g>
+        <g id="arm-3" style={{ transformOrigin: '160px 160px' }}><rect x="215" y="195" width="30" height="50" rx="2" fill="#1C1533" stroke="#3D2E6B" transform="rotate(-45 230 220)" /></g>
+        <g id="arm-4" style={{ transformOrigin: '160px 160px' }}><rect x="145" y="220" width="30" height="80" rx="2" fill="#1C1533" stroke="#3D2E6B" /></g>
+        <g id="arm-5" style={{ transformOrigin: '160px 160px' }}><rect x="75" y="195" width="30" height="50" rx="2" fill="#1C1533" stroke="#3D2E6B" transform="rotate(45 90 220)" /></g>
+        <g id="arm-6" style={{ transformOrigin: '160px 160px' }}><rect x="20" y="145" width="80" height="30" rx="2" fill="#1C1533" stroke="#3D2E6B" /></g>
+        <g id="arm-7" style={{ transformOrigin: '160px 160px' }}><rect x="75" y="75" width="30" height="50" rx="2" fill="#1C1533" stroke="#3D2E6B" transform="rotate(-45 90 100)" /></g>
 
-      <circle cx="160" cy="160" r="142" fill="none" stroke={salesOpen ? 'rgba(34, 197, 94, 0.22)' : 'rgba(61, 46, 107, 0.4)'} strokeWidth="8" strokeDasharray="8 4" />
-      <circle
-        cx="160"
-        cy="160"
-        r="142"
-        fill="none"
-        stroke={progressColor}
-        strokeWidth="8"
-        strokeLinecap="round"
-        strokeDasharray={c}
-        strokeDashoffset={offset}
-        transform="rotate(-90 160 160)"
-        style={{ filter: salesOpen ? 'drop-shadow(0 0 10px rgba(34, 197, 94, 0.16))' : 'drop-shadow(0 0 20px rgba(155, 109, 255, 0.4))' }}
-      />
-
-      <text x="160" y="278" textAnchor="middle" fontSize="10" fontWeight="500" fill={salesOpen ? 'rgba(74, 222, 128, 0.45)' : 'rgba(155, 109, 255, 0.45)'} fontFamily="'Outfit', sans-serif" letterSpacing="2">PROGRESS</text>
-      <text x="160" y="293" textAnchor="middle" fontSize="14" fontWeight="700" fill={salesOpen ? 'rgba(134, 239, 172, 0.82)' : 'rgba(155, 109, 255, 0.7)'} fontFamily="'Outfit', sans-serif">{Math.round(clamped)}%</text>
-
-      <rect x="12" y="125" width="18" height="90" rx="9" fill="#0A0812" />
-      <rect x="14" y="127" width="14" height="86" rx="7" fill="#0D0B16" stroke="#1D1836" strokeWidth="1" />
-      <rect x="15" y="128" width="12" height="84" rx="6" fill="none" stroke="rgba(155, 109, 255, 0.05)" strokeWidth="1" />
-      <rect x="19" y="137" width="4" height="66" rx="2" fill="#251C42" stroke="rgba(155, 109, 255, 0.4)" strokeWidth="1" />
-      <line x1="21" y1="140" x2="21" y2="200" stroke={progressColor} strokeWidth="0.5" opacity="0.3" />
-    </svg>
+        <circle cx="160" cy="160" r="65" fill="#120E22" stroke="#3D2E6B" strokeWidth="4" />
+        <text x="160" y="278" textAnchor="middle" fontSize="10" fontWeight="500" fill={salesOpen ? 'rgba(74, 222, 128, 0.45)' : 'rgba(155, 109, 255, 0.45)'} fontFamily="Outfit, sans-serif" letterSpacing="2">PROGRESS</text>
+        <text x="160" y="293" textAnchor="middle" fontSize="14" fontWeight="700" fill={salesOpen ? 'rgba(134, 239, 172, 0.82)' : 'rgba(155, 109, 255, 0.7)'} fontFamily="Outfit, sans-serif">{Math.round(clamped)}%</text>
+      </svg>
+    </>
   )
 }
 
@@ -914,10 +864,61 @@ export default function App() {
   const openWinnersWithTransition = useCallback(() => {
     if (winnersTransitioning) return
     setWinnersTransitioning(true)
+
+    const overlay = document.getElementById('overlay-content')
+    const wheel = document.getElementById('vault-wheel')
+    const card = document.getElementById('vault-card')
+
+    if (overlay) {
+      overlay.style.transition = 'opacity 0.3s'
+      overlay.style.opacity = '0'
+    }
+
+    const armDeltas = [270, 225, 180, 135, 90, 45, 0, -45]
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      armDeltas.forEach((deg, i) => {
+        const arm = document.getElementById('arm-' + i)
+        if (!arm) return
+        arm.style.transition = 'transform 1.4s cubic-bezier(0.6, 0, 0.15, 1)'
+        arm.style.transform = `rotate(${deg}deg)`
+      })
+    }))
+
+    setTimeout(() => {
+      if (!wheel) return
+      wheel.style.transition = 'transform 1.8s cubic-bezier(0.3, 0.05, 0.1, 1)'
+      wheel.style.transform = 'translate(calc(-50% + 80px), -50%) rotate(180deg)'
+    }, 1400)
+
+    setTimeout(() => {
+      if (!card) return
+      const burst = document.createElement('div')
+      Object.assign(burst.style, {
+        position: 'absolute',
+        top: '50%',
+        left: '50%',
+        transform: 'translate(-50%, -50%) scale(0)',
+        width: '500px',
+        height: '500px',
+        borderRadius: '50%',
+        background: 'radial-gradient(circle, rgba(220,200,255,0.45) 0%, rgba(155,109,255,0.28) 35%, transparent 70%)',
+        transition: 'transform 0.8s cubic-bezier(0.2, 0, 0.1, 1), opacity 0.6s ease 0.3s',
+        opacity: '1',
+        zIndex: '20',
+        pointerEvents: 'none',
+      })
+      card.appendChild(burst)
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        burst.style.transform = 'translate(-50%, -50%) scale(1)'
+        burst.style.opacity = '0'
+      }))
+      setTimeout(() => burst.remove(), 1600)
+    }, 3200)
+
     setTimeout(() => {
       setShowWinnersView(true)
       setWinnersTransitioning(false)
-    }, 750)
+    }, 3400)
   }, [winnersTransitioning])
 
   if (!poolAddress) {
@@ -1076,7 +1077,7 @@ export default function App() {
               </div>
             </div>
 
-            <div className={`card filled vault-card ${winnersTransitioning ? 'to-winners' : ''}`} id="vault-card">
+            <div className="card filled vault-card" id="vault-card">
               <VaultDoorBackground progressPct={mainView === 'previous' ? 100 : timerProgressPct} salesOpen={mainView === 'current' ? salesOpen : false} />
 
               <div className="card-header vault-layer">
@@ -1094,7 +1095,7 @@ export default function App() {
               </div>
 
               {(mainView === 'previous' || drawFinished) ? (
-                <div className="draw-ended-overlay vault-layer">
+                <div className="draw-ended-overlay vault-layer" id="overlay-content">
                   <button className="btn btn-winners" onClick={openWinnersWithTransition} disabled={winnersTransitioning}>
                     {winnersTransitioning ? 'OPENING…' : `SEE ROUND #${winnersSource.rid} WINNERS`}
                   </button>
