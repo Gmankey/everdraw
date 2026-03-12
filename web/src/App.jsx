@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ethers } from 'ethers'
+import VaultAnimationTest from './components/VaultAnimationTest'
 import './App.css'
 
 const POOL_ABI = [
@@ -832,6 +833,8 @@ export default function App() {
       ? '—'
       : 0
 
+  const sfxTestMode = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('sfxtest') === '1'
+
   useEffect(() => {
     let cancelled = false
     const loadPrincipal = async () => {
@@ -979,7 +982,7 @@ export default function App() {
     setTimeout(() => {
       setShowWinnersView(true)
       setWinnersTransitioning(false)
-    }, 750)
+    }, 1800)
   }, [winnersTransitioning])
 
   if (!poolAddress) {
@@ -1152,39 +1155,43 @@ export default function App() {
               </div>
             </div>
 
-            <div className={`card filled vault-card ${winnersTransitioning ? 'to-winners' : ''}`} id="vault-card">
-              <VaultDoorBackground progressPct={mainView === 'previous' ? 100 : timerProgressPct} salesOpen={mainView === 'current' ? salesOpen : false} />
+            {sfxTestMode ? (
+              <VaultAnimationTest onComplete={() => {}} />
+            ) : (
+              <div className={`card filled vault-card ${winnersTransitioning ? 'to-winners' : ''}`} id="vault-card">
+                <VaultDoorBackground progressPct={mainView === 'previous' ? 100 : timerProgressPct} salesOpen={mainView === 'current' ? salesOpen : false} />
 
-              <div className="card-header vault-layer">
-                <div className="card-title">
-                  {mainView === 'previous'
-                    ? (Number(previousRoundInfo?.state ?? -1) === 3 ? 'Settled — Withdraw Available' : 'Winner Drawn - Vault Awaiting Settlement')
-                    : (drawFinished ? 'Draw Finished' : timerCard.heading)}
+                <div className="card-header vault-layer">
+                  <div className="card-title">
+                    {mainView === 'previous'
+                      ? (Number(previousRoundInfo?.state ?? -1) === 3 ? 'Settled — Withdraw Available' : 'Winner Drawn - Vault Awaiting Settlement')
+                      : (drawFinished ? 'Draw Finished' : timerCard.heading)}
+                  </div>
+                  <div className="card-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24">
+                      <circle cx="12" cy="12" r="10" stroke="white" strokeWidth="2" fill="none" />
+                      <circle cx="12" cy="12" r="3" fill="white" />
+                    </svg>
+                  </div>
                 </div>
-                <div className="card-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24">
-                    <circle cx="12" cy="12" r="10" stroke="white" strokeWidth="2" fill="none" />
-                    <circle cx="12" cy="12" r="3" fill="white" />
-                  </svg>
-                </div>
+
+                {(mainView === 'previous' || drawFinished) ? (
+                  <div className="draw-ended-overlay vault-layer">
+                    <button className="btn btn-winners" onClick={openWinnersWithTransition} disabled={winnersTransitioning}>
+                      {winnersTransitioning ? 'OPENING…' : `SEE ROUND #${winnersSource.rid} WINNERS`}
+                    </button>
+                    <div className="countdown-value draw-zero">{mainView === 'previous' ? previousSettlementCountdown : '00:00:00'}</div>
+                  </div>
+                ) : (
+                  <div className="countdown-center vault-layer vault-center">
+                    <div className="countdown-value" style={{ fontSize: timerIsClock ? undefined : '2.4rem' }}>{timerCard.value}</div>
+                    <div className="countdown-sub">{timerCard.sub}</div>
+                  </div>
+                )}
+
+                <div className="progress-container vault-layer vault-progress-hidden" />
               </div>
-
-              {(mainView === 'previous' || drawFinished) ? (
-                <div className="draw-ended-overlay vault-layer">
-                  <button className="btn btn-winners" onClick={openWinnersWithTransition} disabled={winnersTransitioning}>
-                    {winnersTransitioning ? 'OPENING…' : `SEE ROUND #${winnersSource.rid} WINNERS`}
-                  </button>
-                  <div className="countdown-value draw-zero">{mainView === 'previous' ? previousSettlementCountdown : '00:00:00'}</div>
-                </div>
-              ) : (
-                <div className="countdown-center vault-layer vault-center">
-                  <div className="countdown-value" style={{ fontSize: timerIsClock ? undefined : '2.4rem' }}>{timerCard.value}</div>
-                  <div className="countdown-sub">{timerCard.sub}</div>
-                </div>
-              )}
-
-              <div className="progress-container vault-layer vault-progress-hidden" />
-            </div>
+            )}
           </section>
         )}
 
