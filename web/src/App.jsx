@@ -812,12 +812,15 @@ export default function App() {
 
           const isWinner = account.toLowerCase() === String(info.winner || '').toLowerCase()
           if (principal > 0n || isWinner) {
+            const canWithdraw = Number(info.state) === 3 && principal > 0n
+            const canClaim = isWinner && Number(info.state) === 3 && BigInt(info.yieldMON ?? 0n) > 0n && !Boolean(info.prizeClaimed)
             rows.push({
               rid,
               state: Number(info.state),
               isWinner,
               principalMon: Number(ethers.formatEther(principal)).toFixed(4),
-              canWithdraw: Number(info.state) === 3 && principal > 0n,
+              canWithdraw,
+              canClaim,
             })
           }
         }
@@ -881,6 +884,14 @@ export default function App() {
     await runSignedAction(`Withdraw (Round #${rid})`, async (pool) => {
       const tx = await pool.withdrawPrincipal(BigInt(rid))
       setActionStatus(`Withdraw (Round #${rid}): submitted ${tx.hash.slice(0, 10)}...`)
+      await tx.wait()
+    })
+  }, [runSignedAction])
+
+  const handleClaimForRound = useCallback(async (rid) => {
+    await runSignedAction(`Claim prize (Round #${rid})`, async (pool) => {
+      const tx = await pool.claimPrize(BigInt(rid))
+      setActionStatus(`Claim prize (Round #${rid}): submitted ${tx.hash.slice(0, 10)}...`)
       await tx.wait()
     })
   }, [runSignedAction])
@@ -1041,7 +1052,16 @@ export default function App() {
                   <span>Round #{r.rid} · {STATE_LABELS[r.state] || 'Unknown'}</span>
                   <span>{r.isWinner ? 'Winner' : 'Participant'}</span>
                   <span>{r.principalMon} MON</span>
-                  <span>
+                  <span style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                    {r.canClaim ? (
+                      <button
+                        className="max-btn"
+                        onClick={() => handleClaimForRound(r.rid)}
+                        disabled={actionBusy}
+                      >
+                        {actionBusy ? 'Claiming...' : 'Claim Prize'}
+                      </button>
+                    ) : null}
                     {r.canWithdraw ? (
                       <button
                         className="max-btn"
@@ -1050,7 +1070,8 @@ export default function App() {
                       >
                         {actionBusy ? 'Withdrawing...' : 'Withdraw'}
                       </button>
-                    ) : 'Waiting'}
+                    ) : null}
+                    {!r.canClaim && !r.canWithdraw ? 'Waiting' : null}
                   </span>
                 </div>
               ))}
