@@ -791,9 +791,25 @@ export default function App() {
         const pool = new ethers.Contract(poolAddress, POOL_ABI, provider)
         const cur = Number(roundId)
         const rows = []
-        for (let rid = Math.max(0, cur - 25); rid <= cur; rid++) {
-          const info = await pool.getRoundInfo(BigInt(rid))
-          const principal = await pool.principalMON(BigInt(rid), account)
+
+        // Scan a wider range so older participation still appears in "My Rounds".
+        const fromRid = Math.max(0, cur - 120)
+        for (let rid = fromRid; rid <= cur; rid++) {
+          let info
+          try {
+            info = await pool.getRoundInfo(BigInt(rid))
+          } catch {
+            continue
+          }
+
+          // Some states/contracts may revert here; treat as 0 so one bad round doesn't wipe the list.
+          let principal = 0n
+          try {
+            principal = await pool.principalMON(BigInt(rid), account)
+          } catch {
+            principal = 0n
+          }
+
           const isWinner = account.toLowerCase() === String(info.winner || '').toLowerCase()
           if (principal > 0n || isWinner) {
             rows.push({
