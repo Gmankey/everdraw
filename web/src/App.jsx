@@ -877,6 +877,14 @@ export default function App() {
     })
   }, [winnersRoundId, runSignedAction])
 
+  const handleWithdrawForRound = useCallback(async (rid) => {
+    await runSignedAction(`Withdraw (Round #${rid})`, async (pool) => {
+      const tx = await pool.withdrawPrincipal(BigInt(rid))
+      setActionStatus(`Withdraw (Round #${rid}): submitted ${tx.hash.slice(0, 10)}...`)
+      await tx.wait()
+    })
+  }, [runSignedAction])
+
   const openWinnersWithTransition = useCallback(() => {
     if (winnersTransitioning) return
     setWinnersTransitioning(true)
@@ -1029,7 +1037,21 @@ export default function App() {
                 </div>
               ) : myRounds.map((r) => (
                 <div className="participants-row" key={r.rid}>
-                  <span>{r.rid}</span><span>Round #{r.rid} · {STATE_LABELS[r.state] || 'Unknown'}</span><span>{r.isWinner ? 'Winner' : 'Participant'}</span><span>{r.principalMon} MON</span><span>{r.canWithdraw ? 'Withdraw Available' : 'Waiting'}</span>
+                  <span>{r.rid}</span>
+                  <span>Round #{r.rid} · {STATE_LABELS[r.state] || 'Unknown'}</span>
+                  <span>{r.isWinner ? 'Winner' : 'Participant'}</span>
+                  <span>{r.principalMon} MON</span>
+                  <span>
+                    {r.canWithdraw ? (
+                      <button
+                        className="max-btn"
+                        onClick={() => handleWithdrawForRound(r.rid)}
+                        disabled={actionBusy}
+                      >
+                        {actionBusy ? 'Withdrawing...' : 'Withdraw'}
+                      </button>
+                    ) : 'Waiting'}
+                  </span>
                 </div>
               ))}
             </div>
