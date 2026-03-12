@@ -892,7 +892,9 @@ export default function App() {
               rid,
               state: Number(info.state),
               isWinner,
+              principalWei: principal,
               principalMon: Number(ethers.formatEther(principal)).toFixed(4),
+              yieldWei: BigInt(info.yieldMON || 0n),
               canWithdraw: Number(info.state) === 3 && principal > 0n,
             })
           }
@@ -906,6 +908,27 @@ export default function App() {
     loadMyRounds()
     return () => { cancelled = true }
   }, [account, poolAddress, roundId])
+
+  const myRoundsStats = useMemo(() => {
+    const lockedWei = myRounds
+      .filter((r) => r.state !== 3)
+      .reduce((acc, r) => acc + (r.principalWei || 0n), 0n)
+
+    const claimableWei = myRounds
+      .filter((r) => r.state === 3)
+      .reduce((acc, r) => acc + (r.principalWei || 0n), 0n)
+
+    const winningsWei = myRounds
+      .filter((r) => r.isWinner && r.state === 3)
+      .reduce((acc, r) => acc + (r.yieldWei || 0n), 0n)
+
+    return {
+      lockedMon: Number(ethers.formatEther(lockedWei)).toFixed(4),
+      claimableMon: Number(ethers.formatEther(claimableWei)).toFixed(4),
+      winningsMon: Number(ethers.formatEther(winningsWei)).toFixed(4),
+      gamesPlayed: myRounds.length,
+    }
+  }, [myRounds])
 
   const runSignedAction = useCallback(async (label, fn) => {
     try {
@@ -1183,38 +1206,77 @@ export default function App() {
         )}
 
         <section className="stats-grid two-col">
-          <StatCard
-            label="Total Tickets"
-            value={activeRoundInfo ? Number(activeRoundInfo.totalTickets).toLocaleString() : '...'}
-            sub={`Vault #${activeRoundId}`}
-            icon={(
-              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 7a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v2a2 2 0 0 0 0 4v2a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3v-2a2 2 0 0 0 0-4V7z"/></svg>
-            )}
-          />
-          <StatCard
-            label="Total TVL"
-            value={`${tvlMON} MON`}
-            sub="SHMON Deposited"
-            icon={(
-              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
-            )}
-          />
-          <StatCard
-            label="Winner"
-            value={activeRoundInfo ? shortAddr(activeRoundInfo.winner) : '...'}
-            sub={activeRoundInfo ? `Winning ticket: ${activeRoundInfo.winningTicket}` : ''}
-            icon={(
-              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M6 4h12v3a4 4 0 0 1-4 4h-1v2.08A4 4 0 0 1 16 17v2H8v-2a4 4 0 0 1 3-3.87V11h-1a4 4 0 0 1-4-4V4z"/></svg>
-            )}
-          />
-          <StatCard
-            label="Current Prize Pool"
-            value={activeRoundInfo && Number(activeRoundInfo.state) === 3 ? `${Number(ethers.formatEther(activeRoundInfo.yieldMON)).toFixed(4)} MON` : currentPrizePool.value}
-            sub={activeRoundInfo && Number(activeRoundInfo.state) === 3 ? 'Final settled yield' : currentPrizePool.sub}
-            icon={(
-              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 17h2.59l3.7-3.71 3 3L17.59 11H20v2h-1.59l-6.12 6.12-3-3L7 18.41V21H3v-4zM14 3h7v7h-2V6.41l-5.29 5.3-1.42-1.42 5.3-5.29H14V3z"/></svg>
-            )}
-          />
+          {mainView === 'myrounds' ? (
+            <>
+              <StatCard
+                label="Total Locked (Active Rounds)"
+                value={`${myRoundsStats.lockedMon} MON`}
+                sub="Principal in non-settled rounds"
+                icon={(
+                  <svg viewBox="0 0 24 24"><path fill="currentColor" d="M17 9h-1V7a4 4 0 1 0-8 0v2H7a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2zm-7-2a2 2 0 1 1 4 0v2h-4V7z"/></svg>
+                )}
+              />
+              <StatCard
+                label="Total Principal Claimable"
+                value={`${myRoundsStats.claimableMon} MON`}
+                sub="Settled rounds ready to withdraw"
+                icon={(
+                  <svg viewBox="0 0 24 24"><path d="M12 2v10m0 0l-4-4m4 4l4-4M5 14v5h14v-5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                )}
+              />
+              <StatCard
+                label="Total Winnings To Date"
+                value={`${myRoundsStats.winningsMon} MON`}
+                sub="Yield from settled wins"
+                icon={(
+                  <svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                )}
+              />
+              <StatCard
+                label="Total Games Played"
+                value={String(myRoundsStats.gamesPlayed)}
+                sub="Rounds where this wallet participated"
+                icon={(
+                  <svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 7a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v2a2 2 0 0 0 0 4v2a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3v-2a2 2 0 0 0 0-4V7z"/></svg>
+                )}
+              />
+            </>
+          ) : (
+            <>
+              <StatCard
+                label="Total Tickets"
+                value={activeRoundInfo ? Number(activeRoundInfo.totalTickets).toLocaleString() : '...'}
+                sub={`Vault #${activeRoundId}`}
+                icon={(
+                  <svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 7a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v2a2 2 0 0 0 0 4v2a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3v-2a2 2 0 0 0 0-4V7z"/></svg>
+                )}
+              />
+              <StatCard
+                label="Total TVL"
+                value={`${tvlMON} MON`}
+                sub="SHMON Deposited"
+                icon={(
+                  <svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                )}
+              />
+              <StatCard
+                label="Winner"
+                value={activeRoundInfo ? shortAddr(activeRoundInfo.winner) : '...'}
+                sub={activeRoundInfo ? `Winning ticket: ${activeRoundInfo.winningTicket}` : ''}
+                icon={(
+                  <svg viewBox="0 0 24 24"><path fill="currentColor" d="M6 4h12v3a4 4 0 0 1-4 4h-1v2.08A4 4 0 0 1 16 17v2H8v-2a4 4 0 0 1 3-3.87V11h-1a4 4 0 0 1-4-4V4z"/></svg>
+                )}
+              />
+              <StatCard
+                label="Current Prize Pool"
+                value={activeRoundInfo && Number(activeRoundInfo.state) === 3 ? `${Number(ethers.formatEther(activeRoundInfo.yieldMON)).toFixed(4)} MON` : currentPrizePool.value}
+                sub={activeRoundInfo && Number(activeRoundInfo.state) === 3 ? 'Final settled yield' : currentPrizePool.sub}
+                icon={(
+                  <svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 17h2.59l3.7-3.71 3 3L17.59 11H20v2h-1.59l-6.12 6.12-3-3L7 18.41V21H3v-4zM14 3h7v7h-2V6.41l-5.29 5.3-1.42-1.42 5.3-5.29H14V3z"/></svg>
+                )}
+              />
+            </>
+          )}
         </section>
       </div>
     </div>
