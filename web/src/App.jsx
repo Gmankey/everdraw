@@ -1155,18 +1155,14 @@ export default function App() {
               </div>
             </div>
 
-            {sfxTestMode ? (
-              <VaultAnimationTest onComplete={() => {}} />
+            {(mainView === 'previous' || drawFinished) ? (
+              <VaultAnimationTest onComplete={() => setShowWinnersView(true)} />
             ) : (
               <div className={`card filled vault-card ${winnersTransitioning ? 'to-winners' : ''}`} id="vault-card">
                 <VaultDoorBackground progressPct={mainView === 'previous' ? 100 : timerProgressPct} salesOpen={mainView === 'current' ? salesOpen : false} />
 
                 <div className="card-header vault-layer">
-                  <div className="card-title">
-                    {mainView === 'previous'
-                      ? (Number(previousRoundInfo?.state ?? -1) === 3 ? 'Settled — Withdraw Available' : 'Winner Drawn - Vault Awaiting Settlement')
-                      : (drawFinished ? 'Draw Finished' : timerCard.heading)}
-                  </div>
+                  <div className="card-title">{timerCard.heading}</div>
                   <div className="card-icon" aria-hidden="true">
                     <svg viewBox="0 0 24 24">
                       <circle cx="12" cy="12" r="10" stroke="white" strokeWidth="2" fill="none" />
@@ -1175,19 +1171,10 @@ export default function App() {
                   </div>
                 </div>
 
-                {(mainView === 'previous' || drawFinished) ? (
-                  <div className="draw-ended-overlay vault-layer">
-                    <button className="btn btn-winners" onClick={openWinnersWithTransition} disabled={winnersTransitioning}>
-                      {winnersTransitioning ? 'OPENING…' : `SEE ROUND #${winnersSource.rid} WINNERS`}
-                    </button>
-                    <div className="countdown-value draw-zero">{mainView === 'previous' ? previousSettlementCountdown : '00:00:00'}</div>
-                  </div>
-                ) : (
-                  <div className="countdown-center vault-layer vault-center">
-                    <div className="countdown-value" style={{ fontSize: timerIsClock ? undefined : '2.4rem' }}>{timerCard.value}</div>
-                    <div className="countdown-sub">{timerCard.sub}</div>
-                  </div>
-                )}
+                <div className="countdown-center vault-layer vault-center">
+                  <div className="countdown-value" style={{ fontSize: timerIsClock ? undefined : '2.4rem' }}>{timerCard.value}</div>
+                  <div className="countdown-sub">{timerCard.sub}</div>
+                </div>
 
                 <div className="progress-container vault-layer vault-progress-hidden" />
               </div>
