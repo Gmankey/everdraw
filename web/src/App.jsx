@@ -569,6 +569,9 @@ export default function App() {
     }
   }, [])
 
+  const allowlistEnabled = walletAllowlist.length > 0
+  const walletAllowed = !allowlistEnabled || (!!account && walletAllowlist.includes(account.toLowerCase()))
+
   const buyTickets = useCallback(async () => {
     try {
       setLoading(true)
@@ -627,8 +630,6 @@ export default function App() {
   const isOpenState = currentState === 0
   const wrongNetwork = expectedChainId && connectedChainId && expectedChainId !== connectedChainId
   const salesOpen = isOpenState && secondsRemaining > 0
-  const allowlistEnabled = walletAllowlist.length > 0
-  const walletAllowed = !allowlistEnabled || (!!account && walletAllowlist.includes(account.toLowerCase()))
   const canBuyTx = !!account && walletAllowed && !wrongNetwork && salesOpen && !loading
 
   const buyDisabledReason = useMemo(() => {
