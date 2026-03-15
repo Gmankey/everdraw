@@ -47,12 +47,22 @@ function parsePoolAddresses() {
   return out
 }
 
+function normalizeWalletAllowlist(entries) {
+  const seen = new Set()
+  const out = []
+  for (const entry of entries) {
+    const addr = String(entry || '').trim().toLowerCase()
+    if (!ethers.isAddress(addr)) continue
+    if (seen.has(addr)) continue
+    seen.add(addr)
+    out.push(addr)
+  }
+  return out
+}
+
 function parseWalletAllowlist() {
   const raw = import.meta.env.VITE_WALLET_ALLOWLIST || ''
-  return raw
-    .split(',')
-    .map((s) => s.trim().toLowerCase())
-    .filter((s) => ethers.isAddress(s))
+  return normalizeWalletAllowlist(raw.split(','))
 }
 
 function hexChainIdToDec(hexId) {
@@ -286,7 +296,10 @@ function WinnersView({ onBack, winner, prize, participants, participantCount, wi
 
 export default function App() {
   const poolAddresses = useMemo(() => parsePoolAddresses(), [])
-  const walletAllowlist = useMemo(() => parseWalletAllowlist(), [])
+  const envWalletAllowlist = useMemo(() => parseWalletAllowlist(), [])
+  const [walletAllowlist, setWalletAllowlist] = useState(envWalletAllowlist)
+  const [allowlistManagedBy, setAllowlistManagedBy] = useState(envWalletAllowlist.length > 0 ? 'env' : 'none')
+  const [allowlistEnabled, setAllowlistEnabled] = useState(envWalletAllowlist.length > 0)
   const [selectedPoolAddress, setSelectedPoolAddress] = useState(poolAddresses[0] || '')
   const poolAddress = selectedPoolAddress
 
@@ -335,6 +348,29 @@ export default function App() {
       setSelectedPoolAddress(poolAddresses[0])
     }
   }, [poolAddresses, selectedPoolAddress])
+
+  useEffect(() => {
+    let cancelled = false
+    const loadRuntimeAllowlist = async () => {
+      try {
+        const res = await fetch('/api/allowlist', { cache: 'no-store' })
+        if (!res.ok) throw new Error(`allowlist endpoint ${res.status}`)
+        const payload = await res.json()
+        if (!payload || payload.configured !== true) return
+
+        const enabled = payload.enabled !== false
+        const wallets = normalizeWalletAllowlist(payload.wallets || [])
+        if (cancelled) return
+        setAllowlistEnabled(enabled)
+        setWalletAllowlist(wallets)
+        setAllowlistManagedBy('edge-config')
+      } catch {
+        // Keep env fallback when Edge Config endpoint is not available.
+      }
+    }
+    loadRuntimeAllowlist()
+    return () => { cancelled = true }
+  }, [])
 
   useEffect(() => {
     // Load user-provided vault SFX from public/sfx
@@ -569,7 +605,6 @@ export default function App() {
     }
   }, [])
 
-  const allowlistEnabled = walletAllowlist.length > 0
   const walletAllowed = !allowlistEnabled || (!!account && walletAllowlist.includes(account.toLowerCase()))
 
   const buyTickets = useCallback(async () => {
@@ -1073,7 +1108,7 @@ export default function App() {
 
         {allowlistEnabled ? (
           <p className="deposit-caption" style={{ color: walletAllowed || !account ? '#9fa5c0' : '#ff8ea1' }}>
-            Testnet allowlist is enabled ({walletAllowlist.length} wallet{walletAllowlist.length === 1 ? '' : 's'}).
+            Testnet allowlist is enabled via {allowlistManagedBy === 'edge-config' ? 'Edge Config' : 'env fallback'} ({walletAllowlist.length} wallet{walletAllowlist.length === 1 ? '' : 's'}).
             {account ? (walletAllowed ? ' Connected wallet is approved.' : ' Connected wallet is NOT approved.') : ' Connect an approved wallet to transact.'}
           </p>
         ) : null}
