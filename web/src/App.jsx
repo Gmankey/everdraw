@@ -47,6 +47,14 @@ function parsePoolAddresses() {
   return out
 }
 
+function parseWalletAllowlist() {
+  const raw = import.meta.env.VITE_WALLET_ALLOWLIST || ''
+  return raw
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter((s) => ethers.isAddress(s))
+}
+
 function hexChainIdToDec(hexId) {
   if (!hexId) return null
   return Number.parseInt(hexId, 16)
@@ -278,6 +286,7 @@ function WinnersView({ onBack, winner, prize, participants, participantCount, wi
 
 export default function App() {
   const poolAddresses = useMemo(() => parsePoolAddresses(), [])
+  const walletAllowlist = useMemo(() => parseWalletAllowlist(), [])
   const [selectedPoolAddress, setSelectedPoolAddress] = useState(poolAddresses[0] || '')
   const poolAddress = selectedPoolAddress
 
@@ -579,6 +588,10 @@ export default function App() {
         throw new Error(`Wrong network: connected ${Number(network.chainId)}, expected ${expectedChainId}`)
       }
       const signer = await provider.getSigner()
+      const signerAddr = (await signer.getAddress()).toLowerCase()
+      if (allowlistEnabled && !walletAllowlist.includes(signerAddr)) {
+        throw new Error('This wallet is not allowlisted for this testnet frontend')
+      }
       const pool = new ethers.Contract(poolAddress, POOL_ABI, signer)
 
       const value = ticketPrice * BigInt(n)
@@ -597,7 +610,7 @@ export default function App() {
     } finally {
       setLoading(false)
     }
-  }, [expectedChainId, poolAddress, refresh, ticketCountInput, ticketPrice])
+  }, [allowlistEnabled, walletAllowlist, expectedChainId, poolAddress, refresh, ticketCountInput, ticketPrice])
 
   const secondsRemaining = useMemo(() => {
     if (!roundInfo) return 0
@@ -614,7 +627,9 @@ export default function App() {
   const isOpenState = currentState === 0
   const wrongNetwork = expectedChainId && connectedChainId && expectedChainId !== connectedChainId
   const salesOpen = isOpenState && secondsRemaining > 0
-  const canBuyTx = !!account && !wrongNetwork && salesOpen && !loading
+  const allowlistEnabled = walletAllowlist.length > 0
+  const walletAllowed = !allowlistEnabled || (!!account && walletAllowlist.includes(account.toLowerCase()))
+  const canBuyTx = !!account && walletAllowed && !wrongNetwork && salesOpen && !loading
 
   const buyDisabledReason = useMemo(() => {
     if (loading) return 'Transaction in progress'
@@ -623,9 +638,10 @@ export default function App() {
       return 'Sales window closed; waiting for keeper processing'
     }
     if (!account) return 'Connect wallet to deposit'
+    if (!walletAllowed) return 'This wallet is not allowlisted for this testnet frontend'
     if (wrongNetwork) return `Wrong network (need ${expectedChainId})`
     return ''
-  }, [loading, salesOpen, isOpenState, account, wrongNetwork, expectedChainId])
+  }, [loading, salesOpen, isOpenState, account, walletAllowed, wrongNetwork, expectedChainId])
 
   const settlementSecondsRemaining = useMemo(() => {
     if (!roundInfo) return 0
@@ -946,6 +962,10 @@ export default function App() {
         throw new Error(`Wrong network: connected ${Number(network.chainId)}, expected ${expectedChainId}`)
       }
       const signer = await provider.getSigner()
+      const signerAddr = (await signer.getAddress()).toLowerCase()
+      if (allowlistEnabled && !walletAllowlist.includes(signerAddr)) {
+        throw new Error('This wallet is not allowlisted for this testnet frontend')
+      }
       const pool = new ethers.Contract(poolAddress, POOL_ABI, signer)
       await fn(pool)
       await refresh()
@@ -956,7 +976,7 @@ export default function App() {
     } finally {
       setActionBusy(false)
     }
-  }, [expectedChainId, poolAddress, refresh])
+  }, [allowlistEnabled, walletAllowlist, expectedChainId, poolAddress, refresh])
 
   const handleClaimPrize = useCallback(async () => {
     if (!winnersRoundId) return
@@ -1049,6 +1069,13 @@ export default function App() {
     <div className="app-shell">
       <div className="app-container">
         <Header account={account} onConnect={connectWallet} />
+
+        {allowlistEnabled ? (
+          <p className="deposit-caption" style={{ color: walletAllowed || !account ? '#9fa5c0' : '#ff8ea1' }}>
+            Testnet allowlist is enabled ({walletAllowlist.length} wallet{walletAllowlist.length === 1 ? '' : 's'}).
+            {account ? (walletAllowed ? ' Connected wallet is approved.' : ' Connected wallet is NOT approved.') : ' Connect an approved wallet to transact.'}
+          </p>
+        ) : null}
 
         {vaultSummaries.length > 1 ? (
           <section className="vault-switcher">
@@ -1153,7 +1180,7 @@ export default function App() {
                 <div className="deposit-cta-wrap">
                   <button
                     className="btn deposit-btn"
-                    disabled={mainView !== 'current' || loading || wrongNetwork || !salesOpen}
+                    disabled={mainView !== 'current' || loading || wrongNetwork || !salesOpen || !walletAllowed}
                     onClick={account ? buyTickets : connectWallet}
                   >
                     {mainView !== 'current'
@@ -1164,13 +1191,15 @@ export default function App() {
                           ? 'Buy Unavailable'
                           : !account
                             ? 'Connect Wallet to Deposit'
-                            : wrongNetwork
-                              ? `Wrong network (need ${expectedChainId})`
-                              : canBuyTx
-                                ? 'Buy Tickets'
-                                : 'Buy Unavailable'}
+                            : !walletAllowed
+                              ? 'Wallet Not Approved'
+                              : wrongNetwork
+                                ? `Wrong network (need ${expectedChainId})`
+                                : canBuyTx
+                                  ? 'Buy Tickets'
+                                  : 'Buy Unavailable'}
                   </button>
-                  {(loading || wrongNetwork || !salesOpen || !account || mainView !== 'current') && buyDisabledReason ? <p className="deposit-caption">{buyDisabledReason}</p> : null}
+                  {(loading || wrongNetwork || !salesOpen || !account || !walletAllowed || mainView !== 'current') && buyDisabledReason ? <p className="deposit-caption">{buyDisabledReason}</p> : null}
                 </div>
 
                 {status ? <p className="deposit-caption">{status}</p> : null}

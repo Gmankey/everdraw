@@ -36,6 +36,7 @@ Set these in the new testnet project:
 - `VITE_CHAIN_ID=10143`
 - `VITE_ESTIMATED_APY_PERCENT=12`
 - `VITE_POOL_DEPLOY_BLOCK=0`
+- `VITE_WALLET_ALLOWLIST=0xYourWallet1,0xTesterWallet2,...`
 
 Notes:
 - `VITE_POOL_ADDRESSES` supports multi-vault switcher if more pools are added later.
