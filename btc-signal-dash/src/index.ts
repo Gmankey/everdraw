@@ -5,7 +5,7 @@ import yaml from 'js-yaml';
 type Config = {
   symbol: string;
   timezone: string;
-  polling: { market_ms: number; slow_ms: number };
+  polling: { market_ms: number; slow_ms: number; polymarket_ms?: number };
   sessions: { eu_open_utc: string; us_open_utc: string };
   telegram: { bot_token: string; chat_id: string };
 };
@@ -17,6 +17,23 @@ type SlowState = {
   oiDelta1hUsd: number;
   lsRatio: number;
   updatedAt: number;
+};
+
+type PolyState = { lines: string[]; ageSec: number | null; updatedAt: number };
+
+type AlertState = { eu: string | null; us: string | null };
+
+type Snapshot = {
+  price: number;
+  regime: string;
+  sigma: number;
+  cvd15: number;
+  cvd60: number;
+  fundingPct: number;
+  oiDelta1hUsd: number;
+  lsRatio: number;
+  walls: { put: string; call: string };
+  poly: { lines: string[]; ageSec: number | null };
 };
 
 const BINANCE = 'https://api.binance.com';
@@ -70,6 +87,53 @@ function countdown(to: Date): string {
   const h = Math.floor(mins / 60);
   const m = mins % 60;
   return h > 0 ? `in ${h}h ${m}m` : `in ${m}m`;
+}
+
+function loadAlertState(): AlertState {
+  try {
+    const p = path.resolve(process.cwd(), 'data/alert-state.json');
+    const raw = fs.readFileSync(p, 'utf8');
+    const j = JSON.parse(raw);
+    return { eu: j?.eu ?? null, us: j?.us ?? null };
+  } catch {
+    return { eu: null, us: null };
+  }
+}
+
+function saveAlertState(s: AlertState): void {
+  const p = path.resolve(process.cwd(), 'data/alert-state.json');
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(p, JSON.stringify(s, null, 2));
+}
+
+async function sendTelegram(token: string, chatId: string, text: string): Promise<void> {
+  const url = `https://api.telegram.org/bot${token}/sendMessage`;
+  const body = new URLSearchParams({ chat_id: chatId, text, disable_web_page_preview: 'true' });
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`telegram ${res.status}: ${t}`);
+  }
+}
+
+function buildSnapshotText(kind: 'EU' | 'US', openAt: Date, s: Snapshot): string {
+  const polyLines = s.poly.lines.slice(0, 4).map((l) => `- ${l}`).join('\n');
+  const stale = s.poly.ageSec !== null && s.poly.ageSec > 60;
+  const age = s.poly.ageSec === null ? 'n/a ⚠ unavailable' : `${s.poly.ageSec}s ${stale ? '⚠ stale' : '✓'}`;
+
+  return [
+    `🔔 ${kind} session opens in 15m (${openAt.toUTCString()})`,
+    `PRICE: ${fmtMoney(s.price)} (${kind} pre-open snapshot)`,
+    `REGIME: ${s.regime} (sigma_1h ${s.sigma.toFixed(2)}%)`,
+    `CVD 15m/60m: ${s.cvd15 >= 0 ? '+' : ''}${s.cvd15.toFixed(2)} / ${s.cvd60 >= 0 ? '+' : ''}${s.cvd60.toFixed(2)}`,
+    `FUNDING: ${fmtPct(s.fundingPct)} | OI Δ1h: ${fmtMoney(s.oiDelta1hUsd)} | L/S: ${s.lsRatio.toFixed(2)}`,
+    `OPTIONS: Put ${s.walls.put} | Call ${s.walls.call}`,
+    `POLY BTC brackets:\n${polyLines}\n(quote age: ${age})`,
+  ].join('\n');
 }
 
 async function fetchBinancePrice(symbol: string): Promise<number> {
@@ -352,6 +416,10 @@ async function main(): Promise<void> {
     lsRatio: 1,
     updatedAt: 0,
   };
+  let polyState: PolyState = { lines: ['n/a', 'n/a', 'n/a', 'n/a'], ageSec: null, updatedAt: 0 };
+  const alertState = loadAlertState();
+
+  const polyFastMs = cfg.polling.polymarket_ms ?? cfg.polling.market_ms;
 
   console.log('BTC Signal Dash Ticket 1 process started.');
 
@@ -362,11 +430,16 @@ async function main(): Promise<void> {
       }
 
       const price = await fetchBinancePrice(cfg.symbol);
-      const [k15, k60, walls, poly] = await Promise.all([
+
+      if (Date.now() - polyState.updatedAt > polyFastMs) {
+        const p = await fetchPolymarketBrackets(price);
+        polyState = { ...p, updatedAt: Date.now() };
+      }
+
+      const [k15, k60, walls] = await Promise.all([
         fetchKlines(cfg.symbol, '1m', 15),
         fetchKlines(cfg.symbol, '1m', 60),
         fetchDeribitWalls(price),
-        fetchPolymarketBrackets(price),
       ]);
 
       const sigma = sigma1hPctFrom1m(k60);
@@ -402,11 +475,44 @@ async function main(): Promise<void> {
       console.log(` US open: ${countdown(us)}\n`);
 
       console.log('POLYMARKET (24h BTC):');
-      for (const line of poly.lines.slice(0, 4)) console.log(` ${line}`);
-      const stale = poly.ageSec !== null && poly.ageSec > 60;
-      const ageLabel = poly.ageSec === null ? 'n/a' : `${poly.ageSec}s`;
-      const ageStatus = poly.ageSec === null ? '⚠ unavailable' : stale ? '⚠ stale (>60s)' : '✓';
+      for (const line of polyState.lines.slice(0, 4)) console.log(` ${line}`);
+      const stale = polyState.ageSec !== null && polyState.ageSec > 60;
+      const ageLabel = polyState.ageSec === null ? 'n/a' : `${polyState.ageSec}s`;
+      const ageStatus = polyState.ageSec === null ? '⚠ unavailable' : stale ? '⚠ stale (>60s)' : '✓';
       console.log(` (quote age: ${ageLabel} ${ageStatus})`);
+
+      // Ticket 2: Telegram pre-session alerts (15 minutes before open), one per session per day.
+      if (cfg.telegram.bot_token && cfg.telegram.chat_id) {
+        const snapshot: Snapshot = {
+          price,
+          regime,
+          sigma,
+          cvd15,
+          cvd60,
+          fundingPct: slow.fundingPct,
+          oiDelta1hUsd: slow.oiDelta1hUsd,
+          lsRatio: slow.lsRatio,
+          walls,
+          poly: { lines: polyState.lines, ageSec: polyState.ageSec },
+        };
+
+        const checkAndSend = async (kind: 'EU' | 'US', openAt: Date, keyName: 'eu' | 'us') => {
+          const msToOpen = openAt.getTime() - Date.now();
+          const dayKey = openAt.toISOString().slice(0, 10);
+          const inWindow = msToOpen <= 15 * 60_000 && msToOpen > 14 * 60_000;
+          if (!inWindow) return;
+          if (alertState[keyName] === dayKey) return;
+
+          const text = buildSnapshotText(kind, openAt, snapshot);
+          await sendTelegram(cfg.telegram.bot_token, cfg.telegram.chat_id, text);
+          alertState[keyName] = dayKey;
+          saveAlertState(alertState);
+          console.log(`[telegram] sent ${kind} pre-open alert for ${dayKey}`);
+        };
+
+        await checkAndSend('EU', eu, 'eu');
+        await checkAndSend('US', us, 'us');
+      }
     } catch (err: any) {
       console.error('tick error:', err?.message ?? err);
     }

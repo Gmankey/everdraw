@@ -2,6 +2,7 @@ symbol: BTCUSDT
 timezone: Australia/Sydney
 polling:
   market_ms: 15000
+  polymarket_ms: 15000
   slow_ms: 60000
 sessions:
   eu_open_utc: "08:00"
