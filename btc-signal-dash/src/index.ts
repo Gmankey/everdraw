@@ -191,129 +191,146 @@ async function fetchPolymarketBrackets(price: number): Promise<{ lines: string[]
     return [];
   };
 
-  const toMidYes = (m: any): number => {
+  const toYesPrice = (m: any): { px: number; source: 'mid' | 'last' | 'indicative' | 'na' } => {
     const bid = Number(m?.bestBid ?? NaN);
     const ask = Number(m?.bestAsk ?? NaN);
-    if (Number.isFinite(bid) && Number.isFinite(ask) && bid >= 0 && ask >= 0) return (bid + ask) / 2;
+    if (Number.isFinite(bid) && Number.isFinite(ask) && bid >= 0 && ask >= 0 && ask >= bid) {
+      return { px: (bid + ask) / 2, source: 'mid' };
+    }
 
     const outcomes = asArr(m?.outcomes).map(String).map((s) => s.toLowerCase());
     const prices = asArr(m?.outcomePrices).map((x) => Number(x));
     const yesIx = outcomes.findIndex((o) => o === 'yes');
-    if (yesIx >= 0 && Number.isFinite(prices[yesIx])) return prices[yesIx];
+    if (yesIx >= 0 && Number.isFinite(prices[yesIx])) {
+      return { px: prices[yesIx], source: 'indicative' };
+    }
 
     const p = Number(m?.lastTradePrice ?? NaN);
-    return Number.isFinite(p) ? p : NaN;
+    if (Number.isFinite(p)) return { px: p, source: 'last' };
+
+    return { px: NaN, source: 'na' };
   };
 
   try {
-    const markets = await jget<any[]>(`${POLY_GAMMA}/markets?limit=1000&active=true&closed=false&tag_id=235`);
+    const markets = await jget<any[]>(`${POLY_GAMMA}/markets?limit=500&active=true&closed=false&tag_id=235`);
 
-    // Convert "Will Bitcoin reach $X on Month D?" ladder into bracket probabilities.
-    const reReach = /will bitcoin reach \$(\d{1,3}(?:,\d{3})*) on ([a-z]+ \d{1,2})\?/i;
-
-    const ladder = markets
+    // Primary path: explicit daily range brackets.
+    const reBetween = /between \$(\d{1,3}(?:,\d{3})*) and \$(\d{1,3}(?:,\d{3})*) on ([a-z]+ \d{1,2})\?/i;
+    const betweenRows = markets
       .map((m) => {
         const q = String(m?.question ?? '');
-        const hit = q.match(reReach);
+        const hit = q.match(reBetween);
         if (!hit) return null;
 
-        const strike = Number(hit[1].replaceAll(',', ''));
-        const dateLabel = hit[2].toLowerCase();
-        const yesPx = toMidYes(m);
+        const low = Number(hit[1].replaceAll(',', ''));
+        const high = Number(hit[2].replaceAll(',', ''));
+        const dateLabel = hit[3].toLowerCase();
+        const yes = toYesPrice(m);
         const updatedMs = Number(m?.updatedAt ? Date.parse(m.updatedAt) : NaN);
 
         return {
-          strike,
+          low,
+          high,
           dateLabel,
-          yesPx: Number.isFinite(yesPx) ? Math.max(0, Math.min(1, yesPx)) : NaN,
+          yesPx: Number.isFinite(yes.px) ? Math.max(0, Math.min(1, yes.px)) : NaN,
+          source: yes.source,
           updatedMs: Number.isFinite(updatedMs) ? updatedMs : NaN,
         };
       })
-      .filter((x): x is { strike: number; dateLabel: string; yesPx: number; updatedMs: number } => !!x && Number.isFinite(x.strike));
-
-    if (ladder.length < 5) return fallback();
+      .filter(
+        (x): x is { low: number; high: number; dateLabel: string; yesPx: number; source: 'mid' | 'last' | 'indicative' | 'na'; updatedMs: number } =>
+          !!x
+      );
 
     const now = new Date();
     const todayLabel = now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', timeZone: 'America/New_York' }).toLowerCase();
     const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
     const tomorrowLabel = tomorrow.toLocaleDateString('en-US', { month: 'long', day: 'numeric', timeZone: 'America/New_York' }).toLowerCase();
 
-    const byToday = ladder.filter((p) => p.dateLabel === todayLabel);
-    const byTomorrow = ladder.filter((p) => p.dateLabel === tomorrowLabel);
+    if (betweenRows.length >= 4) {
+      const byToday = betweenRows.filter((p) => p.dateLabel === todayLabel);
+      const byTomorrow = betweenRows.filter((p) => p.dateLabel === tomorrowLabel);
+      const set = byToday.length >= 4 ? byToday : byTomorrow.length >= 4 ? byTomorrow : betweenRows;
 
-    const dateBuckets = new Map<string, { strike: number; yesPx: number; updatedMs: number; dateLabel: string }[]>();
+      const sorted = set.sort((a, b) => a.low - b.low);
+      let idx = sorted.findIndex((r) => price >= r.low && price < r.high);
+      if (idx < 0) {
+        idx = sorted.reduce((best, r, i) => {
+          const mid = (r.low + r.high) / 2;
+          const bestMid = (sorted[best].low + sorted[best].high) / 2;
+          return Math.abs(mid - price) < Math.abs(bestMid - price) ? i : best;
+        }, 0);
+      }
+
+      const start = Math.max(0, Math.min(sorted.length - 4, idx - 1));
+      const picked = sorted.slice(start, start + 4);
+      const lines = picked.map((r) => {
+        const label = Number.isFinite(r.yesPx) ? `${Math.round(r.yesPx * 100)}¢` : 'n/a';
+        const src = r.source === 'last' ? ' (last trade)' : r.source === 'indicative' ? ' (indicative)' : '';
+        return `${Math.floor(r.low / 1000)}-${Math.floor(r.high / 1000)}k: ${label}${src}`;
+      });
+      const ageSecVals = picked
+        .map((p) => (Number.isFinite(p.updatedMs) ? Math.max(0, Math.round((Date.now() - p.updatedMs) / 1000)) : NaN))
+        .filter(Number.isFinite);
+      const ageSec = ageSecVals.length ? Math.max(...(ageSecVals as number[])) : null;
+      return { lines, ageSec };
+    }
+
+    // Fallback path: derive wide annual brackets from "reach" ladder if explicit brackets are unavailable.
+    const reReach = /will bitcoin reach \$(\d{1,3}(?:,\d{3})*) by ([a-z]+ \d{1,2}, \d{4})\?/i;
+    const ladder = markets
+      .map((m) => {
+        const q = String(m?.question ?? '');
+        const hit = q.match(reReach);
+        if (!hit) return null;
+        const strike = Number(hit[1].replaceAll(',', ''));
+        const yes = toYesPrice(m);
+        const updatedMs = Number(m?.updatedAt ? Date.parse(m.updatedAt) : NaN);
+        return {
+          strike,
+          expiry: hit[2].toLowerCase(),
+          yesPx: Number.isFinite(yes.px) ? Math.max(0, Math.min(1, yes.px)) : NaN,
+          updatedMs: Number.isFinite(updatedMs) ? updatedMs : NaN,
+        };
+      })
+      .filter((x): x is { strike: number; expiry: string; yesPx: number; updatedMs: number } => !!x && Number.isFinite(x.strike));
+
+    if (ladder.length < 6) return fallback();
+
+    const byExpiry = new Map<string, { strike: number; expiry: string; yesPx: number; updatedMs: number }[]>();
     for (const r of ladder) {
-      if (!dateBuckets.has(r.dateLabel)) dateBuckets.set(r.dateLabel, []);
-      dateBuckets.get(r.dateLabel)!.push(r);
+      if (!byExpiry.has(r.expiry)) byExpiry.set(r.expiry, []);
+      byExpiry.get(r.expiry)!.push(r);
     }
 
-    const chooseClosestDate = () => {
-      let bestLabel: string | null = null;
-      let bestDist = Number.POSITIVE_INFINITY;
-      for (const [label, rows] of dateBuckets.entries()) {
-        if (rows.length < 6) continue;
-        for (const row of rows) {
-          const d = Math.abs(row.strike - price);
-          if (d < bestDist) {
-            bestDist = d;
-            bestLabel = label;
-          }
-        }
-      }
-      return bestLabel ? dateBuckets.get(bestLabel)! : ladder;
-    };
+    const sortedExp = [...byExpiry.entries()].sort((a, b) => b[1].length - a[1].length);
+    const set = sortedExp[0][1].sort((a, b) => a.strike - b.strike);
+    if (set.length < 6) return fallback();
 
-    const set = byToday.length >= 6 ? byToday : byTomorrow.length >= 6 ? byTomorrow : chooseClosestDate();
-
-    // Merge duplicate strikes by latest update.
-    const byStrike = new Map<number, { strike: number; yesPx: number; updatedMs: number }>();
-    for (const r of set) {
-      const prev = byStrike.get(r.strike);
-      if (!prev || (Number.isFinite(r.updatedMs) && r.updatedMs > prev.updatedMs)) {
-        byStrike.set(r.strike, { strike: r.strike, yesPx: r.yesPx, updatedMs: r.updatedMs });
-      }
+    const rows: { low: number; high: number; p: number; updatedMs: number }[] = [];
+    for (let i = 0; i < set.length - 1; i++) {
+      const low = set[i].strike;
+      const high = set[i + 1].strike;
+      const p = Number.isFinite(set[i].yesPx) && Number.isFinite(set[i + 1].yesPx) ? Math.max(0, Math.min(1, set[i].yesPx - set[i + 1].yesPx)) : NaN;
+      rows.push({ low, high, p, updatedMs: Math.max(set[i].updatedMs, set[i + 1].updatedMs) });
     }
 
-    const sorted = [...byStrike.values()].sort((a, b) => a.strike - b.strike);
-    if (sorted.length < 5) return fallback();
-
-    const nearestStrikeDist = Math.min(...sorted.map((s) => Math.abs(s.strike - price)));
-    if (nearestStrikeDist > 3000) return fallback();
-
-    const probs = new Map<number, number>();
-    for (const s of sorted) probs.set(s.strike, Number.isFinite(s.yesPx) ? s.yesPx : NaN);
-
-    const bracketRows: { low: number; high: number; p: number; updatedMs: number }[] = [];
-    for (let i = 0; i < sorted.length - 1; i++) {
-      const low = sorted[i].strike;
-      const high = sorted[i + 1].strike;
-      const pLow = probs.get(low) ?? NaN;
-      const pHigh = probs.get(high) ?? NaN;
-      const p = Number.isFinite(pLow) && Number.isFinite(pHigh) ? Math.max(0, Math.min(1, pLow - pHigh)) : NaN;
-      const updatedMs = Math.max(sorted[i].updatedMs, sorted[i + 1].updatedMs);
-      bracketRows.push({ low, high, p, updatedMs });
-    }
-
-    if (bracketRows.length < 4) return fallback();
-
-    let idx = bracketRows.findIndex((r) => price >= r.low && price < r.high);
+    let idx = rows.findIndex((r) => price >= r.low && price < r.high);
     if (idx < 0) {
-      idx = bracketRows.reduce((best, r, i) => {
+      idx = rows.reduce((best, r, i) => {
         const mid = (r.low + r.high) / 2;
-        const bestMid = (bracketRows[best].low + bracketRows[best].high) / 2;
+        const bestMid = (rows[best].low + rows[best].high) / 2;
         return Math.abs(mid - price) < Math.abs(bestMid - price) ? i : best;
       }, 0);
     }
 
-    const start = Math.max(0, Math.min(bracketRows.length - 4, idx - 1));
-    const picked = bracketRows.slice(start, start + 4);
-
-    const lines = picked.map((r) => `${Math.floor(r.low / 1000)}-${Math.floor(r.high / 1000)}k: ${Number.isFinite(r.p) ? `${Math.round(r.p * 100)}¢` : 'n/a'}`);
+    const start = Math.max(0, Math.min(rows.length - 4, idx - 1));
+    const picked = rows.slice(start, start + 4);
+    const lines = picked.map((r) => `${Math.floor(r.low / 1000)}-${Math.floor(r.high / 1000)}k: ${Number.isFinite(r.p) ? `${Math.round(r.p * 100)}¢` : 'n/a'} (derived)`);
     const ageSecVals = picked
       .map((p) => (Number.isFinite(p.updatedMs) ? Math.max(0, Math.round((Date.now() - p.updatedMs) / 1000)) : NaN))
       .filter(Number.isFinite);
-    const ageSec = ageSecVals.length ? Math.min(...(ageSecVals as number[])) : null;
-
+    const ageSec = ageSecVals.length ? Math.max(...(ageSecVals as number[])) : null;
     return { lines, ageSec };
   } catch {
     return fallback();
