@@ -421,7 +421,47 @@ async function main(): Promise<void> {
 
   const polyFastMs = cfg.polling.polymarket_ms ?? cfg.polling.market_ms;
 
-  console.log('BTC Signal Dash Ticket 1 process started.');
+  console.log('BTC Signal Dash process started.');
+
+  // one-shot test mode: send one Telegram alert immediately and exit
+  if (process.env.TEST_ALERT === '1') {
+    if (!cfg.telegram.bot_token || !cfg.telegram.chat_id) {
+      throw new Error('TEST_ALERT=1 requires telegram.bot_token and telegram.chat_id in config/default.yaml');
+    }
+
+    slow = await fetchSlow(cfg.symbol, null);
+    const price = await fetchBinancePrice(cfg.symbol);
+    const [k15, k60, walls, poly] = await Promise.all([
+      fetchKlines(cfg.symbol, '1m', 15),
+      fetchKlines(cfg.symbol, '1m', 60),
+      fetchDeribitWalls(price),
+      fetchPolymarketBrackets(price),
+    ]);
+
+    const sigma = sigma1hPctFrom1m(k60);
+    const regime = regimeFromSigma(sigma);
+    const cvd15 = proxyCvdNorm(k15);
+    const cvd60 = proxyCvdNorm(k60);
+
+    const snapshot: Snapshot = {
+      price,
+      regime,
+      sigma,
+      cvd15,
+      cvd60,
+      fundingPct: slow.fundingPct,
+      oiDelta1hUsd: slow.oiDelta1hUsd,
+      lsRatio: slow.lsRatio,
+      walls,
+      poly,
+    };
+
+    const now = new Date();
+    const text = `🧪 TEST ALERT\n${buildSnapshotText('EU', now, snapshot)}`;
+    await sendTelegram(cfg.telegram.bot_token, cfg.telegram.chat_id, text);
+    console.log('[telegram] TEST_ALERT sent; exiting.');
+    return;
+  }
 
   while (true) {
     try {
