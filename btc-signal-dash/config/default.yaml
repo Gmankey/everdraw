@@ -1,0 +1,11 @@
+symbol: BTCUSDT
+timezone: Australia/Sydney
+polling:
+  market_ms: 15000
+  slow_ms: 60000
+sessions:
+  eu_open_utc: "08:00"
+  us_open_utc: "14:30"
+telegram:
+  bot_token: ""
+  chat_id: ""
