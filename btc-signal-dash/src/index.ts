@@ -573,7 +573,7 @@ function renderDashboardHtml(state: DashboardState | null): string {
     .regime-low{background:#14532d}
     .regime-trend{background:#7f1d1d}
     .regime-high{background:#fbbf24;color:#111827}
-    .spark{display:block;width:120px;height:40px;margin-top:8px}
+    .spark{display:block;width:100%;height:80px;margin-top:8px}
     ul{margin:8px 0 0 18px;padding:0}
     li.active-bracket{border-left:4px solid #4ade80;padding-left:8px;font-weight:700}
     .info-icon{position:absolute;top:8px;right:10px;font-size:14px;opacity:.5;cursor:help}
@@ -584,6 +584,20 @@ function renderDashboardHtml(state: DashboardState | null): string {
       border-radius:8px;padding:10px;width:260px;
       font-size:12px;font-weight:400;white-space:normal;
       z-index:10;color:#e8ecff;line-height:1.35;
+    }
+    .chart-tooltip{
+      position:absolute;
+      transform:translate(-50%,-100%);
+      background:rgba(15,23,42,.95);
+      border:1px solid #475569;
+      border-radius:6px;
+      padding:4px 6px;
+      font-size:11px;
+      color:#e8ecff;
+      white-space:nowrap;
+      pointer-events:none;
+      display:none;
+      z-index:12;
     }
   </style>
 </head>
@@ -602,7 +616,7 @@ function renderDashboardHtml(state: DashboardState | null): string {
     <div class="card">
       <div class="info-icon" data-tip="Live BTC spot price from Binance. Reference for which Polymarket bracket you're currently in.">ⓘ</div>
       <div class="k">Price</div><div class="v" id="price">${escapeHtml(fmtMoney(state.price))}</div>
-      <canvas id="spark-price" class="spark" width="120" height="40"></canvas>
+      <canvas id="spark-price" class="spark" width="400" height="80"></canvas>
     </div>
 
     <div class="card">
@@ -633,7 +647,7 @@ function renderDashboardHtml(state: DashboardState | null): string {
     <div class="card">
       <div class="info-icon" data-tip="Long/short account ratio. Above 1.6 = longs crowded (bearish). Below 0.8 = shorts crowded (bullish). Extremes support mean-reversion.">ⓘ</div>
       <div class="k">L/S Ratio</div><div class="v" id="lsRatio">${state.lsRatio.toFixed(2)}</div>
-      <canvas id="spark-ls" class="spark" width="120" height="40"></canvas>
+      <canvas id="spark-ls" class="spark" width="400" height="80"></canvas>
     </div>
 
     <div class="card">
@@ -733,43 +747,158 @@ function renderDashboardHtml(state: DashboardState | null): string {
       }
     }
 
-    function drawSparkline(canvasId, points, color){
+    const palette = { green: '#4ade80', red: '#f87171', amber: '#fbbf24', white: '#e8ecff' };
+    const chartRegistry = {};
+
+    function resolveSignalColor(v){
+      if (!v) return palette.white;
+      if (typeof v === 'string' && v.startsWith('#')) return v;
+      return palette[v] || palette.white;
+    }
+
+    function ensureTooltip(canvas){
+      const card = canvas.closest('.card');
+      if (!card) return null;
+      let tip = card.querySelector('.chart-tooltip');
+      if (!tip) {
+        tip = document.createElement('div');
+        tip.className = 'chart-tooltip';
+        card.appendChild(tip);
+      }
+      return tip;
+    }
+
+    function resizeCanvas(c){
+      const dpr = window.devicePixelRatio || 1;
+      const w = Math.max(160, Math.floor(c.clientWidth || 400));
+      const h = Math.max(80, Math.floor(c.clientHeight || 80));
+      const rw = Math.floor(w * dpr);
+      const rh = Math.floor(h * dpr);
+      if (c.width !== rw || c.height !== rh) {
+        c.width = rw;
+        c.height = rh;
+      }
+      const ctx = c.getContext('2d');
+      if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return { w, h };
+    }
+
+    function formatHm(ts){
+      return new Date(ts).toLocaleTimeString('en-AU', { timeZone: latest.timezone, hour: '2-digit', minute: '2-digit', hour12: false });
+    }
+
+    function drawColumnChart(canvasId, points, colorForValue, formatValue){
       const c = document.getElementById(canvasId);
       if (!c || !c.getContext) return;
       const ctx = c.getContext('2d');
       if (!ctx) return;
+      const { w, h } = resizeCanvas(c);
+      ctx.clearRect(0, 0, w, h);
 
-      ctx.clearRect(0,0,c.width,c.height);
-      if (!Array.isArray(points) || points.length < 2) return;
+      const rows = Array.isArray(points) ? points.filter((p) => Number.isFinite(Number(p.v))) : [];
+      const vals = rows.map((p) => Number(p.v));
+      const st = chartRegistry[canvasId] || { hover: -1 };
+      chartRegistry[canvasId] = st;
+      st.points = rows;
+      st.formatValue = formatValue;
+      st.bars = [];
+      const tip = ensureTooltip(c);
 
-      const vals = points.map(p => Number(p.v)).filter(Number.isFinite);
-      if (vals.length < 2) return;
+      if (!vals.length) {
+        st.hover = -1;
+        if (tip) tip.style.display = 'none';
+        return;
+      }
+
       const min = Math.min(...vals);
       const max = Math.max(...vals);
       const span = Math.max(1e-9, max - min);
+      const rightPad = 64;
+      const leftPad = 6;
+      const topPad = 6;
+      const bottomPad = 10;
+      const chartW = Math.max(20, w - leftPad - rightPad);
+      const chartH = Math.max(20, h - topPad - bottomPad);
+      const n = vals.length;
+      const slot = chartW / n;
+      const gap = 1;
+      const barW = Math.max(1, slot - gap);
 
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 1.8;
-      ctx.beginPath();
-      for (let i = 0; i < vals.length; i++) {
-        const x = (i / (vals.length - 1)) * (c.width - 2) + 1;
-        const y = c.height - ((vals[i] - min) / span) * (c.height - 4) - 2;
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
+      for (let i = 0; i < n; i++) {
+        const v = vals[i];
+        const t = span < 1e-8 ? 0.5 : (v - min) / span;
+        const bh = Math.max(1, t * chartH);
+        const x = leftPad + i * slot;
+        const y = topPad + chartH - bh;
+        st.bars.push({ x, y, w: barW, h: bh, point: rows[i], color: resolveSignalColor(colorForValue(v)) });
       }
-      ctx.stroke();
+
+      if (st.hover >= n) st.hover = -1;
+      for (let i = 0; i < st.bars.length; i++) {
+        const b = st.bars[i];
+        ctx.fillStyle = b.color;
+        ctx.fillRect(b.x, b.y, b.w, b.h);
+        if (i === st.hover) {
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(b.x + 0.5, b.y + 0.5, Math.max(0, b.w - 1), Math.max(0, b.h - 1));
+        }
+      }
+
+      ctx.fillStyle = 'rgba(232,236,255,0.82)';
+      ctx.font = '10px Inter, system-ui, sans-serif';
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'top';
+      ctx.fillText(formatValue(max), w - 2, 2);
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(formatValue(min), w - 2, h - 2);
+
+      if (tip && st.hover >= 0 && st.bars[st.hover]) {
+        const b = st.bars[st.hover];
+        tip.textContent = formatValue(Number(b.point.v)) + ' | ' + formatHm(Number(b.point.ts));
+        tip.style.left = (b.x + b.w / 2) + 'px';
+        tip.style.top = Math.max(14, b.y - 6) + 'px';
+        tip.style.display = 'block';
+      } else if (tip) {
+        tip.style.display = 'none';
+      }
+
+      if (!c.dataset.chartBound) {
+        c.dataset.chartBound = '1';
+        c.addEventListener('mousemove', (ev) => {
+          const curr = chartRegistry[canvasId];
+          if (!curr || !curr.bars || !curr.bars.length) return;
+          const rect = c.getBoundingClientRect();
+          const x = ev.clientX - rect.left;
+          let idx = -1;
+          for (let i = 0; i < curr.bars.length; i++) {
+            const b = curr.bars[i];
+            if (x >= b.x && x <= b.x + b.w) {
+              idx = i;
+              break;
+            }
+          }
+          if (idx !== curr.hover) {
+            curr.hover = idx;
+            drawColumnChart(canvasId, curr.points, colorForValue, curr.formatValue);
+          }
+        });
+
+        c.addEventListener('mouseleave', () => {
+          const curr = chartRegistry[canvasId];
+          if (!curr) return;
+          curr.hover = -1;
+          drawColumnChart(canvasId, curr.points || [], colorForValue, curr.formatValue || formatValue);
+        });
+      }
     }
 
     function applySparks(s){
-      const cvdColor = colorByCvd(s.cvd15) === 'green' ? '#4ade80' : colorByCvd(s.cvd15) === 'red' ? '#f87171' : '#e8ecff';
-      const fundingColor = colorByFunding(s.fundingPct) === 'green' ? '#4ade80' : colorByFunding(s.fundingPct) === 'red' ? '#f87171' : '#e8ecff';
-      const oiColor = colorByOi(s.oiDelta1hUsd) === 'green' ? '#4ade80' : colorByOi(s.oiDelta1hUsd) === 'red' ? '#f87171' : '#e8ecff';
-      const lsColor = colorByLs(s.lsRatio) === 'green' ? '#4ade80' : colorByLs(s.lsRatio) === 'red' ? '#f87171' : '#e8ecff';
-      drawSparkline('spark-price', s.history?.price || [], '#60a5fa');
-      drawSparkline('spark-cvd15', s.history?.cvd15 || [], cvdColor);
-      drawSparkline('spark-funding', s.history?.funding || [], fundingColor);
-      drawSparkline('spark-oi', s.history?.oiDelta || [], oiColor);
-      drawSparkline('spark-ls', s.history?.lsRatio || [], lsColor);
+      drawColumnChart('spark-price', s.history?.price || [], () => '#60a5fa', (v) => '$' + Math.round(v).toLocaleString());
+      drawColumnChart('spark-cvd15', s.history?.cvd15 || [], (v) => colorByCvd(v), (v) => (v >= 0 ? '+' : '') + Number(v).toFixed(2));
+      drawColumnChart('spark-funding', s.history?.funding || [], (v) => colorByFunding(v), (v) => (v >= 0 ? '+' : '') + Number(v).toFixed(4) + '%');
+      drawColumnChart('spark-oi', s.history?.oiDelta || [], (v) => colorByOi(v), (v) => '$' + Math.round(v).toLocaleString());
+      drawColumnChart('spark-ls', s.history?.lsRatio || [], (v) => colorByLs(v), (v) => Number(v).toFixed(2));
     }
 
     function applyState(s){
