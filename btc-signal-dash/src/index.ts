@@ -713,7 +713,7 @@ function renderDashboardHtml(state: DashboardState | null): string {
     }
 
     function parseBracketLine(t){
-      const m = t.match(/(\d+)\s*[-–—]\s*(\d+)\s*k/i);
+      const m = t.match(/(\\d+)\\s*[-\\u2013\\u2014]\\s*(\\d+)\\s*k/i);
       if (!m) return null;
       return { lo: Number(m[1]) * 1000, hi: Number(m[2]) * 1000 };
     }
