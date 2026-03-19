@@ -8,5 +8,5 @@ sessions:
   eu_open_utc: "08:00"
   us_open_utc: "14:30"
 telegram:
-  bot_token: ""
-  chat_id: ""
+  bot_token: "TELEGRAM_BOT_TOKEN_REDACTED"
+  chat_id: "5759377461"
