@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import http from 'node:http';
 import yaml from 'js-yaml';
 
 type Config = {
@@ -33,6 +34,23 @@ type Snapshot = {
   oiDelta1hUsd: number;
   lsRatio: number;
   walls: { put: string; call: string };
+  poly: { lines: string[]; ageSec: number | null };
+};
+
+type DashboardState = {
+  updatedAt: number;
+  timezone: string;
+  symbol: string;
+  price: number;
+  regime: string;
+  sigma: number;
+  cvd15: number;
+  cvd60: number;
+  fundingPct: number;
+  oiDelta1hUsd: number;
+  lsRatio: number;
+  walls: { put: string; call: string };
+  sessions: { euIn: string; usIn: string };
   poly: { lines: string[]; ageSec: number | null };
 };
 
@@ -406,6 +424,91 @@ function breakoutLine(price: number, step: number): string {
   return `NONE (last boundary: ${Math.floor(boundary / 1000)}k, score: pending)`;
 }
 
+function escapeHtml(s: string): string {
+  return s
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function renderDashboardHtml(state: DashboardState | null): string {
+  if (!state) {
+    return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BTC Signal Dash</title></head><body style="font-family:system-ui;padding:24px;background:#0b1020;color:#e8ecff"><h1>BTC Signal Dash</h1><p>Waiting for first tick…</p><script>setTimeout(()=>location.reload(),3000)</script></body></html>`;
+  }
+
+  const updated = escapeHtml(toAest(state.updatedAt, state.timezone));
+  const polyLines = state.poly.lines.map((l) => `<li>${escapeHtml(l)}</li>`).join('');
+  const ageLabel = state.poly.ageSec === null ? 'n/a' : `${state.poly.ageSec}s`;
+
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>BTC Signal Dash</title>
+  <style>
+    :root{color-scheme:dark}
+    body{font-family:Inter,system-ui,sans-serif;background:#0b1020;color:#e8ecff;margin:0;padding:20px}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+    .card{background:#121a35;border:1px solid #263157;border-radius:12px;padding:14px}
+    .k{font-size:12px;opacity:.8;text-transform:uppercase;letter-spacing:.04em}
+    .v{font-size:24px;font-weight:700;margin-top:4px}
+    ul{margin:8px 0 0 18px}
+    .muted{opacity:.75}
+  </style>
+</head>
+<body>
+  <h1>BTC Signal Dash</h1>
+  <div class="muted">${escapeHtml(state.symbol)} · Updated ${updated} (${escapeHtml(state.timezone)})</div>
+  <div class="grid" style="margin-top:12px">
+    <div class="card"><div class="k">Price</div><div class="v">${escapeHtml(fmtMoney(state.price))}</div></div>
+    <div class="card"><div class="k">Regime</div><div class="v">${escapeHtml(state.regime)}</div><div class="muted">σ₁h ${state.sigma.toFixed(2)}%</div></div>
+    <div class="card"><div class="k">Funding</div><div class="v">${escapeHtml(fmtPct(state.fundingPct))}</div></div>
+    <div class="card"><div class="k">OI Δ1h</div><div class="v">${escapeHtml(fmtMoney(state.oiDelta1hUsd))}</div></div>
+    <div class="card"><div class="k">L/S Ratio</div><div class="v">${state.lsRatio.toFixed(2)}</div></div>
+    <div class="card"><div class="k">CVD 15m/60m</div><div class="v">${state.cvd15.toFixed(2)} / ${state.cvd60.toFixed(2)}</div></div>
+  </div>
+
+  <div class="grid" style="margin-top:12px">
+    <div class="card"><div class="k">Sessions</div><div>EU ${escapeHtml(state.sessions.euIn)}</div><div>US ${escapeHtml(state.sessions.usIn)}</div></div>
+    <div class="card"><div class="k">Options Walls</div><div>Put: ${escapeHtml(state.walls.put)}</div><div>Call: ${escapeHtml(state.walls.call)}</div></div>
+    <div class="card"><div class="k">Polymarket Brackets</div><ul>${polyLines}</ul><div class="muted">quote age: ${escapeHtml(ageLabel)}</div></div>
+  </div>
+
+  <script>setTimeout(()=>location.reload(), 10000)</script>
+</body>
+</html>`;
+}
+
+function startDashboardServer(getState: () => DashboardState | null): void {
+  if (process.env.DASHBOARD !== '1' && process.env.DASHBOARD !== 'true') return;
+  const host = process.env.DASHBOARD_HOST || '0.0.0.0';
+  const port = Number(process.env.DASHBOARD_PORT || '8787');
+
+  const server = http.createServer((req, res) => {
+    if (!req.url) {
+      res.statusCode = 400;
+      res.end('bad request');
+      return;
+    }
+
+    if (req.url === '/api/state') {
+      res.setHeader('content-type', 'application/json; charset=utf-8');
+      res.end(JSON.stringify(getState()));
+      return;
+    }
+
+    res.setHeader('content-type', 'text/html; charset=utf-8');
+    res.end(renderDashboardHtml(getState()));
+  });
+
+  server.listen(port, host, () => {
+    console.log(`[dashboard] http://${host}:${port}`);
+  });
+}
+
 async function main(): Promise<void> {
   const cfg = loadConfig();
   let slow: SlowState = {
@@ -417,11 +520,13 @@ async function main(): Promise<void> {
     updatedAt: 0,
   };
   let polyState: PolyState = { lines: ['n/a', 'n/a', 'n/a', 'n/a'], ageSec: null, updatedAt: 0 };
+  let dashboardState: DashboardState | null = null;
   const alertState = loadAlertState();
 
   const polyFastMs = cfg.polling.polymarket_ms ?? cfg.polling.market_ms;
 
   console.log('BTC Signal Dash process started.');
+  startDashboardServer(() => dashboardState);
 
   // one-shot test mode: send one Telegram alert immediately and exit
   if (process.env.TEST_ALERT === '1') {
@@ -489,6 +594,23 @@ async function main(): Promise<void> {
 
       const eu = parseUtcHm(cfg.sessions.eu_open_utc);
       const us = parseUtcHm(cfg.sessions.us_open_utc);
+
+      dashboardState = {
+        updatedAt: Date.now(),
+        timezone: cfg.timezone,
+        symbol: cfg.symbol,
+        price,
+        regime,
+        sigma,
+        cvd15,
+        cvd60,
+        fundingPct: slow.fundingPct,
+        oiDelta1hUsd: slow.oiDelta1hUsd,
+        lsRatio: slow.lsRatio,
+        walls,
+        sessions: { euIn: countdown(eu), usIn: countdown(us) },
+        poly: { lines: polyState.lines.slice(0, 4), ageSec: polyState.ageSec },
+      };
 
       const lsInterpret = slow.lsRatio > 1.6 ? 'longs crowded — reversion setup' : slow.lsRatio < 0.8 ? 'shorts crowded — squeeze setup' : 'neutral';
       const fundingInterpret = slow.fundingPct > 0 ? 'longs paying — elevated' : 'shorts paying — elevated';
