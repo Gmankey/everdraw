@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
+import { fileURLToPath } from 'node:url';
 import yaml from 'js-yaml';
 
 type Config = {
@@ -577,7 +578,8 @@ function etDayKey(ts: number): string {
 
 
 function historyFilePath(): string {
-  return path.resolve(process.cwd(), 'data/history.json');
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  return path.resolve(here, '../data/history.json');
 }
 
 function emptyHistory(): HistoryState {
