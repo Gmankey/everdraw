@@ -531,15 +531,28 @@ function etDayKey(ts: number): string {
   return d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 }
 
-function pushHistory(arr: HistoryPoint[], point: HistoryPoint): void {
-  const bucket = Math.floor(point.ts / 60000);
+function pushHistory(arr: HistoryPoint[], point: HistoryPoint, intervalMs: number, maxPoints: number, lastPush: { ts: number }): void {
+  if (!Number.isFinite(point.v)) return;
+
+  if (!lastPush.ts) {
+    arr.push(point);
+    lastPush.ts = point.ts;
+    if (arr.length > maxPoints) arr.splice(0, arr.length - maxPoints);
+    return;
+  }
+
+  const elapsed = point.ts - lastPush.ts;
+  if (elapsed >= intervalMs) {
+    arr.push(point);
+    lastPush.ts = point.ts;
+    if (arr.length > maxPoints) arr.splice(0, arr.length - maxPoints);
+    return;
+  }
+
   const last = arr[arr.length - 1];
-  if (last && Math.floor(last.ts / 60000) === bucket) {
+  if (last) {
     last.ts = point.ts;
     last.v = point.v;
-  } else {
-    arr.push(point);
-    if (arr.length > 1440) arr.splice(0, arr.length - 1440);
   }
 }
 
@@ -1011,6 +1024,30 @@ async function main(): Promise<void> {
   const history: HistoryState = { price: [], cvd15: [], funding: [], oiDelta: [], lsRatio: [] };
   let historyDayKey = etDayKey(Date.now());
 
+  const historyIntervalMs = {
+    price: 60_000,
+    cvd15: 5 * 60_000,
+    funding: 60 * 60_000,
+    oiDelta: 5 * 60_000,
+    lsRatio: 15 * 60_000,
+  } as const;
+
+  const historyMaxPoints = {
+    price: Math.floor((24 * 60 * 60_000) / historyIntervalMs.price),
+    cvd15: Math.floor((24 * 60 * 60_000) / historyIntervalMs.cvd15),
+    funding: Math.floor((24 * 60 * 60_000) / historyIntervalMs.funding),
+    oiDelta: Math.floor((24 * 60 * 60_000) / historyIntervalMs.oiDelta),
+    lsRatio: Math.floor((24 * 60 * 60_000) / historyIntervalMs.lsRatio),
+  } as const;
+
+  const historyLastPush = {
+    price: { ts: 0 },
+    cvd15: { ts: 0 },
+    funding: { ts: 0 },
+    oiDelta: { ts: 0 },
+    lsRatio: { ts: 0 },
+  };
+
   const polyFastMs = cfg.polling.polymarket_ms ?? cfg.polling.market_ms;
 
   console.log('BTC Signal Dash process started.');
@@ -1093,14 +1130,19 @@ async function main(): Promise<void> {
         history.funding = [];
         history.oiDelta = [];
         history.lsRatio = [];
+        historyLastPush.price.ts = 0;
+        historyLastPush.cvd15.ts = 0;
+        historyLastPush.funding.ts = 0;
+        historyLastPush.oiDelta.ts = 0;
+        historyLastPush.lsRatio.ts = 0;
         historyDayKey = dayKey;
       }
 
-      pushHistory(history.price, { ts: nowTs, v: price });
-      pushHistory(history.cvd15, { ts: nowTs, v: cvd15 });
-      pushHistory(history.funding, { ts: nowTs, v: slow.fundingPct });
-      pushHistory(history.oiDelta, { ts: nowTs, v: slow.oiDelta1hUsd });
-      pushHistory(history.lsRatio, { ts: nowTs, v: slow.lsRatio });
+      pushHistory(history.price, { ts: nowTs, v: price }, historyIntervalMs.price, historyMaxPoints.price, historyLastPush.price);
+      pushHistory(history.cvd15, { ts: nowTs, v: cvd15 }, historyIntervalMs.cvd15, historyMaxPoints.cvd15, historyLastPush.cvd15);
+      pushHistory(history.funding, { ts: nowTs, v: slow.fundingPct }, historyIntervalMs.funding, historyMaxPoints.funding, historyLastPush.funding);
+      pushHistory(history.oiDelta, { ts: nowTs, v: slow.oiDelta1hUsd }, historyIntervalMs.oiDelta, historyMaxPoints.oiDelta, historyLastPush.oiDelta);
+      pushHistory(history.lsRatio, { ts: nowTs, v: slow.lsRatio }, historyIntervalMs.lsRatio, historyMaxPoints.lsRatio, historyLastPush.lsRatio);
 
       dashboardState = {
         updatedAt: nowTs,
