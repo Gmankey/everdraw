@@ -731,7 +731,17 @@ async function callSoWhatViaOpenClaw(
 
       try {
         const j = JSON.parse(out || '{}') as any;
-        const text = String(j?.message || j?.text || j?.result?.message || j?.result?.text || '').trim();
+        const payloadText = Array.isArray(j?.result?.payloads)
+          ? j.result.payloads.map((p: any) => String(p?.text || '')).filter(Boolean).join('\n\n').trim()
+          : '';
+        const text = String(
+          j?.message ||
+          j?.text ||
+          j?.result?.message ||
+          j?.result?.text ||
+          payloadText ||
+          ''
+        ).trim();
         if (!text) {
           reject(new SoWhatError('OPENCLAW_BAD_RESPONSE', 'So What unavailable (bad OpenClaw response)'));
           return;
