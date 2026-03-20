@@ -473,7 +473,32 @@ async function fetchPolymarketBrackets(price: number): Promise<{ lines: string[]
       const byTomorrow = betweenRows.filter((p) => p.dateLabel === tomorrowLabel);
       const set = byToday.length >= 4 ? byToday : byTomorrow.length >= 4 ? byTomorrow : betweenRows;
 
-      const sorted = set.sort((a, b) => a.low - b.low);
+      const deduped = new Map<string, (typeof set)[number]>();
+      const rankSource = (s: 'mid' | 'last' | 'indicative' | 'na') => (s === 'mid' ? 3 : s === 'indicative' ? 2 : s === 'last' ? 1 : 0);
+      for (const r of set) {
+        const key = `${r.low}-${r.high}`;
+        const prev = deduped.get(key);
+        if (!prev) {
+          deduped.set(key, r);
+          continue;
+        }
+        const prevHasPx = Number.isFinite(prev.yesPx);
+        const currHasPx = Number.isFinite(r.yesPx);
+        if (currHasPx && !prevHasPx) {
+          deduped.set(key, r);
+          continue;
+        }
+        if (currHasPx === prevHasPx) {
+          const prevSource = rankSource(prev.source);
+          const currSource = rankSource(r.source);
+          if (currSource > prevSource || (currSource === prevSource && Number.isFinite(r.updatedMs) && (!Number.isFinite(prev.updatedMs) || r.updatedMs > prev.updatedMs))) {
+            deduped.set(key, r);
+          }
+        }
+      }
+
+      const sorted = Array.from(deduped.values()).sort((a, b) => a.low - b.low);
+      if (sorted.length < 4) return fallback();
       let idx = sorted.findIndex((r) => price >= r.low && price < r.high);
       if (idx < 0) {
         idx = sorted.reduce((best, r, i) => {
@@ -508,7 +533,7 @@ function parsePolyBracketRows(lines: string[]): { lo: number; hi: number; yesCen
     .map((line) => {
       const range = line.match(/(\d+)\s*[-\u2013\u2014]\s*(\d+)\s*k/i);
       if (!range) return null;
-      const cents = line.match(/(\d{1,3})\s*¢/);
+      const cents = line.match(/(\d{1,3}(?:\.\d+)?)\s*¢/);
       return {
         lo: Number(range[1]) * 1000,
         hi: Number(range[2]) * 1000,
@@ -1144,7 +1169,7 @@ function renderDashboardHtml(state: DashboardState | null): string {
     }
 
     function parseBracketWithCents(t){
-      const m = t.match(/(\d+)\s*[-\u2013\u2014]\s*(\d+)\s*k.*?(\d+)¢/i);
+      const m = t.match(/(\d+)\s*[-\u2013\u2014]\s*(\d+)\s*k.*?(\d+(?:\.\d+)?)\s*¢/i);
       if (!m) return null;
       return { key: m[1] + '-' + m[2], lo: Number(m[1]) * 1000, hi: Number(m[2]) * 1000, cents: Number(m[3]) };
     }
@@ -1161,10 +1186,13 @@ function renderDashboardHtml(state: DashboardState | null): string {
     function renderPolyWithPositions(s){
       const list = document.getElementById('polyList');
       if (!list) return;
+      const seen = new Set();
       const rows = (s.poly.lines || []).map((line) => {
         const safe = line.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
         const b = parseBracketWithCents(line);
         if (!b) return '<li>' + safe + '</li>';
+        if (seen.has(b.key)) return '';
+        seen.add(b.key);
         const pos = readPos(b.key) || {};
         const qty = Number(pos.qty || 0);
         const entry = Number(pos.entry || 0);
@@ -1222,7 +1250,7 @@ function renderDashboardHtml(state: DashboardState | null): string {
       return new Date(ts).toLocaleTimeString('en-AU', { timeZone: latest.timezone, hour: '2-digit', minute: '2-digit', hour12: false });
     }
 
-    function drawColumnChart(canvasId, points, colorForValue, formatValue){
+    function drawColumnChart(canvasId, points, colorForValue, formatValue, opts){
       const c = document.getElementById(canvasId);
       if (!c || !c.getContext) return;
       const ctx = c.getContext('2d');
@@ -1236,6 +1264,7 @@ function renderDashboardHtml(state: DashboardState | null): string {
       chartRegistry[canvasId] = st;
       st.points = rows;
       st.formatValue = formatValue;
+      st.opts = opts || null;
       st.bars = [];
       const tip = ensureTooltip(c);
 
@@ -1245,8 +1274,16 @@ function renderDashboardHtml(state: DashboardState | null): string {
         return;
       }
 
-      const min = Math.min(...vals);
-      const max = Math.max(...vals);
+      const rawMin = Math.min(...vals);
+      const rawMax = Math.max(...vals);
+      const useRange = !!(opts && opts.useRangeAxis);
+      let min = useRange ? rawMin : Math.min(0, rawMin);
+      let max = rawMax;
+      if (useRange && Number.isFinite(rawMin) && Number.isFinite(rawMax)) {
+        const pad = Math.max(1e-9, (rawMax - rawMin) * 0.08);
+        min = rawMin - pad;
+        max = rawMax + pad;
+      }
       const span = Math.max(1e-9, max - min);
       const rightPad = 64;
       const leftPad = 6;
@@ -1284,9 +1321,9 @@ function renderDashboardHtml(state: DashboardState | null): string {
       ctx.font = '10px Inter, system-ui, sans-serif';
       ctx.textAlign = 'right';
       ctx.textBaseline = 'top';
-      ctx.fillText(formatValue(max), w - 2, 2);
+      ctx.fillText(formatValue(rawMax), w - 2, 2);
       ctx.textBaseline = 'bottom';
-      ctx.fillText(formatValue(min), w - 2, h - 2);
+      ctx.fillText(formatValue(rawMin), w - 2, h - 2);
 
       if (tip && st.hover >= 0 && st.bars[st.hover]) {
         const b = st.bars[st.hover];
@@ -1315,7 +1352,7 @@ function renderDashboardHtml(state: DashboardState | null): string {
           }
           if (idx !== curr.hover) {
             curr.hover = idx;
-            drawColumnChart(canvasId, curr.points, colorForValue, curr.formatValue);
+            drawColumnChart(canvasId, curr.points, colorForValue, curr.formatValue, curr.opts);
           }
         });
 
@@ -1323,7 +1360,7 @@ function renderDashboardHtml(state: DashboardState | null): string {
           const curr = chartRegistry[canvasId];
           if (!curr) return;
           curr.hover = -1;
-          drawColumnChart(canvasId, curr.points || [], colorForValue, curr.formatValue || formatValue);
+          drawColumnChart(canvasId, curr.points || [], colorForValue, curr.formatValue || formatValue, curr.opts || opts);
         });
       }
     }
@@ -1347,8 +1384,8 @@ function renderDashboardHtml(state: DashboardState | null): string {
       drawColumnChart('spark-price', s.history?.price || [], () => '#60a5fa', (v) => '$' + Math.round(v).toLocaleString());
       drawColumnChart('spark-cvd15', s.history?.cvd15 || [], (v) => colorByCvd(v), (v) => (v >= 0 ? '+' : '') + Number(v).toFixed(2));
       drawColumnChart('spark-funding', s.history?.funding || [], (v) => colorByFunding(v), (v) => (v >= 0 ? '+' : '') + Number(v).toFixed(4) + '%');
-      drawColumnChart('spark-oi', s.history?.oiDelta || [], () => '#22d3ee', (v) => fmtUsdCompactJs(v));
-      drawColumnChart('spark-ls', s.history?.lsRatio || [], (v) => colorByLs(v), (v) => Number(v).toFixed(2));
+      drawColumnChart('spark-oi', s.history?.oiDelta || [], () => '#22d3ee', (v) => fmtUsdCompactJs(v), { useRangeAxis: true });
+      drawColumnChart('spark-ls', s.history?.lsRatio || [], (v) => colorByLs(v), (v) => Number(v).toFixed(2), { useRangeAxis: true });
     }
 
     function parseRows(lines){
