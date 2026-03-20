@@ -1231,7 +1231,7 @@ function renderDashboardHtml(state: DashboardState | null): string {
       setText('regimeLabel', s.strategyContext.regime_label);
       setText('setupText', s.strategyContext.setup_text || 'No active setup trigger');
       const breakoutText = s.breakout && s.breakout.active
-        ? (s.breakout.direction === 'BELOW' ? '▼ BELOW ' : '▲ ABOVE ') + Math.floor((s.breakout.boundary || 0) / 1000) + 'k at ' + fmtClock(s.breakout.triggeredAt || Date.now()) + ' — CVD ' + s.breakout.cvdStatus + ' (score: ' + (s.breakout.cvdScore || 0).toFixed(2) + ')' + (s.breakout.reverted ? ' — REVERTED' : '')
+        ? (s.breakout.direction === 'BELOW' ? '▼ BELOW ' : '▲ ABOVE ') + Math.floor((s.breakout.boundary || 0) / 1000) + 'k at ' + formatHm(s.breakout.triggeredAt || Date.now()) + ' — CVD ' + s.breakout.cvdStatus + ' (score: ' + (s.breakout.cvdScore || 0).toFixed(2) + ')' + (s.breakout.reverted ? ' — REVERTED' : '')
         : 'NONE (last boundary: n/a, score: pending)';
       setText('breakoutLine', 'BREAKOUT: ' + breakoutText);
       setText('breakoutHint', s.breakout && s.breakout.cvdStatus === 'DIVERGENT' && s.breakout.oldBracketLabel
