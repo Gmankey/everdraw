@@ -523,7 +523,9 @@ async function fetchPolymarketBrackets(price: number): Promise<{ lines: string[]
     }
 
     return fallback();
-  } catch {
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[poly] fetch failed: ${msg}`);
     return fallback();
   }
 }
@@ -1151,7 +1153,7 @@ function renderDashboardHtml(state: DashboardState | null): string {
     const CONTEXT_KEY = 'market-context';
 
     function currentEtDay(){
-      return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year:'numeric', month:'2-digit', day:'2-digit' }).format(new Date()).replaceAll('/','-');
+      return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year:'numeric', month:'2-digit', day:'2-digit' }).format(new Date()).split('/').join('-');
     }
 
     function rolloverLocalStorage(){
@@ -1188,7 +1190,7 @@ function renderDashboardHtml(state: DashboardState | null): string {
       if (!list) return;
       const seen = new Set();
       const rows = (s.poly.lines || []).map((line) => {
-        const safe = line.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
+        const safe = String(line).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
         const b = parseBracketWithCents(line);
         if (!b) return '<li>' + safe + '</li>';
         if (seen.has(b.key)) return '';
