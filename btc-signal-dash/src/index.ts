@@ -575,6 +575,105 @@ function etDayKey(ts: number): string {
   return d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 }
 
+
+function historyFilePath(): string {
+  return path.resolve(process.cwd(), 'data/history.json');
+}
+
+function emptyHistory(): HistoryState {
+  return { price: [], cvd15: [], funding: [], oiDelta: [], lsRatio: [] };
+}
+
+function loadHistoryForDay(dayKey: string): HistoryState {
+  try {
+    const raw = fs.readFileSync(historyFilePath(), 'utf8');
+    const j = JSON.parse(raw);
+    if (j?.etDay !== dayKey || !j?.history) return emptyHistory();
+    const h = j.history;
+    return {
+      price: Array.isArray(h.price) ? h.price : [],
+      cvd15: Array.isArray(h.cvd15) ? h.cvd15 : [],
+      funding: Array.isArray(h.funding) ? h.funding : [],
+      oiDelta: Array.isArray(h.oiDelta) ? h.oiDelta : [],
+      lsRatio: Array.isArray(h.lsRatio) ? h.lsRatio : [],
+    };
+  } catch {
+    return emptyHistory();
+  }
+}
+
+function saveHistoryForDay(dayKey: string, history: HistoryState): void {
+  const fp = historyFilePath();
+  fs.mkdirSync(path.dirname(fp), { recursive: true });
+  fs.writeFileSync(fp, JSON.stringify({ etDay: dayKey, history }, null, 2));
+}
+
+function isLastFridayEt(ts: number): boolean {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    weekday: 'short',
+  });
+  const parts = Object.fromEntries(dtf.formatToParts(new Date(ts)).map((p) => [p.type, p.value]));
+  if (parts.weekday !== 'Fri') return false;
+  const y = Number(parts.year);
+  const m = Number(parts.month);
+  const d = Number(parts.day);
+  const lastDayUtc = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return d + 7 > lastDayUtc;
+}
+
+async function callLlm(system: string, user: string): Promise<string> {
+  const openaiKey = process.env.OPENAI_API_KEY;
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+
+  if (openaiKey) {
+    const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${openaiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: user },
+        ],
+      }),
+    });
+    if (!res.ok) throw new Error(`openai ${res.status}: ${await res.text()}`);
+    const j = await res.json() as any;
+    return j?.choices?.[0]?.message?.content || 'No response.';
+  }
+
+  if (anthropicKey) {
+    const model = process.env.ANTHROPIC_MODEL || 'claude-3-5-sonnet-latest';
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': anthropicKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 700,
+        system,
+        messages: [{ role: 'user', content: user }],
+      }),
+    });
+    if (!res.ok) throw new Error(`anthropic ${res.status}: ${await res.text()}`);
+    const j = await res.json() as any;
+    return j?.content?.map((x: any) => x?.text || '').join('\n').trim() || 'No response.';
+  }
+
+  throw new Error('No LLM key configured. Set OPENAI_API_KEY or ANTHROPIC_API_KEY.');
+}
+
 function pushHistory(arr: HistoryPoint[], point: HistoryPoint, intervalMs: number, maxPoints: number, lastPush: { ts: number }): void {
   if (!Number.isFinite(point.v)) return;
 
@@ -719,7 +818,10 @@ function renderDashboardHtml(state: DashboardState | null): string {
   </style>
 </head>
 <body>
-  <h1>BTC Signal Dash</h1>
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+    <h1 style="margin:0">BTC Signal Dash</h1>
+    <button id="soWhatBtn" style="background:#22306a;color:#e8ecff;border:1px solid #3a4e9a;border-radius:8px;padding:8px 12px;cursor:pointer">So What?</button>
+  </div>
   <div class="muted" id="meta">${escapeHtml(state.symbol)} · Updated ${updated} (${escapeHtml(state.timezone)}) · <span id="updatedAgo">0s ago</span></div>
 
   <div class="grid" style="margin-top:12px">
@@ -786,6 +888,19 @@ function renderDashboardHtml(state: DashboardState | null): string {
       <div class="info-icon" data-tip="Current 24h BTC bracket prices. Highlighted bracket = where BTC sits now. When price breaks into a new bracket, check if the old bracket drops below your entry threshold.">ⓘ</div>
       <div class="k">Polymarket Brackets</div><ul id="polyList">${polyLines}</ul><div class="muted" id="polyAge"></div>
     </div>
+
+    <div class="card">
+      <div class="k">Macro Context</div>
+      <div id="monthlyExpiry" class="amber" style="display:none;margin:6px 0">⚠ MONTHLY OPTIONS EXPIRY TODAY</div>
+      <label class="muted" for="marketContextInput">Market context</label>
+      <input id="marketContextInput" placeholder="e.g., FOMC at 2pm, Trump tariff news" style="width:100%;margin-top:6px;background:#121a33;color:#e8ecff;border:1px solid #2f3a64;border-radius:6px;padding:8px" />
+    </div>
+  </div>
+
+  <div id="soWhatPanel" style="display:none;margin-top:12px;background:#1a2240;border:1px solid #33407a;border-radius:10px;padding:12px;position:relative">
+    <button id="soWhatClose" style="position:absolute;right:10px;top:8px;background:transparent;border:none;color:#e8ecff;font-size:16px;cursor:pointer">✕</button>
+    <div id="soWhatLoading" class="muted" style="display:none">Loading analysis…</div>
+    <div id="soWhatText" style="white-space:pre-wrap;line-height:1.45"></div>
   </div>
 
   <script>
@@ -871,6 +986,69 @@ function renderDashboardHtml(state: DashboardState | null): string {
 
     const palette = { green: '#4ade80', red: '#f87171', amber: '#fbbf24', white: '#e8ecff' };
     const chartRegistry = {};
+    const POS_PREFIX = 'pos-';
+    const ET_DAY_KEY = 'et-day';
+    const CONTEXT_KEY = 'market-context';
+
+    function currentEtDay(){
+      return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year:'numeric', month:'2-digit', day:'2-digit' }).format(new Date()).replaceAll('/','-');
+    }
+
+    function rolloverLocalStorage(){
+      const day = currentEtDay();
+      const prev = localStorage.getItem(ET_DAY_KEY);
+      if (prev && prev !== day) {
+        const keys = [];
+        for (let i=0;i<localStorage.length;i++) {
+          const k = localStorage.key(i);
+          if (k && (k.startsWith(POS_PREFIX) || k === CONTEXT_KEY)) keys.push(k);
+        }
+        keys.forEach((k)=>localStorage.removeItem(k));
+      }
+      localStorage.setItem(ET_DAY_KEY, day);
+    }
+
+    function parseBracketWithCents(t){
+      const m = t.match(/(\d+)\s*[-\u2013\u2014]\s*(\d+)\s*k.*?(\d+)¢/i);
+      if (!m) return null;
+      return { key: m[1] + '-' + m[2], lo: Number(m[1]) * 1000, hi: Number(m[2]) * 1000, cents: Number(m[3]) };
+    }
+
+    function readPos(key){
+      try { return JSON.parse(localStorage.getItem(POS_PREFIX + key) || 'null'); } catch { return null; }
+    }
+
+    function writePos(key, val){
+      if (!val) localStorage.removeItem(POS_PREFIX + key);
+      else localStorage.setItem(POS_PREFIX + key, JSON.stringify(val));
+    }
+
+    function renderPolyWithPositions(s){
+      const list = document.getElementById('polyList');
+      if (!list) return;
+      const rows = (s.poly.lines || []).map((line) => {
+        const safe = line.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
+        const b = parseBracketWithCents(line);
+        if (!b) return '<li>' + safe + '</li>';
+        const pos = readPos(b.key) || {};
+        const qty = Number(pos.qty || 0);
+        const entry = Number(pos.entry || 0);
+        const has = qty > 0 && entry > 0;
+        const pnl = has ? ((b.cents - entry) / 100) * qty : 0;
+        const pct = has ? ((b.cents - entry) / entry) * 100 : 0;
+        const pnlCls = pnl > 0 ? 'green' : pnl < 0 ? 'red' : 'white';
+        return '<li data-bracket="' + b.key + '">' +
+          '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+          '<span>' + safe + '</span>' +
+          '<input data-role="qty" data-bracket="' + b.key + '" type="number" min="0" step="1" placeholder="qty" value="' + (qty || '') + '" style="width:64px;background:#121a33;color:#e8ecff;border:1px solid #2f3a64;border-radius:6px;padding:2px 6px" />' +
+          '<input data-role="entry" data-bracket="' + b.key + '" type="number" min="0" step="0.1" placeholder="¢" value="' + (entry || '') + '" style="width:56px;background:#121a33;color:#e8ecff;border:1px solid #2f3a64;border-radius:6px;padding:2px 6px" />' +
+          '<button data-role="clear" data-bracket="' + b.key + '" style="background:transparent;border:0;color:#e8ecff;cursor:pointer">✕</button>' +
+          '</div>' +
+          (has ? ('<div class="muted ' + pnlCls + '" style="margin-top:4px">' + qty + ' shares @ ' + entry + '¢ → P&L: ' + (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2) + ' (' + (pct >= 0 ? '+' : '') + pct.toFixed(0) + '%)</div>') : '') +
+          '</li>';
+      });
+      list.innerHTML = rows.join('');
+    }
 
     function resolveSignalColor(v){
       if (!v) return palette.white;
@@ -1058,10 +1236,7 @@ function renderDashboardHtml(state: DashboardState | null): string {
         ? '→ Strat 1 signal: old bracket (' + s.breakout.oldBracketLabel + ') likely underpriced'
         : '');
 
-      const list = document.getElementById('polyList');
-      if (list) {
-        list.innerHTML = (s.poly.lines || []).map((l, i) => '<li id="poly-' + i + '">' + l.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;') + '</li>').join('');
-      }
+      renderPolyWithPositions(s);
 
       refreshColors(s);
       highlightBracket(s);
@@ -1084,7 +1259,121 @@ function renderDashboardHtml(state: DashboardState | null): string {
       el.textContent = sec + 's ago';
     }
 
+    rolloverLocalStorage();
+    const ctxInput = document.getElementById('marketContextInput');
+    if (ctxInput) {
+      ctxInput.value = localStorage.getItem(CONTEXT_KEY) || '';
+      ctxInput.addEventListener('input', (e) => localStorage.setItem(CONTEXT_KEY, e.target.value || ''));
+    }
+
+    const monthly = document.getElementById('monthlyExpiry');
+    if (monthly) monthly.style.display = ${isLastFridayEt(state.updatedAt) ? "'block'" : "'none'"};
+
+    document.getElementById('polyList')?.addEventListener('input', (ev) => {
+      const t = ev.target;
+      const b = t?.dataset?.bracket;
+      const role = t?.dataset?.role;
+      if (!b || !role) return;
+      const pos = readPos(b) || {};
+      pos[role] = Number(t.value || 0);
+      writePos(b, pos);
+      renderPolyWithPositions(latest);
+      highlightBracket(latest);
+    });
+
+    document.getElementById('polyList')?.addEventListener('click', (ev) => {
+      const t = ev.target;
+      if (t?.dataset?.role !== 'clear') return;
+      const b = t?.dataset?.bracket;
+      if (!b) return;
+      writePos(b, null);
+      renderPolyWithPositions(latest);
+      highlightBracket(latest);
+    });
+
+    let soWhatCooldown = 0;
+    const soWhatBtn = document.getElementById('soWhatBtn');
+    const soWhatPanel = document.getElementById('soWhatPanel');
+    const soWhatText = document.getElementById('soWhatText');
+    const soWhatLoading = document.getElementById('soWhatLoading');
+    document.getElementById('soWhatClose')?.addEventListener('click', () => { if (soWhatPanel) soWhatPanel.style.display = 'none'; });
+
+    function collectPositions(){
+      const arr = [];
+      for (const line of (latest.poly.lines || [])) {
+        const b = parseBracketWithCents(line);
+        if (!b) continue;
+        const pos = readPos(b.key) || {};
+        const qty = Number(pos.qty || 0);
+        const entry = Number(pos.entry || 0);
+        if (qty > 0 && entry > 0) {
+          const pnl = ((b.cents - entry) / 100) * qty;
+          const pct = ((b.cents - entry) / entry) * 100;
+          arr.push({ bracket: b.key + 'k', shares: qty, entryCents: entry, currentCents: b.cents, pnl, pct });
+        }
+      }
+      return arr;
+    }
+
+    function buildSoWhatPrompt(){
+      const s = latest;
+      const positions = collectPositions();
+      const lines = [
+        'CURRENT DASHBOARD STATE:',
+        'Price: $' + Math.round(s.price).toLocaleString(),
+        'Regime: ' + s.regime + ' (sigma: ' + s.sigma.toFixed(2) + '%)',
+        'CVD 15m: ' + s.cvd15.toFixed(2) + ' | CVD 60m: ' + s.cvd60.toFixed(2),
+        'Funding: ' + (s.fundingPct >= 0 ? '+' : '') + s.fundingPct.toFixed(4) + '% | Predicted: ' + (s.fundingPredictedPct >= 0 ? '+' : '') + s.fundingPredictedPct.toFixed(4) + '%',
+        'OI Delta 1h: $' + Math.round(s.oiDelta1hUsd).toLocaleString(),
+        'L/S Ratio: ' + s.lsRatio.toFixed(2),
+        'Put wall: ' + s.walls.put + ' | Call wall: ' + s.walls.call,
+        'Max pain: ' + Math.round(s.optionsExpiry.maxPainStrike/1000) + 'k | Expiry in: ' + s.optionsExpiry.expiryIn,
+        'EU open in: ' + s.sessions.euIn + ' | US open in: ' + s.sessions.usIn,
+        '', 'BRACKETS:'
+      ];
+      (s.poly.lines || []).forEach((x) => lines.push(x));
+      const btxt = s.breakout?.active
+        ? ((s.breakout.direction === 'BELOW' ? '▼ BELOW ' : '▲ ABOVE ') + Math.floor((s.breakout.boundary || 0)/1000) + 'k at ' + new Date(s.breakout.triggeredAt || Date.now()).toLocaleTimeString('en-AU',{hour:'2-digit',minute:'2-digit',hour12:false,timeZone:s.timezone}) + ' — CVD ' + s.breakout.cvdStatus + ' (score: ' + Number(s.breakout.cvdScore || 0).toFixed(2) + ')' + (s.breakout.reverted ? ' — REVERTED' : ''))
+        : 'NONE (score: pending)';
+      lines.push('', 'BREAKOUT: ' + btxt, '', 'USER POSITIONS:');
+      if (positions.length === 0) lines.push('None');
+      else positions.forEach((p) => lines.push(p.bracket + ': ' + p.shares + ' shares @ ' + p.entryCents + '¢ (current ' + p.currentCents + '¢, P&L: ' + (p.pnl>=0?'+':'') + '$' + p.pnl.toFixed(2) + ' / ' + (p.pct>=0?'+':'') + p.pct.toFixed(0) + '%)'));
+      lines.push('', 'MACRO CONTEXT:', 'Monthly options expiry: ' + (${isLastFridayEt(state.updatedAt) ? 'Yes' : 'No'}), 'User context: ' + (localStorage.getItem(CONTEXT_KEY) || 'None'), '', 'What is the current situation and what should I do?');
+      return lines.join('\n');
+    }
+
+    async function runSoWhat(){
+      if (!soWhatBtn || soWhatCooldown > 0) return;
+      soWhatCooldown = 60;
+      soWhatBtn.disabled = true;
+      const timer = setInterval(() => {
+        soWhatCooldown--;
+        if (soWhatCooldown <= 0) {
+          clearInterval(timer);
+          soWhatBtn.disabled = false;
+          soWhatBtn.textContent = 'So What?';
+        } else {
+          soWhatBtn.textContent = 'So What? (' + soWhatCooldown + 's)';
+        }
+      }, 1000);
+      if (soWhatPanel) soWhatPanel.style.display = 'block';
+      if (soWhatLoading) soWhatLoading.style.display = 'block';
+      if (soWhatText) soWhatText.textContent = '';
+      try {
+        const r = await fetch('/api/so-what', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user: buildSoWhatPrompt() }) });
+        const j = await r.json();
+        if (soWhatText) soWhatText.textContent = j.text || j.error || 'No response';
+      } catch (e) {
+        if (soWhatText) soWhatText.textContent = String(e);
+      } finally {
+        if (soWhatLoading) soWhatLoading.style.display = 'none';
+      }
+    }
+
+    soWhatBtn?.addEventListener('click', runSoWhat);
+
     refreshColors(latest);
+    renderPolyWithPositions(latest);
     highlightBracket(latest);
     applySparks(latest);
     setInterval(poll, 10000);
@@ -1100,7 +1389,30 @@ function startDashboardServer(getState: () => DashboardState | null): void {
   const host = process.env.DASHBOARD_HOST || '0.0.0.0';
   const port = Number(process.env.DASHBOARD_PORT || '8787');
 
-  const server = http.createServer((req, res) => {
+  const SO_WHAT_SYSTEM_PROMPT = `You are a trading analyst for Polymarket BTC 24-hour bracket markets. These are binary prediction markets on where BTC price will be at market close (midnight ET). Each bracket (e.g., "70k-72k") pays $1 if BTC closes in that range, $0 otherwise.
+
+The user trades two strategies:
+
+STRAT 1 (mean reversion / fakeout fade): During LOW_VOL days, when BTC price spikes past a bracket boundary, buy the OLD bracket cheap expecting price to revert back. Typical entry around 20¢, exit at 40¢+. Key confirmation: CVD diverges from price move (volume doesn't support the breakout = fakeout). Best near options expiry when max pain acts as a magnet.
+
+STRAT 2 (barbell straddle): During HIGH_VOL days, buy both extreme brackets cheap, then fill the middle bracket on reversion. If average cost of all 3 brackets is under 33¢, it's a guaranteed profit regardless of where BTC closes.
+
+BOTH STRATEGIES LOSE ON STRONG TREND DAYS. If all signals align in one direction (CVD confirms, OI rising, funding extreme), recommend staying flat.
+
+The user may or may not have open positions. If they do:
+- Assess whether the original thesis is still intact
+- Recommend: HOLD (thesis playing out, target not reached), TAKE PROFIT (thesis played out or conditions shifting), or CUT LOSS (thesis invalidated — e.g., breakout was confirmed real by CVD)
+- Include specific price levels or bracket prices where they should act
+
+IMPORTANT RULES:
+- Synthesize ALL signals into ONE cohesive paragraph. Do NOT list signals individually or use bullet points. Weave them into a narrative.
+- Reference every signal: price, regime, CVD direction + magnitude, funding current + predicted, OI delta + what it means, L/S ratio, put wall + call wall, max pain, time to options expiry, time to session opens, bracket prices, breakout status.
+- Include a prediction of most likely BTC price action between now and market close: expected range, wick risk (sharp moves that revert), and key inflection times (session opens, options expiry).
+- State which bracket is most likely to resolve YES at market close.
+- If macro events are provided (FOMC, CPI, monthly expiry, user context), factor them into the analysis. Monthly options expiry makes max pain gravity 10x stronger.
+- End with a single **bold action line**: BUY [bracket] at [price], HOLD, TAKE PROFIT, or STAY FLAT — with reasoning.`;
+
+  const server = http.createServer(async (req, res) => {
     if (!req.url) {
       res.statusCode = 400;
       res.end('bad request');
@@ -1110,6 +1422,35 @@ function startDashboardServer(getState: () => DashboardState | null): void {
     if (req.url === '/api/state') {
       res.setHeader('content-type', 'application/json; charset=utf-8');
       res.end(JSON.stringify(getState()));
+      return;
+    }
+
+    if (req.url === '/api/so-what' && req.method === 'POST') {
+      let raw = '';
+      req.on('data', (c) => {
+        raw += c;
+        if (raw.length > 1_000_000) req.destroy();
+      });
+      req.on('end', async () => {
+        try {
+          const body = JSON.parse(raw || '{}');
+          const userText = String(body?.user || '').trim();
+          if (!userText) {
+            res.statusCode = 400;
+            res.setHeader('content-type', 'application/json; charset=utf-8');
+            res.end(JSON.stringify({ error: 'Missing user payload' }));
+            return;
+          }
+          const text = await callLlm(SO_WHAT_SYSTEM_PROMPT, userText);
+          res.statusCode = 200;
+          res.setHeader('content-type', 'application/json; charset=utf-8');
+          res.end(JSON.stringify({ text }));
+        } catch (err: any) {
+          res.statusCode = 500;
+          res.setHeader('content-type', 'application/json; charset=utf-8');
+          res.end(JSON.stringify({ error: err?.message || String(err) }));
+        }
+      });
       return;
     }
 
@@ -1137,8 +1478,8 @@ async function main(): Promise<void> {
   let dashboardState: DashboardState | null = null;
   const alertState = loadAlertState();
 
-  const history: HistoryState = { price: [], cvd15: [], funding: [], oiDelta: [], lsRatio: [] };
   let historyDayKey = etDayKey(Date.now());
+  const history: HistoryState = loadHistoryForDay(historyDayKey);
 
   const historyIntervalMs = {
     price: 60_000,
@@ -1267,6 +1608,7 @@ async function main(): Promise<void> {
         historyLastPush.oiDelta.ts = 0;
         historyLastPush.lsRatio.ts = 0;
         historyDayKey = dayKey;
+        saveHistoryForDay(historyDayKey, history);
       }
 
       const breakoutEvent = detectBreakoutEvent({
@@ -1312,6 +1654,7 @@ async function main(): Promise<void> {
       pushHistory(history.funding, { ts: nowTs, v: slow.fundingPct }, historyIntervalMs.funding, historyMaxPoints.funding, historyLastPush.funding);
       pushHistory(history.oiDelta, { ts: nowTs, v: slow.oiDelta1hUsd }, historyIntervalMs.oiDelta, historyMaxPoints.oiDelta, historyLastPush.oiDelta);
       pushHistory(history.lsRatio, { ts: nowTs, v: slow.lsRatio }, historyIntervalMs.lsRatio, historyMaxPoints.lsRatio, historyLastPush.lsRatio);
+      saveHistoryForDay(historyDayKey, history);
 
       dashboardState = {
         updatedAt: nowTs,
