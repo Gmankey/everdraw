@@ -807,7 +807,7 @@ function renderDashboardHtml(state: DashboardState | null): string {
     const colorByCvd = (v) => v > 0.05 ? 'green' : v < -0.05 ? 'red' : 'white';
     const colorByFunding = (v) => v < -0.0005 ? 'green' : v > 0.0005 ? 'red' : 'white';
     const colorByLs = (v) => v < 0.8 ? 'green' : v > 1.6 ? 'red' : 'white';
-    const colorByOi = (v) => v > 100000 ? 'green' : v < -100000 ? 'red' : 'white';
+    const colorByOi = (v) => v > 10000 ? 'green' : v < -10000 ? 'red' : 'white';
 
     function sessionClass(mins){
       if (mins < 15) return 'red';
