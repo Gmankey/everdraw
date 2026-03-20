@@ -1339,7 +1339,7 @@ function renderDashboardHtml(state: DashboardState | null): string {
       if (positions.length === 0) lines.push('None');
       else positions.forEach((p) => lines.push(p.bracket + ': ' + p.shares + ' shares @ ' + p.entryCents + '¢ (current ' + p.currentCents + '¢, P&L: ' + (p.pnl>=0?'+':'') + '$' + p.pnl.toFixed(2) + ' / ' + (p.pct>=0?'+':'') + p.pct.toFixed(0) + '%)'));
       lines.push('', 'MACRO CONTEXT:', 'Monthly options expiry: ' + ${JSON.stringify(isLastFridayEt(state.updatedAt) ? 'Yes' : 'No')}, 'User context: ' + (localStorage.getItem(CONTEXT_KEY) || 'None'), '', 'What is the current situation and what should I do?');
-      return lines.join('\n');
+      return lines.join('\\n');
     }
 
     async function runSoWhat(){
