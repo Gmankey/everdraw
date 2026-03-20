@@ -523,15 +523,69 @@ function clamp01(n: number): number {
   return Math.max(0, Math.min(1, n));
 }
 
-function breakoutLabel(b: BreakoutState): string {
-  if (!b.active || !b.boundary || !b.direction || !b.triggeredAt || b.cvdScore === null || !b.cvdStatus) {
-    return 'NONE (last boundary: n/a, score: pending)';
+function fmtBoundaryK(boundary: number): string {
+  const k = boundary / 1000;
+  return Number.isInteger(k) ? `${k}k` : `${k.toFixed(1)}k`;
+}
+
+function bracketLabel(r: { lo: number; hi: number } | null | undefined): string | null {
+  if (!r) return null;
+  return `${r.lo / 1000}-${r.hi / 1000}k`;
+}
+
+function breakoutLabel(b: BreakoutState, rows: { lo: number; hi: number; yesCents: number | null }[]): string {
+  if (!b.active || !b.boundary || !b.direction || !b.cvdStatus) {
+    return '✅ NO SETUP: price within bracket — wait.';
   }
 
-  const arrow = b.direction === 'BELOW' ? '▼ BELOW' : '▲ ABOVE';
-  const time = new Intl.DateTimeFormat('en-AU', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Australia/Sydney' }).format(new Date(b.triggeredAt));
-  const reverted = b.reverted ? ' — REVERTED' : '';
-  return `${arrow} ${Math.floor(b.boundary / 1000)}k at ${time} — CVD ${b.cvdStatus} (score: ${b.cvdScore.toFixed(2)})${reverted}`;
+  const boundaryText = fmtBoundaryK(b.boundary);
+  const byLo = new Map(rows.map((r) => [r.lo, r]));
+  const above = rows.find((r) => r.lo === b.boundary) || null;
+  const below = rows.find((r) => r.hi === b.boundary) || null;
+  const step = rows.length > 1 ? Math.max(1000, Math.round(rows[1].lo - rows[0].lo)) : 2000;
+
+  if (b.cvdStatus === 'DIVERGENT' && !b.reverted) {
+    if (b.direction === 'BELOW') {
+      const buyBracket = bracketLabel(above) ?? `${b.boundary / 1000}-${(b.boundary + step) / 1000}k`;
+      return `⚡ SETUP: fake break below ${boundaryText} — real buyers not selling. Price likely snaps back. Buy ${buyBracket} bracket at discount now.`;
+    }
+    const buyBracket = bracketLabel(above) ?? `${b.boundary / 1000}-${(b.boundary + step) / 1000}k`;
+    return `⚡ SETUP: fake break above ${boundaryText} — real sellers not present. Price likely snaps back. Buy ${buyBracket} bracket at discount now.`;
+  }
+
+  if (b.cvdStatus === 'CONFIRMED' && !b.reverted) {
+    if (b.direction === 'BELOW') {
+      const activeBracket = bracketLabel(below) ?? `${(b.boundary - step) / 1000}-${b.boundary / 1000}k`;
+      const fillBracket = bracketLabel(above) ?? `${b.boundary / 1000}-${(b.boundary + step) / 1000}k`;
+      const tailBracket = bracketLabel(byLo.get(b.boundary + step)) ?? `${(b.boundary + step) / 1000}-${(b.boundary + 2 * step) / 1000}k`;
+      return `🚨 TREND DOWN: real break below ${boundaryText} — strong selling confirmed. ${activeBracket} bracket now active. Buy ${activeBracket}. Buy ${tailBracket} cheap as upper tail. Fill ${fillBracket} on any bounce. Keep total avg cost under 33¢.`;
+    }
+    const activeBracket = bracketLabel(above) ?? `${b.boundary / 1000}-${(b.boundary + step) / 1000}k`;
+    const tailBracket = bracketLabel(below) ?? `${(b.boundary - step) / 1000}-${b.boundary / 1000}k`;
+    return `🚨 TREND UP: real break above ${boundaryText} — strong buying confirmed. ${activeBracket} bracket now active. Buy ${activeBracket}. Buy ${tailBracket} cheap as lower tail. Fill ${activeBracket} on any dip. Keep total avg cost under 33¢.`;
+  }
+
+  if (b.cvdStatus === 'CONFIRMED' && b.reverted) {
+    if (b.direction === 'BELOW') {
+      const holdBracket = bracketLabel(above) ?? `${b.boundary / 1000}-${(b.boundary + step) / 1000}k`;
+      const breakBracket = bracketLabel(below) ?? `${(b.boundary - step) / 1000}-${b.boundary / 1000}k`;
+      const upperTail = bracketLabel(byLo.get(b.boundary + step)) ?? `${(b.boundary + step) / 1000}-${(b.boundary + 2 * step) / 1000}k`;
+      return `⚠ WATCH: real break below ${boundaryText} then snapped back above. Price testing ${boundaryText} as support from above. If ${boundaryText} holds: buy ${holdBracket} bracket. If ${boundaryText} breaks again: buy ${breakBracket} + ${upperTail} cheap as upper tail, fill ${holdBracket} on reversion, keep avg cost under 33¢.`;
+    }
+    const holdBracket = bracketLabel(below) ?? `${(b.boundary - step) / 1000}-${b.boundary / 1000}k`;
+    const breakBracket = bracketLabel(above) ?? `${b.boundary / 1000}-${(b.boundary + step) / 1000}k`;
+    return `⚠ WATCH: real break above ${boundaryText} then snapped back below. Price testing ${boundaryText} as resistance from below. If ${boundaryText} holds: buy ${holdBracket} bracket. If ${boundaryText} breaks again: buy ${breakBracket} + ${holdBracket} cheap as lower tail, fill ${breakBracket} on dip, keep avg cost under 33¢.`;
+  }
+
+  if (b.cvdStatus === 'DIVERGENT' && b.reverted) {
+    const intact = bracketLabel(above) ?? `${b.boundary / 1000}-${(b.boundary + step) / 1000}k`;
+    if (b.direction === 'BELOW') {
+      return `✅ FAKEOUT RESOLVED: fake break below ${boundaryText} snapped back. ${intact} bracket intact. If ${intact} still under 40¢, buy. Otherwise wait for next setup.`;
+    }
+    return `✅ FAKEOUT RESOLVED: fake break above ${boundaryText} snapped back. ${intact} bracket intact. If ${intact} still under 40¢, buy. Otherwise wait for next setup.`;
+  }
+
+  return '✅ NO SETUP: price within bracket — wait.';
 }
 
 function escapeHtml(s: string): string {
@@ -910,8 +964,8 @@ function renderDashboardHtml(state: DashboardState | null): string {
       <div class="k">Setup Scanner</div>
       <div class="v" id="regimeLabel">${escapeHtml(state.strategyContext.regime_label)}</div>
       <div id="setupText" class="muted">${escapeHtml(state.strategyContext.setup_text ?? 'No active setup trigger')}</div>
-      <div id="breakoutLine" class="muted" style="margin-top:8px">BREAKOUT: ${escapeHtml(breakoutLabel(state.breakout))}</div>
-      <div id="breakoutHint" class="muted">${escapeHtml(state.breakout.cvdStatus === 'DIVERGENT' && state.breakout.oldBracketLabel ? `→ Strat 1 signal: old bracket (${state.breakout.oldBracketLabel}) likely underpriced` : '')}</div>
+      <div id="breakoutLine" class="muted" style="margin-top:8px">${escapeHtml(breakoutLabel(state.breakout, parsePolyBracketRows(state.poly.lines)))}</div>
+      <div id="breakoutHint" class="muted"></div>
     </div>
 
     <div class="card">
@@ -1297,6 +1351,73 @@ function renderDashboardHtml(state: DashboardState | null): string {
       drawColumnChart('spark-ls', s.history?.lsRatio || [], (v) => colorByLs(v), (v) => Number(v).toFixed(2));
     }
 
+    function parseRows(lines){
+      return (lines || []).map((line) => {
+        const m = line.match(/(\d+)\s*[-\u2013\u2014]\s*(\d+)\s*k/i);
+        if (!m) return null;
+        return { lo: Number(m[1]) * 1000, hi: Number(m[2]) * 1000 };
+      }).filter(Boolean).sort((a,b) => a.lo - b.lo);
+    }
+
+    function fmtBoundaryKJs(boundary){
+      const k = boundary / 1000;
+      return Number.isInteger(k) ? (k + 'k') : (k.toFixed(1) + 'k');
+    }
+
+    function labelBracket(r){
+      return r ? (r.lo/1000) + '-' + (r.hi/1000) + 'k' : null;
+    }
+
+    function breakoutStatusText(s){
+      const b = s.breakout || {};
+      if (!b.active || !b.boundary || !b.direction || !b.cvdStatus) return '✅ NO SETUP: price within bracket — wait.';
+      const rows = parseRows(s.poly?.lines || []);
+      const boundary = b.boundary;
+      const boundaryText = fmtBoundaryKJs(boundary);
+      const above = rows.find((r) => r.lo === boundary) || null;
+      const below = rows.find((r) => r.hi === boundary) || null;
+      const byLo = new Map(rows.map((r) => [r.lo, r]));
+      const step = rows.length > 1 ? Math.max(1000, Math.round(rows[1].lo - rows[0].lo)) : 2000;
+
+      if (b.cvdStatus === 'DIVERGENT' && !b.reverted) {
+        const buyBracket = labelBracket(above) || (boundary/1000) + '-' + ((boundary+step)/1000) + 'k';
+        if (b.direction === 'BELOW') return '⚡ SETUP: fake break below ' + boundaryText + ' — real buyers not selling. Price likely snaps back. Buy ' + buyBracket + ' bracket at discount now.';
+        return '⚡ SETUP: fake break above ' + boundaryText + ' — real sellers not present. Price likely snaps back. Buy ' + buyBracket + ' bracket at discount now.';
+      }
+
+      if (b.cvdStatus === 'CONFIRMED' && !b.reverted) {
+        if (b.direction === 'BELOW') {
+          const active = labelBracket(below) || ((boundary-step)/1000) + '-' + (boundary/1000) + 'k';
+          const fill = labelBracket(above) || (boundary/1000) + '-' + ((boundary+step)/1000) + 'k';
+          const tail = labelBracket(byLo.get(boundary + step)) || ((boundary+step)/1000) + '-' + ((boundary+2*step)/1000) + 'k';
+          return '🚨 TREND DOWN: real break below ' + boundaryText + ' — strong selling confirmed. ' + active + ' bracket now active. Buy ' + active + '. Buy ' + tail + ' cheap as upper tail. Fill ' + fill + ' on any bounce. Keep total avg cost under 33¢.';
+        }
+        const active = labelBracket(above) || (boundary/1000) + '-' + ((boundary+step)/1000) + 'k';
+        const tail = labelBracket(below) || ((boundary-step)/1000) + '-' + (boundary/1000) + 'k';
+        return '🚨 TREND UP: real break above ' + boundaryText + ' — strong buying confirmed. ' + active + ' bracket now active. Buy ' + active + '. Buy ' + tail + ' cheap as lower tail. Fill ' + active + ' on any dip. Keep total avg cost under 33¢.';
+      }
+
+      if (b.cvdStatus === 'CONFIRMED' && b.reverted) {
+        if (b.direction === 'BELOW') {
+          const hold = labelBracket(above) || (boundary/1000) + '-' + ((boundary+step)/1000) + 'k';
+          const brk = labelBracket(below) || ((boundary-step)/1000) + '-' + (boundary/1000) + 'k';
+          const upperTail = labelBracket(byLo.get(boundary + step)) || ((boundary+step)/1000) + '-' + ((boundary+2*step)/1000) + 'k';
+          return '⚠ WATCH: real break below ' + boundaryText + ' then snapped back above. Price testing ' + boundaryText + ' as support from above. If ' + boundaryText + ' holds: buy ' + hold + ' bracket. If ' + boundaryText + ' breaks again: buy ' + brk + ' + ' + upperTail + ' cheap as upper tail, fill ' + hold + ' on reversion, keep avg cost under 33¢.';
+        }
+        const hold = labelBracket(below) || ((boundary-step)/1000) + '-' + (boundary/1000) + 'k';
+        const brk = labelBracket(above) || (boundary/1000) + '-' + ((boundary+step)/1000) + 'k';
+        return '⚠ WATCH: real break above ' + boundaryText + ' then snapped back below. Price testing ' + boundaryText + ' as resistance from below. If ' + boundaryText + ' holds: buy ' + hold + ' bracket. If ' + boundaryText + ' breaks again: buy ' + brk + ' + ' + hold + ' cheap as lower tail, fill ' + brk + ' on dip, keep avg cost under 33¢.';
+      }
+
+      if (b.cvdStatus === 'DIVERGENT' && b.reverted) {
+        const intact = labelBracket(above) || (boundary/1000) + '-' + ((boundary+step)/1000) + 'k';
+        if (b.direction === 'BELOW') return '✅ FAKEOUT RESOLVED: fake break below ' + boundaryText + ' snapped back. ' + intact + ' bracket intact. If ' + intact + ' still under 40¢, buy. Otherwise wait for next setup.';
+        return '✅ FAKEOUT RESOLVED: fake break above ' + boundaryText + ' snapped back. ' + intact + ' bracket intact. If ' + intact + ' still under 40¢, buy. Otherwise wait for next setup.';
+      }
+
+      return '✅ NO SETUP: price within bracket — wait.';
+    }
+
     function applyState(s){
       latest = s;
       lastUpdatedAt = s.updatedAt;
@@ -1325,13 +1446,9 @@ function renderDashboardHtml(state: DashboardState | null): string {
       setText('callWall', 'Call: ' + s.walls.call);
       setText('regimeLabel', s.strategyContext.regime_label);
       setText('setupText', s.strategyContext.setup_text || 'No active setup trigger');
-      const breakoutText = s.breakout && s.breakout.active
-        ? (s.breakout.direction === 'BELOW' ? '▼ BELOW ' : '▲ ABOVE ') + Math.floor((s.breakout.boundary || 0) / 1000) + 'k at ' + formatHm(s.breakout.triggeredAt || Date.now()) + ' — CVD ' + s.breakout.cvdStatus + ' (score: ' + (s.breakout.cvdScore || 0).toFixed(2) + ')' + (s.breakout.reverted ? ' — REVERTED' : '')
-        : 'NONE (last boundary: n/a, score: pending)';
-      setText('breakoutLine', 'BREAKOUT: ' + breakoutText);
-      setText('breakoutHint', s.breakout && s.breakout.cvdStatus === 'DIVERGENT' && s.breakout.oldBracketLabel
-        ? '→ Strat 1 signal: old bracket (' + s.breakout.oldBracketLabel + ') likely underpriced'
-        : '');
+      const breakoutText = breakoutStatusText(s);
+      setText('breakoutLine', breakoutText);
+      setText('breakoutHint', '');
 
       renderPolyWithPositions(s);
 
@@ -1429,9 +1546,7 @@ function renderDashboardHtml(state: DashboardState | null): string {
         '', 'BRACKETS:'
       ];
       (s.poly.lines || []).forEach((x) => lines.push(x));
-      const btxt = s.breakout?.active
-        ? ((s.breakout.direction === 'BELOW' ? '▼ BELOW ' : '▲ ABOVE ') + Math.floor((s.breakout.boundary || 0)/1000) + 'k at ' + new Date(s.breakout.triggeredAt || Date.now()).toLocaleTimeString('en-AU',{hour:'2-digit',minute:'2-digit',hour12:false,timeZone:s.timezone}) + ' — CVD ' + s.breakout.cvdStatus + ' (score: ' + Number(s.breakout.cvdScore || 0).toFixed(2) + ')' + (s.breakout.reverted ? ' — REVERTED' : ''))
-        : 'NONE (score: pending)';
+      const btxt = breakoutStatusText(s);
       lines.push('', 'BREAKOUT: ' + btxt, '', 'USER POSITIONS:');
       if (positions.length === 0) lines.push('None');
       else positions.forEach((p) => lines.push(p.bracket + ': ' + p.shares + ' shares @ ' + p.entryCents + '¢ (current ' + p.currentCents + '¢, P&L: ' + (p.pnl>=0?'+':'') + '$' + p.pnl.toFixed(2) + ' / ' + (p.pct>=0?'+':'') + p.pct.toFixed(0) + '%)'));
@@ -1785,7 +1900,7 @@ async function main(): Promise<void> {
       console.log(` 15m: ${cvd15 >= 0 ? '+' : ''}${cvd15.toFixed(2)} (normalized)`);
       console.log(` 60m: ${cvd60 >= 0 ? '+' : ''}${cvd60.toFixed(2)} (normalized)\n`);
 
-      console.log(`BREAKOUT: ${breakoutLabel(breakoutState)}\n`);
+      console.log(`BREAKOUT: ${breakoutLabel(breakoutState, parsePolyBracketRows(polyState.lines))}\n`);
       console.log(`FUNDING: ${fmtPct(slow.fundingPct)} | Predicted: ${fmtPct(slow.fundingPredictedPct)} (${fundingInterpret})`);
       console.log(`OI DELTA: ${fmtMoney(slow.oiDelta1hUsd)} last 1h (${oiInterpret})`);
       console.log(`L/S RATIO: ${slow.lsRatio.toFixed(2)} (${lsInterpret})\n`);
