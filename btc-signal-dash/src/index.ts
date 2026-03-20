@@ -48,6 +48,23 @@ type Snapshot = {
   poly: { lines: string[]; ageSec: number | null };
 };
 
+type BreakoutStatus = 'CONFIRMED' | 'DIVERGENT' | 'UNCERTAIN';
+type BreakoutDirection = 'ABOVE' | 'BELOW';
+
+type BreakoutState = {
+  active: boolean;
+  boundary: number | null;
+  direction: BreakoutDirection | null;
+  triggeredAt: number | null;
+  cvdScore: number | null;
+  cvdStatus: BreakoutStatus | null;
+  oldBracketLabel: string | null;
+  oldBracketYesCents: number | null;
+  reverted: boolean;
+  revertedAt: number | null;
+  alertSent: boolean;
+};
+
 type DashboardState = {
   updatedAt: number;
   timezone: string;
@@ -74,6 +91,7 @@ type DashboardState = {
     setup_text: string | null;
     setup_type: 'strat1' | 'strat2' | 'caution' | 'none';
   };
+  breakout: BreakoutState;
   history: HistoryState;
 };
 
@@ -459,9 +477,35 @@ async function fetchPolymarketBrackets(price: number): Promise<{ lines: string[]
   }
 }
 
-function breakoutLine(price: number, step: number): string {
-  const boundary = Math.round(price / step) * step;
-  return `NONE (last boundary: ${Math.floor(boundary / 1000)}k, score: pending)`;
+function parsePolyBracketRows(lines: string[]): { lo: number; hi: number; yesCents: number | null }[] {
+  return lines
+    .map((line) => {
+      const range = line.match(/(\d+)\s*[-\u2013\u2014]\s*(\d+)\s*k/i);
+      if (!range) return null;
+      const cents = line.match(/(\d{1,3})\s*¢/);
+      return {
+        lo: Number(range[1]) * 1000,
+        hi: Number(range[2]) * 1000,
+        yesCents: cents ? Number(cents[1]) : null,
+      };
+    })
+    .filter((x): x is { lo: number; hi: number; yesCents: number | null } => !!x)
+    .sort((a, b) => a.lo - b.lo);
+}
+
+function clamp01(n: number): number {
+  return Math.max(0, Math.min(1, n));
+}
+
+function breakoutLabel(b: BreakoutState): string {
+  if (!b.active || !b.boundary || !b.direction || !b.triggeredAt || b.cvdScore === null || !b.cvdStatus) {
+    return 'NONE (last boundary: n/a, score: pending)';
+  }
+
+  const arrow = b.direction === 'BELOW' ? '▼ BELOW' : '▲ ABOVE';
+  const time = new Intl.DateTimeFormat('en-AU', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Australia/Sydney' }).format(new Date(b.triggeredAt));
+  const reverted = b.reverted ? ' — REVERTED' : '';
+  return `${arrow} ${Math.floor(b.boundary / 1000)}k at ${time} — CVD ${b.cvdStatus} (score: ${b.cvdScore.toFixed(2)})${reverted}`;
 }
 
 function escapeHtml(s: string): string {
@@ -556,6 +600,66 @@ function pushHistory(arr: HistoryPoint[], point: HistoryPoint, intervalMs: numbe
   }
 }
 
+function detectBreakoutEvent(args: {
+  k15: any[];
+  polyLines: string[];
+  lastTriggeredByBoundary: Record<string, number>;
+  nowTs: number;
+}): {
+  boundary: number;
+  direction: BreakoutDirection;
+  triggeredAt: number;
+  oldBracketLabel: string | null;
+  oldBracketYesCents: number | null;
+} | null {
+  const rows = parsePolyBracketRows(args.polyLines);
+  if (!rows.length || args.k15.length < 4) return null;
+
+  const boundaries = [...new Set(rows.flatMap((r) => [r.lo, r.hi]))].sort((a, b) => a - b);
+  const closes = args.k15.map((k) => Number(k[4]));
+  const closeTimes = args.k15.map((k) => Number(k[6] ?? k[0]));
+
+  for (const boundary of boundaries) {
+    const key = String(boundary);
+    const lastAt = args.lastTriggeredByBoundary[key] ?? 0;
+    if (args.nowTs - lastAt < 15 * 60_000) continue;
+
+    const sideAt = (p: number): BreakoutDirection | null => (p > boundary ? 'ABOVE' : p < boundary ? 'BELOW' : null);
+
+    let run = 0;
+    let side: BreakoutDirection | null = null;
+    for (let i = closes.length - 1; i >= 0; i--) {
+      const s = sideAt(closes[i]);
+      if (!s) break;
+      if (!side) side = s;
+      if (s !== side) break;
+      run++;
+    }
+
+    if (!side || run < 2) continue;
+
+    const before = closes.slice(0, closes.length - run).map(sideAt);
+    const crossed = before.some((s) => s && s !== side);
+    if (!crossed) continue;
+
+    const triggerIx = Math.max(0, closes.length - run);
+    const triggerAt = Number(closeTimes[triggerIx] ?? args.nowTs);
+
+    const oldBracket =
+      side === 'BELOW' ? rows.find((r) => r.lo === boundary) : rows.find((r) => r.hi === boundary);
+
+    return {
+      boundary,
+      direction: side,
+      triggeredAt: triggerAt,
+      oldBracketLabel: oldBracket ? `${Math.floor(oldBracket.lo / 1000)}-${Math.floor(oldBracket.hi / 1000)}k` : null,
+      oldBracketYesCents: oldBracket?.yesCents ?? null,
+    };
+  }
+
+  return null;
+}
+
 function renderDashboardHtml(state: DashboardState | null): string {
   if (!state) {
     return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BTC Signal Dash</title></head><body style="font-family:system-ui;padding:24px;background:#0b1020;color:#e8ecff"><h1>BTC Signal Dash</h1><p>Waiting for first tick…</p></body></html>`;
@@ -624,6 +728,8 @@ function renderDashboardHtml(state: DashboardState | null): string {
       <div class="k">Setup Scanner</div>
       <div class="v" id="regimeLabel">${escapeHtml(state.strategyContext.regime_label)}</div>
       <div id="setupText" class="muted">${escapeHtml(state.strategyContext.setup_text ?? 'No active setup trigger')}</div>
+      <div id="breakoutLine" class="muted" style="margin-top:8px">BREAKOUT: ${escapeHtml(breakoutLabel(state.breakout))}</div>
+      <div id="breakoutHint" class="muted">${escapeHtml(state.breakout.cvdStatus === 'DIVERGENT' && state.breakout.oldBracketLabel ? `→ Strat 1 signal: old bracket (${state.breakout.oldBracketLabel}) likely underpriced` : '')}</div>
     </div>
 
     <div class="card">
@@ -722,6 +828,9 @@ function renderDashboardHtml(state: DashboardState | null): string {
       setClass('fundingPredicted', [colorByFunding(s.fundingPredictedPct)]);
       setClass('lsRatio', [colorByLs(s.lsRatio)]);
       setClass('oiDelta', [colorByOi(s.oiDelta1hUsd)]);
+
+      const breakoutColor = s.breakout?.cvdStatus === 'DIVERGENT' ? 'green' : s.breakout?.cvdStatus === 'CONFIRMED' ? 'red' : s.breakout?.cvdStatus === 'UNCERTAIN' ? 'amber' : 'white';
+      setClass('breakoutLine', [breakoutColor]);
 
       const regimeClass = s.regime === 'LOW_VOL' ? 'regime-low' : s.regime === 'TREND' ? 'regime-trend' : 'regime-high';
       setClass('regime', [regimeClass]);
@@ -941,6 +1050,13 @@ function renderDashboardHtml(state: DashboardState | null): string {
       setText('callWall', 'Call: ' + s.walls.call);
       setText('regimeLabel', s.strategyContext.regime_label);
       setText('setupText', s.strategyContext.setup_text || 'No active setup trigger');
+      const breakoutText = s.breakout && s.breakout.active
+        ? (s.breakout.direction === 'BELOW' ? '▼ BELOW ' : '▲ ABOVE ') + Math.floor((s.breakout.boundary || 0) / 1000) + 'k at ' + fmtClock(s.breakout.triggeredAt || Date.now()) + ' — CVD ' + s.breakout.cvdStatus + ' (score: ' + (s.breakout.cvdScore || 0).toFixed(2) + ')' + (s.breakout.reverted ? ' — REVERTED' : '')
+        : 'NONE (last boundary: n/a, score: pending)';
+      setText('breakoutLine', 'BREAKOUT: ' + breakoutText);
+      setText('breakoutHint', s.breakout && s.breakout.cvdStatus === 'DIVERGENT' && s.breakout.oldBracketLabel
+        ? '→ Strat 1 signal: old bracket (' + s.breakout.oldBracketLabel + ') likely underpriced'
+        : '');
 
       const list = document.getElementById('polyList');
       if (list) {
@@ -1049,6 +1165,20 @@ async function main(): Promise<void> {
   };
 
   const polyFastMs = cfg.polling.polymarket_ms ?? cfg.polling.market_ms;
+  const breakoutCooldownByBoundary: Record<string, number> = {};
+  let breakoutState: BreakoutState = {
+    active: false,
+    boundary: null,
+    direction: null,
+    triggeredAt: null,
+    cvdScore: null,
+    cvdStatus: null,
+    oldBracketLabel: null,
+    oldBracketYesCents: null,
+    reverted: false,
+    revertedAt: null,
+    alertSent: false,
+  };
 
   console.log('BTC Signal Dash process started.');
   startDashboardServer(() => dashboardState);
@@ -1105,12 +1235,13 @@ async function main(): Promise<void> {
         polyState = { ...p, updatedAt: Date.now() };
       }
 
-      const [k15, k60, wallsMax] = await Promise.all([
-        fetchKlines(cfg.symbol, '1m', 15),
+      const [k20, k60, wallsMax] = await Promise.all([
+        fetchKlines(cfg.symbol, '1m', 20),
         fetchKlines(cfg.symbol, '1m', 60),
         fetchDeribitWallsAndMaxPain(price),
       ]);
 
+      const k15 = k20.slice(-15);
       const sigma = sigma1hPctFrom1m(k60);
       const regime = regimeFromSigma(sigma);
       const cvd15 = proxyCvdNorm(k15);
@@ -1136,6 +1267,44 @@ async function main(): Promise<void> {
         historyLastPush.oiDelta.ts = 0;
         historyLastPush.lsRatio.ts = 0;
         historyDayKey = dayKey;
+      }
+
+      const breakoutEvent = detectBreakoutEvent({
+        k15,
+        polyLines: polyState.lines,
+        lastTriggeredByBoundary: breakoutCooldownByBoundary,
+        nowTs,
+      });
+
+      if (breakoutEvent) {
+        const cvdPrev5 = proxyCvdNorm(k20.slice(0, 15));
+        const cvdDelta = cvd15 - cvdPrev5;
+        const signedAlign = (breakoutEvent.direction === 'ABOVE' ? 1 : -1) * cvdDelta;
+        const score = clamp01(0.5 + signedAlign * 4);
+        const status: BreakoutStatus = score >= 0.7 ? 'CONFIRMED' : score <= 0.3 ? 'DIVERGENT' : 'UNCERTAIN';
+        breakoutState = {
+          active: true,
+          boundary: breakoutEvent.boundary,
+          direction: breakoutEvent.direction,
+          triggeredAt: breakoutEvent.triggeredAt,
+          cvdScore: score,
+          cvdStatus: status,
+          oldBracketLabel: breakoutEvent.oldBracketLabel,
+          oldBracketYesCents: breakoutEvent.oldBracketYesCents,
+          reverted: false,
+          revertedAt: null,
+          alertSent: false,
+        };
+        breakoutCooldownByBoundary[String(breakoutEvent.boundary)] = nowTs;
+      }
+
+      if (breakoutState.active && breakoutState.triggeredAt && !breakoutState.reverted && nowTs - breakoutState.triggeredAt <= 10 * 60_000) {
+        const rows = parsePolyBracketRows(polyState.lines);
+        const old = rows.find((r) => breakoutState.oldBracketLabel === `${Math.floor(r.lo / 1000)}-${Math.floor(r.hi / 1000)}k`);
+        if (old && price >= old.lo && price <= old.hi) {
+          breakoutState.reverted = true;
+          breakoutState.revertedAt = nowTs;
+        }
       }
 
       pushHistory(history.price, { ts: nowTs, v: price }, historyIntervalMs.price, historyMaxPoints.price, historyLastPush.price);
@@ -1166,6 +1335,7 @@ async function main(): Promise<void> {
         },
         poly: { lines: polyState.lines.slice(0, 4), ageSec: polyState.ageSec },
         strategyContext,
+        breakout: breakoutState,
         history,
       };
 
@@ -1182,7 +1352,7 @@ async function main(): Promise<void> {
       console.log(` 15m: ${cvd15 >= 0 ? '+' : ''}${cvd15.toFixed(2)} (normalized)`);
       console.log(` 60m: ${cvd60 >= 0 ? '+' : ''}${cvd60.toFixed(2)} (normalized)\n`);
 
-      console.log(`BREAKOUT: ${breakoutLine(price, 2000)}\n`);
+      console.log(`BREAKOUT: ${breakoutLabel(breakoutState)}\n`);
       console.log(`FUNDING: ${fmtPct(slow.fundingPct)} | Predicted: ${fmtPct(slow.fundingPredictedPct)} (${fundingInterpret})`);
       console.log(`OI DELTA: ${fmtMoney(slow.oiDelta1hUsd)} last 1h (${oiInterpret})`);
       console.log(`L/S RATIO: ${slow.lsRatio.toFixed(2)} (${lsInterpret})\n`);
@@ -1214,6 +1384,27 @@ async function main(): Promise<void> {
           walls: { put: wallsMax.put, call: wallsMax.call },
           poly: { lines: polyState.lines, ageSec: polyState.ageSec },
         };
+
+        if (
+          breakoutState.active &&
+          breakoutState.cvdStatus === 'DIVERGENT' &&
+          breakoutState.triggeredAt &&
+          !breakoutState.alertSent
+        ) {
+          const at = toAest(breakoutState.triggeredAt, cfg.timezone);
+          const priceText = breakoutState.direction === 'BELOW' ? 'below' : 'above';
+          const bracketText = breakoutState.oldBracketLabel ? `${breakoutState.oldBracketLabel} bracket` : 'old bracket';
+          const centsText = breakoutState.oldBracketYesCents != null ? ` (currently ${breakoutState.oldBracketYesCents}¢)` : '';
+          const msg = [
+            '🔔 BREAKOUT FAKEOUT DETECTED',
+            `Price broke ${priceText} ${fmtMoney(breakoutState.boundary || 0)} at ${at}`,
+            `CVD score: ${(breakoutState.cvdScore || 0).toFixed(2)} (DIVERGENT — CVD not confirming)`,
+            `→ Strat 1: consider buying ${bracketText}${centsText}`,
+          ].join('\n');
+          await sendTelegram(cfg.telegram.bot_token, cfg.telegram.chat_id, msg);
+          breakoutState.alertSent = true;
+          console.log('[telegram] sent breakout fakeout alert');
+        }
 
         const checkAndSend = async (kind: 'EU' | 'US', openAt: Date, keyName: 'eu' | 'us') => {
           const msToOpen = openAt.getTime() - Date.now();
