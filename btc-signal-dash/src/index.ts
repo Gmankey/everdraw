@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import yaml from 'js-yaml';
 
@@ -10,6 +11,12 @@ type Config = {
   polling: { market_ms: number; slow_ms: number; polymarket_ms?: number };
   sessions: { eu_open_utc: string; us_open_utc: string };
   telegram: { bot_token: string; chat_id: string };
+  so_what?: {
+    provider?: 'openclaw' | 'disabled';
+    timeout_ms?: number;
+    openclaw_session_id?: string;
+    thinking?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+  };
 };
 
 type SlowState = {
@@ -18,6 +25,7 @@ type SlowState = {
   oiNow: number;
   oiPrev: number | null;
   oiDelta1hUsd: number;
+  oiNotionalUsd: number;
   lsRatio: number;
   updatedAt: number;
 };
@@ -44,6 +52,7 @@ type Snapshot = {
   cvd60: number;
   fundingPct: number;
   oiDelta1hUsd: number;
+  oiNotionalUsd: number;
   lsRatio: number;
   walls: { put: string; call: string };
   poly: { lines: string[]; ageSec: number | null };
@@ -78,6 +87,7 @@ type DashboardState = {
   fundingPct: number;
   fundingPredictedPct: number;
   oiDelta1hUsd: number;
+  oiNotionalUsd: number;
   lsRatio: number;
   walls: { put: string; call: string };
   sessions: { euIn: string; usIn: string; euMins: number; usMins: number };
@@ -115,6 +125,19 @@ async function jget<T>(url: string): Promise<T> {
 
 function fmtMoney(n: number): string {
   return `$${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+}
+
+function fmtUsdCompact(n: number): string {
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(1)}B`;
+  if (abs >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `$${(n / 1_000).toFixed(1)}K`;
+  return `$${n.toFixed(0)}`;
+}
+
+function fmtSignedUsdCompact(n: number): string {
+  const sign = n > 0 ? '+' : n < 0 ? '-' : '';
+  return `${sign}${fmtUsdCompact(Math.abs(n))}`;
 }
 
 function fmtPct(n: number): string {
@@ -255,6 +278,7 @@ async function fetchSlow(symbol: string, prevOi: number | null): Promise<SlowSta
   const oiNow = Number(oi.openInterest);
   const spot = await fetchBinancePrice(symbol);
   const oiDelta1hUsd = prevOi ? (oiNow - prevOi) * spot : 0;
+  const oiNotionalUsd = oiNow * spot;
 
   const mark = Number(premium?.markPrice ?? NaN);
   const index = Number(premium?.indexPrice ?? NaN);
@@ -266,6 +290,7 @@ async function fetchSlow(symbol: string, prevOi: number | null): Promise<SlowSta
     oiNow,
     oiPrev: prevOi,
     oiDelta1hUsd,
+    oiNotionalUsd,
     lsRatio: Number(ls[0]?.longShortRatio ?? 1),
     updatedAt: Date.now(),
   };
@@ -627,53 +652,96 @@ function isLastFridayEt(ts: number): boolean {
   return d + 7 > lastDayUtc;
 }
 
-async function callLlm(system: string, user: string): Promise<string> {
-  const openaiKey = process.env.OPENAI_API_KEY;
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+type SoWhatErrorCode =
+  | 'OPENCLAW_OFFLINE'
+  | 'OPENCLAW_TIMEOUT'
+  | 'OPENCLAW_BAD_RESPONSE'
+  | 'OPENCLAW_NOT_CONFIGURED';
 
-  if (openaiKey) {
-    const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        authorization: `Bearer ${openaiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: user },
-        ],
-      }),
-    });
-    if (!res.ok) throw new Error(`openai ${res.status}: ${await res.text()}`);
-    const j = await res.json() as any;
-    return j?.choices?.[0]?.message?.content || 'No response.';
+class SoWhatError extends Error {
+  code: SoWhatErrorCode;
+  constructor(code: SoWhatErrorCode, message: string) {
+    super(message);
+    this.code = code;
   }
+}
 
-  if (anthropicKey) {
-    const model = process.env.ANTHROPIC_MODEL || 'claude-3-5-sonnet-latest';
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': anthropicKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: 700,
-        system,
-        messages: [{ role: 'user', content: user }],
-      }),
-    });
-    if (!res.ok) throw new Error(`anthropic ${res.status}: ${await res.text()}`);
-    const j = await res.json() as any;
-    return j?.content?.map((x: any) => x?.text || '').join('\n').trim() || 'No response.';
+async function callSoWhatViaOpenClaw(
+  userPrompt: string,
+  opts: {
+    timeoutMs: number;
+    sessionId: string;
+    thinking: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
   }
+): Promise<string> {
+  const timeoutMs = Math.max(1_000, Number(opts.timeoutMs || 45_000));
+  const timeoutSec = Math.max(1, Math.ceil(timeoutMs / 1000));
 
-  throw new Error('No LLM key configured. Set OPENAI_API_KEY or ANTHROPIC_API_KEY.');
+  const args = [
+    '/home/c/.npm-global/bin/openclaw',
+    'agent',
+    '--json',
+    '--session-id',
+    opts.sessionId,
+    '--timeout',
+    String(timeoutSec),
+    '--thinking',
+    opts.thinking,
+    '--message',
+    userPrompt,
+  ];
+
+  return await new Promise<string>((resolve, reject) => {
+    const child = spawn('node', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+    let out = '';
+    let err = '';
+    let timedOut = false;
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGKILL');
+    }, timeoutMs);
+
+    child.stdout.on('data', (d) => {
+      out += String(d);
+    });
+
+    child.stderr.on('data', (d) => {
+      err += String(d);
+    });
+
+    child.on('error', (e) => {
+      clearTimeout(timer);
+      reject(new SoWhatError('OPENCLAW_OFFLINE', `So What unavailable (OpenClaw offline): ${e.message}`));
+    });
+
+    child.on('close', (code) => {
+      clearTimeout(timer);
+
+      if (timedOut) {
+        reject(new SoWhatError('OPENCLAW_TIMEOUT', 'So What unavailable (OpenClaw timeout)'));
+        return;
+      }
+
+      if (code !== 0) {
+        reject(new SoWhatError('OPENCLAW_OFFLINE', `So What unavailable (OpenClaw offline): ${err.trim() || `exit ${code}`}`));
+        return;
+      }
+
+      try {
+        const j = JSON.parse(out || '{}') as any;
+        const text = String(j?.message || j?.text || j?.result?.message || j?.result?.text || '').trim();
+        if (!text) {
+          reject(new SoWhatError('OPENCLAW_BAD_RESPONSE', 'So What unavailable (bad OpenClaw response)'));
+          return;
+        }
+        resolve(text);
+      } catch (e: any) {
+        reject(new SoWhatError('OPENCLAW_BAD_RESPONSE', `So What unavailable (invalid JSON): ${e?.message || String(e)}`));
+      }
+    });
+  });
 }
 
 function pushHistory(arr: HistoryPoint[], point: HistoryPoint, intervalMs: number, maxPoints: number, lastPush: { ts: number }): void {
@@ -863,7 +931,8 @@ function renderDashboardHtml(state: DashboardState | null): string {
 
     <div class="card">
       <div class="info-icon" data-tip="Open interest change last hour. Rising = new positions (conviction). Falling = positions closing (less follow-through).">ⓘ</div>
-      <div class="k">OI Δ1h</div><div class="v" id="oiDelta">${escapeHtml(fmtMoney(state.oiDelta1hUsd))}</div>
+      <div class="k">OI Δ1h</div><div class="v" id="oiDelta">${escapeHtml(fmtSignedUsdCompact(state.oiDelta1hUsd))}</div>
+      <div class="muted" id="oiAbs">OI: ${escapeHtml(fmtUsdCompact(state.oiNotionalUsd))}</div>
       <canvas id="spark-oi" class="spark" width="120" height="40"></canvas>
     </div>
 
@@ -1195,11 +1264,26 @@ function renderDashboardHtml(state: DashboardState | null): string {
       }
     }
 
+    function fmtUsdCompactJs(n){
+      const abs = Math.abs(Number(n) || 0);
+      if (abs >= 1e9) return '$' + (abs / 1e9).toFixed(1) + 'B';
+      if (abs >= 1e6) return '$' + (abs / 1e6).toFixed(1) + 'M';
+      if (abs >= 1e3) return '$' + (abs / 1e3).toFixed(1) + 'K';
+      return '$' + abs.toFixed(0);
+    }
+
+    function fmtSignedUsdCompactJs(n){
+      const v = Number(n) || 0;
+      if (v > 0) return '+' + fmtUsdCompactJs(v);
+      if (v < 0) return '-' + fmtUsdCompactJs(v);
+      return fmtUsdCompactJs(v);
+    }
+
     function applySparks(s){
       drawColumnChart('spark-price', s.history?.price || [], () => '#60a5fa', (v) => '$' + Math.round(v).toLocaleString());
       drawColumnChart('spark-cvd15', s.history?.cvd15 || [], (v) => colorByCvd(v), (v) => (v >= 0 ? '+' : '') + Number(v).toFixed(2));
       drawColumnChart('spark-funding', s.history?.funding || [], (v) => colorByFunding(v), (v) => (v >= 0 ? '+' : '') + Number(v).toFixed(4) + '%');
-      drawColumnChart('spark-oi', s.history?.oiDelta || [], (v) => colorByOi(v), (v) => '$' + Math.round(v).toLocaleString());
+      drawColumnChart('spark-oi', s.history?.oiDelta || [], () => '#22d3ee', (v) => fmtUsdCompactJs(v));
       drawColumnChart('spark-ls', s.history?.lsRatio || [], (v) => colorByLs(v), (v) => Number(v).toFixed(2));
     }
 
@@ -1221,7 +1305,8 @@ function renderDashboardHtml(state: DashboardState | null): string {
       setText('cvd60', s.cvd60.toFixed(2));
       setText('funding', (s.fundingPct >= 0 ? '+' : '') + s.fundingPct.toFixed(4) + '%');
       setText('fundingPredicted', (s.fundingPredictedPct >= 0 ? '+' : '') + s.fundingPredictedPct.toFixed(4) + '%');
-      setText('oiDelta', '$' + Math.round(s.oiDelta1hUsd).toLocaleString());
+      setText('oiDelta', fmtSignedUsdCompactJs(s.oiDelta1hUsd));
+      setText('oiAbs', 'OI: ' + fmtUsdCompactJs(s.oiNotionalUsd));
       setText('lsRatio', s.lsRatio.toFixed(2));
       setText('euIn', 'EU open: ' + s.sessions.euIn);
       setText('usIn', 'US open: ' + s.sessions.usIn);
@@ -1364,7 +1449,7 @@ function renderDashboardHtml(state: DashboardState | null): string {
       try {
         const r = await fetch('/api/so-what', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user: buildSoWhatPrompt() }) });
         const j = await r.json();
-        if (soWhatText) soWhatText.textContent = j.text || j.error || 'No response';
+        if (soWhatText) soWhatText.textContent = j.ok ? j.text : (j.message || 'So What unavailable');
       } catch (e) {
         if (soWhatText) soWhatText.textContent = String(e);
       } finally {
@@ -1386,33 +1471,10 @@ function renderDashboardHtml(state: DashboardState | null): string {
 </html>`;
 }
 
-function startDashboardServer(getState: () => DashboardState | null): void {
+function startDashboardServer(getState: () => DashboardState | null, cfg: Config): void {
   if (process.env.DASHBOARD !== '1' && process.env.DASHBOARD !== 'true') return;
   const host = process.env.DASHBOARD_HOST || '0.0.0.0';
   const port = Number(process.env.DASHBOARD_PORT || '8787');
-
-  const SO_WHAT_SYSTEM_PROMPT = `You are a trading analyst for Polymarket BTC 24-hour bracket markets. These are binary prediction markets on where BTC price will be at market close (midnight ET). Each bracket (e.g., "70k-72k") pays $1 if BTC closes in that range, $0 otherwise.
-
-The user trades two strategies:
-
-STRAT 1 (mean reversion / fakeout fade): During LOW_VOL days, when BTC price spikes past a bracket boundary, buy the OLD bracket cheap expecting price to revert back. Typical entry around 20¢, exit at 40¢+. Key confirmation: CVD diverges from price move (volume doesn't support the breakout = fakeout). Best near options expiry when max pain acts as a magnet.
-
-STRAT 2 (barbell straddle): During HIGH_VOL days, buy both extreme brackets cheap, then fill the middle bracket on reversion. If average cost of all 3 brackets is under 33¢, it's a guaranteed profit regardless of where BTC closes.
-
-BOTH STRATEGIES LOSE ON STRONG TREND DAYS. If all signals align in one direction (CVD confirms, OI rising, funding extreme), recommend staying flat.
-
-The user may or may not have open positions. If they do:
-- Assess whether the original thesis is still intact
-- Recommend: HOLD (thesis playing out, target not reached), TAKE PROFIT (thesis played out or conditions shifting), or CUT LOSS (thesis invalidated — e.g., breakout was confirmed real by CVD)
-- Include specific price levels or bracket prices where they should act
-
-IMPORTANT RULES:
-- Synthesize ALL signals into ONE cohesive paragraph. Do NOT list signals individually or use bullet points. Weave them into a narrative.
-- Reference every signal: price, regime, CVD direction + magnitude, funding current + predicted, OI delta + what it means, L/S ratio, put wall + call wall, max pain, time to options expiry, time to session opens, bracket prices, breakout status.
-- Include a prediction of most likely BTC price action between now and market close: expected range, wick risk (sharp moves that revert), and key inflection times (session opens, options expiry).
-- State which bracket is most likely to resolve YES at market close.
-- If macro events are provided (FOMC, CPI, monthly expiry, user context), factor them into the analysis. Monthly options expiry makes max pain gravity 10x stronger.
-- End with a single **bold action line**: BUY [bracket] at [price], HOLD, TAKE PROFIT, or STAY FLAT — with reasoning.`;
 
   const server = http.createServer(async (req, res) => {
     if (!req.url) {
@@ -1438,19 +1500,32 @@ IMPORTANT RULES:
           const body = JSON.parse(raw || '{}');
           const userText = String(body?.user || '').trim();
           if (!userText) {
-            res.statusCode = 400;
-            res.setHeader('content-type', 'application/json; charset=utf-8');
-            res.end(JSON.stringify({ error: 'Missing user payload' }));
-            return;
+            throw new SoWhatError('OPENCLAW_BAD_RESPONSE', 'Missing user payload');
           }
-          const text = await callLlm(SO_WHAT_SYSTEM_PROMPT, userText);
+
+          const provider = cfg.so_what?.provider ?? 'openclaw';
+          const sessionId = String(cfg.so_what?.openclaw_session_id || '').trim();
+          const timeoutMs = Number(cfg.so_what?.timeout_ms ?? 45_000);
+          const thinking = (cfg.so_what?.thinking ?? 'medium') as 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+
+          if (provider !== 'openclaw') {
+            throw new SoWhatError('OPENCLAW_NOT_CONFIGURED', 'So What unavailable (provider disabled)');
+          }
+          if (!sessionId) {
+            throw new SoWhatError('OPENCLAW_NOT_CONFIGURED', 'So What unavailable (openclaw_session_id not set)');
+          }
+
+          const text = await callSoWhatViaOpenClaw(userText, { timeoutMs, sessionId, thinking });
+
           res.statusCode = 200;
           res.setHeader('content-type', 'application/json; charset=utf-8');
-          res.end(JSON.stringify({ text }));
+          res.end(JSON.stringify({ ok: true, provider: 'openclaw', text }));
         } catch (err: any) {
-          res.statusCode = 500;
+          const code = (err?.code || 'OPENCLAW_OFFLINE') as SoWhatErrorCode;
+          const message = String(err?.message || 'So What unavailable (OpenClaw offline)');
+          res.statusCode = code === 'OPENCLAW_NOT_CONFIGURED' || code === 'OPENCLAW_BAD_RESPONSE' ? 400 : 503;
           res.setHeader('content-type', 'application/json; charset=utf-8');
-          res.end(JSON.stringify({ error: err?.message || String(err) }));
+          res.end(JSON.stringify({ ok: false, provider: 'openclaw', code, message }));
         }
       });
       return;
@@ -1473,6 +1548,7 @@ async function main(): Promise<void> {
     oiNow: 0,
     oiPrev: null,
     oiDelta1hUsd: 0,
+    oiNotionalUsd: 0,
     lsRatio: 1,
     updatedAt: 0,
   };
@@ -1524,7 +1600,7 @@ async function main(): Promise<void> {
   };
 
   console.log('BTC Signal Dash process started.');
-  startDashboardServer(() => dashboardState);
+  startDashboardServer(() => dashboardState, cfg);
 
   if (process.env.TEST_ALERT === '1') {
     if (!cfg.telegram.bot_token || !cfg.telegram.chat_id) {
@@ -1553,6 +1629,7 @@ async function main(): Promise<void> {
       cvd60,
       fundingPct: slow.fundingPct,
       oiDelta1hUsd: slow.oiDelta1hUsd,
+      oiNotionalUsd: slow.oiNotionalUsd,
       lsRatio: slow.lsRatio,
       walls: { put: walls.put, call: walls.call },
       poly,
@@ -1654,7 +1731,7 @@ async function main(): Promise<void> {
       pushHistory(history.price, { ts: nowTs, v: price }, historyIntervalMs.price, historyMaxPoints.price, historyLastPush.price);
       pushHistory(history.cvd15, { ts: nowTs, v: cvd15 }, historyIntervalMs.cvd15, historyMaxPoints.cvd15, historyLastPush.cvd15);
       pushHistory(history.funding, { ts: nowTs, v: slow.fundingPct }, historyIntervalMs.funding, historyMaxPoints.funding, historyLastPush.funding);
-      pushHistory(history.oiDelta, { ts: nowTs, v: slow.oiDelta1hUsd }, historyIntervalMs.oiDelta, historyMaxPoints.oiDelta, historyLastPush.oiDelta);
+      pushHistory(history.oiDelta, { ts: nowTs, v: slow.oiNotionalUsd }, historyIntervalMs.oiDelta, historyMaxPoints.oiDelta, historyLastPush.oiDelta);
       pushHistory(history.lsRatio, { ts: nowTs, v: slow.lsRatio }, historyIntervalMs.lsRatio, historyMaxPoints.lsRatio, historyLastPush.lsRatio);
       saveHistoryForDay(historyDayKey, history);
 
@@ -1670,6 +1747,7 @@ async function main(): Promise<void> {
         fundingPct: slow.fundingPct,
         fundingPredictedPct: slow.fundingPredictedPct,
         oiDelta1hUsd: slow.oiDelta1hUsd,
+        oiNotionalUsd: slow.oiNotionalUsd,
         lsRatio: slow.lsRatio,
         walls: { put: wallsMax.put, call: wallsMax.call },
         sessions: { euIn: countdown(eu), usIn: countdown(us), euMins: countdownMins(eu), usMins: countdownMins(us) },
@@ -1725,6 +1803,7 @@ async function main(): Promise<void> {
           cvd60,
           fundingPct: slow.fundingPct,
           oiDelta1hUsd: slow.oiDelta1hUsd,
+          oiNotionalUsd: slow.oiNotionalUsd,
           lsRatio: slow.lsRatio,
           walls: { put: wallsMax.put, call: wallsMax.call },
           poly: { lines: polyState.lines, ageSec: polyState.ageSec },
