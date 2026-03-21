@@ -1627,6 +1627,7 @@ function renderDashboardHtml(state: DashboardState | null): string {
     renderPolyWithPositions(latest);
     highlightBracket(latest);
     applySparks(latest);
+    applyState(latest);
     setInterval(poll, 10000);
     setInterval(tickAgo, 1000);
     tickAgo();
