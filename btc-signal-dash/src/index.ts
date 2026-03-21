@@ -1632,6 +1632,20 @@ function renderDashboardHtml(state: DashboardState | null): string {
     function buildSoWhatPrompt(){
       const s = latest;
       const positions = collectPositions();
+      const hist = s.history || {};
+      const trendVals = (arr, n, fmt) => (Array.isArray(arr) ? arr.slice(-n).map((p) => fmt(Number((p && p.v) || 0))) : []);
+      const fmtUsdCompact = (v) => {
+        const a = Math.abs(v);
+        if (a >= 1e9) return (v / 1e9).toFixed(2).replace(/\.00$/, '') + 'B';
+        if (a >= 1e6) return (v / 1e6).toFixed(2).replace(/\.00$/, '') + 'M';
+        if (a >= 1e3) return (v / 1e3).toFixed(1).replace(/\.0$/, '') + 'K';
+        return String(Math.round(v));
+      };
+      const priceTrend = trendVals(hist.price, 12, (v) => String(Math.round(v)));
+      const premiumTrend = trendVals(hist.funding, 12, (v) => (v >= 0 ? '+' : '') + v.toFixed(4));
+      const oiTrend = trendVals(hist.oiDelta, 12, (v) => (v >= 0 ? '+' : '') + fmtUsdCompact(v));
+      const lsTrend = trendVals(hist.lsRatio, 8, (v) => Number(v).toFixed(2));
+      const cvdTrend = trendVals(hist.cvd15, 12, (v) => (v >= 0 ? '+' : '') + Number(v).toFixed(2));
       const lines = [
         'TRADING STYLE: I trade Polymarket BTC 24h brackets. I do NOT hold to resolution. My target is ~10¢ upside per position then sell. Focus your analysis on:',
         '1. Where price is likely to WICK before market resolves (not just where it closes)',
@@ -1639,7 +1653,11 @@ function renderDashboardHtml(state: DashboardState | null): string {
         '3. Which bracket benefits most from the expected wick — even if price reverts after',
         '4. Entry timing: should I buy now or wait for a better entry?',
         'Do NOT assume I hold positions to resolution. A bracket that wicks to 50¢ then falls back to 30¢ is still a profitable trade if I bought at 20¢ and sold at 30¢.',
-        'FORMAT: Write as ONE narrative paragraph — no bullet points, no numbered lists, no headers. Reference every relevant signal naturally in the text. End with a single bold action line stating exactly what to do right now.',
+        'FORMAT: Structure your response in these sections with headers:',
+        '**MARKET READ** — 2-3 sentences synthesising all signals (price, regime, CVD, funding, OI, L/S, walls, max pain) into a directional thesis.',
+        '**WICK OUTLOOK** — Where price is most likely to wick before resolution and when (EU open, US open, overnight). Reference the historical trends from the charts to support your reasoning.',
+        '**BRACKET PLAY** — Which bracket benefits most from the expected wick. Entry price target and exit target (~10¢ upside).',
+        '**ACTION** — One bold line: exactly what to do right now.',
         '',
         'CURRENT DASHBOARD STATE:',
         'Price: $' + Math.round(s.price).toLocaleString(),
@@ -1651,6 +1669,12 @@ function renderDashboardHtml(state: DashboardState | null): string {
         'Put wall: ' + s.walls.put + ' | Call wall: ' + s.walls.call,
         'Max pain: ' + Math.round(s.optionsExpiry.maxPainStrike/1000) + 'k | Expiry in: ' + s.optionsExpiry.expiryIn,
         'EU open in: ' + s.sessions.euIn + ' | US open in: ' + s.sessions.usIn,
+        '',
+        'PRICE TREND (last 12h): ' + (priceTrend.length ? priceTrend.join(' → ') : 'n/a'),
+        'PREMIUM INDEX TREND (last 12h): ' + (premiumTrend.length ? premiumTrend.join(' → ') : 'n/a'),
+        'OI DELTA TREND (last 12h): ' + (oiTrend.length ? oiTrend.join(' → ') : 'n/a'),
+        'L/S TREND (last 8): ' + (lsTrend.length ? lsTrend.join(' → ') : 'n/a'),
+        'CVD 15M TREND (last 12): ' + (cvdTrend.length ? cvdTrend.join(' → ') : 'n/a'),
         '', 'BRACKETS:'
       ];
       (s.poly.lines || []).forEach((x) => lines.push(x));
@@ -1800,6 +1824,16 @@ async function main(): Promise<void> {
 
   let historyDayKey = etDayKey(Date.now());
   const history: HistoryState = loadHistoryForDay(historyDayKey);
+  // One-time cleanup for legacy funding-rate history (8h cadence, repeated values)
+  // now that funding chart tracks premium index at 1h cadence.
+  if (Array.isArray(history.funding) && history.funding.length >= 8) {
+    const vals = history.funding.map((p) => Number((p && p.v) || 0));
+    const unique = new Set(vals.map((v) => v.toFixed(6))).size;
+    if (unique <= 1) {
+      history.funding = [];
+      try { saveHistoryForDay(historyDayKey, history); } catch {}
+    }
+  }
 
   const historyIntervalMs = {
     price: 60_000,
