@@ -1665,6 +1665,9 @@ function startDashboardServer(getState: () => DashboardState | null, cfg: Config
 
     if (req.url === '/api/state') {
       res.setHeader('content-type', 'application/json; charset=utf-8');
+      res.setHeader('cache-control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.setHeader('pragma', 'no-cache');
+      res.setHeader('expires', '0');
       res.end(JSON.stringify(getState()));
       return;
     }
@@ -1712,6 +1715,9 @@ function startDashboardServer(getState: () => DashboardState | null, cfg: Config
     }
 
     res.setHeader('content-type', 'text/html; charset=utf-8');
+    res.setHeader('cache-control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('pragma', 'no-cache');
+    res.setHeader('expires', '0');
     res.end(renderDashboardHtml(getState()));
   });
 
