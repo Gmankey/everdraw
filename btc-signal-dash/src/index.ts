@@ -1213,7 +1213,7 @@ function renderDashboardHtml(state: DashboardState | null): string {
     }
 
     function parseBracketWithCents(t){
-      const m = String(t).match(/(\d+)\s*[-\u2013\u2014]\s*(\d+)\s*k.*?(\d+(?:\.\d+)?)\s*(?:¢|￠|Â¢|c|&#162;)/i);
+      const m = String(t).match(/(\\d+)\\s*[-\\u2013\\u2014]\\s*(\\d+)\\s*k.*?(\\d+(?:\\.\\d+)?)\\s*(?:¢|￠|Â¢|c|&#162;)/i);
       if (!m) return null;
       return { key: m[1] + '-' + m[2], lo: Number(m[1]) * 1000, hi: Number(m[2]) * 1000, cents: Number(m[3]) };
     }
@@ -1265,7 +1265,7 @@ function renderDashboardHtml(state: DashboardState | null): string {
 
       const fromState = Array.isArray(s?.poly?.lines) ? s.poly.lines : [];
       const fromDom = Array.from(list.querySelectorAll('li'))
-        .map((li) => String(li.textContent || '').replace(/^[\s•\-]+/, '').trim())
+        .map((li) => String(li.textContent || '').replace(/^[\\s•\\-]+/, '').trim())
         .filter(Boolean);
       const lines = fromState.length ? fromState : fromDom;
       if (!lines.length) return;
@@ -1451,7 +1451,7 @@ function renderDashboardHtml(state: DashboardState | null): string {
 
     function parseRows(lines){
       return (lines || []).map((line) => {
-        const m = line.match(/(\d+)\s*[-\u2013\u2014]\s*(\d+)\s*k/i);
+        const m = line.match(/(\\d+)\\s*[-\\u2013\\u2014]\\s*(\\d+)\\s*k/i);
         if (!m) return null;
         return { lo: Number(m[1]) * 1000, hi: Number(m[2]) * 1000 };
       }).filter(Boolean).sort((a,b) => a.lo - b.lo);
