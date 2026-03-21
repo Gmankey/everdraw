@@ -677,8 +677,10 @@ function computeStrategyContext(
   };
 }
 
+const ET_TRADING_DAY_OFFSET_MS = 12 * 60 * 60 * 1000;
+
 function etDayKey(ts: number): string {
-  const d = new Date(ts);
+  const d = new Date(ts - ET_TRADING_DAY_OFFSET_MS);
   return d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 }
 
@@ -811,15 +813,39 @@ async function callSoWhatViaOpenClaw(
       }
 
       try {
-        const j = JSON.parse(out || '{}') as any;
-        const payloadText = Array.isArray(j?.result?.payloads)
-          ? j.result.payloads.map((p: any) => String(p?.text || '')).filter(Boolean).join('\n\n').trim()
-          : '';
+        const raw = String(out || '').trim();
+        const parseCandidates = [raw];
+        const start = raw.indexOf('{');
+        const end = raw.lastIndexOf('}');
+        if (start >= 0 && end > start) parseCandidates.push(raw.slice(start, end + 1));
+
+        let j: any = null;
+        let parseErr: any = null;
+        for (const candidate of parseCandidates) {
+          try {
+            j = JSON.parse(candidate || '{}');
+            parseErr = null;
+            break;
+          } catch (e: any) {
+            parseErr = e;
+          }
+        }
+        if (!j) throw parseErr || new Error('empty JSON payload');
+
+        const payloadText = [j?.result?.payloads, j?.payloads]
+          .find((v) => Array.isArray(v))
+          ?.map((p: any) => String(p?.text || p?.message || p?.content || '').trim())
+          .filter(Boolean)
+          .join('\n\n')
+          .trim() || '';
+
         const text = String(
           j?.message ||
           j?.text ||
           j?.result?.message ||
           j?.result?.text ||
+          j?.result?.output_text ||
+          j?.output_text ||
           payloadText ||
           ''
         ).trim();
@@ -1168,7 +1194,8 @@ function renderDashboardHtml(state: DashboardState | null): string {
     const CONTEXT_KEY = 'market-context';
 
     function currentEtDay(){
-      return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year:'numeric', month:'2-digit', day:'2-digit' }).format(new Date()).split('/').join('-');
+      const shifted = new Date(Date.now() - 12 * 60 * 60 * 1000);
+      return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year:'numeric', month:'2-digit', day:'2-digit' }).format(shifted).split('/').join('-');
     }
 
     function rolloverLocalStorage(){
@@ -1186,7 +1213,7 @@ function renderDashboardHtml(state: DashboardState | null): string {
     }
 
     function parseBracketWithCents(t){
-      const m = t.match(/(\d+)\s*[-\u2013\u2014]\s*(\d+)\s*k.*?(\d+(?:\.\d+)?)\s*¢/i);
+      const m = String(t).match(/(\d+)\s*[-\u2013\u2014]\s*(\d+)\s*k.*?(\d+(?:\.\d+)?)\s*(?:¢|￠|Â¢|c|&#162;)/i);
       if (!m) return null;
       return { key: m[1] + '-' + m[2], lo: Number(m[1]) * 1000, hi: Number(m[2]) * 1000, cents: Number(m[3]) };
     }
@@ -1207,6 +1234,7 @@ function renderDashboardHtml(state: DashboardState | null): string {
       const rows = (s.poly.lines || []).map((line) => {
         const safe = String(line).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
         const b = parseBracketWithCents(line);
+        if (window.__polyDebug) console.log('[poly-parse]', line, b);
         if (!b) return '<li>' + safe + '</li>';
         if (seen.has(b.key)) return '';
         seen.add(b.key);
@@ -1331,7 +1359,8 @@ function renderDashboardHtml(state: DashboardState | null): string {
       for (let i = 0; i < n; i++) {
         const v = vals[i];
         const t = span < 1e-8 ? 0.5 : (v - min) / span;
-        const bh = Math.max(1, t * chartH);
+        const minBarPx = Math.abs(v) > 1e-12 ? 2 : 1;
+        const bh = Math.max(minBarPx, t * chartH);
         const x = leftPad + i * slot;
         const y = topPad + chartH - bh;
         st.bars.push({ x, y, w: barW, h: bh, point: rows[i], color: resolveSignalColor(colorForValue(v)) });
@@ -1413,10 +1442,10 @@ function renderDashboardHtml(state: DashboardState | null): string {
     }
 
     function applySparks(s){
-      drawColumnChart('spark-price', s.history?.price || [], () => '#60a5fa', (v) => '$' + Math.round(v).toLocaleString());
+      drawColumnChart('spark-price', s.history?.price || [], () => '#60a5fa', (v) => '$' + Math.round(v).toLocaleString(), { useRangeAxis: true });
       drawColumnChart('spark-cvd15', s.history?.cvd15 || [], (v) => colorByCvd(v), (v) => (v >= 0 ? '+' : '') + Number(v).toFixed(2));
-      drawColumnChart('spark-funding', s.history?.funding || [], (v) => colorByFunding(v), (v) => (v >= 0 ? '+' : '') + Number(v).toFixed(4) + '%');
-      drawColumnChart('spark-oi', s.history?.oiDelta || [], () => '#22d3ee', (v) => fmtUsdCompactJs(v), { useRangeAxis: true });
+      drawColumnChart('spark-funding', s.history?.funding || [], (v) => colorByFunding(v), (v) => (v >= 0 ? '+' : '') + Number(v).toFixed(4) + '%', { useRangeAxis: true });
+      drawColumnChart('spark-oi', s.history?.oiDelta || [], (v) => Number(v) >= 0 ? '#22d3ee' : '#f87171', (v) => fmtUsdCompactJs(v), { useRangeAxis: false });
       drawColumnChart('spark-ls', s.history?.lsRatio || [], (v) => colorByLs(v), (v) => Number(v).toFixed(2), { useRangeAxis: true });
     }
 
@@ -1935,7 +1964,7 @@ async function main(): Promise<void> {
       pushHistory(history.price, { ts: nowTs, v: price }, historyIntervalMs.price, historyMaxPoints.price, historyLastPush.price);
       pushHistory(history.cvd15, { ts: nowTs, v: cvd15 }, historyIntervalMs.cvd15, historyMaxPoints.cvd15, historyLastPush.cvd15);
       pushHistory(history.funding, { ts: nowTs, v: slow.fundingPct }, historyIntervalMs.funding, historyMaxPoints.funding, historyLastPush.funding);
-      pushHistory(history.oiDelta, { ts: nowTs, v: slow.oiNotionalUsd }, historyIntervalMs.oiDelta, historyMaxPoints.oiDelta, historyLastPush.oiDelta);
+      pushHistory(history.oiDelta, { ts: nowTs, v: slow.oiDelta1hUsd }, historyIntervalMs.oiDelta, historyMaxPoints.oiDelta, historyLastPush.oiDelta);
       pushHistory(history.lsRatio, { ts: nowTs, v: slow.lsRatio }, historyIntervalMs.lsRatio, historyMaxPoints.lsRatio, historyLastPush.lsRatio);
       saveHistoryForDay(historyDayKey, history);
 
