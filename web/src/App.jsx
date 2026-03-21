@@ -87,6 +87,37 @@ function normalizeError(e) {
   return msg
 }
 
+const MONAD_TESTNET_CHAIN_PARAMS = {
+  chainId: '0x279F',
+  chainName: 'Monad Testnet',
+  nativeCurrency: { name: 'MON', symbol: 'MON', decimals: 18 },
+  rpcUrls: ['https://testnet-rpc.monad.xyz'],
+  blockExplorerUrls: ['https://testnet.monadexplorer.com'],
+}
+
+async function ensureCorrectNetwork(provider, expectedChainId) {
+  if (!expectedChainId) return
+
+  const network = await provider.getNetwork()
+  if (Number(network.chainId) === expectedChainId) return
+
+  const hexChainId = `0x${expectedChainId.toString(16).toUpperCase()}`
+
+  try {
+    await provider.send('wallet_switchEthereumChain', [{ chainId: hexChainId }])
+  } catch (switchErr) {
+    if (switchErr?.code === 4902 || switchErr?.code === -32603) {
+      const chainParams = expectedChainId === 10143
+        ? MONAD_TESTNET_CHAIN_PARAMS
+        : { chainId: hexChainId }
+      await provider.send('wallet_addEthereumChain', [chainParams])
+      await provider.send('wallet_switchEthereumChain', [{ chainId: hexChainId }])
+    } else {
+      throw switchErr
+    }
+  }
+}
+
 function Header({ account, onConnect }) {
   return (
     <header>
@@ -500,10 +531,7 @@ export default function App() {
 
       const provider = new ethers.BrowserProvider(window.ethereum)
       await provider.send('eth_requestAccounts', [])
-      const network = await provider.getNetwork()
-      if (expectedChainId && Number(network.chainId) !== expectedChainId) {
-        throw new Error(`Wrong network: connected ${Number(network.chainId)}, expected ${expectedChainId}`)
-      }
+      await ensureCorrectNetwork(provider, expectedChainId)
       const signer = await provider.getSigner()
       const pool = new ethers.Contract(poolAddress, POOL_ABI, signer)
 
@@ -540,7 +568,7 @@ export default function App() {
   const isOpenState = currentState === 0
   const wrongNetwork = expectedChainId && connectedChainId && expectedChainId !== connectedChainId
   const salesOpen = isOpenState && secondsRemaining > 0
-  const canBuyTx = !!account && !wrongNetwork && salesOpen && !loading
+  const canBuyTx = !!account && salesOpen && !loading
 
   const buyDisabledReason = useMemo(() => {
     if (loading) return 'Transaction in progress'
@@ -549,9 +577,9 @@ export default function App() {
       return 'Deposit window closed — next round opening soon'
     }
     if (!account) return 'Connect wallet to deposit'
-    if (wrongNetwork) return `Wrong network (need ${expectedChainId})`
+    if (wrongNetwork) return 'Wrong network — click Buy to switch automatically'
     return ''
-  }, [loading, salesOpen, isOpenState, account, wrongNetwork, expectedChainId])
+  }, [loading, salesOpen, isOpenState, account, wrongNetwork])
 
   const settlementSecondsRemaining = useMemo(() => {
     if (!roundInfo) return 0
@@ -826,10 +854,7 @@ export default function App() {
 
       const provider = new ethers.BrowserProvider(window.ethereum)
       await provider.send('eth_requestAccounts', [])
-      const network = await provider.getNetwork()
-      if (expectedChainId && Number(network.chainId) !== expectedChainId) {
-        throw new Error(`Wrong network: connected ${Number(network.chainId)}, expected ${expectedChainId}`)
-      }
+      await ensureCorrectNetwork(provider, expectedChainId)
       const signer = await provider.getSigner()
       const pool = new ethers.Contract(poolAddress, POOL_ABI, signer)
       await fn(pool)
@@ -1052,7 +1077,7 @@ export default function App() {
                 <div className="deposit-cta-wrap">
                   <button
                     className="btn deposit-btn"
-                    disabled={mainView !== 'current' || loading || wrongNetwork || !salesOpen}
+                    disabled={mainView !== 'current' || loading || !salesOpen}
                     onClick={account ? buyTickets : connectWallet}
                   >
                     {mainView !== 'current'
@@ -1064,7 +1089,7 @@ export default function App() {
                           : !account
                             ? 'Connect Wallet to Deposit'
                             : wrongNetwork
-                              ? `Wrong network (need ${expectedChainId})`
+                              ? 'Wrong network — click Buy to switch automatically'
                               : canBuyTx
                                 ? 'Buy Tickets'
                                 : 'Buy Unavailable'}
