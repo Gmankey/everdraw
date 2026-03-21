@@ -1612,6 +1612,16 @@ function renderDashboardHtml(state: DashboardState | null): string {
     const soWhatLoading = document.getElementById('soWhatLoading');
     document.getElementById('soWhatClose')?.addEventListener('click', () => { if (soWhatPanel) soWhatPanel.style.display = 'none'; });
 
+    function renderSoWhatBasicMarkdown(text){
+      const safe = String(text || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+      return safe
+        .replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>')
+        .replace(/\\n/g, '<br>');
+    }
+
     function collectPositions(){
       const arr = [];
       for (const line of (latest.poly.lines || [])) {
@@ -1702,13 +1712,13 @@ function renderDashboardHtml(state: DashboardState | null): string {
       }, 1000);
       if (soWhatPanel) soWhatPanel.style.display = 'block';
       if (soWhatLoading) soWhatLoading.style.display = 'block';
-      if (soWhatText) soWhatText.textContent = '';
+      if (soWhatText) soWhatText.innerHTML = '';
       try {
         const r = await fetch('/api/so-what', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user: buildSoWhatPrompt() }) });
         const j = await r.json();
-        if (soWhatText) soWhatText.textContent = j.ok ? j.text : (j.message || 'So What unavailable');
+        if (soWhatText) soWhatText.innerHTML = renderSoWhatBasicMarkdown(j.ok ? j.text : (j.message || 'So What unavailable'));
       } catch (e) {
-        if (soWhatText) soWhatText.textContent = String(e);
+        if (soWhatText) soWhatText.innerHTML = renderSoWhatBasicMarkdown(String(e));
       } finally {
         if (soWhatLoading) soWhatLoading.style.display = 'none';
       }
