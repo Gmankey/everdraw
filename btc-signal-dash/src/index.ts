@@ -1230,6 +1230,7 @@ function renderDashboardHtml(state: DashboardState | null): string {
     function renderPolyWithPositions(s){
       const list = document.getElementById('polyList');
       if (!list) return;
+      if (document.activeElement && document.activeElement.closest('#polyList')) return;
       const seen = new Set();
       const rows = (s.poly.lines || []).map((line) => {
         const safe = String(line).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -1638,6 +1639,7 @@ function renderDashboardHtml(state: DashboardState | null): string {
         '3. Which bracket benefits most from the expected wick — even if price reverts after',
         '4. Entry timing: should I buy now or wait for a better entry?',
         'Do NOT assume I hold positions to resolution. A bracket that wicks to 50¢ then falls back to 30¢ is still a profitable trade if I bought at 20¢ and sold at 30¢.',
+        'FORMAT: Write as ONE narrative paragraph — no bullet points, no numbered lists, no headers. Reference every relevant signal naturally in the text. End with a single bold action line stating exactly what to do right now.',
         '',
         'CURRENT DASHBOARD STATE:',
         'Price: $' + Math.round(s.price).toLocaleString(),
