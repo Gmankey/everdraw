@@ -961,8 +961,8 @@ function renderDashboardHtml(state: DashboardState | null): string {
       return `<li id="poly-${i}" data-bracket="${key}">`
         + `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">`
         + `<span>${safe}</span>`
-        + `<input data-role="qty" data-bracket="${key}" type="number" min="0" step="1" placeholder="qty" style="width:64px;background:#121a33;color:#e8ecff;border:1px solid #2f3a64;border-radius:6px;padding:2px 6px" />`
-        + `<input data-role="entry" data-bracket="${key}" type="number" min="0" step="0.1" placeholder="¢" style="width:56px;background:#121a33;color:#e8ecff;border:1px solid #2f3a64;border-radius:6px;padding:2px 6px" />`
+        + `<input data-role="qty" data-bracket="${key}" type="text" inputmode="decimal" placeholder="qty" style="width:64px;background:#121a33;color:#e8ecff;border:1px solid #2f3a64;border-radius:6px;padding:2px 6px" />`
+        + `<input data-role="entry" data-bracket="${key}" type="text" inputmode="decimal" placeholder="¢" style="width:56px;background:#121a33;color:#e8ecff;border:1px solid #2f3a64;border-radius:6px;padding:2px 6px" />`
         + `<button data-role="clear" data-bracket="${key}" style="background:transparent;border:0;color:#e8ecff;cursor:pointer">✕</button>`
         + `</div>`
         + `</li>`;
@@ -1055,7 +1055,7 @@ function renderDashboardHtml(state: DashboardState | null): string {
 
     <div class="card">
       <div class="info-icon" data-tip="Futures funding rate. Positive = longs paying (crowded). Negative = shorts paying. Elevated funding + crowded L/S = reversion setup. Predicted value shows where funding is heading next hour.">ⓘ</div>
-      <div class="k">Funding</div>
+      <div class="k">Premium Index</div>
       <div id="fundingCurrent">Current: <span id="funding">${escapeHtml(fmtPct(state.fundingPct))}</span></div>
       <div id="fundingPred">Predicted: <span id="fundingPredicted">${escapeHtml(fmtPct(state.fundingPredictedPct))}</span></div>
       <canvas id="spark-funding" class="spark" width="120" height="40"></canvas>
@@ -1248,8 +1248,8 @@ function renderDashboardHtml(state: DashboardState | null): string {
         return '<li data-bracket="' + b.key + '">' +
           '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
           '<span>' + safe + '</span>' +
-          '<input data-role="qty" data-bracket="' + b.key + '" type="number" min="0" step="1" placeholder="qty" value="' + (qty || '') + '" style="width:64px;background:#121a33;color:#e8ecff;border:1px solid #2f3a64;border-radius:6px;padding:2px 6px" />' +
-          '<input data-role="entry" data-bracket="' + b.key + '" type="number" min="0" step="0.1" placeholder="¢" value="' + (entry || '') + '" style="width:56px;background:#121a33;color:#e8ecff;border:1px solid #2f3a64;border-radius:6px;padding:2px 6px" />' +
+          '<input data-role="qty" data-bracket="' + b.key + '" type="text" inputmode="decimal" placeholder="qty" value="' + (qty || '') + '" style="width:64px;background:#121a33;color:#e8ecff;border:1px solid #2f3a64;border-radius:6px;padding:2px 6px" />' +
+          '<input data-role="entry" data-bracket="' + b.key + '" type="text" inputmode="decimal" placeholder="¢" value="' + (entry || '') + '" style="width:56px;background:#121a33;color:#e8ecff;border:1px solid #2f3a64;border-radius:6px;padding:2px 6px" />' +
           '<button data-role="clear" data-bracket="' + b.key + '" style="background:transparent;border:0;color:#e8ecff;cursor:pointer">✕</button>' +
           '</div>' +
           (has ? ('<div class="muted ' + pnlCls + '" style="margin-top:4px">' + qty + ' shares @ ' + entry + '¢ → P&L: ' + (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2) + ' (' + (pct >= 0 ? '+' : '') + pct.toFixed(0) + '%)</div>') : '') +
@@ -1444,7 +1444,7 @@ function renderDashboardHtml(state: DashboardState | null): string {
     function applySparks(s){
       drawColumnChart('spark-price', s.history?.price || [], () => '#60a5fa', (v) => '$' + Math.round(v).toLocaleString(), { useRangeAxis: true });
       drawColumnChart('spark-cvd15', s.history?.cvd15 || [], (v) => colorByCvd(v), (v) => (v >= 0 ? '+' : '') + Number(v).toFixed(2));
-      drawColumnChart('spark-funding', s.history?.funding || [], (v) => colorByFunding(v), (v) => (v >= 0 ? '+' : '') + Number(v).toFixed(4) + '%', { useRangeAxis: true });
+      drawColumnChart('spark-funding', s.history?.funding || [], (v) => colorByFunding(v), (v) => 'Premium Index: ' + (v >= 0 ? '+' : '') + Number(v).toFixed(4) + '%', { useRangeAxis: true });
       drawColumnChart('spark-oi', s.history?.oiDelta || [], (v) => Number(v) >= 0 ? '#22d3ee' : '#f87171', (v) => fmtUsdCompactJs(v), { useRangeAxis: false });
       drawColumnChart('spark-ls', s.history?.lsRatio || [], (v) => colorByLs(v), (v) => Number(v).toFixed(2), { useRangeAxis: true });
     }
@@ -1632,6 +1632,13 @@ function renderDashboardHtml(state: DashboardState | null): string {
       const s = latest;
       const positions = collectPositions();
       const lines = [
+        'TRADING STYLE: I trade Polymarket BTC 24h brackets. I do NOT hold to resolution. My target is ~10¢ upside per position then sell. Focus your analysis on:',
+        '1. Where price is likely to WICK before market resolves (not just where it closes)',
+        '2. Which direction the wick is most likely (up or down) and when (EU open, US open, overnight)',
+        '3. Which bracket benefits most from the expected wick — even if price reverts after',
+        '4. Entry timing: should I buy now or wait for a better entry?',
+        'Do NOT assume I hold positions to resolution. A bracket that wicks to 50¢ then falls back to 30¢ is still a profitable trade if I bought at 20¢ and sold at 30¢.',
+        '',
         'CURRENT DASHBOARD STATE:',
         'Price: $' + Math.round(s.price).toLocaleString(),
         'Regime: ' + s.regime + ' (sigma: ' + s.sigma.toFixed(2) + '%)',
@@ -1963,7 +1970,7 @@ async function main(): Promise<void> {
 
       pushHistory(history.price, { ts: nowTs, v: price }, historyIntervalMs.price, historyMaxPoints.price, historyLastPush.price);
       pushHistory(history.cvd15, { ts: nowTs, v: cvd15 }, historyIntervalMs.cvd15, historyMaxPoints.cvd15, historyLastPush.cvd15);
-      pushHistory(history.funding, { ts: nowTs, v: slow.fundingPct }, historyIntervalMs.funding, historyMaxPoints.funding, historyLastPush.funding);
+      pushHistory(history.funding, { ts: nowTs, v: slow.fundingPredictedPct }, historyIntervalMs.funding, historyMaxPoints.funding, historyLastPush.funding);
       pushHistory(history.oiDelta, { ts: nowTs, v: slow.oiDelta1hUsd }, historyIntervalMs.oiDelta, historyMaxPoints.oiDelta, historyLastPush.oiDelta);
       pushHistory(history.lsRatio, { ts: nowTs, v: slow.lsRatio }, historyIntervalMs.lsRatio, historyMaxPoints.lsRatio, historyLastPush.lsRatio);
       saveHistoryForDay(historyDayKey, history);
