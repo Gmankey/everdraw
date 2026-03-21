@@ -1230,6 +1230,21 @@ function renderDashboardHtml(state: DashboardState | null): string {
       list.innerHTML = rows.join('');
     }
 
+    function ensurePolyInputsPresent(s){
+      const list = document.getElementById('polyList');
+      if (!list) return;
+      if (list.querySelector('input[data-role="qty"]')) return;
+
+      const fromState = Array.isArray(s?.poly?.lines) ? s.poly.lines : [];
+      const fromDom = Array.from(list.querySelectorAll('li'))
+        .map((li) => String(li.textContent || '').replace(/^[\s•\-]+/, '').trim())
+        .filter(Boolean);
+      const lines = fromState.length ? fromState : fromDom;
+      if (!lines.length) return;
+
+      renderPolyWithPositions({ poly: { lines } });
+    }
+
     function resolveSignalColor(v){
       if (!v) return palette.white;
       if (typeof v === 'string' && v.startsWith('#')) return v;
@@ -1505,6 +1520,7 @@ function renderDashboardHtml(state: DashboardState | null): string {
       setText('breakoutHint', '');
 
       renderPolyWithPositions(s);
+      ensurePolyInputsPresent(s);
 
       refreshColors(s);
       highlightBracket(s);
@@ -1640,10 +1656,12 @@ function renderDashboardHtml(state: DashboardState | null): string {
 
     refreshColors(latest);
     renderPolyWithPositions(latest);
+    ensurePolyInputsPresent(latest);
     highlightBracket(latest);
     applySparks(latest);
     applyState(latest);
     setInterval(poll, 10000);
+    setInterval(() => ensurePolyInputsPresent(latest), 2000);
     setInterval(tickAgo, 1000);
     tickAgo();
   </script>
