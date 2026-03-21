@@ -926,7 +926,22 @@ function renderDashboardHtml(state: DashboardState | null): string {
   }
 
   const updated = escapeHtml(toAest(state.updatedAt, state.timezone));
-  const polyLines = state.poly.lines.map((l, i) => `<li id="poly-${i}">${escapeHtml(l)}</li>`).join('');
+  const polyLines = state.poly.lines
+    .map((l, i) => {
+      const safe = escapeHtml(l);
+      const m = l.match(/(\d+)\s*[-\u2013\u2014]\s*(\d+)\s*k/i);
+      if (!m) return `<li id="poly-${i}">${safe}</li>`;
+      const key = `${m[1]}-${m[2]}`;
+      return `<li id="poly-${i}" data-bracket="${key}">`
+        + `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">`
+        + `<span>${safe}</span>`
+        + `<input data-role="qty" data-bracket="${key}" type="number" min="0" step="1" placeholder="qty" style="width:64px;background:#121a33;color:#e8ecff;border:1px solid #2f3a64;border-radius:6px;padding:2px 6px" />`
+        + `<input data-role="entry" data-bracket="${key}" type="number" min="0" step="0.1" placeholder="¢" style="width:56px;background:#121a33;color:#e8ecff;border:1px solid #2f3a64;border-radius:6px;padding:2px 6px" />`
+        + `<button data-role="clear" data-bracket="${key}" style="background:transparent;border:0;color:#e8ecff;cursor:pointer">✕</button>`
+        + `</div>`
+        + `</li>`;
+    })
+    .join('');
 
   return `<!doctype html>
 <html>
