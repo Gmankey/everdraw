@@ -117,10 +117,58 @@ function loadConfig(): Config {
   return yaml.load(raw) as Config;
 }
 
-async function jget<T>(url: string): Promise<T> {
-  const res = await fetch(url, { headers: { 'user-agent': 'btc-signal-dash/0.1' } });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText} @ ${url}`);
-  return (await res.json()) as T;
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function jget<T>(
+  url: string,
+  opts?: {
+    timeoutMs?: number;
+    retries?: number;
+    backoffMs?: number;
+    retryOn?: (status: number) => boolean;
+  },
+): Promise<T> {
+  const timeoutMs = opts?.timeoutMs ?? 10_000;
+  const retries = Math.max(0, opts?.retries ?? 0);
+  const baseBackoffMs = Math.max(100, opts?.backoffMs ?? 400);
+  const retryOn = opts?.retryOn ?? ((status: number) => status === 408 || status === 425 || status === 429 || status >= 500);
+
+  let attempt = 0;
+  while (true) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, {
+        headers: { 'user-agent': 'btc-signal-dash/0.1' },
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        const retriable = retryOn(res.status);
+        if (!retriable || attempt >= retries) {
+          throw new Error(`${res.status} ${res.statusText} @ ${url}`);
+        }
+        const waitMs = baseBackoffMs * Math.pow(2, attempt);
+        await sleep(waitMs);
+        attempt += 1;
+        continue;
+      }
+      return (await res.json()) as T;
+    } catch (err: any) {
+      const isAbort = err?.name === 'AbortError';
+      const isNetwork = err instanceof TypeError || isAbort;
+      if (!isNetwork || attempt >= retries) {
+        const msg = isAbort ? `timeout after ${timeoutMs}ms @ ${url}` : err?.message ?? String(err);
+        throw new Error(msg);
+      }
+      const waitMs = baseBackoffMs * Math.pow(2, attempt);
+      await sleep(waitMs);
+      attempt += 1;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 }
 
 function fmtMoney(n: number): string {
@@ -434,7 +482,12 @@ async function fetchPolymarketBrackets(price: number): Promise<{ lines: string[]
   };
 
   try {
-    const markets = await jget<any[]>(`${POLY_GAMMA}/markets?limit=500&active=true&closed=false&tag_id=235`);
+    const fetchStartedAt = Date.now();
+    const markets = await jget<any[]>(`${POLY_GAMMA}/markets?limit=500&active=true&closed=false&tag_id=235`, {
+      timeoutMs: 8_000,
+      retries: 3,
+      backoffMs: 500,
+    });
 
     const reBetween = /between \$(\d{1,3}(?:,\d{3})*) and \$(\d{1,3}(?:,\d{3})*) on ([a-z]+ \d{1,2})\?/i;
     const betweenRows = markets
@@ -515,10 +568,9 @@ async function fetchPolymarketBrackets(price: number): Promise<{ lines: string[]
         const src = r.source === 'last' ? ' (last trade)' : r.source === 'indicative' ? ' (indicative)' : '';
         return `${Math.floor(r.low / 1000)}-${Math.floor(r.high / 1000)}k: ${label}${src}`;
       });
-      const ageSecVals = picked
-        .map((p) => (Number.isFinite(p.updatedMs) ? Math.max(0, Math.round((Date.now() - p.updatedMs) / 1000)) : NaN))
-        .filter(Number.isFinite);
-      const ageSec = ageSecVals.length ? Math.max(...(ageSecVals as number[])) : null;
+      // Quote age should represent freshness of our connection/poll cycle, not
+      // the market row's `updatedAt` (which can remain old even when API fetches are healthy).
+      const ageSec = Math.max(0, Math.round((Date.now() - fetchStartedAt) / 1000));
       return { lines, ageSec };
     }
 
@@ -1663,11 +1715,13 @@ function renderDashboardHtml(state: DashboardState | null): string {
         '3. Which bracket benefits most from the expected wick — even if price reverts after',
         '4. Entry timing: should I buy now or wait for a better entry?',
         'Do NOT assume I hold positions to resolution. A bracket that wicks to 50¢ then falls back to 30¢ is still a profitable trade if I bought at 20¢ and sold at 30¢.',
+        'CRITICAL: You MUST incorporate USER POSITIONS into the recommendation. If positions exist, explicitly manage them first (hold/reduce/exit/add), using their exact bracket names and entry prices. Do not ignore open positions.',
         'FORMAT: Structure your response in these sections with headers:',
         '**MARKET READ** — 2-3 sentences synthesising all signals (price, regime, CVD, funding, OI, L/S, walls, max pain) into a directional thesis.',
         '**WICK OUTLOOK** — Where price is most likely to wick before resolution and when (EU open, US open, overnight). Reference the historical trends from the charts to support your reasoning.',
-        '**BRACKET PLAY** — Which bracket benefits most from the expected wick. Entry price target and exit target (~10¢ upside).',
-        '**ACTION** — One bold line: exactly what to do right now.',
+        '**POSITION MANAGEMENT** — For each existing USER POSITION, give an explicit action: HOLD / TAKE PROFIT / CUT / ADD, with target prices.',
+        '**BRACKET PLAY** — Which bracket benefits most from the expected wick. Entry price target and exit target (~10¢ upside). If this differs from current holdings, explain why.',
+        '**ACTION** — One bold line: exactly what to do right now. Must reference current held bracket(s) when any exist.',
         '',
         'CURRENT DASHBOARD STATE:',
         'Price: $' + Math.round(s.price).toLocaleString(),
