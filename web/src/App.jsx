@@ -144,7 +144,7 @@ function Header({ account, onConnect }) {
       <nav className="nav-links">
         <a href="#" className="nav-link active">Vault</a>
         <a href="#" className="nav-link">Governance</a>
-        <a href="#" className="nav-link">Docs</a>
+        <a href="https://everdraw.gitbook.io/everdraw" target="_blank" rel="noreferrer" className="nav-link">Docs</a>
       </nav>
       <button className="btn" onClick={onConnect}>
         {account ? shortAddr(account) : 'Connect Wallet'}
