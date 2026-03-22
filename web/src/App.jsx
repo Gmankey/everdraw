@@ -1241,11 +1241,7 @@ export default function App() {
                 <div className="deposit-cta-wrap">
                   <button
                     className="btn deposit-btn"
-<<<<<<< HEAD
-                    disabled={mainView !== 'current' || loading || wrongNetwork || !salesOpen || !walletAllowed}
-=======
-                    disabled={mainView !== 'current' || loading || !salesOpen}
->>>>>>> f3530a1 (web: auto switch/add Monad testnet on wallet actions)
+                    disabled={mainView !== 'current' || loading || !salesOpen || !walletAllowed}
                     onClick={account ? buyTickets : connectWallet}
                   >
                     {mainView !== 'current'
@@ -1256,21 +1252,13 @@ export default function App() {
                           ? 'Buy Unavailable'
                           : !account
                             ? 'Connect Wallet to Deposit'
-<<<<<<< HEAD
                             : !walletAllowed
                               ? 'Wallet Not Approved'
                               : wrongNetwork
-                                ? `Wrong network (need ${expectedChainId})`
+                                ? 'Wrong network — click Buy to switch automatically'
                                 : canBuyTx
                                   ? 'Buy Tickets'
                                   : 'Buy Unavailable'}
-=======
-                            : wrongNetwork
-                              ? 'Wrong network — click Buy to switch automatically'
-                              : canBuyTx
-                                ? 'Buy Tickets'
-                                : 'Buy Unavailable'}
->>>>>>> f3530a1 (web: auto switch/add Monad testnet on wallet actions)
                   </button>
                   {(loading || wrongNetwork || !salesOpen || !account || !walletAllowed || mainView !== 'current') && buyDisabledReason ? <p className="deposit-caption">{buyDisabledReason}</p> : null}
                 </div>
