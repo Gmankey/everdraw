@@ -603,6 +603,7 @@ export default function App() {
       if (!window.ethereum) throw new Error('No wallet found. Install MetaMask/Rabby.')
       const provider = new ethers.BrowserProvider(window.ethereum)
       await provider.send('eth_requestAccounts', [])
+      await ensureCorrectNetwork(provider, expectedChainId)
       const signer = await provider.getSigner()
       const addr = await signer.getAddress()
       setAccount(addr)
@@ -614,7 +615,7 @@ export default function App() {
     } catch (e) {
       setError(normalizeError(e) || 'Wallet connection failed')
     }
-  }, [])
+  }, [expectedChainId])
 
   useEffect(() => {
     if (!window.ethereum) return
