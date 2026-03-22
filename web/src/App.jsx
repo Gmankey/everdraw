@@ -1131,12 +1131,6 @@ export default function App() {
       <div className="app-container">
         <Header account={account} onConnect={connectWallet} />
 
-        {allowlistEnabled ? (
-          <p className="deposit-caption" style={{ color: walletAllowed || !account ? '#9fa5c0' : '#ff8ea1' }}>
-            Testnet allowlist is enabled via {allowlistManagedBy === 'edge-config' ? 'Edge Config' : 'env fallback'} ({walletAllowlist.length} wallet{walletAllowlist.length === 1 ? '' : 's'}).
-            {account ? (walletAllowed ? ' Connected wallet is approved.' : ' Connected wallet is NOT approved.') : ' Connect an approved wallet to transact.'}
-          </p>
-        ) : null}
 
         {vaultSummaries.length > 1 ? (
           <section className="vault-switcher">
