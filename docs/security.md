@@ -38,7 +38,7 @@ This documentation will be updated with the audit report link, scope, and findin
 
 The smart contract is fully verified on MonadVision. All source code, constructor arguments, and compiler settings are publicly readable and independently verifiable.
 
-[View verified contract →](https://monadexplorer.com/address/0x[MAINNET_ADDRESS]?tab=contract)
+[View verified contract →](https://monadexplorer.com/address/0x[MAINNET ADDRESS]?tab=contract)
 
 ---
 
