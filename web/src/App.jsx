@@ -332,7 +332,7 @@ export default function App() {
   const [now, setNow] = useState(Math.floor(Date.now() / 1000))
   const [showWinnersView, setShowWinnersView] = useState(false)
   const [winnersTransitioning, setWinnersTransitioning] = useState(false)
-  const [mainView, setMainView] = useState('current')
+  const [mainView, setMainView] = useState('vaultA')
   const [participants, setParticipants] = useState([])
   const [previousRoundId, setPreviousRoundId] = useState('0')
   const [previousRoundInfo, setPreviousRoundInfo] = useState(null)
@@ -343,6 +343,9 @@ export default function App() {
   const [actionError, setActionError] = useState('')
   const [myRounds, setMyRounds] = useState([])
   const [vaultSummaries, setVaultSummaries] = useState([])
+  const [settledRoundId, setSettledRoundId] = useState('0')
+  const [settledRoundInfo, setSettledRoundInfo] = useState(null)
+  const [settledParticipants, setSettledParticipants] = useState([])
   const [latestBlockNumber, setLatestBlockNumber] = useState(0)
   const [currentInternalEpoch, setCurrentInternalEpoch] = useState(0)
   const unlockAudioRef = useRef(null)
@@ -524,6 +527,23 @@ export default function App() {
       setPreviousParticipants([])
     }
 
+    // Find the latest settled round with tickets for the Previous Vault tab
+    let sRid = null, sInfo = null, sBuilt = []
+    for (let r = Number(rid) - 1; r >= Math.max(1, Number(rid) - 10); r--) {
+      try {
+        const si = await pool.getRoundInfo(BigInt(r))
+        if (Number(si.state) === 3 && Number(si.totalTickets) > 0) {
+          sRid = r
+          sInfo = si
+          sBuilt = await buildParticipantsForRound(r, si.totalTickets)
+          break
+        }
+      } catch { continue }
+    }
+    setSettledRoundId(sRid ? String(sRid) : '0')
+    setSettledRoundInfo(sInfo)
+    setSettledParticipants(sBuilt)
+
     const network = await provider.getNetwork()
     setConnectedChainId(Number(network.chainId))
 
@@ -643,6 +663,30 @@ export default function App() {
 
   const currentState = roundInfo ? Number(roundInfo.state) : null
   const isOpenState = currentState === 0
+
+  // Vault A = odd rounds, Vault B = even rounds
+  const currentRidNum = Number(roundId) || 0
+  const vaultARoundId = currentRidNum % 2 === 1 ? roundId : previousRoundId
+  const vaultARoundInfo = currentRidNum % 2 === 1 ? roundInfo : previousRoundInfo
+  const vaultAParticipants = currentRidNum % 2 === 1 ? participants : previousParticipants
+  const vaultBRoundId = currentRidNum % 2 === 0 ? roundId : previousRoundId
+  const vaultBRoundInfo = currentRidNum % 2 === 0 ? roundInfo : previousRoundInfo
+  const vaultBParticipants = currentRidNum % 2 === 0 ? participants : previousParticipants
+
+  const shownRoundId = mainView === 'vaultA' ? vaultARoundId
+    : mainView === 'vaultB' ? vaultBRoundId
+    : mainView === 'previous' ? settledRoundId
+    : roundId
+  const shownRoundInfo = mainView === 'vaultA' ? vaultARoundInfo
+    : mainView === 'vaultB' ? vaultBRoundInfo
+    : mainView === 'previous' ? settledRoundInfo
+    : roundInfo
+  const shownParticipants = mainView === 'vaultA' ? vaultAParticipants
+    : mainView === 'vaultB' ? vaultBParticipants
+    : mainView === 'previous' ? settledParticipants
+    : participants
+  const shownIsCurrentRound = shownRoundId === roundId
+  const shownVaultLabel = mainView === 'vaultA' ? 'Vault A' : mainView === 'vaultB' ? 'Vault B' : 'Previous Vault'
   const wrongNetwork = expectedChainId && connectedChainId && expectedChainId !== connectedChainId
   const salesOpen = isOpenState && secondsRemaining > 0
   const canBuyTx = !!account && salesOpen && !loading
@@ -799,14 +843,14 @@ export default function App() {
 
   const timerProgressPct = currentState === 0 ? progressPct : currentState === 3 ? 100 : 50
   const timerIsClock = /^\d+:\d{2}:\d{2}:\d{2}$/.test(timerCard.value)
-  const drawFinished = currentState === 3 || (currentState >= 2 && !!roundInfo && roundInfo.winner !== ethers.ZeroAddress)
-  const previousRoundVisible = previousRoundInfo && Number(previousRoundInfo.totalTickets) > 0 && Number(previousRoundInfo.state) >= 2
-  const activeRoundInfo = mainView === 'previous' && previousRoundInfo ? previousRoundInfo : roundInfo
-  const activeRoundId = mainView === 'previous' && previousRoundInfo ? previousRoundId : roundId
+  const shownState = shownRoundInfo ? Number(shownRoundInfo.state) : -1
+  const drawFinished = shownState === 3
+  const activeRoundInfo = shownRoundInfo ?? roundInfo
+  const activeRoundId = shownRoundId || roundId
 
   useEffect(() => {
-    if (!drawFinished && !previousRoundVisible) setShowWinnersView(false)
-  }, [drawFinished, previousRoundVisible])
+    if (!drawFinished) setShowWinnersView(false)
+  }, [drawFinished])
 
   const tvlMON = roundInfo ? Number(ethers.formatEther(roundInfo.totalPrincipalMON)).toFixed(4) : '...'
   const currentPrizePool = useMemo(() => {
@@ -831,13 +875,11 @@ export default function App() {
     }
   }, [estimatedApyPercent, roundDuration, roundInfo])
 
-  const winnersSource = mainView === 'previous' && previousRoundInfo
-    ? { rid: previousRoundId, info: previousRoundInfo, participants: previousParticipants }
-    : drawFinished
-      ? { rid: roundId, info: roundInfo, participants }
-      : previousRoundVisible
-        ? { rid: previousRoundId, info: previousRoundInfo, participants: previousParticipants }
-        : { rid: roundId, info: roundInfo, participants }
+  const winnersSource = {
+    rid: shownRoundId,
+    info: shownRoundInfo ?? roundInfo,
+    participants: shownParticipants,
+  }
 
   const winnerParticipant = useMemo(() => {
     if (!winnersSource.info?.winner) return null
@@ -1107,8 +1149,15 @@ export default function App() {
         </h1>
 
         <section className="round-toggle">
-          <button className={`toggle-btn ${mainView === 'current' ? 'active' : ''}`} onClick={() => setMainView('current')}>Current Vault</button>
-          <button className={`toggle-btn ${mainView === 'previous' ? 'active' : ''}`} onClick={() => setMainView('previous')} disabled={!previousRoundInfo}>Previous Vault</button>
+          <button className={`toggle-btn ${mainView === 'vaultA' ? 'active' : ''}`} onClick={() => setMainView('vaultA')}>
+            Vault A{vaultARoundId && Number(vaultARoundId) > 0 ? ` · #${vaultARoundId}` : ''}
+          </button>
+          <button className={`toggle-btn ${mainView === 'vaultB' ? 'active' : ''}`} onClick={() => setMainView('vaultB')}>
+            Vault B{vaultBRoundId && Number(vaultBRoundId) > 0 ? ` · #${vaultBRoundId}` : ''}
+          </button>
+          <button className={`toggle-btn ${mainView === 'previous' ? 'active' : ''}`} onClick={() => setMainView('previous')} disabled={!settledRoundInfo}>
+            Previous Vault
+          </button>
           <button className={`toggle-btn ${mainView === 'myrounds' ? 'active' : ''}`} onClick={() => setMainView('myrounds')}>My Rounds</button>
         </section>
 
@@ -1130,7 +1179,7 @@ export default function App() {
                 <div className="participants-row" key={r.rid}>
                   <span>{r.rid}</span>
                   <span>Round #{r.rid} · {STATE_LABELS[r.state] || 'Unknown'}</span>
-                  <span>{r.isWinner ? 'Winner' : 'Participant'}</span>
+                  <span>{r.state < 3 ? (r.isWinner ? '🔒 Drawn' : '🔒 Locked') : (r.isWinner ? '🏆 Winner' : 'Participant')}</span>
                   <span>{r.principalMon} MON</span>
                   <span>
                     {r.canWithdraw ? (
@@ -1152,7 +1201,21 @@ export default function App() {
             <div className="card">
               <div className="card-header">
                 <div className="card-title">Buy Tickets</div>
+                {shownRoundId && Number(shownRoundId) > 0 ? (
+                  <div style={{ fontSize: '0.82rem', color: 'rgba(155,109,255,0.8)', marginTop: '2px' }}>
+                    {shownVaultLabel} · Round #{shownRoundId}
+                  </div>
+                ) : null}
               </div>
+
+              {(mainView === 'vaultA' || mainView === 'vaultB') && !shownIsCurrentRound ? (
+                <div style={{ background: 'rgba(155,109,255,0.08)', border: '1px solid rgba(155,109,255,0.25)', borderRadius: '12px', padding: '20px', margin: '8px 0 16px', textAlign: 'center' }}>
+                  <div style={{ fontSize: '2rem', marginBottom: '8px' }}>🔒</div>
+                  <div style={{ color: '#ede8ff', fontWeight: 600 }}>Vault {mainView === 'vaultA' ? 'A' : 'B'} · Round #{shownRoundId} is Locked</div>
+                  <div style={{ color: '#8d82ac', fontSize: '0.85rem', marginTop: '6px' }}>ShMON unstaking in progress · Your principal is safe</div>
+                  <div style={{ color: '#9B6DFF', fontSize: '0.82rem', marginTop: '4px' }}>Check My Rounds to track your position</div>
+                </div>
+              ) : null}
 
               <div className="deposit-area">
                 <div className="input-group">
@@ -1163,7 +1226,7 @@ export default function App() {
                       step="1"
                       value={ticketCountInput}
                       onChange={(e) => setTicketCountInput(e.target.value)}
-                      disabled={mainView !== 'current'}
+                      disabled={!shownIsCurrentRound}
                     />
                     <span className="currency-label">tickets</span>
                   </div>
@@ -1181,11 +1244,11 @@ export default function App() {
                 <div className="deposit-cta-wrap">
                   <button
                     className="btn deposit-btn"
-                    disabled={mainView !== 'current' || loading || !salesOpen}
+                    disabled={!shownIsCurrentRound || loading || !salesOpen}
                     onClick={account ? buyTickets : connectWallet}
                   >
-                    {mainView !== 'current'
-                      ? 'Switch to Current Vault'
+                    {!shownIsCurrentRound
+                      ? 'This Vault is Locked'
                       : loading
                         ? 'Submitting...'
                         : !salesOpen
@@ -1198,7 +1261,7 @@ export default function App() {
                                 ? 'Buy Tickets'
                                 : 'Buy Unavailable'}
                   </button>
-                  {(loading || wrongNetwork || !salesOpen || !account || mainView !== 'current') && buyDisabledReason ? <p className="deposit-caption">{buyDisabledReason}</p> : null}
+                  {(loading || wrongNetwork || !salesOpen || !account || !shownIsCurrentRound) && buyDisabledReason ? <p className="deposit-caption">{buyDisabledReason}</p> : null}
                 </div>
 
                 {status ? <p className="deposit-caption">{status}</p> : null}
@@ -1206,11 +1269,11 @@ export default function App() {
               </div>
             </div>
 
-            {(mainView === 'previous' || drawFinished) ? (
+            {drawFinished ? (
               <VaultAnimationTest onComplete={() => setShowWinnersView(true)} />
             ) : (
               <div className={`card filled vault-card ${winnersTransitioning ? 'to-winners' : ''}`} id="vault-card">
-                <VaultDoorBackground progressPct={mainView === 'previous' ? 100 : timerProgressPct} salesOpen={mainView === 'current' ? salesOpen : false} />
+                <VaultDoorBackground progressPct={shownState === 3 ? 100 : shownIsCurrentRound ? timerProgressPct : 50} salesOpen={shownIsCurrentRound ? salesOpen : false} />
 
                 <div className="card-header vault-layer">
                   <div className="card-title">{timerCard.heading}</div>
@@ -1289,8 +1352,8 @@ export default function App() {
               />
               <StatCard
                 label="Winner"
-                value={activeRoundInfo ? shortAddr(activeRoundInfo.winner) : '...'}
-                sub={activeRoundInfo ? `Winning ticket: ${activeRoundInfo.winningTicket}` : ''}
+                value={activeRoundInfo && Number(activeRoundInfo.state) === 3 ? shortAddr(activeRoundInfo.winner) : '—'}
+                sub={activeRoundInfo && Number(activeRoundInfo.state) === 3 ? `Winning ticket: ${activeRoundInfo.winningTicket}` : 'Revealed at settlement'}
                 icon={(
                   <svg viewBox="0 0 24 24"><path fill="currentColor" d="M6 4h12v3a4 4 0 0 1-4 4h-1v2.08A4 4 0 0 1 16 17v2H8v-2a4 4 0 0 1 3-3.87V11h-1a4 4 0 0 1-4-4V4z"/></svg>
                 )}
