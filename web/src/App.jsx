@@ -611,7 +611,9 @@ export default function App() {
       const pool = new ethers.Contract(poolAddress, POOL_ABI, signer)
 
       const value = ticketPrice * BigInt(n)
-      const tx = await pool.buyTickets(n, { value })
+      // Explicit gas limit avoids Rabby/wallet simulation failures on Monad testnet
+      const gasLimit = 300000n + 50000n * BigInt(n)
+      const tx = await pool.buyTickets(n, { value, gasLimit })
       setStatus(`Submitted: ${tx.hash.slice(0, 10)}... waiting for confirmation...`)
 
       await tx.wait()
@@ -987,7 +989,7 @@ export default function App() {
   const handleClaimPrize = useCallback(async () => {
     if (!winnersRoundId) return
     await runSignedAction('Claim prize', async (pool) => {
-      const tx = await pool.claimPrize(BigInt(winnersRoundId))
+      const tx = await pool.claimPrize(BigInt(winnersRoundId), { gasLimit: 500000n })
       setActionStatus(`Claim prize: submitted ${tx.hash.slice(0, 10)}...`)
       await tx.wait()
     })
@@ -996,7 +998,7 @@ export default function App() {
   const handleWithdraw = useCallback(async () => {
     if (!winnersRoundId) return
     await runSignedAction('Withdraw', async (pool) => {
-      const tx = await pool.withdrawPrincipal(BigInt(winnersRoundId))
+      const tx = await pool.withdrawPrincipal(BigInt(winnersRoundId), { gasLimit: 500000n })
       setActionStatus(`Withdraw: submitted ${tx.hash.slice(0, 10)}...`)
       await tx.wait()
     })
@@ -1004,7 +1006,7 @@ export default function App() {
 
   const handleWithdrawForRound = useCallback(async (rid) => {
     await runSignedAction(`Withdraw (Round #${rid})`, async (pool) => {
-      const tx = await pool.withdrawPrincipal(BigInt(rid))
+      const tx = await pool.withdrawPrincipal(BigInt(rid), { gasLimit: 500000n })
       setActionStatus(`Withdraw (Round #${rid}): submitted ${tx.hash.slice(0, 10)}...`)
       await tx.wait()
     })
