@@ -1,0 +1,12 @@
+export default {
+  index: 'Introduction',
+  'why-everdraw': 'Why EverDraw',
+  'how-it-works': 'How It Works',
+  'shmon-partnership': 'ShMON Partnership',
+  'getting-started': 'Getting Started',
+  'for-protocols': 'For Protocols',
+  vision: 'Vision',
+  developers: 'Developers',
+  security: 'Security',
+  faq: 'FAQ',
+}
