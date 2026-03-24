@@ -307,6 +307,26 @@ function WinnersView({ onBack, winner, prize, participants, participantCount, wi
   )
 }
 
+function RoundProgressSteps({ state, prizeClaimed }) {
+  const steps = ['Deposit', 'Yield Accumulating', 'Winner Selected', 'Settlement', 'Distributed']
+  let activeStep = 0
+  if (state === 1 || state === 2) activeStep = 1
+  if (state === 3) activeStep = 3
+  if (state === 3 && prizeClaimed) activeStep = 4
+
+  return (
+    <section className="round-steps">
+      {steps.map((label, i) => (
+        <div key={label} className={`step ${i < activeStep ? 'done' : i === activeStep ? 'active' : ''}`}>
+          {i < steps.length - 1 && <div className="step-line" />}
+          <div className="step-circle">{i < activeStep ? '✓' : i + 1}</div>
+          <div className="step-label">{label}</div>
+        </div>
+      ))}
+    </section>
+  )
+}
+
 export default function App() {
   const poolAddresses = useMemo(() => parsePoolAddresses(), [])
   const [selectedPoolAddress, setSelectedPoolAddress] = useState(poolAddresses[0] || '')
@@ -742,6 +762,28 @@ export default function App() {
   }, [roundInfo, latestBlockNumber, currentInternalEpoch])
 
   const timerCard = useMemo(() => {
+    // Viewing a locked (non-current) vault — override all text
+    if (!shownIsCurrentRound) {
+      if (shownState === 2) {
+        return {
+          heading: 'Vault Locked — Accumulating Yield',
+          value: '🔒',
+          sub: 'ShMON staking yield building for winner',
+          metaLabel: 'Status',
+          metaValue: 'Finalizing'
+        }
+      }
+      if (shownState === 1) {
+        return {
+          heading: 'Vault Locked — Draw In Progress',
+          value: '🔒',
+          sub: 'Winner selection underway',
+          metaLabel: 'Status',
+          metaValue: 'Committed'
+        }
+      }
+    }
+
     if (currentState === 0) {
       if (secondsRemaining > 0) {
         return {
@@ -839,7 +881,7 @@ export default function App() {
       metaLabel: 'Progress',
       metaValue: '0%'
     }
-  }, [currentState, nextAction, progressPct, secondsRemaining, roundInfo, settlementSecondsRemaining, currentInternalEpoch])
+  }, [currentState, nextAction, progressPct, secondsRemaining, roundInfo, settlementSecondsRemaining, currentInternalEpoch, shownIsCurrentRound, shownState])
 
   const timerProgressPct = currentState === 0 ? progressPct : currentState === 3 ? 100 : 50
   const timerIsClock = /^\d+:\d{2}:\d{2}:\d{2}$/.test(timerCard.value)
@@ -1149,12 +1191,8 @@ export default function App() {
         </h1>
 
         <section className="round-toggle">
-          <button className={`toggle-btn ${mainView === 'vaultA' ? 'active' : ''}`} onClick={() => setMainView('vaultA')}>
-            Vault A{vaultARoundId && Number(vaultARoundId) > 0 ? ` · #${vaultARoundId}` : ''}
-          </button>
-          <button className={`toggle-btn ${mainView === 'vaultB' ? 'active' : ''}`} onClick={() => setMainView('vaultB')}>
-            Vault B{vaultBRoundId && Number(vaultBRoundId) > 0 ? ` · #${vaultBRoundId}` : ''}
-          </button>
+          <button className={`toggle-btn ${mainView === 'vaultA' ? 'active' : ''}`} onClick={() => setMainView('vaultA')}>Vault A</button>
+          <button className={`toggle-btn ${mainView === 'vaultB' ? 'active' : ''}`} onClick={() => setMainView('vaultB')}>Vault B</button>
           <button className={`toggle-btn ${mainView === 'previous' ? 'active' : ''}`} onClick={() => setMainView('previous')} disabled={!settledRoundInfo}>
             Previous Vault
           </button>
@@ -1207,15 +1245,6 @@ export default function App() {
                   </div>
                 ) : null}
               </div>
-
-              {(mainView === 'vaultA' || mainView === 'vaultB') && !shownIsCurrentRound ? (
-                <div style={{ background: 'rgba(155,109,255,0.08)', border: '1px solid rgba(155,109,255,0.25)', borderRadius: '12px', padding: '20px', margin: '8px 0 16px', textAlign: 'center' }}>
-                  <div style={{ fontSize: '2rem', marginBottom: '8px' }}>🔒</div>
-                  <div style={{ color: '#ede8ff', fontWeight: 600 }}>Vault {mainView === 'vaultA' ? 'A' : 'B'} · Round #{shownRoundId} is Locked</div>
-                  <div style={{ color: '#8d82ac', fontSize: '0.85rem', marginTop: '6px' }}>ShMON unstaking in progress · Your principal is safe</div>
-                  <div style={{ color: '#9B6DFF', fontSize: '0.82rem', marginTop: '4px' }}>Check My Rounds to track your position</div>
-                </div>
-              ) : null}
 
               <div className="deposit-area">
                 <div className="input-group">
@@ -1295,6 +1324,13 @@ export default function App() {
             )}
           </section>
         )}
+
+        {mainView !== 'myrounds' ? (
+          <RoundProgressSteps
+            state={shownState >= 0 ? shownState : 0}
+            prizeClaimed={!!shownRoundInfo?.prizeClaimed}
+          />
+        ) : null}
 
         <section className="stats-grid two-col">
           {mainView === 'myrounds' ? (
