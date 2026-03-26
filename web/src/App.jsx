@@ -786,6 +786,9 @@ export default function App() {
     return Math.ceil(blocksLeft * BLOCK_TIME_SEC)
   }, [roundInfo, latestBlockNumber, currentInternalEpoch])
 
+  // Must be declared before timerCard to avoid temporal dead zone
+  const isDeadRound = shownState === 3 && Number(shownRoundInfo?.totalTickets ?? 0) === 0
+
   const timerCard = useMemo(() => {
     // Dead round (skipped — state 3 with 0 tickets)
     if (isDeadRound) {
@@ -972,7 +975,6 @@ export default function App() {
   }, [shownIsCurrentRound, settlementSecondsRemaining, shownRoundInfo, currentInternalEpoch, latestBlockNumber])
 
   const isUnstaking = shownState === 2 && shownSettlementSecs > 0 && shownSettlementSecs <= 86400
-  const isDeadRound = shownState === 3 && Number(shownRoundInfo?.totalTickets ?? 0) === 0
   const drawFinished = !isDeadRound && (shownState === 3 || isUnstaking)
   const activeRoundInfo = shownRoundInfo ?? roundInfo
   const activeRoundId = shownRoundId || roundId
