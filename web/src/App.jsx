@@ -247,23 +247,28 @@ function VaultDoorBackground({ progressPct, salesOpen }) {
   )
 }
 
-function WinnersView({ onBack, winner, prize, participants, participantCount, winnerTickets, canClaim, canWithdraw, settlementLabel, settlementCountdown, onClaimPrize, onWithdraw, actionBusy, actionStatus, actionError }) {
+function WinnersView({ onBack, winner, winnerAddress, prize, participants, participantCount, winnerTickets, totalTickets, roundNumber, isUnstaking, canClaim, canWithdraw, settlementLabel, settlementCountdown, onClaimPrize, onWithdraw, actionBusy, actionStatus, actionError }) {
+  const winProbText = typeof winnerTickets === 'number' && totalTickets > 0
+    ? `Won with ${((winnerTickets / totalTickets) * 100).toFixed(1)}% chance (${winnerTickets} of ${totalTickets} tickets)`
+    : null
+
   return (
     <div className="winners-view-page">
       <div className="winners-back-wrap">
-        <button className="back-link" onClick={onBack}>← Back to Vault</button>
+        <button className="back-link" onClick={onBack}>{'\u2190'} Back to Vault</button>
       </div>
 
       <div className="winners-hero">
-        <h2>Draw Complete</h2>
+        <h2>{isUnstaking ? 'Winner Revealed' : 'Draw Complete'}</h2>
         <p>{settlementLabel}</p>
+        {roundNumber > 0 && <p className="round-label-hero">Round {roundNumber}</p>}
       </div>
 
       <div className="winner-spotlight-card">
         <div className="winner-address">{winner}</div>
         <div className="winner-stats">
           <div>
-            <span>Prize Won</span>
+            <span>{isUnstaking ? 'Est. Prize' : 'Prize Won'}</span>
             <strong>{prize}</strong>
           </div>
           <div>
@@ -271,7 +276,12 @@ function WinnersView({ onBack, winner, prize, participants, participantCount, wi
             <strong>{typeof winnerTickets === 'number' ? winnerTickets.toLocaleString() : winnerTickets}</strong>
           </div>
         </div>
-        {canClaim ? <button className="btn" onClick={onClaimPrize} disabled={actionBusy}>Claim Prize</button> : null}
+        {winProbText && <div className="win-probability">{winProbText}</div>}
+        {isUnstaking ? (
+          <button className="btn" disabled>Available after settlement</button>
+        ) : canClaim ? (
+          <button className="btn" onClick={onClaimPrize} disabled={actionBusy}>Claim Prize</button>
+        ) : null}
       </div>
 
       <div className="participants-card">
@@ -285,19 +295,32 @@ function WinnersView({ onBack, winner, prize, participants, participantCount, wi
           </div>
           {participants.length === 0 ? (
             <div className="participants-row">
-              <span>—</span><span>No participants indexed yet</span><span>0</span><span>0.00%</span><span>0.0000 MON</span>
+              <span>{'\u2014'}</span><span>No participants indexed yet</span><span>0</span><span>0.00%</span><span>0.0000 MON</span>
             </div>
-          ) : participants.map((p, i) => (
-            <div className="participants-row" key={`${p.wallet}-${i}`}>
-              <span>{i + 1}</span><span>{p.walletShort}</span><span>{p.tickets.toLocaleString()}</span><span>{p.sharePct}%</span><span>{p.depositedMon} MON</span>
-            </div>
-          ))}
+          ) : participants.map((p, i) => {
+            const isWinnerRow = winnerAddress && p.wallet.toLowerCase() === winnerAddress.toLowerCase()
+            return (
+              <div className={`participants-row${isWinnerRow ? ' winner-row' : ''}`} key={`${p.wallet}-${i}`}>
+                <span>{i + 1}</span>
+                <span>{p.walletShort}{isWinnerRow ? ' [Winner]' : ''}</span>
+                <span>{p.tickets.toLocaleString()}</span>
+                <span>{p.sharePct}%</span>
+                <span>{p.depositedMon} MON</span>
+              </div>
+            )
+          })}
         </div>
       </div>
 
       <div className="winners-actions-grid">
-        <button className="btn ghost-btn" onClick={onWithdraw} disabled={actionBusy || !canWithdraw}>
-          {canWithdraw ? 'Withdraw Tokens' : `Withdraw Tokens (${settlementCountdown})`}
+        <button className="btn ghost-btn" onClick={onWithdraw} disabled={actionBusy || !canWithdraw || isUnstaking}>
+          {isUnstaking
+            ? 'Available after settlement'
+            : canWithdraw
+              ? 'Withdraw Tokens'
+              : settlementCountdown === '00:00:00:00'
+                ? 'No principal to withdraw'
+                : `Withdraw Tokens (${settlementCountdown})`}
         </button>
       </div>
 
@@ -307,19 +330,20 @@ function WinnersView({ onBack, winner, prize, participants, participantCount, wi
   )
 }
 
-function RoundProgressSteps({ state, prizeClaimed }) {
-  const steps = ['Deposit', 'Yield Accumulating', 'Winner Selected', 'Settlement', 'Distributed']
+function RoundProgressSteps({ state, settlementSecs }) {
+  const steps = ['Deposit', 'Yield Accumulating', 'Winner Revealed', 'Unstaking ShMON', 'Claim / Withdraw']
   let activeStep = 0
-  if (state === 1 || state === 2) activeStep = 1
-  if (state === 3) activeStep = 3
-  if (state === 3 && prizeClaimed) activeStep = 4
+  if (state === 1) activeStep = 1
+  if (state === 2 && settlementSecs > 86400) activeStep = 1  // Still yield (>24h left)
+  if (state === 2 && settlementSecs <= 86400) activeStep = 3  // Unstaking (<=24h left, winner done)
+  if (state === 3) activeStep = 4  // Claim / Withdraw
 
   return (
     <section className="round-steps">
       {steps.map((label, i) => (
         <div key={label} className={`step ${i < activeStep ? 'done' : i === activeStep ? 'active' : ''}`}>
           {i < steps.length - 1 && <div className="step-line" />}
-          <div className="step-circle">{i < activeStep ? '✓' : i + 1}</div>
+          <div className="step-circle">{i < activeStep ? '\u2713' : i + 1}</div>
           <div className="step-label">{label}</div>
         </div>
       ))}
@@ -657,7 +681,7 @@ export default function App() {
       setStatus(`Submitted: ${tx.hash.slice(0, 10)}... waiting for confirmation...`)
 
       await tx.wait()
-      setStatus('Buy successful ✅')
+      setStatus('Buy successful')
       // Unblock button immediately so user can buy again without waiting on extra reads.
       setLoading(false)
       refresh().catch(() => {})
@@ -706,6 +730,7 @@ export default function App() {
     : mainView === 'previous' ? settledParticipants
     : participants
   const shownIsCurrentRound = shownRoundId === roundId
+  const shownState = shownRoundInfo ? Number(shownRoundInfo.state) : -1
   const shownVaultLabel = mainView === 'vaultA' ? 'Vault A' : mainView === 'vaultB' ? 'Vault B' : 'Previous Vault'
   const wrongNetwork = expectedChainId && connectedChainId && expectedChainId !== connectedChainId
   const salesOpen = isOpenState && secondsRemaining > 0
@@ -762,24 +787,53 @@ export default function App() {
   }, [roundInfo, latestBlockNumber, currentInternalEpoch])
 
   const timerCard = useMemo(() => {
+    // Dead round (skipped — state 3 with 0 tickets)
+    if (isDeadRound) {
+      return {
+        heading: 'Vault Cycling',
+        value: 'Resetting',
+        sub: 'This vault is preparing for the next deposit window',
+        metaLabel: 'Vault status',
+        metaValue: 'Cycling'
+      }
+    }
+
     // Viewing a locked (non-current) vault — override all text
     if (!shownIsCurrentRound) {
-      if (shownState === 2) {
-        return {
-          heading: 'Vault Locked — Accumulating Yield',
-          value: '🔒',
-          sub: 'ShMON staking yield building for winner',
-          metaLabel: 'Status',
-          metaValue: 'Finalizing'
+      if (shownState === 2 || shownState === 1) {
+        const completionEpoch = shownRoundInfo ? Number(shownRoundInfo.unstakeCompletionEpoch ?? 0) : 0
+        const epochBased = completionEpoch > 0 && currentInternalEpoch > 0
+        const EPOCH_LENGTH = 50_000
+        const BLOCK_TIME_SEC = 0.4
+        let nonCurrentSettleSecs = 0
+        if (epochBased && latestBlockNumber > 0) {
+          const epochsLeft = completionEpoch - currentInternalEpoch
+          if (epochsLeft > 0) {
+            const blocksIntoEpoch = latestBlockNumber % EPOCH_LENGTH
+            const blocksRemaining = (EPOCH_LENGTH - blocksIntoEpoch) + (epochsLeft - 1) * EPOCH_LENGTH
+            nonCurrentSettleSecs = Math.max(0, Math.ceil(blocksRemaining * BLOCK_TIME_SEC))
+          }
         }
-      }
-      if (shownState === 1) {
+
+        // Unstaking phase: <=24h remaining
+        if (nonCurrentSettleSecs > 0 && nonCurrentSettleSecs <= 86400) {
+          return {
+            heading: 'Winner Revealed',
+            value: formatCountdown(nonCurrentSettleSecs),
+            sub: 'Unstaking ShMON \u2014 settling soon',
+            metaLabel: 'Next action',
+            metaValue: 'Settle'
+          }
+        }
+
         return {
-          heading: 'Vault Locked — Draw In Progress',
-          value: '🔒',
-          sub: 'Winner selection underway',
-          metaLabel: 'Status',
-          metaValue: 'Committed'
+          heading: 'Vault Locked \u2014 Accumulating Yield',
+          value: nonCurrentSettleSecs > 0 ? formatCountdown(nonCurrentSettleSecs) : 'Finalizing\u2026',
+          sub: epochBased
+            ? `Unstake epoch ${currentInternalEpoch} / ${completionEpoch}`
+            : 'ShMON staking yield building for winner',
+          metaLabel: 'Est. unlock',
+          metaValue: nonCurrentSettleSecs > 0 ? formatCountdown(nonCurrentSettleSecs) : 'Soon'
         }
       }
     }
@@ -841,21 +895,33 @@ export default function App() {
       const completionEpoch = roundInfo ? Number(roundInfo.unstakeCompletionEpoch ?? 0) : 0
       const epochBased = completionEpoch > 0 && currentInternalEpoch > 0
 
-      if (settlementSecondsRemaining > 0) {
+      // Unstaking phase: <=24h remaining — winner revealed, ShMON unstaking
+      if (settlementSecondsRemaining > 0 && settlementSecondsRemaining <= 86400) {
         return {
-          heading: 'Winner Drawn - Vault Awaiting Settlement',
+          heading: 'Winner Revealed',
           value: formatCountdown(settlementSecondsRemaining),
-          sub: epochBased
-            ? `Unstake epoch ${currentInternalEpoch}/${completionEpoch}`
-            : `Estimated settle at block ${targetBlock.toLocaleString()}`,
+          sub: 'Unstaking ShMON \u2014 settling soon',
           metaLabel: 'Next action',
           metaValue: ACTION_LABELS[nextAction] ?? 'Settle'
         }
       }
 
+      // Yield accumulation phase: >24h remaining — vault locked
+      if (settlementSecondsRemaining > 86400) {
+        return {
+          heading: 'Vault Locked \u2014 Accumulating Yield',
+          value: formatCountdown(settlementSecondsRemaining),
+          sub: epochBased
+            ? `Unstake epoch ${currentInternalEpoch}/${completionEpoch}`
+            : 'ShMON yield building for prize',
+          metaLabel: 'Est. unlock',
+          metaValue: formatCountdown(Math.max(0, settlementSecondsRemaining - 86400))
+        }
+      }
+
       return {
-        heading: 'Winner Drawn - Vault Awaiting Settlement',
-        value: 'Finalizing…',
+        heading: 'Winner Revealed',
+        value: 'Finalizing\u2026',
         sub: epochBased
           ? `Unstake epoch ${currentInternalEpoch}/${completionEpoch}`
           : (targetBlock > 0 ? `Target block ${targetBlock.toLocaleString()}` : 'Unstake requested, waiting for settlement'),
@@ -885,8 +951,29 @@ export default function App() {
 
   const timerProgressPct = currentState === 0 ? progressPct : currentState === 3 ? 100 : 50
   const timerIsClock = /^\d+:\d{2}:\d{2}:\d{2}$/.test(timerCard.value)
-  const shownState = shownRoundInfo ? Number(shownRoundInfo.state) : -1
-  const drawFinished = shownState === 3
+
+  // Compute settlement seconds for the shown round (not just the current round)
+  const shownSettlementSecs = useMemo(() => {
+    if (shownIsCurrentRound) return settlementSecondsRemaining
+    if (!shownRoundInfo) return 0
+    const st = Number(shownRoundInfo.state)
+    if (st === 3 || (st !== 1 && st !== 2)) return 0
+    const completionEpoch = Number(shownRoundInfo.unstakeCompletionEpoch ?? 0)
+    if (completionEpoch > 0 && currentInternalEpoch > 0) {
+      const EPOCH_LENGTH = 50_000
+      const BLOCK_TIME_SEC = 0.4
+      const epochsLeft = completionEpoch - currentInternalEpoch
+      if (epochsLeft <= 0) return 0
+      const blocksIntoEpoch = latestBlockNumber % EPOCH_LENGTH
+      const blocksRemaining = (EPOCH_LENGTH - blocksIntoEpoch) + (epochsLeft - 1) * EPOCH_LENGTH
+      return Math.max(0, Math.ceil(blocksRemaining * BLOCK_TIME_SEC))
+    }
+    return 0
+  }, [shownIsCurrentRound, settlementSecondsRemaining, shownRoundInfo, currentInternalEpoch, latestBlockNumber])
+
+  const isUnstaking = shownState === 2 && shownSettlementSecs > 0 && shownSettlementSecs <= 86400
+  const isDeadRound = shownState === 3 && Number(shownRoundInfo?.totalTickets ?? 0) === 0
+  const drawFinished = !isDeadRound && (shownState === 3 || isUnstaking)
   const activeRoundInfo = shownRoundInfo ?? roundInfo
   const activeRoundId = shownRoundId || roundId
 
@@ -1061,7 +1148,7 @@ export default function App() {
       const pool = new ethers.Contract(poolAddress, POOL_ABI, signer)
       await fn(pool)
       await refresh()
-      setActionStatus(`${label}: success ✅`)
+      setActionStatus(`${label}: success`)
     } catch (e) {
       setActionStatus('')
       setActionError(normalizeError(e) || `${label} failed`)
@@ -1137,15 +1224,37 @@ export default function App() {
         <div className="app-container">
           <WinnersView
             onBack={() => setShowWinnersView(false)}
-            winner={winnersSource.info ? shortAddr(winnersSource.info.winner) : '—'}
-            prize={winnersSource.info ? `${Number(ethers.formatEther(winnersSource.info.yieldMON)).toFixed(4)} MON` : currentPrizePool.value}
+            winner={winnersSource.info ? shortAddr(winnersSource.info.winner) : '\u2014'}
+            winnerAddress={winnersSource.info ? String(winnersSource.info.winner) : ''}
+            prize={
+              isUnstaking && winnersSource.info
+                ? `~${Number(ethers.formatEther(winnersSource.info.yieldMON || 0n)).toFixed(4)} MON (estimated)`
+                : winnersSource.info
+                  ? `${Number(ethers.formatEther(winnersSource.info.yieldMON)).toFixed(4)} MON`
+                  : currentPrizePool.value
+            }
             participants={winnersSource.participants}
             participantCount={winnersSource.participants.length}
             winnerTickets={winnerTicketsDisplay}
+            totalTickets={winnersSource.info ? Number(winnersSource.info.totalTickets) : 0}
+            roundNumber={Number(winnersSource.rid) || 0}
+            isUnstaking={isUnstaking}
             canClaim={canClaimPrize}
             canWithdraw={canWithdrawPrincipal}
-            settlementLabel={Number(winnersSource?.info?.state ?? -1) === 3 ? 'Settled — Withdraw Available' : 'Winner Drawn - Vault Awaiting Settlement'}
-            settlementCountdown={previousSettlementCountdown}
+            settlementLabel={
+              isUnstaking
+                ? `Unstaking ShMON \u2014 settling in ${formatCountdown(shownSettlementSecs)}`
+                : Number(winnersSource?.info?.state ?? -1) === 3
+                  ? 'Settled \u2014 Withdraw Available'
+                  : 'Winner Drawn - Vault Awaiting Settlement'
+            }
+            settlementCountdown={
+              Number(winnersSource?.info?.state ?? -1) === 3
+                ? '00:00:00:00'
+                : shownSettlementSecs > 0
+                  ? formatCountdown(shownSettlementSecs)
+                  : previousSettlementCountdown
+            }
             onClaimPrize={handleClaimPrize}
             onWithdraw={handleWithdraw}
             actionBusy={actionBusy}
@@ -1213,11 +1322,16 @@ export default function App() {
                 <div className="participants-row">
                   <span>—</span><span>No prior rounds found for this wallet</span><span>—</span><span>0.0000 MON</span><span>—</span>
                 </div>
-              ) : myRounds.map((r) => (
+              ) : myRounds.map((r) => {
+                const myRoundStatusLabel = r.state === 0 ? 'Accepting Deposits'
+                  : r.state === 3 ? 'Settled'
+                  : 'Yield Accumulating'
+                const myRoundResultLabel = r.state < 3 ? 'Locked' : (r.isWinner ? 'Winner' : 'Participant')
+                return (
                 <div className="participants-row" key={r.rid}>
                   <span>{r.rid}</span>
-                  <span>Round #{r.rid} · {STATE_LABELS[r.state] || 'Unknown'}</span>
-                  <span>{r.state < 3 ? (r.isWinner ? '🔒 Drawn' : '🔒 Locked') : (r.isWinner ? '🏆 Winner' : 'Participant')}</span>
+                  <span>Round #{r.rid} {'\u00B7'} {myRoundStatusLabel}</span>
+                  <span>{myRoundResultLabel}</span>
                   <span>{r.principalMon} MON</span>
                   <span>
                     {r.canWithdraw ? (
@@ -1228,10 +1342,17 @@ export default function App() {
                       >
                         {actionBusy ? 'Withdrawing...' : 'Withdraw'}
                       </button>
+                    ) : r.state === 0 ? (
+                      <button
+                        className="max-btn"
+                        onClick={() => setMainView(Number(r.rid) % 2 === 1 ? 'vaultA' : 'vaultB')}
+                      >
+                        Deposit Now
+                      </button>
                     ) : 'Waiting'}
                   </span>
                 </div>
-              ))}
+              )})}
             </div>
           </section>
         ) : (
@@ -1276,7 +1397,9 @@ export default function App() {
                     disabled={!shownIsCurrentRound || loading || !salesOpen}
                     onClick={account ? buyTickets : connectWallet}
                   >
-                    {!shownIsCurrentRound
+                    {isDeadRound
+                      ? 'Vault Cycling — Next Round Soon'
+                      : !shownIsCurrentRound
                       ? 'This Vault is Locked'
                       : loading
                         ? 'Submitting...'
@@ -1306,12 +1429,6 @@ export default function App() {
 
                 <div className="card-header vault-layer">
                   <div className="card-title">{timerCard.heading}</div>
-                  <div className="card-icon" aria-hidden="true">
-                    <svg viewBox="0 0 24 24">
-                      <circle cx="12" cy="12" r="10" stroke="white" strokeWidth="2" fill="none" />
-                      <circle cx="12" cy="12" r="3" fill="white" />
-                    </svg>
-                  </div>
                 </div>
 
                 <div className="countdown-center vault-layer vault-center">
@@ -1328,7 +1445,7 @@ export default function App() {
         {mainView !== 'myrounds' ? (
           <RoundProgressSteps
             state={shownState >= 0 ? shownState : 0}
-            prizeClaimed={!!shownRoundInfo?.prizeClaimed}
+            settlementSecs={shownSettlementSecs}
           />
         ) : null}
 
@@ -1388,16 +1505,28 @@ export default function App() {
               />
               <StatCard
                 label="Winner"
-                value={activeRoundInfo && Number(activeRoundInfo.state) === 3 ? shortAddr(activeRoundInfo.winner) : '—'}
-                sub={activeRoundInfo && Number(activeRoundInfo.state) === 3 ? `Winning ticket: ${activeRoundInfo.winningTicket}` : 'Revealed at settlement'}
+                value={activeRoundInfo && (Number(activeRoundInfo.state) === 3 || isUnstaking) ? shortAddr(activeRoundInfo.winner) : '\u2014'}
+                sub={activeRoundInfo && (Number(activeRoundInfo.state) === 3 || isUnstaking) ? `Winning ticket: ${activeRoundInfo.winningTicket}` : 'Revealed at settlement'}
                 icon={(
                   <svg viewBox="0 0 24 24"><path fill="currentColor" d="M6 4h12v3a4 4 0 0 1-4 4h-1v2.08A4 4 0 0 1 16 17v2H8v-2a4 4 0 0 1 3-3.87V11h-1a4 4 0 0 1-4-4V4z"/></svg>
                 )}
               />
               <StatCard
-                label="Current Prize Pool"
-                value={activeRoundInfo && Number(activeRoundInfo.state) === 3 ? `${Number(ethers.formatEther(activeRoundInfo.yieldMON)).toFixed(4)} MON` : currentPrizePool.value}
-                sub={activeRoundInfo && Number(activeRoundInfo.state) === 3 ? 'Final settled yield' : currentPrizePool.sub}
+                label="Total Prize Pool"
+                value={
+                  activeRoundInfo && Number(activeRoundInfo.state) === 3
+                    ? `${Number(ethers.formatEther(activeRoundInfo.yieldMON)).toFixed(4)} MON`
+                    : isUnstaking && activeRoundInfo
+                      ? `~${Number(ethers.formatEther(activeRoundInfo.yieldMON || 0n)).toFixed(4)} MON (est.)`
+                      : currentPrizePool.value
+                }
+                sub={
+                  activeRoundInfo && Number(activeRoundInfo.state) === 3
+                    ? 'Final settled yield'
+                    : isUnstaking
+                      ? 'Estimated yield - finalizing'
+                      : currentPrizePool.sub
+                }
                 icon={(
                   <svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 17h2.59l3.7-3.71 3 3L17.59 11H20v2h-1.59l-6.12 6.12-3-3L7 18.41V21H3v-4zM14 3h7v7h-2V6.41l-5.29 5.3-1.42-1.42 5.3-5.29H14V3z"/></svg>
                 )}
