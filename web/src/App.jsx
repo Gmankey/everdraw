@@ -330,6 +330,7 @@ export default function App() {
   const [previousParticipants, setPreviousParticipants] = useState([])
   const [winnersUserPrincipalWei, setWinnersUserPrincipalWei] = useState(0n)
   const [actionBusy, setActionBusy] = useState(false)
+  const [busyRids, setBusyRids] = useState(new Set())
   const [actionStatus, setActionStatus] = useState('')
   const [actionError, setActionError] = useState('')
   const [myRounds, setMyRounds] = useState([])
@@ -1033,11 +1034,16 @@ export default function App() {
   }, [winnersRoundId, runSignedAction])
 
   const handleWithdrawForRound = useCallback(async (rid) => {
-    await runSignedAction(`Withdraw (Round #${rid})`, async (pool) => {
-      const tx = await pool.withdrawPrincipal(BigInt(rid))
-      setActionStatus(`Withdraw (Round #${rid}): submitted ${tx.hash.slice(0, 10)}...`)
-      await tx.wait()
-    })
+    setBusyRids(prev => new Set([...prev, rid]))
+    try {
+      await runSignedAction(`Withdraw (Round #${rid})`, async (pool) => {
+        const tx = await pool.withdrawPrincipal(BigInt(rid))
+        setActionStatus(`Withdraw (Round #${rid}): submitted ${tx.hash.slice(0, 10)}...`)
+        await tx.wait()
+      })
+    } finally {
+      setBusyRids(prev => { const s = new Set(prev); s.delete(rid); return s })
+    }
   }, [runSignedAction])
 
   const openWinnersWithTransition = useCallback(() => {
@@ -1172,11 +1178,13 @@ export default function App() {
                       <button
                         className="max-btn"
                         onClick={() => handleWithdrawForRound(r.rid)}
-                        disabled={actionBusy}
+                        disabled={busyRids.has(r.rid)}
                       >
-                        {actionBusy ? 'Withdrawing...' : 'Withdraw'}
+                        {busyRids.has(r.rid) ? 'Withdrawing...' : 'WITHDRAW'}
                       </button>
-                    ) : 'Waiting'}
+                    ) : r.state === 3 && r.principalWei === 0n
+                      ? <span style={{color:'#6ee7b7'}}>✓ Done</span>
+                      : 'Waiting'}
                   </span>
                 </div>
               ))}
