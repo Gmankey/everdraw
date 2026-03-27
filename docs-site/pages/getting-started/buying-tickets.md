@@ -23,10 +23,12 @@ If your wallet is not on Monad mainnet, EverDraw will automatically prompt you t
 **3. Check the vault status**
 
 The vault graphic shows the current state:
-- **Green ring** — vault is open, tickets available
-- **Purple ring** — vault is locked, in finalization
+- **Vault open — accepting deposits** — tickets are available, countdown shows time remaining
+- **Vault locked — accumulating yield** — deposit window has closed, yield is building
+- **Winner revealed — settling soon** — draw is complete, unstaking in progress
+- **Settled — claim available** — funds are ready to claim or withdraw
 
-The countdown timer shows exactly how much time remains in the deposit window.
+The countdown timer shows exactly how much time remains in the current stage.
 
 **4. Enter your ticket count and buy**
 
@@ -36,7 +38,7 @@ Your MON is immediately staked via ShMON on confirmation. The stat cards update 
 
 **5. Wait for the draw**
 
-That's all you need to do. The round runs automatically. The draw executes when the sales window closes and the keeper processes the committed block. You'll find the results in "View Previous Draw" once the round settles.
+That's all you need to do. The round runs automatically. The draw executes when the sales window closes and the keeper processes the committed block. You'll find the results in the Previous Vault tab once the round's winner is revealed.
 
 ---
 

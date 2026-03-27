@@ -1,16 +1,16 @@
 # Round Lifecycle
 
-Every EverDraw round moves through four states. Understanding these states tells you exactly what to expect at any point.
+Every EverDraw round moves through five stages. Understanding these stages tells you exactly what to expect at any point.
 
 ---
 
-## State 1 — Open 🟢
+## Stage 1 — Deposit
 
 **Duration:** 24 hours
 
 The vault is live and accepting deposits. You can buy tickets at any point during this window. Your MON is staked via ShMON immediately on purchase and starts generating yield from the moment you deposit.
 
-The vault UI shows a green progress ring counting down the time remaining. When the timer reaches zero, the vault locks.
+The vault UI shows a countdown timer for the time remaining in the deposit window. When the timer reaches zero, the vault locks.
 
 **What you can do:** Buy tickets. Multiple purchases in the same round are supported and cumulative.
 
@@ -18,55 +18,74 @@ The vault UI shows a green progress ring counting down the time remaining. When 
 
 ---
 
-## State 2 — Committed
-
-**Duration:** ~10 blocks (seconds)
-
-Sales close. A target block number is recorded on-chain — this is the source of the draw's randomness. The commitment happens in a single keeper transaction immediately after the sales window ends.
-
-A new round opens simultaneously in State 1 so deposits continue flowing into the next vault without interruption.
-
-**What you can do:** Nothing required. This state is automated.
-
----
-
-## State 3 — Finalizing ⏳
+## Stage 2 — Yield Accumulating
 
 **Duration:** ~7 days
 
-The winner is drawn using the committed block hash. The full prize pool is unstaked from ShMON via the protocol's unstake request. ShMON operates on an epoch-based unstaking queue, and this process takes approximately 7 days to complete.
+Sales close. The vault is locked. All deposited MON remains staked via ShMON, accumulating yield for the prize pool. No new tickets can be purchased for this round.
 
-During finalization, your principal and the prize pool are in the unstaking queue. Nothing is claimable yet. The vault shows a purple ring in the UI.
+A target block number is also recorded on-chain during this phase — this is the source of the draw's randomness, committed before the winner is determined.
 
-**What you can do:** Nothing required. Continue depositing into open rounds.
-
-**Why 7 days?** This is a ShMON protocol constraint, not an EverDraw design choice. ShMON's epoch-based unstaking is part of Monad's staking security model. EverDraw's Phase 2 architecture (continuous TWAB deposits) is designed to abstract this wait time away entirely for users.
+**What you can do:** Nothing required. Continue depositing into the current open round.
 
 ---
 
-## State 4 — Settled ✅
+## Stage 3 — Winner Revealed
 
-Unstaking completes. The contract receives the MON back, calculates the prize yield, and makes funds available for withdrawal and claiming.
+**Duration:** Instant (reveal happens automatically at the 7-day mark)
+
+At the end of the yield period, the winner is drawn using the committed block hash and announced in the UI. The winning address, their ticket count, and the estimated prize are all visible immediately.
+
+The draw is fully on-chain and verifiable. [More on winner selection](winner-selection.md).
+
+**What you can do:** View the winner and participant leaderboard in the Previous Vault tab.
+
+**What you cannot do:** Claim or withdraw yet. The ShMON unstaking phase must complete first.
+
+---
+
+## Stage 4 — Unstaking ShMON
+
+**Duration:** 18-24 hours
+
+The prize pool is unstaked from ShMON via the protocol's unstake request. ShMON operates on an epoch-based unstaking queue — this process takes approximately 18-24 hours to complete.
+
+During this phase, the winner is visible in the UI and a countdown shows the estimated time until funds are available. Claim and withdraw buttons are present but disabled until the countdown reaches zero.
+
+This is a ShMON protocol constraint, not an EverDraw design choice. EverDraw's Phase 2 architecture is designed to abstract this wait time away entirely for users.
+
+**What you can do:** View the winner and results. Track the settlement countdown.
+
+---
+
+## Stage 5 — Claim / Withdraw
+
+Unstaking completes. The contract receives the MON back, calculates the final prize yield, and makes funds available.
 
 **What you can do:**
 - **Winners:** Claim the yield prize, then withdraw principal
 - **Everyone else:** Withdraw principal
 
-Both actions are available from the "Previous Draw" view in the UI.
+Both actions are available from the Previous Vault tab in the UI.
 
 ---
 
 ## Round timeline summary
 
-| State | Duration | What's happening |
+| Stage | Duration | What's happening |
 |---|---|---|
-| Open | 24 hours | Ticket sales live |
-| Committed | ~10 blocks | Randomness source locked |
-| Finalizing | ~7 days | ShMON unstaking queue |
-| Settled | Ongoing | Claim / withdraw available |
+| Deposit | 24 hours | Ticket sales live |
+| Yield Accumulating | ~7 days | ShMON staking, yield building |
+| Winner Revealed | Instant | Draw executed, winner announced |
+| Unstaking ShMON | 18-24 hours | ShMON unstaking queue |
+| Claim / Withdraw | Ongoing | Prize claim and principal withdrawal available |
+
+**Total round duration: approximately 9 days** (1 day deposit + 7 days yield + ~1 day unstaking)
 
 ---
 
-## Multi-vault staggering
+## How rounds sequence
 
-EverDraw runs multiple vaults in parallel on a staggered schedule. At any given time, at least one vault is in State 1 (Open) accepting new deposits. This means you never have to wait for a new round to open — there is always somewhere to put your MON to work immediately.
+Rounds are sequential — one round runs at a time. Once a round fully settles, the next round opens automatically. The UI always shows the current active vault and the most recently completed vault side by side.
+
+If a round receives no deposits, the keeper skips it and the next round opens immediately with a fresh deposit window.
