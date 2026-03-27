@@ -27,7 +27,7 @@ This isn't a marketing claim. It's enforced at the contract level. The smart con
 
 ## Round progression
 
-Each round has a defined sales window during which tickets can be purchased. Once the window closes, no new tickets are accepted for that round, and the draw process begins. A new round opens simultaneously, so there is always an active vault accepting deposits.
+Each round has a defined sales window during which tickets can be purchased. Once the window closes, no new tickets are accepted for that round, and the draw process begins. Once a round fully settles, the next round opens automatically. The UI always shows the current active vault and the most recently completed vault side by side.
 
 The entire round lifecycle advances through a single public function: `executeNext()`. This function checks the current state of the contract and executes whatever action is due — commit, draw, settle, or skip. Anyone can call it. The keeper bot automates this for convenience and reliability, but it is not a privileged operator. If the keeper goes offline, any wallet can call `executeNext()` and the round progresses normally. There is no dependency on a single operator.
 
