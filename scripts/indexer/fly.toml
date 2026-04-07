@@ -1,0 +1,45 @@
+app = "everdraw-indexer"
+primary_region = "sjc"
+
+[build]
+
+[env]
+  PORT = "3001"
+  DB_PATH = "/data/everdraw.db"
+  NODE_ENV = "production"
+
+[mounts]
+  source = "everdraw_indexer_data"
+  destination = "/data"
+
+[[services]]
+  internal_port = 3001
+  protocol = "tcp"
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
+    force_https = true
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+
+  [services.concurrency]
+    hard_limit = 50
+    soft_limit = 25
+    type = "connections"
+
+  [[services.http_checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "60s"
+    method = "GET"
+    path = "/api/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

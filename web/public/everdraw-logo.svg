@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 560">
+  <!-- Background circle -->
+  <circle cx="280" cy="280" r="268" fill="#f0e4cc" stroke="#8B5430" stroke-width="7"/>
+  <!-- Stylised E — traced from logo -->
+  <g fill="none" stroke="#8B5430" stroke-width="22" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Top spiral curl -->
+    <path d="
+      M 210 310
+      C 170 290, 150 250, 160 210
+      C 170 165, 205 140, 250 135
+      C 300 128, 345 155, 355 200
+      C 365 240, 340 275, 305 282
+      C 275 288, 252 272, 248 250
+      C 244 230, 258 215, 275 218
+      C 288 220, 294 232, 288 242
+    "/>
+    <!-- Stem diagonal -->
+    <path d="
+      M 248 250
+      L 225 390
+    "/>
+    <!-- Middle arm -->
+    <path d="
+      M 230 330
+      L 330 315
+    "/>
+    <!-- Bottom C curve -->
+    <path d="
+      M 225 390
+      C 220 420, 235 455, 265 470
+      C 295 485, 340 475, 365 450
+      C 385 430, 388 405, 375 385
+      C 362 368, 340 365, 325 372
+    "/>
+  </g>
+</svg>

@@ -1,0 +1,13 @@
+diff --git a/node_modules/@web3modal/scaffold-ui/dist/esm/src/partials/w3m-account-default-widget/index.js b/node_modules/@web3modal/scaffold-ui/dist/esm/src/partials/w3m-account-default-widget/index.js
+index 6f80586..8b8d1e4 100644
+--- a/node_modules/@web3modal/scaffold-ui/dist/esm/src/partials/w3m-account-default-widget/index.js
++++ b/node_modules/@web3modal/scaffold-ui/dist/esm/src/partials/w3m-account-default-widget/index.js
+@@ -94,7 +94,7 @@ let W3mAccountDefaultWidget = class W3mAccountDefaultWidget extends LitElement {
+       </wui-list-item>
+     `;
+     }
+-    activityTemplate() {
++    activityTemplate() { return null; // everdraw: activity hidden
+         const isSolana = ChainController.state.activeChain === ConstantsUtil.CHAIN.SOLANA;
+         return html ` <wui-list-item
+       iconVariant="blue"

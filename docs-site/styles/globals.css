@@ -1,0 +1,12 @@
+:root {
+  --nextra-primary-hue: 265deg;
+}
+
+.dark {
+  --nextra-bg: #0d0b1a;
+}
+
+/* Match EverDraw brand purple */
+.nextra-nav-container {
+  background: #0d0b1a !important;
+}

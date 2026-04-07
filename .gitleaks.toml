@@ -1,0 +1,26 @@
+# EverDraw — gitleaks configuration
+# Docs: https://github.com/gitleaks/gitleaks
+
+title = "EverDraw gitleaks config"
+
+[extend]
+# Use the default ruleset as the base
+useDefault = true
+
+# ── Allowlist: known safe patterns ───────────────────────────────────────────
+[allowlist]
+description = "Safe patterns specific to this repo"
+regexes = [
+  # Placeholder/example private keys in .example files (all zeros, test vectors)
+  '''0x0000000000000000000000000000000000000000000000000000000000000000''',
+  # Monad testnet RPC (not a secret)
+  '''testnet-rpc\.monad\.xyz''',
+]
+paths = [
+  # Example/template files with fake values are safe
+  '''.*\.example$''',
+  '''.*\.example\..*$''',
+  # Test fixtures
+  '''test/.*''',
+  '''tests/.*''',
+]

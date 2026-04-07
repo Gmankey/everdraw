@@ -1,0 +1,25 @@
+##################################
+# Foundry
+out/
+cache/
+broadcast/
+
+# Environment
+.env
+# Frontend (future)
+node_modules/
+dist/
+build/
+# OS / Editor
+.DS_Store
+.vscode/
+.idea/
+# Docs
+scripts/keeper.env
+scripts/keeper-mainnet.env
+scripts/keeper.env.bak*
+logs/
+artifacts/
+cache-hardhat/
+memory/
+skills/gitbook-direct/config.env
