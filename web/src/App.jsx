@@ -169,7 +169,7 @@ function StatCard({ label, value, sub, icon }) {
   )
 }
 
-function ClaimFlowModal({ open, mode, busy, status, error, onClose, onClaimOnly, onWithdrawOnly, onRedeposit, onWithdrawAndConvert, onBackFromRedirectWarning, confirmRedirectOpen, onConfirmRedirect }) {
+function ClaimFlowModal({ open, mode, busy, status, error, onClose, onClaimOnly, onWithdrawOnly, onRedeposit, onWithdrawAndConvert, onBackFromRedirectWarning, confirmRedirectOpen, onConfirmRedirect, prizeAlreadyClaimed = false }) {
   if (!open) return null
 
   const isWinner = mode === 'winner'
@@ -210,11 +210,12 @@ function ClaimFlowModal({ open, mode, busy, status, error, onClose, onClaimOnly,
           tone: 'default',
         },
         {
-          kicker: busy ? 'Working...' : 'KEEP PLAYING',
-          title: 'Leave principal in the next active round',
+          kicker: prizeAlreadyClaimed ? 'ALREADY CLAIMED' : (busy ? 'Working...' : 'KEEP PLAYING'),
+          title: prizeAlreadyClaimed ? 'Prize already claimed' : 'Leave principal in the next active round',
           body: '',
-          onClick: onClaimOnly,
+          onClick: prizeAlreadyClaimed ? undefined : onClaimOnly,
           tone: 'primary',
+          disabled: prizeAlreadyClaimed,
         },
         {
           kicker: busy ? 'Working...' : 'WITHDRAW AND CONVERT',
@@ -264,7 +265,7 @@ function ClaimFlowModal({ open, mode, busy, status, error, onClose, onClaimOnly,
                 type="button"
                 className={`claim-option-card ${option.tone === 'primary' ? 'primary' : ''}`}
                 onClick={option.onClick}
-                disabled={busy}
+                disabled={busy || option.disabled}
               >
                 <span className="claim-option-kicker">{option.kicker}</span>
                 <strong className="claim-option-title">{option.title}</strong>
@@ -936,7 +937,8 @@ export default function App() {
       const provider = new ethers.BrowserProvider(walletProvider)
       await provider.send('eth_requestAccounts', [])
       await ensureCorrectNetwork(provider, expectedChainId)
-      const signer = await provider.getSigner()
+      if (!account) throw new Error('No wallet connected')
+      const signer = await provider.getSigner(account)
       const pool = new ethers.Contract(poolAddress, POOL_ABI, signer)
 
       const value = ticketPrice * BigInt(n)
@@ -1972,6 +1974,7 @@ export default function App() {
           onBackFromRedirectWarning={() => setClaimRedirectWarningOpen(false)}
           confirmRedirectOpen={claimRedirectWarningOpen}
           onConfirmRedirect={handleConfirmWithdrawAndConvert}
+          prizeAlreadyClaimed={claimFlow.mode === 'principal' && claimFlow.prizeWei === 0n}
         />
       </div>
     </div>
