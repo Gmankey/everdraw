@@ -136,9 +136,16 @@ export function StatsPage() {
 
   useEffect(() => { load() }, [])
 
+  // Only show rounds from mainnet launch (Apr 6 2026)
+  const LAUNCH_DATE = new Date('2026-04-06T00:00:00Z')
+  const visibleRounds = rounds.filter(r => {
+    const d = r.openedAt ? new Date(r.openedAt) : null
+    return d && d >= LAUNCH_DATE
+  })
+
   // Derived stats
-  const settled = rounds.filter(r => r.state === 'settled' && !r.isSkipped)
-  const active = rounds.find(r => r.state === 'open')
+  const settled = visibleRounds.filter(r => r.state === 'settled' && !r.isSkipped)
+  const active = visibleRounds.find(r => r.state === 'open')
 
   const totalDeposited = settled.reduce((sum, r) => {
     try { return sum + Number(ethers.formatEther(r.totalMonPaid)) } catch { return sum }
@@ -175,8 +182,8 @@ export function StatsPage() {
           <div className="stats-cards-grid">
             <OverviewCard
               label="Total Rounds"
-              value={rounds.length}
-              sub="All time on-chain"
+              value={visibleRounds.length}
+              sub="Since launch"
             />
             <OverviewCard
               label="Settled Rounds"
@@ -211,14 +218,14 @@ export function StatsPage() {
               <span className="stats-section-note">Actual on-chain yield distributed</span>
             </div>
             <div className="stats-chart-wrap">
-              <YieldChart rounds={rounds} />
+              <YieldChart rounds={visibleRounds} />
             </div>
           </div>
 
           <div className="stats-section">
             <div className="stats-section-header">
               <h3>Round History</h3>
-              <span className="stats-section-note">{rounds.length} total rounds</span>
+              <span className="stats-section-note">{visibleRounds.length} rounds since launch</span>
             </div>
             <div className="stats-table-wrap">
               <table className="stats-table">
@@ -240,13 +247,13 @@ export function StatsPage() {
                         Loading rounds...
                       </td>
                     </tr>
-                  ) : rounds.length === 0 ? (
+                  ) : visibleRounds.length === 0 ? (
                     <tr>
                       <td colSpan="7" style={{ textAlign: 'center', padding: '24px', color: '#6b5f85' }}>
-                        No rounds indexed yet
+                        No rounds since launch yet
                       </td>
                     </tr>
-                  ) : rounds.map(r => {
+                  ) : visibleRounds.map(r => {
                     const deposited = formatMon(r.totalMonPaid)
                     const prize = formatMon(r.yieldMon, 6)
                     return (

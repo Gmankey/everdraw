@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "sc-auditor": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/home/c/.openclaw/tools/sc-auditor/dist/mcp/main.js"],
+      "cwd": "/home/c/.openclaw/tools/sc-auditor"
+    }
+  }
+}

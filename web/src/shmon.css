@@ -1,0 +1,152 @@
+.shmon-panel {
+  width: min(1120px, calc(100% - 32px));
+  margin: 24px auto 64px;
+  display: grid;
+  gap: 20px;
+}
+
+.shmon-hero-card,
+.shmon-card,
+.shmon-modal {
+  display: grid;
+  gap: 14px;
+}
+
+.shmon-eyebrow {
+  color: #f6b73c;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.shmon-copy {
+  color: rgba(255, 244, 220, 0.82);
+  line-height: 1.6;
+  margin: 0;
+}
+
+.shmon-copy.small {
+  font-size: 0.95rem;
+}
+
+.shmon-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 20px;
+}
+
+.shmon-balance {
+  font-size: 2rem;
+  font-weight: 700;
+  color: #fff4dc;
+}
+
+.shmon-subline,
+.shmon-preview,
+.pending-row span {
+  color: rgba(255, 244, 220, 0.72);
+}
+
+.shmon-subline.muted,
+.shmon-copy.muted {
+  color: rgba(255, 244, 220, 0.56);
+}
+
+.shmon-label {
+  display: grid;
+  gap: 6px;
+  color: #fff4dc;
+  font-weight: 600;
+}
+
+.shmon-input {
+  width: 100%;
+  background: rgba(10, 6, 0, 0.5);
+  border: 1px solid rgba(246, 183, 60, 0.24);
+  color: #fff4dc;
+  padding: 14px 16px;
+  border-radius: 12px;
+  font-size: 1rem;
+}
+
+.shmon-actions-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.shmon-actions-row.end {
+  justify-content: flex-end;
+}
+
+.pending-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.shmon-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  display: grid;
+  place-items: center;
+  z-index: 40;
+  padding: 20px;
+}
+
+.shmon-modal {
+  width: min(640px, 100%);
+}
+
+.shmon-modal.danger {
+  border-color: rgba(255, 107, 107, 0.45);
+  box-shadow: 0 24px 80px rgba(255, 0, 0, 0.16);
+}
+
+.shmon-toast {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(246, 183, 60, 0.24);
+  background: rgba(20, 12, 0, 0.88);
+  color: #fff4dc;
+}
+
+.shmon-toast.error {
+  border-color: rgba(255, 107, 107, 0.36);
+}
+
+.shmon-inline-btn,
+.danger-btn {
+  border: 0;
+  cursor: pointer;
+}
+
+.shmon-inline-btn {
+  background: transparent;
+  color: #f6b73c;
+}
+
+.danger-btn {
+  background: linear-gradient(180deg, #ff6b6b 0%, #d93d3d 100%);
+  color: white;
+  border-radius: 12px;
+  padding: 12px 18px;
+  font-weight: 700;
+}
+
+@media (max-width: 720px) {
+  .shmon-panel {
+    width: min(100%, calc(100% - 20px));
+  }
+
+  .pending-row {
+    flex-direction: column;
+  }
+}

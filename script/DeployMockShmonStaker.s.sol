@@ -2,7 +2,7 @@
 pragma solidity ^0.8.33;
 
 import "forge-std/Script.sol";
-import "../test/TicketPrizePoolShmon.t.sol"; // reuses MockShmonStaker
+import "../src/MockShmonStaker.sol";
 
 contract DeployMockShmonStaker is Script {
     function run() external {
