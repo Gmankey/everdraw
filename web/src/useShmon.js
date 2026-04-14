@@ -22,6 +22,33 @@ function getWalletProvider() {
   return modal.getWalletProvider() || window.ethereum || null
 }
 
+async function fetchNonce(address) {
+  const rpcUrl = import.meta.env.VITE_RPC_URL || 'https://rpc.monad.xyz'
+  for (let i = 0; i < 5; i++) {
+    try {
+      const res = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: Date.now(),
+          method: 'eth_getTransactionCount',
+          params: [address.toLowerCase(), 'pending']
+        })
+      })
+      if (res.status === 429) {
+        await new Promise((r) => setTimeout(r, 700 * (i + 1)))
+        continue
+      }
+      const json = await res.json()
+      const n = parseInt(json.result, 16)
+      if (!isNaN(n) && n >= 0) return n
+    } catch {}
+    await new Promise((r) => setTimeout(r, 400))
+  }
+  throw new Error('Could not fetch nonce, RPC rate limited, try again in a few seconds')
+}
+
 function loadPendingMap() {
   if (typeof window === 'undefined') return {}
   try {
@@ -190,13 +217,14 @@ export function useShmon({ account, expectedChainId, getReadProvider, ensureCorr
     if (!walletProvider) throw new Error('Connect wallet first')
     const provider = new ethers.BrowserProvider(walletProvider)
     await ensureCorrectNetwork(provider, expectedChainId)
-    const signer = await provider.getSigner()
+    const signer = await provider.getSigner(account)
+    const nonce = await fetchNonce(account)
     const contract = new ethers.Contract(SHMON_ADDRESS, SHMON_ABI, signer)
 
     setState((s) => ({ ...s, txBusy: true, error: '', success: '' }))
     try {
       const currentEpoch = await contract.getInternalEpoch()
-      const tx = await contract.requestUnstake(shares)
+      const tx = await contract.requestUnstake(shares, { nonce })
       const receipt = await tx.wait()
       let completionEpoch = (currentEpoch + 1n).toString()
       let amountMon = null
@@ -237,12 +265,13 @@ export function useShmon({ account, expectedChainId, getReadProvider, ensureCorr
     if (!walletProvider) throw new Error('Connect wallet first')
     const provider = new ethers.BrowserProvider(walletProvider)
     await ensureCorrectNetwork(provider, expectedChainId)
-    const signer = await provider.getSigner()
+    const signer = await provider.getSigner(account)
+    const nonce = await fetchNonce(account)
     const contract = new ethers.Contract(SHMON_ADDRESS, SHMON_ABI, signer)
 
     setState((s) => ({ ...s, txBusy: true, error: '', success: '' }))
     try {
-      const tx = await contract.redeem(shares, account, account)
+      const tx = await contract.redeem(shares, account, account, { nonce })
       await tx.wait()
       setState((s) => ({ ...s, txBusy: false, success: 'Instant unstake completed.' }))
       await refresh()
@@ -257,12 +286,13 @@ export function useShmon({ account, expectedChainId, getReadProvider, ensureCorr
     if (!walletProvider) throw new Error('Connect wallet first')
     const provider = new ethers.BrowserProvider(walletProvider)
     await ensureCorrectNetwork(provider, expectedChainId)
-    const signer = await provider.getSigner()
+    const signer = await provider.getSigner(account)
+    const nonce = await fetchNonce(account)
     const contract = new ethers.Contract(SHMON_ADDRESS, SHMON_ABI, signer)
 
     setState((s) => ({ ...s, txBusy: true, error: '', success: '' }))
     try {
-      const tx = await contract.completeUnstake()
+      const tx = await contract.completeUnstake({ nonce })
       await tx.wait()
       setPendingFor(account, null)
       setState((s) => ({ ...s, txBusy: false, success: 'Scheduled unstake completed.' }))

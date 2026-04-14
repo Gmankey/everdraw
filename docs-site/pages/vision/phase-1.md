@@ -1,21 +1,18 @@
-# Phase 1 — Launch
+# Product Focus
 
-**Timeline: Now → Month 2**
+EverDraw starts with a simple core product: deposit MON, join a round, and either win the yield or withdraw your principal.
 
-Ship the product. Prove the loop works in the real world.
+The goal is to make that core experience clear, trustworthy, and easy to use.
 
-Phase 1 is deliberately focused on simplicity. Two concurrent vaults run in parallel on a staggered schedule so there is always an open vault accepting deposits. The priority is not complexity — it is creating real winners as fast as possible.
+## What users should expect
 
-**What launches:**
-- MON prize vault with 24-hour deposit windows
-- Staggered multi-vault system (2 vaults running simultaneously)
-- Automated keeper infrastructure for commit → draw → settle
-- Live winner results on-chain and in the UI
-- Prize pool seeding to ensure Day 1 prizes are meaningful enough to drive social sharing
+- straightforward deposits
+- clear round status
+- visible winner results
+- simple claim and withdraw flows
 
-**What we're validating:**
-- Do users deposit?
-- Do winners share?
-- Does the engagement loop work in the real world?
+## Why start here
 
-The first real winners on Monad are the protocol's most important marketing asset. Phase 1 is about creating those moments.
+Because the product should be easy to understand before it expands.
+
+A simple core makes future additions easier for both users and protocols.

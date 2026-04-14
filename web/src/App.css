@@ -190,6 +190,7 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
 }
 
 .shmon-modal.claim-flow-modal {
+  display: flex;
   width: min(980px, calc(100vw - 24px));
   border: 1px solid rgba(155,109,255,0.32);
   background:
@@ -198,6 +199,7 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
     #161225;
   box-shadow: 0 32px 100px rgba(0, 0, 0, 0.45);
   gap: 16px;
+  justify-content: flex-start;
   position: relative;
   z-index: 2147483647;
   isolation: isolate;
@@ -215,11 +217,7 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
 
 .claim-flow-head.compact {
   justify-content: flex-start;
-  min-height: 42px;
-}
-
-.claim-flow-head.compact .claim-flow-close {
-  right: -2px;
+  min-height: 18px;
 }
 
 .claim-flow-hero {
@@ -268,8 +266,8 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
 
 .claim-flow-close {
   position: absolute;
-  top: 0;
-  right: 0;
+  top: 1rem;
+  right: 1rem;
   width: 42px;
   height: 42px;
   border-radius: 999px;
@@ -340,11 +338,11 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
   font-weight: 500;
 }
 .claim-flow-confirm {
-  display: grid;
-  grid-template-columns: 1fr;
+  display: flex;
+  flex-direction: column;
   gap: 16px;
   width: 100%;
-  padding-right: 0;
+  align-self: stretch;
 }
 .claim-flow-confirm-panel {
   display: grid;
@@ -353,24 +351,23 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
   border-radius: 20px;
   border: 1px solid rgba(246, 183, 60, 0.22);
   background: linear-gradient(180deg, rgba(246, 183, 60, 0.08), rgba(246, 183, 60, 0.02));
-  width: calc(100% + 2px);
-  max-width: none;
-  justify-self: stretch;
-  margin-right: -2px;
+  width: 100%;
+  min-width: 100%;
+  align-self: stretch;
 }
 .claim-flow-confirm-copy {
   color: #f6b73c;
 }
 .claim-flow-confirm-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
   gap: 20px;
-  width: calc(100% + 2px);
-  justify-self: stretch;
-  margin-right: -2px;
+  width: 100%;
+  min-width: 100%;
+  align-self: stretch;
 }
 .claim-confirm-btn {
-  width: 100%;
+  flex: 1 1 0;
+  width: 0;
   min-height: 112px;
   align-items: center;
   justify-content: center;

@@ -1,8 +1,8 @@
 export default {
   index: 'Overview',
-  'phase-1': 'Phase 1 — Launch',
-  'phase-2': 'Phase 2 — Continuous + Campaigns',
-  'phase-3': 'Phase 3 — Multi-Asset',
-  'phase-4': 'Phase 4 — Platform',
-  'phase-5': 'Phase 5 — Infrastructure',
+  'phase-1': 'Product Focus',
+  'phase-2': 'User and Protocol Expansion',
+  'phase-3': 'Broader Support',
+  'phase-4': 'Platform Direction',
+  'phase-5': 'Infrastructure Direction'
 }

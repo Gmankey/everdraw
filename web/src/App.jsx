@@ -98,6 +98,33 @@ function normalizeError(e) {
   return msg
 }
 
+async function fetchNonce(address) {
+  const rpcUrl = import.meta.env.VITE_RPC_URL || 'https://rpc.monad.xyz'
+  for (let i = 0; i < 5; i++) {
+    try {
+      const res = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: Date.now(),
+          method: 'eth_getTransactionCount',
+          params: [address.toLowerCase(), 'pending']
+        })
+      })
+      if (res.status === 429) {
+        await new Promise((r) => setTimeout(r, 700 * (i + 1)))
+        continue
+      }
+      const json = await res.json()
+      const n = parseInt(json.result, 16)
+      if (!isNaN(n) && n >= 0) return n
+    } catch {}
+    await new Promise((r) => setTimeout(r, 400))
+  }
+  throw new Error('Could not fetch nonce, RPC rate limited, try again in a few seconds')
+}
+
 const MONAD_TESTNET_CHAIN_PARAMS = {
   chainId: '0x279F',
   chainName: 'Monad Testnet',
@@ -169,7 +196,7 @@ function StatCard({ label, value, sub, icon }) {
   )
 }
 
-function ClaimFlowModal({ open, mode, busy, status, error, onClose, onClaimOnly, onWithdrawOnly, onRedeposit, onWithdrawAndConvert, onBackFromRedirectWarning, confirmRedirectOpen, onConfirmRedirect, prizeAlreadyClaimed = false }) {
+function ClaimFlowModal({ open, mode, busy, status, error, onClose, onClaimOnly, onWithdrawOnly, onRedeposit, onWithdrawAndConvert, onBackFromRedirectWarning, confirmRedirectOpen, onConfirmRedirect }) {
   if (!open) return null
 
   const isWinner = mode === 'winner'
@@ -210,12 +237,11 @@ function ClaimFlowModal({ open, mode, busy, status, error, onClose, onClaimOnly,
           tone: 'default',
         },
         {
-          kicker: prizeAlreadyClaimed ? 'ALREADY CLAIMED' : (busy ? 'Working...' : 'KEEP PLAYING'),
-          title: prizeAlreadyClaimed ? 'Prize already claimed' : 'Leave principal in the next active round',
+          kicker: busy ? 'Working...' : 'KEEP PLAYING',
+          title: 'Leave principal in the next active round',
           body: '',
-          onClick: prizeAlreadyClaimed ? undefined : onClaimOnly,
+          onClick: onClaimOnly,
           tone: 'primary',
-          disabled: prizeAlreadyClaimed,
         },
         {
           kicker: busy ? 'Working...' : 'WITHDRAW AND CONVERT',
@@ -265,7 +291,7 @@ function ClaimFlowModal({ open, mode, busy, status, error, onClose, onClaimOnly,
                 type="button"
                 className={`claim-option-card ${option.tone === 'primary' ? 'primary' : ''}`}
                 onClick={option.onClick}
-                disabled={busy || option.disabled}
+                disabled={busy}
               >
                 <span className="claim-option-kicker">{option.kicker}</span>
                 <strong className="claim-option-title">{option.title}</strong>
@@ -464,13 +490,13 @@ function WinnersView({ onBack, winner, winnerAddress, prize, participants, parti
   )
 }
 
-function RoundProgressSteps({ state, settlementSecs }) {
-  const steps = ['Deposit', 'Yield Accumulating', 'Winner Revealed', 'Unstaking ShMON', 'Claim / Withdraw']
+function RoundProgressSteps({ state, settlementSecs, secondsRemaining }) {
+  const steps = ['Deposit', 'Yield Accruing', 'Winner Revealed', 'Claim / Withdraw']
   let activeStep = 0
+  if (state === 0 && secondsRemaining <= 0) activeStep = 1
   if (state === 1) activeStep = 1
-  if (state === 2 && settlementSecs > 86400) activeStep = 1  // Still yield (>24h left)
-  if (state === 2 && settlementSecs <= 86400) activeStep = 3  // Unstaking (<=24h left, winner done)
-  if (state === 3) activeStep = 4  // Claim / Withdraw
+  if (state === 2) activeStep = settlementSecs > 0 ? 2 : 3
+  if (state === 3) activeStep = 3
 
   return (
     <section className="round-steps">
@@ -532,6 +558,7 @@ export default function App() {
   const [previousRoundId, setPreviousRoundId] = useState('0')
   const [previousRoundInfo, setPreviousRoundInfo] = useState(null)
   const [previousParticipants, setPreviousParticipants] = useState([])
+  const participantsCacheRef = useRef(new Map())
   const [winnersUserPrincipalWei, setWinnersUserPrincipalWei] = useState(0n)
   const [claimFlow, setClaimFlow] = useState({ open: false, mode: 'winner', rid: null, principalWei: 0n, prizeWei: 0n })
   const [claimRedirectWarningOpen, setClaimRedirectWarningOpen] = useState(false)
@@ -544,6 +571,8 @@ export default function App() {
   const [settledRoundId, setSettledRoundId] = useState('0')
   const [settledRoundInfo, setSettledRoundInfo] = useState(null)
   const [settledParticipants, setSettledParticipants] = useState([])
+  const participantLoadRef = useRef({ key: '' })
+  const settledRidCacheRef = useRef(null)
   const [latestBlockNumber, setLatestBlockNumber] = useState(0)
   const [currentInternalEpoch, setCurrentInternalEpoch] = useState(0)
   const unlockAudioRef = useRef(null)
@@ -644,23 +673,41 @@ export default function App() {
     const provider = await getReadProvider()
     const pool = new ethers.Contract(poolAddress, POOL_ABI, provider)
 
-    const rid = await pool.currentRoundId()
+    const [
+      rid,
+      nextExecutable,
+      price,
+      duration,
+      latestBlock,
+      network,
+      shmonAddr,
+      accountBalance,
+    ] = await Promise.all([
+      pool.currentRoundId(),
+      pool.nextExecutable(),
+      pool.ticketPriceMON(),
+      pool.roundDurationSec(),
+      provider.getBlockNumber(),
+      provider.getNetwork(),
+      pool.shmon().catch(() => ethers.ZeroAddress),
+      account ? provider.getBalance(account).catch(() => null) : Promise.resolve(null),
+    ])
+
     const info = await pool.getRoundInfo(rid)
-    const [, action] = await pool.nextExecutable()
-    const price = await pool.ticketPriceMON()
-    const duration = await pool.roundDurationSec()
 
     setRoundId(rid.toString())
     setRoundInfo(info)
-    setNextAction(Number(action))
+    setNextAction(Number(nextExecutable?.[1] ?? 0))
     setTicketPrice(price)
     setRoundDuration(Number(duration))
-
-    const latestBlock = await provider.getBlockNumber()
     setLatestBlockNumber(Number(latestBlock))
+    setConnectedChainId(Number(network.chainId))
+
+    if (accountBalance != null) {
+      setBalance(ethers.formatEther(accountBalance))
+    }
 
     try {
-      const shmonAddr = await pool.shmon()
       if (ethers.isAddress(shmonAddr) && shmonAddr !== ethers.ZeroAddress) {
         const shmon = new ethers.Contract(shmonAddr, SHMON_ABI, provider)
         const ep = await shmon.getInternalEpoch()
@@ -670,49 +717,151 @@ export default function App() {
       // Keep fallback timers if epoch endpoint is unavailable.
     }
 
-    const step = 100
-    const estimatedBlocksPerSecond = 2
-    const scanBufferBlocks = 1000
-    const nowTs = Math.floor(Date.now() / 1000)
+    if (Number(rid) > 0) {
+      const prevRid = Number(rid) - 1
+      const prevInfo = await pool.getRoundInfo(BigInt(prevRid))
+      setPreviousRoundId(String(prevRid))
+      setPreviousRoundInfo(prevInfo)
+    } else {
+      setPreviousRoundId('0')
+      setPreviousRoundInfo(null)
+      setPreviousParticipants([])
+    }
 
-    const getRoundStartBlock = async (roundNumber, roundInfoForWindow) => {
-      const latestBlock = Number(latestBlockNumber || 0)
+    let sRid = null
+    let sInfo = null
+    if (Number(info.state) === 3 && Number(info.totalTickets) > 0) {
+      sRid = Number(rid)
+      sInfo = info
+    } else if (settledRidCacheRef.current && settledRidCacheRef.current !== Number(rid)) {
+      sRid = settledRidCacheRef.current
+      sInfo = settledRoundInfo
+    } else {
+      const scanRids = []
+      for (let r = Number(rid) - 1; r >= Math.max(1, Number(rid) - 3); r--) scanRids.push(r)
+      const results = await Promise.all(scanRids.map((r) => pool.getRoundInfo(BigInt(r)).catch(() => null)))
+      for (let i = 0; i < results.length; i++) {
+        const si = results[i]
+        if (si && Number(si.state) === 3 && Number(si.totalTickets) > 0) {
+          sRid = scanRids[i]
+          sInfo = si
+          break
+        }
+      }
+    }
+    if (sRid) settledRidCacheRef.current = sRid
+    setSettledRoundId(sRid ? String(sRid) : '0')
+    if (sInfo) setSettledRoundInfo(sInfo)
+    else setSettledRoundInfo(null)
+    if (!sRid) setSettledParticipants([])
+  }, [account, poolAddress])
+
+  useEffect(() => {
+    if (!poolAddress) return
+    refresh().catch((e) => setError(normalizeError(e) || 'Failed to load round data'))
+    refreshVaultSummaries().catch(() => {})
+
+    const clockTick = setInterval(() => {
+      setNow(Math.floor(Date.now() / 1000))
+    }, 1000)
+
+    let vaultTick = 0
+    const dataRefresh = setInterval(() => {
+      refresh().catch(() => {})
+      if (vaultTick % 2 === 0) refreshVaultSummaries().catch(() => {})
+      vaultTick += 1
+    }, 30000)
+
+    return () => {
+      clearInterval(clockTick)
+      clearInterval(dataRefresh)
+    }
+  }, [poolAddress, refresh, refreshVaultSummaries])
+
+  const loadParticipantsForView = useCallback(async (view) => {
+    if (!poolAddress || !ethers.isAddress(poolAddress)) return
+
+    const currentRidNum = Number(roundId) || 0
+    const prevRidNum = Number(previousRoundId) || 0
+    const vaultARoundIdNum = currentRidNum % 2 === 1 ? currentRidNum : prevRidNum
+    const vaultARoundInfoValue = currentRidNum % 2 === 1 ? roundInfo : previousRoundInfo
+    const vaultBRoundIdNum = currentRidNum % 2 === 0 ? currentRidNum : prevRidNum
+    const vaultBRoundInfoValue = currentRidNum % 2 === 0 ? roundInfo : previousRoundInfo
+
+    let targetRoundId = 0
+    let targetInfo = null
+    let setter = null
+
+    if (view === 'vaultA') {
+      targetRoundId = vaultARoundIdNum
+      targetInfo = vaultARoundInfoValue
+      setter = setParticipants
+    } else if (view === 'vaultB') {
+      targetRoundId = vaultBRoundIdNum
+      targetInfo = vaultBRoundInfoValue
+      setter = setPreviousParticipants
+    } else if (view === 'previous') {
+      targetRoundId = Number(settledRoundId) || 0
+      targetInfo = settledRoundInfo
+      setter = setSettledParticipants
+    } else {
+      return
+    }
+
+    if (!targetRoundId || !targetInfo) {
+      setter?.([])
+      return
+    }
+
+    const cacheKey = `${poolAddress.toLowerCase()}:${targetRoundId}`
+    const cached = participantsCacheRef.current.get(cacheKey)
+    if (cached) {
+      setter(cached)
+      return
+    }
+
+    const inflightKey = `${view}:${cacheKey}`
+    if (participantLoadRef.current.key === inflightKey) return
+    participantLoadRef.current.key = inflightKey
+
+    try {
+      const provider = await getReadProvider()
+      const pool = new ethers.Contract(poolAddress, POOL_ABI, provider)
+      const step = 100
+      const estimatedBlocksPerSecond = 2
+      const scanBufferBlocks = 1000
+      const latestBlock = Number(await provider.getBlockNumber())
       const deployFloor = poolDeployBlock > 0 ? poolDeployBlock : 0
       const contractDepositWindowSec = Number(roundDuration || 0)
       const fallbackDepositWindowSec = Math.min(86400, Math.max(0, configuredDepositWindowSec || 0))
       const depositWindowSec = Math.min(86400, Math.max(contractDepositWindowSec, fallbackDepositWindowSec))
 
-      let searchFrom = deployFloor
-      let searchTo = latestBlock
+      const getRoundStartBlock = async () => {
+        let searchFrom = deployFloor
+        let searchTo = latestBlock
 
-      if (roundInfoForWindow?.salesEndTime) {
-        const salesEnd = Number(roundInfoForWindow.salesEndTime)
-        const nowTs = Math.floor(Date.now() / 1000)
-        const secondsAgo = Math.max(0, nowTs - salesEnd)
-        const estimatedSalesEndBlock = Math.max(deployFloor, latestBlock - Math.ceil(secondsAgo * estimatedBlocksPerSecond))
-        const depositWindowBlocks = Math.ceil(depositWindowSec * estimatedBlocksPerSecond)
-        searchFrom = Math.max(deployFloor, estimatedSalesEndBlock - depositWindowBlocks - scanBufferBlocks)
-        searchTo = Math.min(latestBlock, estimatedSalesEndBlock + scanBufferBlocks)
-      }
-
-      for (let from = searchFrom; from <= searchTo; from += step) {
-        const to = Math.min(searchTo, from + step - 1)
-        try {
-          const events = await pool.queryFilter(
-            pool.filters.RoundStarted(BigInt(roundNumber)),
-            from,
-            to
-          )
-          if (events.length > 0) return Number(events[0].blockNumber)
-        } catch {
-          continue
+        if (targetInfo?.salesEndTime) {
+          const salesEnd = Number(targetInfo.salesEndTime)
+          const secondsAgo = Math.max(0, Math.floor(Date.now() / 1000) - salesEnd)
+          const estimatedSalesEndBlock = Math.max(deployFloor, latestBlock - Math.ceil(secondsAgo * estimatedBlocksPerSecond))
+          const depositWindowBlocks = Math.ceil(depositWindowSec * estimatedBlocksPerSecond)
+          searchFrom = Math.max(deployFloor, estimatedSalesEndBlock - depositWindowBlocks - scanBufferBlocks)
+          searchTo = Math.min(latestBlock, estimatedSalesEndBlock + scanBufferBlocks)
         }
+
+        for (let from = searchFrom; from <= searchTo; from += step) {
+          const to = Math.min(searchTo, from + step - 1)
+          try {
+            const events = await pool.queryFilter(pool.filters.RoundStarted(BigInt(targetRoundId)), from, to)
+            if (events.length > 0) return Number(events[0].blockNumber)
+          } catch {
+            continue
+          }
+        }
+
+        return null
       }
 
-      return null
-    }
-
-    const buildParticipantsForRound = async (roundNumber, roundInfoForWindow, totalTicketsRaw) => {
       const byWallet = new Map()
       const ingestLogs = (logs) => {
         for (const log of logs) {
@@ -728,13 +877,7 @@ export default function App() {
         }
       }
 
-      const latestBlock = Number(latestBlockNumber || 0)
-      const deployFloor = poolDeployBlock > 0 ? poolDeployBlock : 0
-      const contractDepositWindowSec = Number(roundDuration || 0)
-      const fallbackDepositWindowSec = Math.min(86400, Math.max(0, configuredDepositWindowSec || 0))
-      const depositWindowSec = Math.min(86400, Math.max(contractDepositWindowSec, fallbackDepositWindowSec))
-      const roundStartBlock = await getRoundStartBlock(roundNumber, roundInfoForWindow)
-
+      const roundStartBlock = await getRoundStartBlock()
       let scanFrom = deployFloor
       let scanTo = latestBlock
 
@@ -747,20 +890,19 @@ export default function App() {
       for (let from = scanFrom; from <= scanTo; from += step) {
         const to = Math.min(scanTo, from + step - 1)
         try {
-          const chunk = await pool.queryFilter(pool.filters.TicketsBought(BigInt(roundNumber)), from, to)
+          const chunk = await pool.queryFilter(pool.filters.TicketsBought(BigInt(targetRoundId)), from, to)
           ingestLogs(chunk)
         } catch {
           continue
         }
       }
 
-      const totalTicketsNum = Number(totalTicketsRaw ?? 0)
-
+      const totalTicketsNum = Number(targetInfo.totalTickets ?? 0)
       if (byWallet.size === 0 && totalTicketsNum > 0 && (scanFrom !== deployFloor || scanTo !== latestBlock)) {
         for (let from = deployFloor; from <= latestBlock; from += step) {
           const to = Math.min(latestBlock, from + step - 1)
           try {
-            const chunk = await pool.queryFilter(pool.filters.TicketsBought(BigInt(roundNumber)), from, to)
+            const chunk = await pool.queryFilter(pool.filters.TicketsBought(BigInt(targetRoundId)), from, to)
             ingestLogs(chunk)
           } catch {
             continue
@@ -768,7 +910,7 @@ export default function App() {
         }
       }
 
-      return [...byWallet.values()]
+      const built = [...byWallet.values()]
         .map((p) => ({
           wallet: p.wallet,
           walletShort: shortAddr(p.wallet),
@@ -777,93 +919,22 @@ export default function App() {
           depositedMon: Number(ethers.formatEther(p.depositedWei)).toFixed(4),
         }))
         .sort((a, b) => b.tickets - a.tickets)
-    }
 
-    const built = await buildParticipantsForRound(Number(rid), info, info.totalTickets)
-    setParticipants(built)
-
-    if (Number(rid) > 0) {
-      const prevRid = Number(rid) - 1
-      const prevInfo = await pool.getRoundInfo(BigInt(prevRid))
-      setPreviousRoundId(String(prevRid))
-      setPreviousRoundInfo(prevInfo)
-      try {
-        const prevBuilt = await buildParticipantsForRound(prevRid, prevInfo, prevInfo.totalTickets)
-        setPreviousParticipants(prevBuilt)
-      } catch {
-        setPreviousParticipants([])
-      }
-    } else {
-      setPreviousRoundId('0')
-      setPreviousRoundInfo(null)
-      setPreviousParticipants([])
-    }
-
-    // Find the latest settled round with tickets for the Previous Vault tab.
-    // The current round itself may already be settled before a new round is opened,
-    // so check it first before scanning backwards.
-    let sRid = null, sInfo = null, sBuilt = []
-    if (Number(info.state) === 3 && Number(info.totalTickets) > 0) {
-      sRid = Number(rid)
-      sInfo = info
-      try {
-        sBuilt = await buildParticipantsForRound(Number(rid), info, info.totalTickets)
-      } catch {
-        sBuilt = []
-      }
-    } else {
-      for (let r = Number(rid) - 1; r >= Math.max(1, Number(rid) - 10); r--) {
-        try {
-          const si = await pool.getRoundInfo(BigInt(r))
-          if (Number(si.state) === 3 && Number(si.totalTickets) > 0) {
-            sRid = r
-            sInfo = si
-            try {
-              sBuilt = await buildParticipantsForRound(r, si, si.totalTickets)
-            } catch {
-              sBuilt = []
-            }
-            break
-          }
-        } catch { continue }
+      participantsCacheRef.current.set(cacheKey, built)
+      setter(built)
+    } catch {
+      setter([])
+    } finally {
+      if (participantLoadRef.current.key === inflightKey) {
+        participantLoadRef.current.key = ''
       }
     }
-    setSettledRoundId(sRid ? String(sRid) : '0')
-    setSettledRoundInfo(sInfo)
-    setSettledParticipants(sBuilt)
-
-    const network = await provider.getNetwork()
-    setConnectedChainId(Number(network.chainId))
-
-    if (account) {
-      const bal = await provider.getBalance(account)
-      setBalance(ethers.formatEther(bal))
-    }
-  }, [account, poolAddress, poolDeployBlock])
+  }, [poolAddress, roundId, previousRoundId, roundInfo, previousRoundInfo, settledRoundId, settledRoundInfo, poolDeployBlock, roundDuration])
 
   useEffect(() => {
-    if (!poolAddress) return
-    refresh().catch((e) => setError(normalizeError(e) || 'Failed to load round data'))
-    refreshVaultSummaries().catch(() => {})
-
-    const clockTick = setInterval(() => {
-      setNow(Math.floor(Date.now() / 1000))
-    }, 1000)
-
-    // Stagger refresh + vault summaries to avoid RPC rate limits (429s) on public Monad RPC
-    let vaultTick = 0
-    const dataRefresh = setInterval(() => {
-      refresh().catch(() => {})
-      // Only refresh vault summaries every other tick (60s) since it hits multiple pools
-      if (vaultTick % 2 === 0) refreshVaultSummaries().catch(() => {})
-      vaultTick += 1
-    }, 30000)
-
-    return () => {
-      clearInterval(clockTick)
-      clearInterval(dataRefresh)
-    }
-  }, [poolAddress, refresh, refreshVaultSummaries])
+    if (mainView === 'myrounds') return
+    loadParticipantsForView(mainView).catch(() => {})
+  }, [mainView, loadParticipantsForView])
 
   const connectWallet = useCallback(async () => {
     try {
@@ -939,6 +1010,7 @@ export default function App() {
       await ensureCorrectNetwork(provider, expectedChainId)
       if (!account) throw new Error('No wallet connected')
       const signer = await provider.getSigner(account)
+      const nonce = await fetchNonce(account)
       const pool = new ethers.Contract(poolAddress, POOL_ABI, signer)
 
       const value = ticketPrice * BigInt(n)
@@ -956,7 +1028,8 @@ export default function App() {
       }
 
       setStatus('Waiting for wallet confirmation...')
-      const tx = await pool.buyTickets(n, { value, gasLimit })
+      console.log('[buy] nonce:', nonce, 'isNaN:', isNaN(nonce), 'type:', typeof nonce)
+      const tx = await pool.buyTickets(n, { value, gasLimit, nonce })
       setStatus(`Submitted: ${tx.hash.slice(0, 10)}... waiting for confirmation...`)
 
       await tx.wait()
@@ -1012,19 +1085,22 @@ export default function App() {
   const shownState = shownRoundInfo ? Number(shownRoundInfo.state) : -1
   const shownVaultLabel = mainView === 'vaultA' ? 'Vault A' : mainView === 'vaultB' ? 'Vault B' : 'Previous Vault'
   const wrongNetwork = expectedChainId && connectedChainId && expectedChainId !== connectedChainId
-  const salesOpen = isOpenState && secondsRemaining > 0
-  const canBuyTx = !!account && salesOpen && !loading
+  const shownSecondsRemaining = shownRoundInfo ? Math.max(0, Number(shownRoundInfo.salesEndTime ?? 0) - now) : 0
+  const shownSalesOpen = shownState === 0 && shownSecondsRemaining > 0
+  const salesOpen = shownIsCurrentRound ? shownSalesOpen : isOpenState && secondsRemaining > 0
+  const canBuyTx = !!account && shownIsCurrentRound && shownSalesOpen && !loading
 
   const buyDisabledReason = useMemo(() => {
     if (loading) return 'Transaction in progress'
-    if (!salesOpen) {
-      if (!isOpenState) return 'Sales not open in current round state'
+    if (!shownIsCurrentRound) return 'Deposits are only available in the active vault'
+    if (!shownSalesOpen) {
+      if (shownState !== 0) return 'Sales not open in this vault state'
       return 'Sales window closed; waiting for keeper processing'
     }
     if (!account) return 'Connect wallet to deposit'
     if (wrongNetwork) return 'Wrong network — click Buy to switch automatically'
     return ''
-  }, [loading, salesOpen, isOpenState, account, wrongNetwork])
+  }, [loading, shownIsCurrentRound, shownSalesOpen, shownState, account, wrongNetwork])
 
   const settlementSecondsRemaining = useMemo(() => {
     if (!roundInfo) return 0
@@ -1097,12 +1173,11 @@ export default function App() {
           }
         }
 
-        // Unstaking phase: <=24h remaining
         if (nonCurrentSettleSecs > 0 && nonCurrentSettleSecs <= 86400) {
           return {
             heading: 'Winner Revealed',
             value: formatCountdown(nonCurrentSettleSecs),
-            sub: 'Unstaking ShMON \u2014 settling soon',
+            sub: 'Round is wrapping up',
             metaLabel: 'Next action',
             metaValue: 'Settle'
           }
@@ -1112,8 +1187,8 @@ export default function App() {
           heading: 'Vault Locked \u2014 Accumulating Yield',
           value: nonCurrentSettleSecs > 0 ? formatCountdown(nonCurrentSettleSecs) : 'Finalizing\u2026',
           sub: epochBased
-            ? `Unstake epoch ${currentInternalEpoch} / ${completionEpoch}`
-            : 'ShMON staking yield building for winner',
+            ? 'Yield window in progress'
+            : 'Yield building for winner',
           metaLabel: 'Est. unlock',
           metaValue: nonCurrentSettleSecs > 0 ? formatCountdown(nonCurrentSettleSecs) : 'Soon'
         }
@@ -1143,11 +1218,11 @@ export default function App() {
       }
 
       return {
-        heading: 'Winner Drawn - Vault Awaiting Settlement',
+        heading: 'Yield Accruing',
         value: '00:00:00',
-        sub: 'Keeper is progressing settlement',
+        sub: 'Deposits closed — funds are earning yield while awaiting draw',
         metaLabel: 'Next action',
-        metaValue: ACTION_LABELS[nextAction] ?? 'Processing'
+        metaValue: ACTION_LABELS[nextAction] ?? 'Commit'
       }
     }
 
@@ -1155,7 +1230,7 @@ export default function App() {
       const targetBlock = roundInfo ? Number(roundInfo.targetBlockNumber ?? 0) : 0
       if (settlementSecondsRemaining > 0) {
         return {
-          heading: 'Winner Drawn - Vault Awaiting Settlement',
+          heading: 'Winner Reveal Pending',
           value: formatCountdown(settlementSecondsRemaining),
           sub: `Draw unlock at block ${targetBlock.toLocaleString()}`,
           metaLabel: 'Next action',
@@ -1164,9 +1239,9 @@ export default function App() {
       }
 
       return {
-        heading: 'Winner Drawn - Vault Awaiting Settlement',
-        value: 'Awaiting Settle',
-        sub: targetBlock > 0 ? `Waiting for draw at block ${targetBlock.toLocaleString()}` : 'Keeper is progressing settlement',
+        heading: 'Winner Revealed',
+        value: 'Finalizing…',
+        sub: targetBlock > 0 ? `Waiting for draw at block ${targetBlock.toLocaleString()}` : 'Round is being finalized',
         metaLabel: 'Next action',
         metaValue: ACTION_LABELS[nextAction] ?? 'Settle'
       }
@@ -1177,25 +1252,23 @@ export default function App() {
       const completionEpoch = roundInfo ? Number(roundInfo.unstakeCompletionEpoch ?? 0) : 0
       const epochBased = completionEpoch > 0 && currentInternalEpoch > 0
 
-      // Unstaking phase: <=24h remaining — winner revealed, ShMON unstaking
       if (settlementSecondsRemaining > 0 && settlementSecondsRemaining <= 86400) {
         return {
           heading: 'Winner Revealed',
           value: formatCountdown(settlementSecondsRemaining),
-          sub: 'Unstaking ShMON \u2014 settling soon',
+          sub: 'Round is wrapping up',
           metaLabel: 'Next action',
           metaValue: ACTION_LABELS[nextAction] ?? 'Settle'
         }
       }
 
-      // Yield accumulation phase: >24h remaining — vault locked
       if (settlementSecondsRemaining > 86400) {
         return {
           heading: 'Vault Locked \u2014 Accumulating Yield',
           value: formatCountdown(settlementSecondsRemaining),
           sub: epochBased
-            ? `Unstake epoch ${currentInternalEpoch}/${completionEpoch}`
-            : 'ShMON yield building for prize',
+            ? 'Yield window in progress'
+            : 'Yield building for prize',
           metaLabel: 'Est. unlock',
           metaValue: formatCountdown(Math.max(0, settlementSecondsRemaining - 86400))
         }
@@ -1204,9 +1277,7 @@ export default function App() {
       return {
         heading: 'Winner Revealed',
         value: 'Finalizing\u2026',
-        sub: epochBased
-          ? `Unstake epoch ${currentInternalEpoch}/${completionEpoch}`
-          : (targetBlock > 0 ? `Target block ${targetBlock.toLocaleString()}` : 'Unstake requested, waiting for settlement'),
+        sub: targetBlock > 0 ? `Target block ${targetBlock.toLocaleString()}` : 'Round is being finalized',
         metaLabel: 'Next action',
         metaValue: ACTION_LABELS[nextAction] ?? 'Settle'
       }
@@ -1352,7 +1423,7 @@ export default function App() {
         const rows = []
 
         // Scan a wider range so older participation still appears in "My Rounds".
-        const fromRid = Math.max(0, cur - 120)
+        const fromRid = Math.max(0, cur - 10)
         for (let rid = fromRid; rid <= cur; rid++) {
           let info
           try {
@@ -1428,12 +1499,10 @@ export default function App() {
       const provider = new ethers.BrowserProvider(walletProvider)
       await ensureCorrectNetwork(provider, expectedChainId)
       const signer = await provider.getSigner(account)
+      const nonce = await fetchNonce(account)
       const pool = new ethers.Contract(poolAddress, POOL_ABI, signer)
 
-      const readProvider = await getReadProvider()
-      const nonce = await readProvider.getTransactionCount(account, 'pending')
-      const sendTx = async (txRequest) => signer.sendTransaction({ from: account, ...txRequest })
-      await fn(pool, { nonce, from: account }, sendTx)
+      await fn(pool, nonce)
       await refresh()
       setActionStatus(`${label}: success`)
       return true
@@ -1448,9 +1517,8 @@ export default function App() {
 
   const handleClaimPrize = useCallback(async (rid = winnersRoundId) => {
     if (!rid) return false
-    return await runSignedAction('Claim prize', async (pool, txBase, sendTx) => {
-      const txReq = await pool.claimPrize.populateTransaction(BigInt(rid))
-      const tx = await sendTx({ ...txReq, ...txBase, gasLimit: 500000n })
+    return await runSignedAction('Claim prize', async (pool, nonce) => {
+      const tx = await pool.claimPrize(BigInt(rid), { gasLimit: 500000n, nonce })
       setActionStatus(`Claim prize: submitted ${tx.hash.slice(0, 10)}...`)
       await tx.wait()
     })
@@ -1458,9 +1526,8 @@ export default function App() {
 
   const handleWithdraw = useCallback(async (rid = winnersRoundId) => {
     if (!rid) return false
-    return await runSignedAction('Withdraw', async (pool, txBase, sendTx) => {
-      const txReq = await pool.withdrawPrincipal.populateTransaction(BigInt(rid))
-      const tx = await sendTx({ ...txReq, ...txBase, gasLimit: 500000n })
+    return await runSignedAction('Withdraw', async (pool, nonce) => {
+      const tx = await pool.withdrawPrincipal(BigInt(rid), { gasLimit: 500000n, nonce })
       setActionStatus(`Withdraw: submitted ${tx.hash.slice(0, 10)}...`)
       await tx.wait()
     })
@@ -1469,9 +1536,8 @@ export default function App() {
   const handleWithdrawForRound = useCallback(async (rid) => {
     setWithdrawingRid(rid)
     try {
-      await runSignedAction(`Withdraw (Round #${rid})`, async (pool, txBase, sendTx) => {
-        const txReq = await pool.withdrawPrincipal.populateTransaction(BigInt(rid))
-        const tx = await sendTx({ ...txReq, ...txBase, gasLimit: 500000n })
+      await runSignedAction(`Withdraw (Round #${rid})`, async (pool, nonce) => {
+        const tx = await pool.withdrawPrincipal(BigInt(rid), { gasLimit: 500000n, nonce })
         setActionStatus(`Withdraw (Round #${rid}): submitted ${tx.hash.slice(0, 10)}...`)
         await tx.wait()
       })
@@ -1502,11 +1568,23 @@ export default function App() {
   }, [])
 
   const handleClaimOnly = useCallback(async () => {
-    const ok = await handleClaimPrize(claimFlow.rid)
-    if (ok) {
-      setClaimFlow((prev) => ({ ...prev, open: false }))
+    if (!claimFlow.rid) return
+    if (claimFlow.mode !== 'winner') {
+      const ok = await handleClaimPrize(claimFlow.rid)
+      if (ok) setClaimFlow((prev) => ({ ...prev, open: false }))
+      return
     }
-  }, [claimFlow.rid, handleClaimPrize])
+    const ok = await runSignedAction('Claim and withdraw', async (pool, nonce) => {
+      const claimTx = await pool.claimPrize(BigInt(claimFlow.rid), { gasLimit: 500000n, nonce })
+      setActionStatus(`Claim prize: submitted ${claimTx.hash.slice(0, 10)}...`)
+      await claimTx.wait()
+      setActionStatus('Prize claimed, withdrawing principal...')
+      const withdrawTx = await pool.withdrawPrincipal(BigInt(claimFlow.rid), { gasLimit: 500000n, nonce: nonce + 1 })
+      setActionStatus(`Withdraw principal: submitted ${withdrawTx.hash.slice(0, 10)}...`)
+      await withdrawTx.wait()
+    })
+    if (ok) setClaimFlow((prev) => ({ ...prev, open: false }))
+  }, [claimFlow.mode, claimFlow.rid, handleClaimPrize, runSignedAction])
 
   const handleWithdrawOnly = useCallback(async () => {
     const ok = await handleWithdraw(claimFlow.rid)
@@ -1528,7 +1606,7 @@ export default function App() {
     const redepositTickets = ticketPrice > 0n ? claimFlow.prizeWei / ticketPrice : 0n
     const redepositValue = redepositTickets * ticketPrice
 
-    await runSignedAction('Claim and re-deposit', async (pool, txBase, sendTx) => {
+    await runSignedAction('Claim and re-deposit', async (pool, nonce) => {
       if (!salesOpen || !roundId) {
         throw new Error('No open vault is currently accepting deposits')
       }
@@ -1542,19 +1620,19 @@ export default function App() {
         throw new Error('Prize is too large to convert into a safe ticket count')
       }
 
-      const claimReq = await pool.claimPrize.populateTransaction(BigInt(claimFlow.rid))
-      const claimTx = await sendTx({ ...claimReq, ...txBase, gasLimit: 500000n })
+      const claimTx = await pool.claimPrize(BigInt(claimFlow.rid), { gasLimit: 500000n, nonce })
       setActionStatus(`Claim prize: submitted ${claimTx.hash.slice(0, 10)}...`)
       await claimTx.wait()
 
+      const withdrawTx = await pool.withdrawPrincipal(BigInt(claimFlow.rid), { gasLimit: 500000n, nonce: nonce + 1 })
+      setActionStatus(`Withdraw principal: submitted ${withdrawTx.hash.slice(0, 10)}...`)
+      await withdrawTx.wait()
+
       setActionStatus(`Re-deposit: buying ${redepositTickets.toString()} ticket${redepositTickets === 1n ? '' : 's'} in Round #${roundId}...`)
-      const buyReq = await pool.buyTickets.populateTransaction(Number(redepositTickets), { value: redepositValue })
-      const buyTx = await sendTx({
-        ...buyReq,
-        ...txBase,
-        nonce: txBase.nonce + 1,
+      const buyTx = await pool.buyTickets(Number(redepositTickets), {
         value: redepositValue,
         gasLimit: 700000n,
+        nonce: nonce + 2,
       })
       setActionStatus(`Re-deposit: submitted ${buyTx.hash.slice(0, 10)}...`)
       await buyTx.wait()
@@ -1577,14 +1655,22 @@ export default function App() {
     }
 
     if (claimFlow.mode === 'winner') {
-      const ok = await handleClaimPrize(claimFlow.rid)
+      const ok = await runSignedAction('Claim, withdraw, and convert', async (pool, nonce) => {
+        const claimTx = await pool.claimPrize(BigInt(claimFlow.rid), { gasLimit: 500000n, nonce })
+        setActionStatus(`Claim prize: submitted ${claimTx.hash.slice(0, 10)}...`)
+        await claimTx.wait()
+        setActionStatus('Prize claimed, withdrawing principal...')
+        const withdrawTx = await pool.withdrawPrincipal(BigInt(claimFlow.rid), { gasLimit: 500000n, nonce: nonce + 1 })
+        setActionStatus(`Withdraw principal: submitted ${withdrawTx.hash.slice(0, 10)}...`)
+        await withdrawTx.wait()
+      })
 
       if (!ok) return
 
       window.open('https://shmonad.xyz', '_blank', 'noopener,noreferrer')
       setClaimRedirectWarningOpen(false)
       setClaimFlow((prev) => ({ ...prev, open: false }))
-      setActionStatus('Prize claimed. Continue MON conversion in shmonad.xyz.')
+      setActionStatus('Prize and principal withdrawn. Continue MON conversion in shmonad.xyz.')
       return
     }
 
@@ -1658,10 +1744,10 @@ export default function App() {
             canWithdraw={canWithdrawPrincipal}
             settlementLabel={
               isUnstaking
-                ? `Unstaking ShMON \u2014 settling in ${formatCountdown(shownSettlementSecs)}`
+                ? `Round finalizing — ${formatCountdown(shownSettlementSecs)} remaining`
                 : Number(winnersSource?.info?.state ?? -1) === 3
-                  ? 'Settled \u2014 Withdraw Available'
-                  : 'Winner Drawn - Vault Awaiting Settlement'
+                  ? 'Settled — Withdraw Available'
+                  : 'Winner Revealed'
             }
             settlementCountdown={
               Number(winnersSource?.info?.state ?? -1) === 3
@@ -1682,27 +1768,6 @@ export default function App() {
         {currentPage === 'stats' ? <StatsPage /> : null}
             {currentPage === 'vault' && (<>
 
-        {vaultSummaries.length > 1 ? (
-          <section className="vault-switcher">
-            {vaultSummaries.map((v) => (
-              <button
-                key={v.poolAddress}
-                className={`vault-switch-card ${v.poolAddress.toLowerCase() === poolAddress.toLowerCase() ? 'active' : ''}`}
-                onClick={() => setSelectedPoolAddress(v.poolAddress)}
-              >
-                <div className="vault-switch-title">
-                  <span>{shortAddr(v.poolAddress)}</span>
-                  {v.isNowOpen ? <span className="open-badge">Now Open</span> : null}
-                </div>
-                <div className="vault-switch-sub">Round #{v.roundId} · {v.stateLabel}</div>
-                <div className="vault-switch-meta">Tickets: {v.totalTickets.toLocaleString()} · TVL: {v.tvlMon} MON</div>
-                <div className="vault-switch-meta">
-                  {v.isNowOpen ? `Closes in ${formatCountdown(v.timeRemainingSec)}` : `Status: ${v.stateLabel}`}
-                </div>
-              </button>
-            ))}
-          </section>
-        ) : null}
 
         <h1>
           Win the Pot.
@@ -1867,6 +1932,7 @@ export default function App() {
           <RoundProgressSteps
             state={shownState >= 0 ? shownState : 0}
             settlementSecs={shownSettlementSecs}
+            secondsRemaining={shownSecondsRemaining}
           />
         ) : null}
 
@@ -1945,7 +2011,7 @@ export default function App() {
                   activeRoundInfo && Number(activeRoundInfo.state) === 3
                     ? 'Final settled yield'
                     : isUnstaking
-                      ? 'Estimated yield - finalizing'
+                      ? 'Estimated yield'
                       : currentPrizePool.sub
                 }
                 icon={(
@@ -1974,7 +2040,6 @@ export default function App() {
           onBackFromRedirectWarning={() => setClaimRedirectWarningOpen(false)}
           confirmRedirectOpen={claimRedirectWarningOpen}
           onConfirmRedirect={handleConfirmWithdrawAndConvert}
-          prizeAlreadyClaimed={claimFlow.mode === 'principal' && claimFlow.prizeWei === 0n}
         />
       </div>
     </div>
