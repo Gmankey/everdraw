@@ -1,56 +1,45 @@
 # Why EverDraw
 
-## DeFi has a retention problem — on both sides
+EverDraw exists because most DeFi products ask too much from users and give protocols weak ways to keep people engaged.
 
-**Users are disengaged.** DeFi rewards have dimished. Users chase yields, farm airdrops, and leave. Betting markets like prediction platforms are pulling users away from DeFi entirely. But betting markets erode capital. Users end up poorer and more disengaged over time.
-
-**Protocols are wasting growth budgets.** Airdrops produce 90%+ farmer churn. Liquidity mining creates mercenary capital that exits the moment incentives stop. Points programs face increasing fatigue and scepticism. Protocols will spend millions on these tools over the next 12 months and most of that spend will produce one-time engagement that doesn't stick.
-
-EverDraw solves both problems with one mechanism.
+It offers a simpler alternative: protected principal for users, and repeatable prize campaigns for protocols.
 
 ---
 
-## For users: excitement without risk
+## For users: excitement without added risk
 
-Prize-linked savings is backed by decades of real-world behavioural economics research. Studies consistently show that prize-linked savings accounts generate 30–40% higher deposit rates than equivalent interest-bearing accounts. People will choose the chance to win a large prize over the certainty of a small return, even when the expected value is identical.
+Most yield products ask users to manage complexity or accept downside.
 
-Traditional lotteries exploit this instinct destructively. Players lose money. The house wins.
+EverDraw is simpler. You deposit MON, get tickets, and join the draw. If you win, you get the round's yield. If you don't, you still keep your principal.
 
-EverDraw redirects the same instinct towards a safer alternative. The prize comes from staking yield, not from other players' losses. Nobody funds the pot by losing. The staking layer funds it. This is the critical distinction: EverDraw aligns human psychology with positive financial behaviour rather than exploiting it.
+That matters because people are naturally drawn to upside. EverDraw keeps that excitement, but removes the usual losing side of the equation. The prize comes from staking yield, not from other users losing money.
 
-> "Win the pot. Or keep your lot."
-
-No liquidation risk. No impermanent loss. No complex positions. This is the product you can explain in one sentence.
+> Win the pot. Or keep your lot.
 
 ---
 
-## For protocols: a better retention tool
+## For protocols: a cleaner engagement model
 
-Every Monad protocol with a growth budget faces the same question: how do I acquire users who actually stay?
+Protocols need users who come back, not just users who show up once for an incentive.
 
-EverDraw's CampaignManager gives protocols a new option. Instead of airdropping tokens, a protocol funds a branded prize campaign through EverDraw. Users participate for the chance to win. They come back weekly. Winners post about it. The protocol gets recurring engagement and measurable retention — not a one-time token distribution that evaporates.
+EverDraw gives protocols a way to run prize campaigns that feel simple for users and repeatable for teams. A protocol can fund a campaign, keep its branding, and let EverDraw handle the prize flow underneath.
 
-A protocol funds a campaign with a simple treasury transfer. No contract changes on their side. No audit required. EverDraw handles draw execution, winner selection, claim flows, and frontend integration. The protocol keeps its branding and user relationship. EverDraw provides the trusted prize engine underneath.
-
-This is a fundamentally different model from airdrops, points, or liquidity mining. Those tools create one-time extraction. Prize campaigns create recurring engagement loops.
+Compared with one-off incentive programs, prize campaigns are easier to remember, easier to talk about, and better suited to repeated participation.
 
 ---
-
 
 ## Why now, why Monad
 
-Two main things have converged that make EverDraw possible today in a way it wasn't before:
+Three things make EverDraw a good fit for Monad:
 
-**1. Native, reliable yield via ShMON**
+**1. Native yield via ShMON**
 
-Previous approaches to prize savings were forced to source yield from lending markets or LP farming. These are inherently cyclical and unreliable. ShMON creates a yield source tied to Monad's consensus mechanism. This yield exists as long as Monad runs. It doesn't compress with lending market cycles. It strengthens as more users participate. EverDraw has a native yield floor that never goes to zero.
+EverDraw uses yield tied to Monad's staking economy rather than relying on short-term emissions or fragile market cycles.
 
-**2. Yield gamification is a proven model**
+**2. A simple format users already understand**
 
-    Protocols like Pendle have proven that there is defiitely a market for this. While Pendle is for the sophisticated yield trader, Everdraw aims to be a simple to understand, low barrier to entry alternative.
+Users do not need to learn advanced DeFi mechanics. Deposit, wait, and see the result.
 
-**3. Protocol incentive models are exhausted**
+**3. Better options for protocol incentives**
 
-The gap between what users want — excitement with safety — and what DeF i typically offers — complexity with risk — has never been wider. And protocols are actively searching for retention tools that outperform the airdrop/points playbook. EverDraw arrives at the exact moment both sides of the market need it most.
-
-
+Protocols want engagement that lasts longer than a single reward claim. Prize campaigns offer a cleaner and more memorable way to do that.

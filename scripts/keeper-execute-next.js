@@ -309,13 +309,21 @@ async function tick() {
   tickCount += 1
 
   try {
-    await checkBalance()
+    try {
+      await checkBalance()
+    } catch (balErr) {
+      console.error(`${ts()} [keeper] balance check error (non-fatal): ${balErr?.message || String(balErr)}`)
+    }
 
     for (const poolCtx of pools) {
       try {
         await tickPool(poolCtx)
       } catch (err) {
-        await handlePoolError(poolCtx, err)
+        try {
+          await handlePoolError(poolCtx, err)
+        } catch (alertErr) {
+          console.error(`${ts()} [keeper] handlePoolError failed: ${alertErr?.message || String(alertErr)}`)
+        }
       }
     }
   } finally {
@@ -360,7 +368,12 @@ async function main() {
   })
 
   while (running) {
-    await tick()
+    try {
+      await tick()
+    } catch (tickErr) {
+      const msg = tickErr?.message || String(tickErr)
+      console.error(`${ts()} [keeper] tick error (non-fatal): ${msg}`)
+    }
     await sleep(INTERVAL_MS)
   }
 

@@ -17,6 +17,7 @@ interface IShMonad {
 ///         Strategy 1: only one active finalizing round at a time (shMON unstake is per-account).
 ///         Automation-first: call executeNext() repeatedly. Permissionless fallback: anyone can call the same function.
 contract TicketPrizePoolShmonShMonad {
+    // NOTE: contract is not upgradeable; appending new fields/events/errors is storage-safe here.
     // ---------------------------------------------------------------------
     // Legacy revert encoding (tests expect selector 0xf28dceb3 + raw string bytes)
     // IMPORTANT: must be abi.encodePacked(selector, bytes(reason)), NOT abi.encodeWithSelector.
@@ -48,6 +49,11 @@ contract TicketPrizePoolShmonShMonad {
 
     modifier onlyOwner() {
         require(msg.sender == owner, "not owner");
+        _;
+    }
+
+    modifier onlyKeeper() {
+        if (!isKeeper[msg.sender]) revert NotKeeper();
         _;
     }
 
@@ -117,7 +123,7 @@ contract TicketPrizePoolShmonShMonad {
         _skipRound(rid);
     }
 
-    function drawWinner(uint256 rid) external whenNotPaused {
+    function drawWinner(uint256 rid) external whenNotPaused onlyKeeper {
         RoundData storage r = rounds[rid];
 
         if (r.salesEndTime == 0) _legacyRevert("bad round");
@@ -140,24 +146,44 @@ contract TicketPrizePoolShmonShMonad {
         _settleRound(rid);
     }
 
-    function recommit(uint256 rid) external whenNotPaused {
+    function recommit(uint256 rid) external whenNotPaused onlyKeeper {
         _recommit(rid);
     }
 
-    function emergencyForceSettle(uint256 rid) external onlyOwner {
+    function setKeeper(address keeper, bool allowed) external onlyOwner {
+        isKeeper[keeper] = allowed;
+        emit KeeperSet(keeper, allowed);
+    }
+
+    function emergencyForceSettle(uint256 rid) external onlyOwner nonReentrant {
         RoundData storage r = rounds[rid];
         if (r.state != RoundState.Finalizing) revert BadState();
         if (activeFinalizingRoundId != rid) revert BadState();
         require(block.timestamp >= uint256(r.finalizationStartTime) + FINALIZATION_TIMEOUT, "timeout not reached");
 
-        r.monReceived = 0;
-        r.yieldMON = 0;
-        r.lossRatio = 0;
+        uint256 balBefore = address(this).balance;
+        try shmon.completeUnstake() {
+            uint256 received = address(this).balance - balBefore;
+            r.monReceived = received;
+            if (received >= r.totalPrincipalMON) {
+                r.yieldMON = received - r.totalPrincipalMON;
+                r.lossRatio = 1e18;
+            } else {
+                r.yieldMON = 0;
+                r.lossRatio = r.totalPrincipalMON == 0 ? 1e18 : (received * 1e18) / r.totalPrincipalMON;
+            }
+            r.emergencyMode = false;
+        } catch {
+            r.monReceived = 0;
+            r.yieldMON = 0;
+            r.lossRatio = 1e18;
+            r.emergencyMode = true;
+        }
         r.state = RoundState.Settled;
 
         activeFinalizingRoundId = 0;
 
-        emit RoundSettled(rid, 0, 0, 0);
+        emit EmergencyForceSettled(rid, r.monReceived, r.lossRatio);
 
         _bumpCursor();
     }
@@ -198,6 +224,7 @@ contract TicketPrizePoolShmonShMonad {
         RoundState state;
         uint64 salesEndTime;
         uint256 targetBlockNumber;
+        uint8 recommitCount;
 
         // tickets
         uint32 totalTickets;
@@ -213,6 +240,7 @@ contract TicketPrizePoolShmonShMonad {
         uint256 monReceived;           // from completeUnstake()
         uint256 yieldMON;              // max(0, monReceived - principal)
         uint256 lossRatio;             // 1e18 = no loss; <1e18 scales principal down
+        bool emergencyMode;
 
         // winner
         address winner;
@@ -226,6 +254,11 @@ contract TicketPrizePoolShmonShMonad {
 
     error BadConfig();
     error BadState();
+    error NotKeeper();
+    error RecommitLimitReached();
+    error RoundNotEmergencySettled();
+    error NothingToRecover();
+    error AlreadyClaimedRecovery();
     error SalesNotEnded();
     error SalesEnded();
     error ZeroTickets();
@@ -248,6 +281,7 @@ contract TicketPrizePoolShmonShMonad {
     uint32 public immutable commitDelayBlocks;
     uint32 public immutable roundDurationSec;
     IShMonad public immutable shmon;
+    uint8 public constant MAX_RECOMMITS_PER_ROUND = 3;
 
     // -------------------------
     // Storage
@@ -259,8 +293,13 @@ contract TicketPrizePoolShmonShMonad {
     // principal per user per round (MON)
     mapping(uint256 => mapping(address => uint256)) public principalMON;
 
+    mapping(address => bool) public isKeeper;
+
     // Strategy 1 guard: only one active unstake/finalization at a time
     uint256 public activeFinalizingRoundId; // 0 if none
+
+    mapping(uint256 => uint256) public recoveredMON;
+    mapping(uint256 => mapping(address => bool)) public recoveryClaimed;
 
     // For executeNext() scanning:
     // The earliest round that might still need action (commit/draw/settle/skip).
@@ -278,6 +317,12 @@ contract TicketPrizePoolShmonShMonad {
     event WinnerDrawn(uint256 indexed roundId, address indexed winner, uint32 winningTicket);
     event UnstakeRequested(uint256 indexed roundId, uint64 completionEpoch, uint256 shmonShares);
     event RoundSettled(uint256 indexed roundId, uint256 monReceived, uint256 yieldMON, uint256 lossRatio);
+    event Recommitted(uint256 indexed roundId, uint8 recommitCount, uint256 targetBlockNumber);
+    event KeeperSet(address indexed keeper, bool allowed);
+    event SettlementRetryNeeded(uint256 indexed roundId);
+    event EmergencyForceSettled(uint256 indexed roundId, uint256 monReceived, uint256 lossRatio);
+    event SharesRecovered(uint256 indexed roundId, uint256 amount);
+    event RecoveryClaimed(uint256 indexed roundId, address indexed user, uint256 amount);
 
     event PrizeClaimed(uint256 indexed roundId, address indexed winner, uint256 amount);
     event PrincipalWithdrawn(uint256 indexed roundId, address indexed user, uint256 amount);
@@ -308,6 +353,7 @@ contract TicketPrizePoolShmonShMonad {
         ) revert BadConfig();
 
         owner = msg.sender;
+        isKeeper[msg.sender] = true;
 
         ticketPriceMON = _ticketPriceMON;
         commitDelayBlocks = _commitDelayBlocks;
@@ -378,7 +424,7 @@ contract TicketPrizePoolShmonShMonad {
     /// @notice The ONE function an automation bot can call repeatedly.
     ///         Anyone can call it too (permissionless fallback).
     /// @dev Picks a round and runs exactly one step.
-    function executeNext() external whenNotPaused returns (uint256 rid, NextAction action) {
+    function executeNext() external whenNotPaused onlyKeeper returns (uint256 rid, NextAction action) {
         (rid, action) = nextExecutable();
         if (action == NextAction.None) {
             return (rid, action);
@@ -389,7 +435,7 @@ contract TicketPrizePoolShmonShMonad {
     }
 
     /// @notice Manual/targeted: do the next step for a specific round.
-    function executeNext(uint256 rid) external whenNotPaused returns (NextAction action) {
+    function executeNext(uint256 rid) external whenNotPaused onlyKeeper returns (NextAction action) {
         action = nextAction(rid);
         if (action == NextAction.None) return action;
 
@@ -416,9 +462,11 @@ contract TicketPrizePoolShmonShMonad {
         if (r.state != RoundState.Committed) revert BadState();
         if (r.totalTickets == 0) revert ZeroTickets();
         if (block.number <= r.targetBlockNumber + 255) revert TooEarly();
+        if (r.recommitCount >= MAX_RECOMMITS_PER_ROUND) revert RecommitLimitReached();
 
-        r.targetBlockNumber = block.number + commitDelayBlocks;
-        emit DrawCommitted(rid, r.targetBlockNumber);
+        r.recommitCount += 1;
+        r.targetBlockNumber = block.number + 1;
+        emit Recommitted(rid, r.recommitCount, r.targetBlockNumber);
     }
 
     // -------------------------
@@ -559,7 +607,13 @@ contract TicketPrizePoolShmonShMonad {
         bytes32 bh = blockhash(r.targetBlockNumber);
         if (bh == bytes32(0)) revert NoBlockhash();
 
-        bytes32 rnd = keccak256(abi.encodePacked(bh, rid));
+        bytes32 rnd = keccak256(abi.encodePacked(
+            bh,
+            rid,
+            r.totalPrincipalMON,
+            r.totalTickets,
+            block.prevrandao
+        ));
         uint32 winTicket = uint32(uint256(rnd) % uint256(r.totalTickets));
         address w = _ownerOfTicket(r, winTicket);
 
@@ -586,7 +640,11 @@ contract TicketPrizePoolShmonShMonad {
 
         uint256 balBefore = address(this).balance;
 
-        shmon.completeUnstake();
+        try shmon.completeUnstake() {
+        } catch {
+            emit SettlementRetryNeeded(rid);
+            return;
+        }
 
         uint256 balAfter = address(this).balance;
         uint256 received = balAfter - balBefore;
@@ -657,6 +715,7 @@ contract TicketPrizePoolShmonShMonad {
     function withdrawPrincipal(uint256 rid) external nonReentrant {
         RoundData storage r = rounds[rid];
         if (r.state != RoundState.Settled) revert BadState();
+        if (recoveryClaimed[rid][msg.sender]) revert AlreadyClaimedRecovery();
 
         uint256 amt = principalMON[rid][msg.sender];
         if (amt == 0) revert NothingToWithdraw();
@@ -671,6 +730,44 @@ contract TicketPrizePoolShmonShMonad {
         require(ok, "transfer failed");
 
         emit PrincipalWithdrawn(rid, msg.sender, amt);
+    }
+
+    function recoverStrandedShares(uint256 rid) external onlyOwner nonReentrant {
+        RoundData storage r = rounds[rid];
+        if (r.state != RoundState.Settled || !r.emergencyMode || r.monReceived != 0) {
+            revert RoundNotEmergencySettled();
+        }
+
+        uint256 balBefore = address(this).balance;
+        shmon.completeUnstake();
+        uint256 received = address(this).balance - balBefore;
+        if (received == 0) revert NothingToRecover();
+
+        recoveredMON[rid] += received;
+        emit SharesRecovered(rid, received);
+    }
+
+    function claimRecovery(uint256 rid) external nonReentrant {
+        RoundData storage r = rounds[rid];
+        if (r.state != RoundState.Settled || !r.emergencyMode || r.monReceived != 0) {
+            revert RoundNotEmergencySettled();
+        }
+        if (recoveryClaimed[rid][msg.sender]) revert AlreadyClaimedRecovery();
+
+        uint256 userPrincipal = principalMON[rid][msg.sender];
+        if (userPrincipal == 0) revert NothingToRecover();
+        if (r.totalPrincipalMON == 0) revert NothingToRecover();
+
+        uint256 share = (recoveredMON[rid] * userPrincipal) / r.totalPrincipalMON;
+        if (share == 0) revert NothingToRecover();
+
+        recoveryClaimed[rid][msg.sender] = true;
+        principalMON[rid][msg.sender] = 0;
+
+        (bool ok,) = msg.sender.call{value: share}("");
+        require(ok, "transfer failed");
+
+        emit RecoveryClaimed(rid, msg.sender, share);
     }
 
     // -------------------------

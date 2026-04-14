@@ -2,51 +2,46 @@
 
 ## Where to find results
 
-Switch to the **Previous Vault** tab in the app to see the most recently completed round. This tab shows the winner, the full participant leaderboard, and the current settlement status.
+Open the **Previous Vault** view in the app to see the most recently completed round.
+
+There you can see:
+- the winner
+- the prize amount
+- the winning ticket
+- the participant leaderboard
+- whether claim / withdraw is available yet
 
 ---
 
-## When results become visible
+## When results appear
 
-Results appear in two stages — before funds are available to claim.
+Results appear once the round ends and the winner is revealed.
 
-**At the 7-day mark (Winner Revealed):**
+At that point you can see the winner and leaderboard before funds become available.
 
-Approximately 24 hours before settlement, the winner is announced in the Previous Vault tab. You can see:
-
-- Winner address
-- Estimated prize amount
-- Winning ticket number
-- Full participant leaderboard — every wallet that bought tickets, sorted by ticket count (highest to lowest)
-- Your own participation and ticket count
-
-Claim and withdraw are not yet available at this point. The ShMON unstaking phase must complete first.
-
-**After unstaking completes (Claim / Withdraw):**
-
-Once the 18-24 hour ShMON unstaking phase finishes, the countdown reaches zero and claim/withdraw buttons activate. The prize amount updates from estimated to final.
+After the round is finalized, the claim and withdraw actions become available.
 
 ---
 
 ## What you can see during each stage
 
-| Stage | Winner visible | Prize amount | Leaderboard | Claim / Withdraw |
+| Stage | Winner visible | Prize shown | Leaderboard | Claim / Withdraw |
 |---|---|---|---|---|
 | Deposit | No | No | No | No |
 | Yield Accumulating | No | No | No | No |
-| Winner Revealed | Yes | Estimated | Yes | Not yet (countdown shown) |
-| Unstaking ShMON | Yes | Estimated | Yes | Not yet (countdown shown) |
-| Claim / Withdraw | Yes | Final | Yes | Available |
+| Winner Revealed | Yes | Yes | Yes | Not yet |
+| Claim / Withdraw | Yes | Yes | Yes | Available |
 
 ---
 
 ## Reading the leaderboard
 
-The participant leaderboard lists every wallet that bought tickets in the round, sorted from most tickets to fewest. Each row shows:
+The leaderboard shows every wallet that entered the round, ordered by ticket count.
 
-- Wallet address
-- Number of tickets purchased
-- Share of the total round (%)
+Each row shows:
+- wallet address
+- tickets
+- share of the round
 - MON deposited
 
-The winner's row is highlighted and labelled. If you participated, your row is also highlighted.
+The winner is highlighted.

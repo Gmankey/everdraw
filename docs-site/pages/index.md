@@ -2,48 +2,67 @@
 
 ### Win the pot, or keep your lot.
 
-**Principal protected prize layer for DeFi yield.**
-
-EverDraw is Monad's principal protected prize layer. Deposit MON, earn a chance to win the entire yield pool, and always get your principal back. No losses. No liquidations. No complexity.
+Deposit MON for a chance to win the round's yield pool. If you don't win, you still get your principal back.
 
 ---
 
-## The idea in one sentence
+## What EverDraw is
 
-Instead of users earning a standard APY yield by staking their MON, EverDraw collects all the earned yield into a single prize pool and gifts it to one lucky winner; everyone else keeps their initial deposit and can try again next round.
+EverDraw turns staking yield into a prize draw.
 
----
+You deposit MON, receive tickets, and join the current round. During the round, the vault generates yield. At the end, one wallet wins that yield and everyone else keeps their original deposit.
 
-## Two products, one protocol
-
-**For users:** EverDraw is the simplest DeFi product that exists. Deposit MON. Maybe win the pot. Always keep your lot. No liquidation risk, no impermanent loss, no positions to manage.
-
-**For protocols:** EverDraw is prize campaign infrastructure. Any Monad protocol can fund a branded prize campaign through EverDraw's CampaignManager — no contract changes, no audit required on their side. Instead of spending growth budgets on airdrops that produce 90%+ farmer churn, protocols create recurring weekly engagement events that bring users back. Every winner is a social moment. Every draw is organic retention.
+Simple idea, simple outcome:
+- one winner gets the yield
+- everyone keeps their principal
 
 ---
 
-## Why this is different from anything else in DeFi
+## For users
 
-Every other DeFi product asks you to take risk. Lending carries liquidation risk. LPs take impermanent loss. Yield farming depends on token emissions that dry up. Even staking has slashing risk in theory.
+EverDraw is a simple way to save with upside.
 
-EverDraw inverts this entirely. The worst outcome for a depositor is: *you saved money and earned nothing extra this round.* The best outcome is: *you win the entire yield pool.* There is no bad outcome. There is only "didn't win yet."
+- Deposit MON
+- Get tickets
+- Wait for the draw
+- If you win, claim the prize
+- If you don't, withdraw your principal
 
-In tradfi this is most akin to the concept of "prize-linked savings", a financial concept with decades of real-world validation showing it drives 30–40% higher deposit rates than standard savings accounts. People save more when there's a chance to win. EverDraw brings this to DeFi for the first time, natively on Monad, backed by real consensus-layer yield.
-
----
-
-## Where EverDraw is going
-
-EverDraw launches as a MON prize vault. That's the beginning, not the destination.
-
-The vision is to become the prize layer for all of Monad. The infrastructure where any asset, any yield source, and any protocol can offer "deposit and win" mechanics. From single vaults to a CampaignManager that lets protocols fund branded prize campaigns, to cross-protocol mega draws, to a permissionless vault factory that powers prize savings across the entire ecosystem.
-
-[Read the full vision →](vision/README.md)
+No liquidation risk. No impermanent loss. No complicated position management.
 
 ---
 
-## Built on Monad. Aligned with Monad.
+## For protocols
 
-EverDraw couldn't exist in its current form on any other chain. The yield comes from Monad's own consensus mechanism via ShMON staking, not from a lending market or a token emission schedule. Every MON deposited into EverDraw gets staked via ShMON, strengthening Monad's network security. The protocol and the chain grow together.
+EverDraw can also power prize campaigns for Monad protocols.
+
+Instead of funding one-off incentives, a protocol can fund a branded prize campaign that gives users a reason to come back regularly. EverDraw handles the prize logic, draw flow, and user experience underneath.
+
+---
+
+## Why it's different
+
+Most DeFi products ask users to take risk in exchange for yield.
+
+EverDraw flips that. The yield becomes the prize, while user principal stays protected. The downside is not winning the round. The upside is winning the full prize pool.
+
+That makes EverDraw easier to understand than most DeFi products and easier to explain to someone new.
+
+---
+
+## Built on Monad
+
+EverDraw uses ShMON as its yield source, which ties the product directly to Monad's staking economy.
+
+That means the prize comes from real network yield, not from other users losing money.
 
 [Read about the ShMON partnership →](shmon-partnership.md)
+
+---
+
+## Learn more
+
+- [Why EverDraw →](why-everdraw.md)
+- [How It Works →](how-it-works/index.md)
+- [Getting Started →](getting-started/index.md)
+- [FAQ →](faq.md)

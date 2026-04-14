@@ -12,9 +12,9 @@ contract DeployTicketPrizePoolShmonShMonad is Script {
         vm.startBroadcast(deployerKey);
 
         TicketPrizePoolShmonShMonad pool = new TicketPrizePoolShmonShMonad(
-            0.1 ether,  // ticket price in MON
+            1 ether,    // ticket price in MON
             10,         // commit delay blocks
-            604800,     // round duration (7 days)
+            345600,     // round duration (4 days)
             shmon
         );
 

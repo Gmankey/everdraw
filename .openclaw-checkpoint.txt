@@ -1,0 +1,18 @@
+2026-04-10 12:27 Australia/Sydney
+Task: Everdraw claim-flow completion
+
+Completed:
+- Re-inspected `web/src/App.jsx` and the directly related claim-flow wiring in the live workspace state.
+- Confirmed `ClaimFlowModal` is wired with `onClaimOnly`, `onWithdrawOnly`, `onRedeposit`, and `onWithdrawAndConvert`.
+- Verified the winner-side modal flow is wired to `claimPrize(uint256 rid)` for claim-only and to `claimPrize(uint256 rid)` -> `buyTickets(uint32 ticketCount)` for claim-and-redeposit.
+- Verified the principal-side modal flow is wired to `withdrawPrincipal(uint256 rid)` for withdraw-only.
+- Confirmed the combined principal flow only opens `https://shmonad.xyz` after a successful `withdrawPrincipal(uint256 rid)` transaction.
+- Confirmed the re-deposit callback/prop typo is fixed in the live code: `onRedeposit` / `handleRedeposit`.
+- Patched the remaining UX gap in `web/src/App.jsx`: successful `handleClaimOnly` and `handleWithdrawOnly` actions now close `ClaimFlowModal`, matching the already-implemented combined flows.
+- Verified locally with `npm run build` in `web/` -> success at 12:27 Australia/Sydney.
+
+Known blocker:
+- Full end-to-end transaction confirmation still requires a human-connected browser wallet on Monad testnet. Code path is implemented and build-verified, but on-chain signing cannot be completed from this worker alone.
+
+Next step after unblock:
+- Open the winners view in a browser with a funded wallet, exercise both winner and principal modal paths, and confirm the post-transaction UX on real chain responses.

@@ -1,8 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { ethers } from 'ethers'
 import VaultAnimationTest from './components/VaultAnimationTest'
+import ShmonPanel from './ShmonPanel'
 import { StatsPage } from './Stats.jsx'
+import { modal } from './walletModal.ts'
 import './App.css'
+import './shmon.css'
+
+function getWalletProvider() {
+  return modal.getWalletProvider() || window.ethereum || null
+}
 
 const POOL_ABI = [
   'function currentRoundId() view returns (uint256)',
@@ -90,6 +98,33 @@ function normalizeError(e) {
   return msg
 }
 
+async function fetchNonce(address) {
+  const rpcUrl = import.meta.env.VITE_RPC_URL || 'https://rpc.monad.xyz'
+  for (let i = 0; i < 5; i++) {
+    try {
+      const res = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: Date.now(),
+          method: 'eth_getTransactionCount',
+          params: [address.toLowerCase(), 'pending']
+        })
+      })
+      if (res.status === 429) {
+        await new Promise((r) => setTimeout(r, 700 * (i + 1)))
+        continue
+      }
+      const json = await res.json()
+      const n = parseInt(json.result, 16)
+      if (!isNaN(n) && n >= 0) return n
+    } catch {}
+    await new Promise((r) => setTimeout(r, 400))
+  }
+  throw new Error('Could not fetch nonce, RPC rate limited, try again in a few seconds')
+}
+
 const MONAD_TESTNET_CHAIN_PARAMS = {
   chainId: '0x279F',
   chainName: 'Monad Testnet',
@@ -130,6 +165,7 @@ function Header({ account, onConnect, currentPage }) {
       </div>
       <nav className="nav-links">
         <a href="#vault" className={`nav-link ${currentPage === 'vault' ? 'active' : ''}`}>Vault</a>
+        <a href="#shmon" className={`nav-link ${currentPage === 'shmon' ? 'active' : ''}`}>shMON</a>
         <a href="#stats" className={`nav-link ${currentPage === 'stats' ? 'active' : ''}`}>Stats</a>
         <a href="https://docs.everdraw.xyz" target="_blank" rel="noopener noreferrer" className="nav-link">Docs</a>
         <a href="https://x.com/everdrawing" target="_blank" rel="noopener noreferrer" className="nav-link nav-link-x" aria-label="X / Twitter">
@@ -160,6 +196,120 @@ function StatCard({ label, value, sub, icon }) {
   )
 }
 
+function ClaimFlowModal({ open, mode, busy, status, error, onClose, onClaimOnly, onWithdrawOnly, onRedeposit, onWithdrawAndConvert, onBackFromRedirectWarning, confirmRedirectOpen, onConfirmRedirect }) {
+  if (!open) return null
+
+  const isWinner = mode === 'winner'
+  const heroEyebrow = ''
+  const heroTitle = 'How do you want to claim this round?'
+  const heroBody = ''
+
+  const options = isWinner
+    ? [
+        {
+          kicker: busy ? 'Working...' : 'SIMPLE CLAIM',
+          title: 'Withdraw Shmon directly to wallet ',
+          body: '',
+          onClick: onClaimOnly,
+          tone: 'default',
+        },
+        {
+          kicker: busy ? 'Working...' : 'KEEP PLAYING',
+          title: 'Re-deposit into the next active round',
+          body: '',
+          onClick: onRedeposit,
+          tone: 'primary',
+        },
+        {
+          kicker: busy ? 'Working...' : 'CLAIM AND CONVERT',
+          title: 'Claim Shmon and convert to MON',
+          body: '',
+          onClick: onWithdrawAndConvert,
+          tone: 'default',
+        },
+      ]
+    : [
+        {
+          kicker: busy ? 'Working...' : 'WITHDRAW PRINCIPAL',
+          title: 'Withdraw principal directly to wallet',
+          body: '',
+          onClick: onWithdrawOnly,
+          tone: 'default',
+        },
+        {
+          kicker: busy ? 'Working...' : 'KEEP PLAYING',
+          title: 'Leave principal in the next active round',
+          body: '',
+          onClick: onClaimOnly,
+          tone: 'primary',
+        },
+        {
+          kicker: busy ? 'Working...' : 'WITHDRAW AND CONVERT',
+          title: 'Withdraw principal and convert to MON',
+          body: '',
+          onClick: onWithdrawAndConvert,
+          tone: 'default',
+        },
+      ]
+
+  const modal = (
+    <div className="shmon-modal-backdrop claim-flow-backdrop" role="dialog" aria-modal="true" aria-labelledby="claim-flow-title">
+      <div className={`card shmon-modal claim-flow-modal ${isWinner ? 'winner' : 'principal'}`}>
+        <div className={`claim-flow-head ${confirmRedirectOpen ? 'compact' : ''}`}>
+          <button type="button" className="claim-flow-close" onClick={onClose} disabled={busy} aria-label="Close">×</button>
+          {!confirmRedirectOpen ? (
+            <div className="claim-flow-hero">
+              {heroEyebrow ? <div className="claim-flow-eyebrow">{heroEyebrow}</div> : null}
+              <div className="claim-flow-title" id="claim-flow-title">{heroTitle}</div>
+              {heroBody ? <p className="claim-flow-body">{heroBody}</p> : null}
+            </div>
+          ) : null}
+        </div>
+
+        {confirmRedirectOpen ? (
+          <div className="claim-flow-confirm">
+            <div className="claim-flow-confirm-panel">
+              <div className="claim-flow-eyebrow">HEADS UP</div>
+              <div className="claim-flow-confirm-copy">You will be redirected to shmonad.xyz to finish MON conversion</div>
+            </div>
+            <div className="claim-flow-confirm-actions">
+              <button type="button" className="claim-option-card claim-confirm-btn" onClick={onBackFromRedirectWarning} disabled={busy}>
+                <span className="claim-option-kicker">Go Back</span>
+                <strong>Review options</strong>
+              </button>
+              <button type="button" className="claim-option-card primary claim-confirm-btn" onClick={onConfirmRedirect} disabled={busy}>
+                <span className="claim-option-kicker">Continue</span>
+                <strong>{busy ? 'Working...' : 'Open shmonad.xyz'}</strong>
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="claim-flow-grid">
+            {options.map((option) => (
+              <button
+                key={option.title}
+                type="button"
+                className={`claim-option-card ${option.tone === 'primary' ? 'primary' : ''}`}
+                onClick={option.onClick}
+                disabled={busy}
+              >
+                <span className="claim-option-kicker">{option.kicker}</span>
+                <strong className="claim-option-title">{option.title}</strong>
+                {option.body ? <span>{option.body}</span> : null}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {status ? <div className="shmon-subline claim-flow-status">{status}</div> : null}
+        {error ? <div className="shmon-subline claim-flow-status error">{error}</div> : null}
+      </div>
+    </div>
+  )
+
+  return createPortal(modal, document.body)
+}
+
 function VaultDoorBackground({ progressPct, salesOpen }) {
   const clamped = Math.max(0, Math.min(100, Number(progressPct) || 0))
   const r = 142
@@ -176,7 +326,7 @@ function VaultDoorBackground({ progressPct, salesOpen }) {
         </mask>
       </defs>
 
-      <rect x="0" y="0" width="320" height="320" fill="#141026" />
+      <rect x="0" y="0" width="320" height="320" fill="#100d1e" />
 
       <circle cx="160" cy="160" r="155" fill="none" stroke="#1D1836" strokeWidth="0.5" strokeDasharray="1 3" />
       <circle cx="160" cy="160" r="150" fill="none" stroke="#1D1836" strokeWidth="0.5" strokeDasharray="1 2" />
@@ -290,7 +440,7 @@ function WinnersView({ onBack, winner, winnerAddress, prize, participants, parti
         {isUnstaking ? (
           <button className="btn" disabled>Available after settlement</button>
         ) : canClaim ? (
-          <button className="btn" onClick={onClaimPrize} disabled={actionBusy}>Claim Prize</button>
+          <button className="btn" onClick={onClaimPrize} disabled={actionBusy}>Claim</button>
         ) : null}
       </div>
 
@@ -327,10 +477,10 @@ function WinnersView({ onBack, winner, winnerAddress, prize, participants, parti
           {isUnstaking
             ? 'Available after settlement'
             : canWithdraw
-              ? 'Withdraw Tokens'
+              ? 'Claim Principal'
               : settlementCountdown === '00:00:00:00'
-                ? 'No principal to withdraw'
-                : `Withdraw Tokens (${settlementCountdown})`}
+                ? 'No principal to claim'
+                : `Claim Principal (${settlementCountdown})`}
         </button>
       </div>
 
@@ -340,13 +490,13 @@ function WinnersView({ onBack, winner, winnerAddress, prize, participants, parti
   )
 }
 
-function RoundProgressSteps({ state, settlementSecs }) {
-  const steps = ['Deposit', 'Yield Accumulating', 'Winner Revealed', 'Unstaking ShMON', 'Claim / Withdraw']
+function RoundProgressSteps({ state, settlementSecs, secondsRemaining }) {
+  const steps = ['Deposit', 'Yield Accruing', 'Winner Revealed', 'Claim / Withdraw']
   let activeStep = 0
+  if (state === 0 && secondsRemaining <= 0) activeStep = 1
   if (state === 1) activeStep = 1
-  if (state === 2 && settlementSecs > 86400) activeStep = 1  // Still yield (>24h left)
-  if (state === 2 && settlementSecs <= 86400) activeStep = 3  // Unstaking (<=24h left, winner done)
-  if (state === 3) activeStep = 4  // Claim / Withdraw
+  if (state === 2) activeStep = settlementSecs > 0 ? 2 : 3
+  if (state === 3) activeStep = 3
 
   return (
     <section className="round-steps">
@@ -363,12 +513,16 @@ function RoundProgressSteps({ state, settlementSecs }) {
 
 export default function App() {
   // Hash-based page routing
-  const [currentPage, setCurrentPage] = useState(() =>
-    window.location.hash === '#stats' ? 'stats' : 'vault'
-  )
+  const [currentPage, setCurrentPage] = useState(() => {
+    if (window.location.hash === '#stats') return 'stats'
+    if (window.location.hash === '#shmon') return 'shmon'
+    return 'vault'
+  })
   useEffect(() => {
     function onHashChange() {
-      setCurrentPage(window.location.hash === '#stats' ? 'stats' : 'vault')
+      if (window.location.hash === '#stats') setCurrentPage('stats')
+      else if (window.location.hash === '#shmon') setCurrentPage('shmon')
+      else setCurrentPage('vault')
     }
     window.addEventListener('hashchange', onHashChange)
     return () => window.removeEventListener('hashchange', onHashChange)
@@ -378,7 +532,7 @@ export default function App() {
   const [selectedPoolAddress, setSelectedPoolAddress] = useState(poolAddresses[0] || '')
   const poolAddress = selectedPoolAddress
 
-  const expectedChainId = import.meta.env.VITE_CHAIN_ID ? Number(import.meta.env.VITE_CHAIN_ID) : null
+  const expectedChainId = import.meta.env.VITE_CHAIN_ID ? Number(import.meta.env.VITE_CHAIN_ID) : 143
   const estimatedApyPercent = import.meta.env.VITE_ESTIMATED_APY_PERCENT ? Number(import.meta.env.VITE_ESTIMATED_APY_PERCENT) : 12
   const poolDeployBlock = import.meta.env.VITE_POOL_DEPLOY_BLOCK ? Number(import.meta.env.VITE_POOL_DEPLOY_BLOCK) : 0
   const configuredDepositWindowSec = import.meta.env.VITE_DEPOSIT_WINDOW_SEC ? Number(import.meta.env.VITE_DEPOSIT_WINDOW_SEC) : 0
@@ -404,8 +558,12 @@ export default function App() {
   const [previousRoundId, setPreviousRoundId] = useState('0')
   const [previousRoundInfo, setPreviousRoundInfo] = useState(null)
   const [previousParticipants, setPreviousParticipants] = useState([])
+  const participantsCacheRef = useRef(new Map())
   const [winnersUserPrincipalWei, setWinnersUserPrincipalWei] = useState(0n)
+  const [claimFlow, setClaimFlow] = useState({ open: false, mode: 'winner', rid: null, principalWei: 0n, prizeWei: 0n })
+  const [claimRedirectWarningOpen, setClaimRedirectWarningOpen] = useState(false)
   const [actionBusy, setActionBusy] = useState(false)
+  const [withdrawingRid, setWithdrawingRid] = useState(null)
   const [actionStatus, setActionStatus] = useState('')
   const [actionError, setActionError] = useState('')
   const [myRounds, setMyRounds] = useState([])
@@ -413,6 +571,8 @@ export default function App() {
   const [settledRoundId, setSettledRoundId] = useState('0')
   const [settledRoundInfo, setSettledRoundInfo] = useState(null)
   const [settledParticipants, setSettledParticipants] = useState([])
+  const participantLoadRef = useRef({ key: '' })
+  const settledRidCacheRef = useRef(null)
   const [latestBlockNumber, setLatestBlockNumber] = useState(0)
   const [currentInternalEpoch, setCurrentInternalEpoch] = useState(0)
   const unlockAudioRef = useRef(null)
@@ -513,23 +673,41 @@ export default function App() {
     const provider = await getReadProvider()
     const pool = new ethers.Contract(poolAddress, POOL_ABI, provider)
 
-    const rid = await pool.currentRoundId()
+    const [
+      rid,
+      nextExecutable,
+      price,
+      duration,
+      latestBlock,
+      network,
+      shmonAddr,
+      accountBalance,
+    ] = await Promise.all([
+      pool.currentRoundId(),
+      pool.nextExecutable(),
+      pool.ticketPriceMON(),
+      pool.roundDurationSec(),
+      provider.getBlockNumber(),
+      provider.getNetwork(),
+      pool.shmon().catch(() => ethers.ZeroAddress),
+      account ? provider.getBalance(account).catch(() => null) : Promise.resolve(null),
+    ])
+
     const info = await pool.getRoundInfo(rid)
-    const [, action] = await pool.nextExecutable()
-    const price = await pool.ticketPriceMON()
-    const duration = await pool.roundDurationSec()
 
     setRoundId(rid.toString())
     setRoundInfo(info)
-    setNextAction(Number(action))
+    setNextAction(Number(nextExecutable?.[1] ?? 0))
     setTicketPrice(price)
     setRoundDuration(Number(duration))
-
-    const latestBlock = await provider.getBlockNumber()
     setLatestBlockNumber(Number(latestBlock))
+    setConnectedChainId(Number(network.chainId))
+
+    if (accountBalance != null) {
+      setBalance(ethers.formatEther(accountBalance))
+    }
 
     try {
-      const shmonAddr = await pool.shmon()
       if (ethers.isAddress(shmonAddr) && shmonAddr !== ethers.ZeroAddress) {
         const shmon = new ethers.Contract(shmonAddr, SHMON_ABI, provider)
         const ep = await shmon.getInternalEpoch()
@@ -539,49 +717,151 @@ export default function App() {
       // Keep fallback timers if epoch endpoint is unavailable.
     }
 
-    const step = 100
-    const estimatedBlocksPerSecond = 2
-    const scanBufferBlocks = 1000
-    const nowTs = Math.floor(Date.now() / 1000)
+    if (Number(rid) > 0) {
+      const prevRid = Number(rid) - 1
+      const prevInfo = await pool.getRoundInfo(BigInt(prevRid))
+      setPreviousRoundId(String(prevRid))
+      setPreviousRoundInfo(prevInfo)
+    } else {
+      setPreviousRoundId('0')
+      setPreviousRoundInfo(null)
+      setPreviousParticipants([])
+    }
 
-    const getRoundStartBlock = async (roundNumber, roundInfoForWindow) => {
-      const latestBlock = Number(latestBlockNumber || 0)
+    let sRid = null
+    let sInfo = null
+    if (Number(info.state) === 3 && Number(info.totalTickets) > 0) {
+      sRid = Number(rid)
+      sInfo = info
+    } else if (settledRidCacheRef.current && settledRidCacheRef.current !== Number(rid)) {
+      sRid = settledRidCacheRef.current
+      sInfo = settledRoundInfo
+    } else {
+      const scanRids = []
+      for (let r = Number(rid) - 1; r >= Math.max(1, Number(rid) - 3); r--) scanRids.push(r)
+      const results = await Promise.all(scanRids.map((r) => pool.getRoundInfo(BigInt(r)).catch(() => null)))
+      for (let i = 0; i < results.length; i++) {
+        const si = results[i]
+        if (si && Number(si.state) === 3 && Number(si.totalTickets) > 0) {
+          sRid = scanRids[i]
+          sInfo = si
+          break
+        }
+      }
+    }
+    if (sRid) settledRidCacheRef.current = sRid
+    setSettledRoundId(sRid ? String(sRid) : '0')
+    if (sInfo) setSettledRoundInfo(sInfo)
+    else setSettledRoundInfo(null)
+    if (!sRid) setSettledParticipants([])
+  }, [account, poolAddress])
+
+  useEffect(() => {
+    if (!poolAddress) return
+    refresh().catch((e) => setError(normalizeError(e) || 'Failed to load round data'))
+    refreshVaultSummaries().catch(() => {})
+
+    const clockTick = setInterval(() => {
+      setNow(Math.floor(Date.now() / 1000))
+    }, 1000)
+
+    let vaultTick = 0
+    const dataRefresh = setInterval(() => {
+      refresh().catch(() => {})
+      if (vaultTick % 2 === 0) refreshVaultSummaries().catch(() => {})
+      vaultTick += 1
+    }, 30000)
+
+    return () => {
+      clearInterval(clockTick)
+      clearInterval(dataRefresh)
+    }
+  }, [poolAddress, refresh, refreshVaultSummaries])
+
+  const loadParticipantsForView = useCallback(async (view) => {
+    if (!poolAddress || !ethers.isAddress(poolAddress)) return
+
+    const currentRidNum = Number(roundId) || 0
+    const prevRidNum = Number(previousRoundId) || 0
+    const vaultARoundIdNum = currentRidNum % 2 === 1 ? currentRidNum : prevRidNum
+    const vaultARoundInfoValue = currentRidNum % 2 === 1 ? roundInfo : previousRoundInfo
+    const vaultBRoundIdNum = currentRidNum % 2 === 0 ? currentRidNum : prevRidNum
+    const vaultBRoundInfoValue = currentRidNum % 2 === 0 ? roundInfo : previousRoundInfo
+
+    let targetRoundId = 0
+    let targetInfo = null
+    let setter = null
+
+    if (view === 'vaultA') {
+      targetRoundId = vaultARoundIdNum
+      targetInfo = vaultARoundInfoValue
+      setter = setParticipants
+    } else if (view === 'vaultB') {
+      targetRoundId = vaultBRoundIdNum
+      targetInfo = vaultBRoundInfoValue
+      setter = setPreviousParticipants
+    } else if (view === 'previous') {
+      targetRoundId = Number(settledRoundId) || 0
+      targetInfo = settledRoundInfo
+      setter = setSettledParticipants
+    } else {
+      return
+    }
+
+    if (!targetRoundId || !targetInfo) {
+      setter?.([])
+      return
+    }
+
+    const cacheKey = `${poolAddress.toLowerCase()}:${targetRoundId}`
+    const cached = participantsCacheRef.current.get(cacheKey)
+    if (cached) {
+      setter(cached)
+      return
+    }
+
+    const inflightKey = `${view}:${cacheKey}`
+    if (participantLoadRef.current.key === inflightKey) return
+    participantLoadRef.current.key = inflightKey
+
+    try {
+      const provider = await getReadProvider()
+      const pool = new ethers.Contract(poolAddress, POOL_ABI, provider)
+      const step = 100
+      const estimatedBlocksPerSecond = 2
+      const scanBufferBlocks = 1000
+      const latestBlock = Number(await provider.getBlockNumber())
       const deployFloor = poolDeployBlock > 0 ? poolDeployBlock : 0
       const contractDepositWindowSec = Number(roundDuration || 0)
       const fallbackDepositWindowSec = Math.min(86400, Math.max(0, configuredDepositWindowSec || 0))
       const depositWindowSec = Math.min(86400, Math.max(contractDepositWindowSec, fallbackDepositWindowSec))
 
-      let searchFrom = deployFloor
-      let searchTo = latestBlock
+      const getRoundStartBlock = async () => {
+        let searchFrom = deployFloor
+        let searchTo = latestBlock
 
-      if (roundInfoForWindow?.salesEndTime) {
-        const salesEnd = Number(roundInfoForWindow.salesEndTime)
-        const nowTs = Math.floor(Date.now() / 1000)
-        const secondsAgo = Math.max(0, nowTs - salesEnd)
-        const estimatedSalesEndBlock = Math.max(deployFloor, latestBlock - Math.ceil(secondsAgo * estimatedBlocksPerSecond))
-        const depositWindowBlocks = Math.ceil(depositWindowSec * estimatedBlocksPerSecond)
-        searchFrom = Math.max(deployFloor, estimatedSalesEndBlock - depositWindowBlocks - scanBufferBlocks)
-        searchTo = Math.min(latestBlock, estimatedSalesEndBlock + scanBufferBlocks)
-      }
-
-      for (let from = searchFrom; from <= searchTo; from += step) {
-        const to = Math.min(searchTo, from + step - 1)
-        try {
-          const events = await pool.queryFilter(
-            pool.filters.RoundStarted(BigInt(roundNumber)),
-            from,
-            to
-          )
-          if (events.length > 0) return Number(events[0].blockNumber)
-        } catch {
-          continue
+        if (targetInfo?.salesEndTime) {
+          const salesEnd = Number(targetInfo.salesEndTime)
+          const secondsAgo = Math.max(0, Math.floor(Date.now() / 1000) - salesEnd)
+          const estimatedSalesEndBlock = Math.max(deployFloor, latestBlock - Math.ceil(secondsAgo * estimatedBlocksPerSecond))
+          const depositWindowBlocks = Math.ceil(depositWindowSec * estimatedBlocksPerSecond)
+          searchFrom = Math.max(deployFloor, estimatedSalesEndBlock - depositWindowBlocks - scanBufferBlocks)
+          searchTo = Math.min(latestBlock, estimatedSalesEndBlock + scanBufferBlocks)
         }
+
+        for (let from = searchFrom; from <= searchTo; from += step) {
+          const to = Math.min(searchTo, from + step - 1)
+          try {
+            const events = await pool.queryFilter(pool.filters.RoundStarted(BigInt(targetRoundId)), from, to)
+            if (events.length > 0) return Number(events[0].blockNumber)
+          } catch {
+            continue
+          }
+        }
+
+        return null
       }
 
-      return null
-    }
-
-    const buildParticipantsForRound = async (roundNumber, roundInfoForWindow, totalTicketsRaw) => {
       const byWallet = new Map()
       const ingestLogs = (logs) => {
         for (const log of logs) {
@@ -597,13 +877,7 @@ export default function App() {
         }
       }
 
-      const latestBlock = Number(latestBlockNumber || 0)
-      const deployFloor = poolDeployBlock > 0 ? poolDeployBlock : 0
-      const contractDepositWindowSec = Number(roundDuration || 0)
-      const fallbackDepositWindowSec = Math.min(86400, Math.max(0, configuredDepositWindowSec || 0))
-      const depositWindowSec = Math.min(86400, Math.max(contractDepositWindowSec, fallbackDepositWindowSec))
-      const roundStartBlock = await getRoundStartBlock(roundNumber, roundInfoForWindow)
-
+      const roundStartBlock = await getRoundStartBlock()
       let scanFrom = deployFloor
       let scanTo = latestBlock
 
@@ -616,20 +890,19 @@ export default function App() {
       for (let from = scanFrom; from <= scanTo; from += step) {
         const to = Math.min(scanTo, from + step - 1)
         try {
-          const chunk = await pool.queryFilter(pool.filters.TicketsBought(BigInt(roundNumber)), from, to)
+          const chunk = await pool.queryFilter(pool.filters.TicketsBought(BigInt(targetRoundId)), from, to)
           ingestLogs(chunk)
         } catch {
           continue
         }
       }
 
-      const totalTicketsNum = Number(totalTicketsRaw ?? 0)
-
+      const totalTicketsNum = Number(targetInfo.totalTickets ?? 0)
       if (byWallet.size === 0 && totalTicketsNum > 0 && (scanFrom !== deployFloor || scanTo !== latestBlock)) {
         for (let from = deployFloor; from <= latestBlock; from += step) {
           const to = Math.min(latestBlock, from + step - 1)
           try {
-            const chunk = await pool.queryFilter(pool.filters.TicketsBought(BigInt(roundNumber)), from, to)
+            const chunk = await pool.queryFilter(pool.filters.TicketsBought(BigInt(targetRoundId)), from, to)
             ingestLogs(chunk)
           } catch {
             continue
@@ -637,7 +910,7 @@ export default function App() {
         }
       }
 
-      return [...byWallet.values()]
+      const built = [...byWallet.values()]
         .map((p) => ({
           wallet: p.wallet,
           walletShort: shortAddr(p.wallet),
@@ -646,111 +919,61 @@ export default function App() {
           depositedMon: Number(ethers.formatEther(p.depositedWei)).toFixed(4),
         }))
         .sort((a, b) => b.tickets - a.tickets)
-    }
 
-    const built = await buildParticipantsForRound(Number(rid), info, info.totalTickets)
-    setParticipants(built)
-
-    if (Number(rid) > 0) {
-      const prevRid = Number(rid) - 1
-      const prevInfo = await pool.getRoundInfo(BigInt(prevRid))
-      setPreviousRoundId(String(prevRid))
-      setPreviousRoundInfo(prevInfo)
-      try {
-        const prevBuilt = await buildParticipantsForRound(prevRid, prevInfo, prevInfo.totalTickets)
-        setPreviousParticipants(prevBuilt)
-      } catch {
-        setPreviousParticipants([])
-      }
-    } else {
-      setPreviousRoundId('0')
-      setPreviousRoundInfo(null)
-      setPreviousParticipants([])
-    }
-
-    // Find the latest settled round with tickets for the Previous Vault tab.
-    // The current round itself may already be settled before a new round is opened,
-    // so check it first before scanning backwards.
-    let sRid = null, sInfo = null, sBuilt = []
-    if (Number(info.state) === 3 && Number(info.totalTickets) > 0) {
-      sRid = Number(rid)
-      sInfo = info
-      try {
-        sBuilt = await buildParticipantsForRound(Number(rid), info, info.totalTickets)
-      } catch {
-        sBuilt = []
-      }
-    } else {
-      for (let r = Number(rid) - 1; r >= Math.max(1, Number(rid) - 10); r--) {
-        try {
-          const si = await pool.getRoundInfo(BigInt(r))
-          if (Number(si.state) === 3 && Number(si.totalTickets) > 0) {
-            sRid = r
-            sInfo = si
-            try {
-              sBuilt = await buildParticipantsForRound(r, si, si.totalTickets)
-            } catch {
-              sBuilt = []
-            }
-            break
-          }
-        } catch { continue }
+      participantsCacheRef.current.set(cacheKey, built)
+      setter(built)
+    } catch {
+      setter([])
+    } finally {
+      if (participantLoadRef.current.key === inflightKey) {
+        participantLoadRef.current.key = ''
       }
     }
-    setSettledRoundId(sRid ? String(sRid) : '0')
-    setSettledRoundInfo(sInfo)
-    setSettledParticipants(sBuilt)
-
-    const network = await provider.getNetwork()
-    setConnectedChainId(Number(network.chainId))
-
-    if (account) {
-      const bal = await provider.getBalance(account)
-      setBalance(ethers.formatEther(bal))
-    }
-  }, [account, poolAddress, poolDeployBlock])
+  }, [poolAddress, roundId, previousRoundId, roundInfo, previousRoundInfo, settledRoundId, settledRoundInfo, poolDeployBlock, roundDuration])
 
   useEffect(() => {
-    if (!poolAddress) return
-    refresh().catch((e) => setError(normalizeError(e) || 'Failed to load round data'))
-    refreshVaultSummaries().catch(() => {})
-
-    const clockTick = setInterval(() => {
-      setNow(Math.floor(Date.now() / 1000))
-    }, 1000)
-
-    const dataRefresh = setInterval(() => {
-      refresh().catch(() => {})
-      refreshVaultSummaries().catch(() => {})
-    }, 15000)
-
-    return () => {
-      clearInterval(clockTick)
-      clearInterval(dataRefresh)
-    }
-  }, [poolAddress, refresh, refreshVaultSummaries])
+    if (mainView === 'myrounds') return
+    loadParticipantsForView(mainView).catch(() => {})
+  }, [mainView, loadParticipantsForView])
 
   const connectWallet = useCallback(async () => {
     try {
-      if (!window.ethereum) throw new Error('No wallet found. Install MetaMask/Rabby.')
-      const provider = new ethers.BrowserProvider(window.ethereum)
-      await provider.send('eth_requestAccounts', [])
-      await ensureCorrectNetwork(provider, expectedChainId)
-      const signer = await provider.getSigner()
-      const addr = await signer.getAddress()
-      setAccount(addr)
-      const bal = await provider.getBalance(addr)
-      setBalance(ethers.formatEther(bal))
-      const network = await provider.getNetwork()
-      setConnectedChainId(Number(network.chainId))
-      setError('')
+      await modal.open()
     } catch (e) {
       setError(normalizeError(e) || 'Wallet connection failed')
     }
+  }, [])
+
+  // Reactively handle wallet connect/disconnect via web3modal
+  useEffect(() => {
+    const unsubscribe = modal.subscribeProvider(async (state) => {
+      if (!state.isConnected || !state.provider) {
+        // Wallet disconnected via modal
+        return
+      }
+      try {
+        const provider = new ethers.BrowserProvider(state.provider)
+        await ensureCorrectNetwork(provider, expectedChainId)
+        const signer = await provider.getSigner()
+        const addr = await signer.getAddress()
+        setAccount(addr)
+        const bal = await provider.getBalance(addr)
+        setBalance(ethers.formatEther(bal))
+        const network = await provider.getNetwork()
+        setConnectedChainId(Number(network.chainId))
+        setError('')
+      } catch (e) {
+        const msg = normalizeError(e)
+        if (msg) setError(msg)
+      }
+    })
+    return unsubscribe
   }, [expectedChainId])
 
+  // Handle account/chain changes from injected wallet (MetaMask, Rabby, etc.)
   useEffect(() => {
-    if (!window.ethereum) return
+    const provider = getWalletProvider()
+    if (!provider) return
 
     const onAccountsChanged = (accounts) => {
       setAccount(accounts?.[0] ?? '')
@@ -760,12 +983,12 @@ export default function App() {
       setConnectedChainId(hexChainIdToDec(chainHex))
     }
 
-    window.ethereum.on('accountsChanged', onAccountsChanged)
-    window.ethereum.on('chainChanged', onChainChanged)
+    provider.on('accountsChanged', onAccountsChanged)
+    provider.on('chainChanged', onChainChanged)
 
     return () => {
-      window.ethereum.removeListener('accountsChanged', onAccountsChanged)
-      window.ethereum.removeListener('chainChanged', onChainChanged)
+      provider.removeListener('accountsChanged', onAccountsChanged)
+      provider.removeListener('chainChanged', onChainChanged)
     }
   }, [])
 
@@ -776,21 +999,37 @@ export default function App() {
       setStatus('Preparing transaction...')
 
       if (!poolAddress) throw new Error('Missing VITE_POOL_ADDRESS in web/.env')
-      if (!window.ethereum) throw new Error('Wallet required for buyTickets')
+      const walletProvider = getWalletProvider()
+      if (!walletProvider) throw new Error('Wallet required for buyTickets')
 
       const n = Number(ticketCountInput)
       if (!Number.isInteger(n) || n <= 0) throw new Error('Ticket count must be a positive integer')
 
-      const provider = new ethers.BrowserProvider(window.ethereum)
+      const provider = new ethers.BrowserProvider(walletProvider)
       await provider.send('eth_requestAccounts', [])
       await ensureCorrectNetwork(provider, expectedChainId)
-      const signer = await provider.getSigner()
+      if (!account) throw new Error('No wallet connected')
+      const signer = await provider.getSigner(account)
+      const nonce = await fetchNonce(account)
       const pool = new ethers.Contract(poolAddress, POOL_ABI, signer)
 
       const value = ticketPrice * BigInt(n)
-      // Explicit gas limit avoids Rabby/wallet simulation failures on Monad testnet
-      const gasLimit = 300000n + 50000n * BigInt(n)
-      const tx = await pool.buyTickets(n, { value, gasLimit })
+      if (value === 0n) throw new Error('Ticket price not loaded yet — please wait a moment and try again')
+
+      setStatus('Estimating gas...')
+      let gasLimit
+      try {
+        const estimate = await pool.buyTickets.estimateGas(n, { value })
+        gasLimit = (estimate * 3n) / 2n  // 1.5x buffer
+      } catch (estErr) {
+        // Surface the actual revert reason from the contract
+        const reason = estErr?.reason || estErr?.shortMessage || estErr?.message || 'unknown'
+        throw new Error(`Transaction would fail: ${reason}`)
+      }
+
+      setStatus('Waiting for wallet confirmation...')
+      console.log('[buy] nonce:', nonce, 'isNaN:', isNaN(nonce), 'type:', typeof nonce)
+      const tx = await pool.buyTickets(n, { value, gasLimit, nonce })
       setStatus(`Submitted: ${tx.hash.slice(0, 10)}... waiting for confirmation...`)
 
       await tx.wait()
@@ -846,19 +1085,22 @@ export default function App() {
   const shownState = shownRoundInfo ? Number(shownRoundInfo.state) : -1
   const shownVaultLabel = mainView === 'vaultA' ? 'Vault A' : mainView === 'vaultB' ? 'Vault B' : 'Previous Vault'
   const wrongNetwork = expectedChainId && connectedChainId && expectedChainId !== connectedChainId
-  const salesOpen = isOpenState && secondsRemaining > 0
-  const canBuyTx = !!account && salesOpen && !loading
+  const shownSecondsRemaining = shownRoundInfo ? Math.max(0, Number(shownRoundInfo.salesEndTime ?? 0) - now) : 0
+  const shownSalesOpen = shownState === 0 && shownSecondsRemaining > 0
+  const salesOpen = shownIsCurrentRound ? shownSalesOpen : isOpenState && secondsRemaining > 0
+  const canBuyTx = !!account && shownIsCurrentRound && shownSalesOpen && !loading
 
   const buyDisabledReason = useMemo(() => {
     if (loading) return 'Transaction in progress'
-    if (!salesOpen) {
-      if (!isOpenState) return 'Sales not open in current round state'
+    if (!shownIsCurrentRound) return 'Deposits are only available in the active vault'
+    if (!shownSalesOpen) {
+      if (shownState !== 0) return 'Sales not open in this vault state'
       return 'Sales window closed; waiting for keeper processing'
     }
     if (!account) return 'Connect wallet to deposit'
     if (wrongNetwork) return 'Wrong network — click Buy to switch automatically'
     return ''
-  }, [loading, salesOpen, isOpenState, account, wrongNetwork])
+  }, [loading, shownIsCurrentRound, shownSalesOpen, shownState, account, wrongNetwork])
 
   const settlementSecondsRemaining = useMemo(() => {
     if (!roundInfo) return 0
@@ -931,12 +1173,11 @@ export default function App() {
           }
         }
 
-        // Unstaking phase: <=24h remaining
         if (nonCurrentSettleSecs > 0 && nonCurrentSettleSecs <= 86400) {
           return {
             heading: 'Winner Revealed',
             value: formatCountdown(nonCurrentSettleSecs),
-            sub: 'Unstaking ShMON \u2014 settling soon',
+            sub: 'Round is wrapping up',
             metaLabel: 'Next action',
             metaValue: 'Settle'
           }
@@ -946,8 +1187,8 @@ export default function App() {
           heading: 'Vault Locked \u2014 Accumulating Yield',
           value: nonCurrentSettleSecs > 0 ? formatCountdown(nonCurrentSettleSecs) : 'Finalizing\u2026',
           sub: epochBased
-            ? `Unstake epoch ${currentInternalEpoch} / ${completionEpoch}`
-            : 'ShMON staking yield building for winner',
+            ? 'Yield window in progress'
+            : 'Yield building for winner',
           metaLabel: 'Est. unlock',
           metaValue: nonCurrentSettleSecs > 0 ? formatCountdown(nonCurrentSettleSecs) : 'Soon'
         }
@@ -977,11 +1218,11 @@ export default function App() {
       }
 
       return {
-        heading: 'Winner Drawn - Vault Awaiting Settlement',
+        heading: 'Yield Accruing',
         value: '00:00:00',
-        sub: 'Keeper is progressing settlement',
+        sub: 'Deposits closed — funds are earning yield while awaiting draw',
         metaLabel: 'Next action',
-        metaValue: ACTION_LABELS[nextAction] ?? 'Processing'
+        metaValue: ACTION_LABELS[nextAction] ?? 'Commit'
       }
     }
 
@@ -989,7 +1230,7 @@ export default function App() {
       const targetBlock = roundInfo ? Number(roundInfo.targetBlockNumber ?? 0) : 0
       if (settlementSecondsRemaining > 0) {
         return {
-          heading: 'Winner Drawn - Vault Awaiting Settlement',
+          heading: 'Winner Reveal Pending',
           value: formatCountdown(settlementSecondsRemaining),
           sub: `Draw unlock at block ${targetBlock.toLocaleString()}`,
           metaLabel: 'Next action',
@@ -998,9 +1239,9 @@ export default function App() {
       }
 
       return {
-        heading: 'Winner Drawn - Vault Awaiting Settlement',
-        value: 'Awaiting Settle',
-        sub: targetBlock > 0 ? `Waiting for draw at block ${targetBlock.toLocaleString()}` : 'Keeper is progressing settlement',
+        heading: 'Winner Revealed',
+        value: 'Finalizing…',
+        sub: targetBlock > 0 ? `Waiting for draw at block ${targetBlock.toLocaleString()}` : 'Round is being finalized',
         metaLabel: 'Next action',
         metaValue: ACTION_LABELS[nextAction] ?? 'Settle'
       }
@@ -1011,25 +1252,23 @@ export default function App() {
       const completionEpoch = roundInfo ? Number(roundInfo.unstakeCompletionEpoch ?? 0) : 0
       const epochBased = completionEpoch > 0 && currentInternalEpoch > 0
 
-      // Unstaking phase: <=24h remaining — winner revealed, ShMON unstaking
       if (settlementSecondsRemaining > 0 && settlementSecondsRemaining <= 86400) {
         return {
           heading: 'Winner Revealed',
           value: formatCountdown(settlementSecondsRemaining),
-          sub: 'Unstaking ShMON \u2014 settling soon',
+          sub: 'Round is wrapping up',
           metaLabel: 'Next action',
           metaValue: ACTION_LABELS[nextAction] ?? 'Settle'
         }
       }
 
-      // Yield accumulation phase: >24h remaining — vault locked
       if (settlementSecondsRemaining > 86400) {
         return {
           heading: 'Vault Locked \u2014 Accumulating Yield',
           value: formatCountdown(settlementSecondsRemaining),
           sub: epochBased
-            ? `Unstake epoch ${currentInternalEpoch}/${completionEpoch}`
-            : 'ShMON yield building for prize',
+            ? 'Yield window in progress'
+            : 'Yield building for prize',
           metaLabel: 'Est. unlock',
           metaValue: formatCountdown(Math.max(0, settlementSecondsRemaining - 86400))
         }
@@ -1038,9 +1277,7 @@ export default function App() {
       return {
         heading: 'Winner Revealed',
         value: 'Finalizing\u2026',
-        sub: epochBased
-          ? `Unstake epoch ${currentInternalEpoch}/${completionEpoch}`
-          : (targetBlock > 0 ? `Target block ${targetBlock.toLocaleString()}` : 'Unstake requested, waiting for settlement'),
+        sub: targetBlock > 0 ? `Target block ${targetBlock.toLocaleString()}` : 'Round is being finalized',
         metaLabel: 'Next action',
         metaValue: ACTION_LABELS[nextAction] ?? 'Settle'
       }
@@ -1186,7 +1423,7 @@ export default function App() {
         const rows = []
 
         // Scan a wider range so older participation still appears in "My Rounds".
-        const fromRid = Math.max(0, cur - 120)
+        const fromRid = Math.max(0, cur - 10)
         for (let rid = fromRid; rid <= cur; rid++) {
           let info
           try {
@@ -1209,6 +1446,7 @@ export default function App() {
               rid,
               state: Number(info.state),
               isWinner,
+              prizeClaimed: Boolean(info.prizeClaimed),
               principalWei: principal,
               principalMon: Number(ethers.formatEther(principal)).toFixed(4),
               yieldWei: BigInt(info.yieldMON || 0n),
@@ -1253,50 +1491,198 @@ export default function App() {
       setActionError('')
       setActionStatus(`${label}: preparing...`)
 
-      if (!window.ethereum) throw new Error('Wallet required')
+      const walletProvider = getWalletProvider()
+      if (!walletProvider) throw new Error('Wallet required')
       if (!poolAddress) throw new Error('Missing pool address')
+      if (!account) throw new Error('No wallet connected')
 
-      const provider = new ethers.BrowserProvider(window.ethereum)
-      await provider.send('eth_requestAccounts', [])
+      const provider = new ethers.BrowserProvider(walletProvider)
       await ensureCorrectNetwork(provider, expectedChainId)
-      const signer = await provider.getSigner()
+      const signer = await provider.getSigner(account)
+      const nonce = await fetchNonce(account)
       const pool = new ethers.Contract(poolAddress, POOL_ABI, signer)
-      await fn(pool)
+
+      await fn(pool, nonce)
       await refresh()
       setActionStatus(`${label}: success`)
+      return true
     } catch (e) {
       setActionStatus('')
       setActionError(normalizeError(e) || `${label} failed`)
+      return false
     } finally {
       setActionBusy(false)
     }
-  }, [expectedChainId, poolAddress, refresh])
+  }, [account, expectedChainId, poolAddress, refresh])
 
-  const handleClaimPrize = useCallback(async () => {
-    if (!winnersRoundId) return
-    await runSignedAction('Claim prize', async (pool) => {
-      const tx = await pool.claimPrize(BigInt(winnersRoundId), { gasLimit: 500000n })
+  const handleClaimPrize = useCallback(async (rid = winnersRoundId) => {
+    if (!rid) return false
+    return await runSignedAction('Claim prize', async (pool, nonce) => {
+      const tx = await pool.claimPrize(BigInt(rid), { gasLimit: 500000n, nonce })
       setActionStatus(`Claim prize: submitted ${tx.hash.slice(0, 10)}...`)
       await tx.wait()
     })
   }, [winnersRoundId, runSignedAction])
 
-  const handleWithdraw = useCallback(async () => {
-    if (!winnersRoundId) return
-    await runSignedAction('Withdraw', async (pool) => {
-      const tx = await pool.withdrawPrincipal(BigInt(winnersRoundId), { gasLimit: 500000n })
+  const handleWithdraw = useCallback(async (rid = winnersRoundId) => {
+    if (!rid) return false
+    return await runSignedAction('Withdraw', async (pool, nonce) => {
+      const tx = await pool.withdrawPrincipal(BigInt(rid), { gasLimit: 500000n, nonce })
       setActionStatus(`Withdraw: submitted ${tx.hash.slice(0, 10)}...`)
       await tx.wait()
     })
   }, [winnersRoundId, runSignedAction])
 
   const handleWithdrawForRound = useCallback(async (rid) => {
-    await runSignedAction(`Withdraw (Round #${rid})`, async (pool) => {
-      const tx = await pool.withdrawPrincipal(BigInt(rid), { gasLimit: 500000n })
-      setActionStatus(`Withdraw (Round #${rid}): submitted ${tx.hash.slice(0, 10)}...`)
-      await tx.wait()
-    })
+    setWithdrawingRid(rid)
+    try {
+      await runSignedAction(`Withdraw (Round #${rid})`, async (pool, nonce) => {
+        const tx = await pool.withdrawPrincipal(BigInt(rid), { gasLimit: 500000n, nonce })
+        setActionStatus(`Withdraw (Round #${rid}): submitted ${tx.hash.slice(0, 10)}...`)
+        await tx.wait()
+      })
+    } finally {
+      setWithdrawingRid(null)
+    }
   }, [runSignedAction])
+
+  const closeClaimFlow = useCallback(() => {
+    if (actionBusy) return
+    setClaimRedirectWarningOpen(false)
+    setClaimFlow((prev) => ({ ...prev, open: false }))
+    setActionStatus('')
+    setActionError('')
+  }, [actionBusy])
+
+  const openClaimFlow = useCallback((next) => {
+    setClaimRedirectWarningOpen(false)
+    setActionStatus('')
+    setActionError('')
+    setClaimFlow({
+      open: true,
+      mode: next.mode,
+      rid: next.rid ?? null,
+      principalWei: next.principalWei ?? 0n,
+      prizeWei: next.prizeWei ?? 0n,
+    })
+  }, [])
+
+  const handleClaimOnly = useCallback(async () => {
+    if (!claimFlow.rid) return
+    if (claimFlow.mode !== 'winner') {
+      const ok = await handleClaimPrize(claimFlow.rid)
+      if (ok) setClaimFlow((prev) => ({ ...prev, open: false }))
+      return
+    }
+    const ok = await runSignedAction('Claim and withdraw', async (pool, nonce) => {
+      const claimTx = await pool.claimPrize(BigInt(claimFlow.rid), { gasLimit: 500000n, nonce })
+      setActionStatus(`Claim prize: submitted ${claimTx.hash.slice(0, 10)}...`)
+      await claimTx.wait()
+      setActionStatus('Prize claimed, withdrawing principal...')
+      const withdrawTx = await pool.withdrawPrincipal(BigInt(claimFlow.rid), { gasLimit: 500000n, nonce: nonce + 1 })
+      setActionStatus(`Withdraw principal: submitted ${withdrawTx.hash.slice(0, 10)}...`)
+      await withdrawTx.wait()
+    })
+    if (ok) setClaimFlow((prev) => ({ ...prev, open: false }))
+  }, [claimFlow.mode, claimFlow.rid, handleClaimPrize, runSignedAction])
+
+  const handleWithdrawOnly = useCallback(async () => {
+    const ok = await handleWithdraw(claimFlow.rid)
+    if (ok) {
+      setClaimFlow((prev) => ({ ...prev, open: false }))
+    }
+  }, [claimFlow.rid, handleWithdraw])
+
+  const handleRedeposit = useCallback(async () => {
+    if (!poolAddress) {
+      setActionError('Missing pool address')
+      return
+    }
+    if (!claimFlow.rid) {
+      setActionError('Missing round to claim')
+      return
+    }
+
+    const redepositTickets = ticketPrice > 0n ? claimFlow.prizeWei / ticketPrice : 0n
+    const redepositValue = redepositTickets * ticketPrice
+
+    await runSignedAction('Claim and re-deposit', async (pool, nonce) => {
+      if (!salesOpen || !roundId) {
+        throw new Error('No open vault is currently accepting deposits')
+      }
+      if (ticketPrice <= 0n) {
+        throw new Error('Ticket price not loaded yet')
+      }
+      if (redepositTickets <= 0n || redepositValue <= 0n) {
+        throw new Error('Prize is smaller than one ticket, so it cannot be re-deposited automatically')
+      }
+      if (redepositTickets > BigInt(Number.MAX_SAFE_INTEGER)) {
+        throw new Error('Prize is too large to convert into a safe ticket count')
+      }
+
+      const claimTx = await pool.claimPrize(BigInt(claimFlow.rid), { gasLimit: 500000n, nonce })
+      setActionStatus(`Claim prize: submitted ${claimTx.hash.slice(0, 10)}...`)
+      await claimTx.wait()
+
+      const withdrawTx = await pool.withdrawPrincipal(BigInt(claimFlow.rid), { gasLimit: 500000n, nonce: nonce + 1 })
+      setActionStatus(`Withdraw principal: submitted ${withdrawTx.hash.slice(0, 10)}...`)
+      await withdrawTx.wait()
+
+      setActionStatus(`Re-deposit: buying ${redepositTickets.toString()} ticket${redepositTickets === 1n ? '' : 's'} in Round #${roundId}...`)
+      const buyTx = await pool.buyTickets(Number(redepositTickets), {
+        value: redepositValue,
+        gasLimit: 700000n,
+        nonce: nonce + 2,
+      })
+      setActionStatus(`Re-deposit: submitted ${buyTx.hash.slice(0, 10)}...`)
+      await buyTx.wait()
+
+      setMainView(Number(roundId) % 2 === 1 ? 'vaultA' : 'vaultB')
+      setTicketCountInput(redepositTickets.toString())
+      setClaimFlow((prev) => ({ ...prev, open: false }))
+      setActionStatus(`Prize claimed and re-deposited into Round #${roundId}.`)
+    })
+  }, [poolAddress, claimFlow.rid, claimFlow.prizeWei, ticketPrice, runSignedAction, salesOpen, roundId])
+
+  const handleWithdrawAndConvert = useCallback(() => {
+    setClaimRedirectWarningOpen(true)
+  }, [])
+
+  const handleConfirmWithdrawAndConvert = useCallback(async () => {
+    if (!claimFlow.rid) {
+      setActionError('Missing round to withdraw')
+      return
+    }
+
+    if (claimFlow.mode === 'winner') {
+      const ok = await runSignedAction('Claim, withdraw, and convert', async (pool, nonce) => {
+        const claimTx = await pool.claimPrize(BigInt(claimFlow.rid), { gasLimit: 500000n, nonce })
+        setActionStatus(`Claim prize: submitted ${claimTx.hash.slice(0, 10)}...`)
+        await claimTx.wait()
+        setActionStatus('Prize claimed, withdrawing principal...')
+        const withdrawTx = await pool.withdrawPrincipal(BigInt(claimFlow.rid), { gasLimit: 500000n, nonce: nonce + 1 })
+        setActionStatus(`Withdraw principal: submitted ${withdrawTx.hash.slice(0, 10)}...`)
+        await withdrawTx.wait()
+      })
+
+      if (!ok) return
+
+      window.open('https://shmonad.xyz', '_blank', 'noopener,noreferrer')
+      setClaimRedirectWarningOpen(false)
+      setClaimFlow((prev) => ({ ...prev, open: false }))
+      setActionStatus('Prize and principal withdrawn. Continue MON conversion in shmonad.xyz.')
+      return
+    }
+
+    const ok = await handleWithdraw(claimFlow.rid)
+
+    if (!ok) return
+
+    window.open('https://shmonad.xyz', '_blank', 'noopener,noreferrer')
+    setClaimRedirectWarningOpen(false)
+    setClaimFlow((prev) => ({ ...prev, open: false }))
+    setActionStatus('Principal withdrawn. Continue MON conversion in shmonad.xyz.')
+  }, [claimFlow.mode, claimFlow.rid, handleClaimPrize, handleWithdraw])
 
   const openWinnersWithTransition = useCallback(() => {
     if (winnersTransitioning) return
@@ -1333,10 +1719,10 @@ export default function App() {
     )
   }
 
-  if (showWinnersView) {
-    return (
-      <div className="app-shell">
-        <div className="app-container">
+  return (
+    <div className="app-shell">
+      <div className="app-container">
+        {showWinnersView ? (
           <WinnersView
             onBack={() => setShowWinnersView(false)}
             winner={winnersSource.info ? shortAddr(winnersSource.info.winner) : '\u2014'}
@@ -1358,10 +1744,10 @@ export default function App() {
             canWithdraw={canWithdrawPrincipal}
             settlementLabel={
               isUnstaking
-                ? `Unstaking ShMON \u2014 settling in ${formatCountdown(shownSettlementSecs)}`
+                ? `Round finalizing — ${formatCountdown(shownSettlementSecs)} remaining`
                 : Number(winnersSource?.info?.state ?? -1) === 3
-                  ? 'Settled \u2014 Withdraw Available'
-                  : 'Winner Drawn - Vault Awaiting Settlement'
+                  ? 'Settled — Withdraw Available'
+                  : 'Winner Revealed'
             }
             settlementCountdown={
               Number(winnersSource?.info?.state ?? -1) === 3
@@ -1370,45 +1756,18 @@ export default function App() {
                   ? formatCountdown(shownSettlementSecs)
                   : previousSettlementCountdown
             }
-            onClaimPrize={handleClaimPrize}
-            onWithdraw={handleWithdraw}
+            onClaimPrize={() => openClaimFlow({ mode: 'winner', rid: winnersRoundId, principalWei: winnersUserPrincipalWei, prizeWei: winnersYieldWei })}
+            onWithdraw={() => openClaimFlow({ mode: 'principal', rid: winnersRoundId, principalWei: winnersUserPrincipalWei, prizeWei: winnersYieldWei })}
             actionBusy={actionBusy}
             actionStatus={actionStatus}
             actionError={actionError}
           />
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="app-shell">
-      <div className="app-container">
-        <Header account={account} onConnect={connectWallet} currentPage={currentPage} />
+        ) : (
+          <>
+            <Header account={account} onConnect={connectWallet} currentPage={currentPage} />
         {currentPage === 'stats' ? <StatsPage /> : null}
-        {currentPage !== 'stats' && (<>
+            {currentPage === 'vault' && (<>
 
-        {vaultSummaries.length > 1 ? (
-          <section className="vault-switcher">
-            {vaultSummaries.map((v) => (
-              <button
-                key={v.poolAddress}
-                className={`vault-switch-card ${v.poolAddress.toLowerCase() === poolAddress.toLowerCase() ? 'active' : ''}`}
-                onClick={() => setSelectedPoolAddress(v.poolAddress)}
-              >
-                <div className="vault-switch-title">
-                  <span>{shortAddr(v.poolAddress)}</span>
-                  {v.isNowOpen ? <span className="open-badge">Now Open</span> : null}
-                </div>
-                <div className="vault-switch-sub">Round #{v.roundId} · {v.stateLabel}</div>
-                <div className="vault-switch-meta">Tickets: {v.totalTickets.toLocaleString()} · TVL: {v.tvlMon} MON</div>
-                <div className="vault-switch-meta">
-                  {v.isNowOpen ? `Closes in ${formatCountdown(v.timeRemainingSec)}` : `Status: ${v.stateLabel}`}
-                </div>
-              </button>
-            ))}
-          </section>
-        ) : null}
 
         <h1>
           Win the Pot.
@@ -1416,13 +1775,15 @@ export default function App() {
           Or keep your lot.
         </h1>
 
-        <section className="round-toggle">
-          <button className={`toggle-btn ${mainView === 'vaultA' ? 'active' : ''}`} onClick={() => setMainView('vaultA')}>Vault A</button>
-          <button className={`toggle-btn ${mainView === 'vaultB' ? 'active' : ''}`} onClick={() => setMainView('vaultB')}>Vault B</button>
-          <button className={`toggle-btn ${mainView === 'previous' ? 'active' : ''}`} onClick={() => setMainView('previous')} disabled={!settledRoundInfo}>
-            Previous Vault
-          </button>
-          <button className={`toggle-btn ${mainView === 'myrounds' ? 'active' : ''}`} onClick={() => setMainView('myrounds')}>My Rounds</button>
+        <section className="vault-bar">
+          <button className={`vault-label ${mainView === 'vaultA' ? 'active' : ''}`} tabIndex={-1} onClick={() => setMainView('vaultA')}>VAULT A</button>
+          <div className="vault-gear-track" onClick={() => setMainView(mainView === 'vaultA' ? 'vaultB' : 'vaultA')}>
+            <div className={`vault-gear-knob ${mainView === 'vaultB' ? 'right' : ''}`}>⚙</div>
+          </div>
+          <button className={`vault-label ${mainView === 'vaultB' ? 'active' : ''}`} tabIndex={-1} onClick={() => setMainView('vaultB')}>VAULT B</button>
+          <div className="vault-bar-divider"></div>
+          <button className={`vault-aux-btn ${mainView === 'previous' ? 'active' : ''}`} onClick={() => setMainView('previous')} disabled={!settledRoundInfo}>Previous Vault</button>
+          <button className={`vault-aux-btn ${mainView === 'myrounds' ? 'active' : ''}`} onClick={() => setMainView('myrounds')}>My Rounds</button>
         </section>
 
         {mainView === 'myrounds' ? (
@@ -1441,9 +1802,12 @@ export default function App() {
                 </div>
               ) : myRounds.map((r) => {
                 const myRoundStatusLabel = r.state === 0 ? 'Accepting Deposits'
-                  : r.state === 3 ? 'Settled'
-                  : 'Yield Accumulating'
+                  : r.state === 1 ? 'Draw Pending'
+                  : r.state === 2 ? 'Finalizing'
+                  : 'Settled'
                 const myRoundResultLabel = r.state < 3 ? 'Locked' : (r.isWinner ? 'Winner' : 'Participant')
+                const actionLabel = 'Claim'
+                const pendingActionLabel = r.isWinner ? 'Claiming...' : 'Claiming principal...'
                 return (
                 <div className="participants-row" key={r.rid}>
                   <span>{r.rid}</span>
@@ -1454,10 +1818,15 @@ export default function App() {
                     {r.canWithdraw ? (
                       <button
                         className="max-btn"
-                        onClick={() => handleWithdrawForRound(r.rid)}
-                        disabled={actionBusy}
+                        onClick={() => openClaimFlow({
+                          mode: (r.isWinner && !r.prizeClaimed) ? 'winner' : 'principal',
+                          rid: r.rid,
+                          principalWei: r.principalWei || 0n,
+                          prizeWei: r.yieldWei || 0n,
+                        })}
+                        disabled={withdrawingRid === r.rid}
                       >
-                        {actionBusy ? 'Withdrawing...' : 'Withdraw'}
+                        {withdrawingRid === r.rid ? pendingActionLabel : actionLabel}
                       </button>
                     ) : r.state === 0 ? (
                       <button
@@ -1466,7 +1835,7 @@ export default function App() {
                       >
                         Deposit Now
                       </button>
-                    ) : 'Waiting'}
+                    ) : r.state === 3 && !r.canWithdraw ? 'Done' : 'Waiting'}
                   </span>
                 </div>
               )})}
@@ -1563,6 +1932,7 @@ export default function App() {
           <RoundProgressSteps
             state={shownState >= 0 ? shownState : 0}
             settlementSecs={shownSettlementSecs}
+            secondsRemaining={shownSecondsRemaining}
           />
         ) : null}
 
@@ -1641,7 +2011,7 @@ export default function App() {
                   activeRoundInfo && Number(activeRoundInfo.state) === 3
                     ? 'Final settled yield'
                     : isUnstaking
-                      ? 'Estimated yield - finalizing'
+                      ? 'Estimated yield'
                       : currentPrizePool.sub
                 }
                 icon={(
@@ -1652,6 +2022,25 @@ export default function App() {
           )}
         </section>
         </>)}
+
+          </>
+        )}
+
+        <ClaimFlowModal
+          open={claimFlow.open}
+          mode={claimFlow.mode}
+          busy={actionBusy}
+          status={actionStatus}
+          error={actionError}
+          onClose={closeClaimFlow}
+          onClaimOnly={handleClaimOnly}
+          onWithdrawOnly={handleWithdrawOnly}
+          onRedeposit={handleRedeposit}
+          onWithdrawAndConvert={handleWithdrawAndConvert}
+          onBackFromRedirectWarning={() => setClaimRedirectWarningOpen(false)}
+          confirmRedirectOpen={claimRedirectWarningOpen}
+          onConfirmRedirect={handleConfirmWithdrawAndConvert}
+        />
       </div>
     </div>
   )

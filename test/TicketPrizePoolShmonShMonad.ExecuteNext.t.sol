@@ -133,7 +133,7 @@ contract TicketPrizePoolShmonShMonad_ExecuteNext_Test is Test {
         assertEq(uint8(state), uint8(TicketPrizePoolShmonShMonad.RoundState.Settled));
         assertEq(monReceived, 0);
         assertEq(yieldMON, 0);
-        assertEq(lossRatio, 0);
+        assertEq(lossRatio, 1e18);
         assertEq(pool.getActiveFinalizer(), 0);
     }
 }

@@ -1,3 +1,7 @@
+## Supported contracts
+
+**Supported contracts:** the only supported and deployed contract is `TicketPrizePoolShmonShMonad`. Earlier iterations (`TicketPrizePool`, `TicketPrizePoolShmon`, `PrizeVault`) have been removed from this repository as of PR 2, they were not in production and carried security issues that were not worth fixing in place. See `security_audit/AUDIT_REPORT.md` for detail.
+
 ## Foundry
 
 **Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
