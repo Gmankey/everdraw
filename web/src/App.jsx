@@ -1119,8 +1119,13 @@ export default function App() {
   // Must be declared before timerCard to avoid temporal dead zone
   const isDeadRound = shownState === 3 && Number(shownRoundInfo?.totalTickets ?? 0) === 0
 
+  const shownProgressPct = useMemo(() => {
+    if (!roundDuration || !shownRoundInfo) return 0
+    const elapsed = Math.max(0, roundDuration - shownSecondsRemaining)
+    return Math.min(100, Math.round((elapsed / roundDuration) * 100))
+  }, [roundDuration, shownSecondsRemaining, shownRoundInfo])
+
   const timerCard = useMemo(() => {
-    // Dead round (skipped — state 3 with 0 tickets)
     if (isDeadRound) {
       return {
         heading: 'Vault Cycling',
@@ -1131,64 +1136,25 @@ export default function App() {
       }
     }
 
-    // Viewing a locked (non-current) vault — override all text
-    if (!shownIsCurrentRound) {
-      if (shownState === 2 || shownState === 1) {
-        const completionEpoch = shownRoundInfo ? Number(shownRoundInfo.unstakeCompletionEpoch ?? 0) : 0
-        const epochBased = completionEpoch > 0 && currentInternalEpoch > 0
-        const EPOCH_LENGTH = 50_000
-        const BLOCK_TIME_SEC = 0.4
-        let nonCurrentSettleSecs = 0
-        if (epochBased && latestBlockNumber > 0) {
-          const epochsLeft = completionEpoch - currentInternalEpoch
-          if (epochsLeft > 0) {
-            const blocksIntoEpoch = latestBlockNumber % EPOCH_LENGTH
-            const blocksRemaining = (EPOCH_LENGTH - blocksIntoEpoch) + (epochsLeft - 1) * EPOCH_LENGTH
-            nonCurrentSettleSecs = Math.max(0, Math.ceil(blocksRemaining * BLOCK_TIME_SEC))
-          }
-        }
-
-        if (nonCurrentSettleSecs > 0 && nonCurrentSettleSecs <= 86400) {
-          return {
-            heading: 'Winner Revealed',
-            value: formatCountdown(nonCurrentSettleSecs),
-            sub: 'Round is wrapping up',
-            metaLabel: 'Next action',
-            metaValue: 'Settle'
-          }
-        }
-
-        return {
-          heading: 'Vault Locked \u2014 Accumulating Yield',
-          value: nonCurrentSettleSecs > 0 ? formatCountdown(nonCurrentSettleSecs) : 'Finalizing\u2026',
-          sub: epochBased
-            ? 'Yield window in progress'
-            : 'Yield building for winner',
-          metaLabel: 'Est. unlock',
-          metaValue: nonCurrentSettleSecs > 0 ? formatCountdown(nonCurrentSettleSecs) : 'Soon'
-        }
-      }
-    }
-
-    if (currentState === 0) {
-      if (secondsRemaining > 0) {
+    if (shownState === 0) {
+      if (shownSecondsRemaining > 0) {
         return {
           heading: 'Vault Accepting Deposits',
-          value: formatCountdown(secondsRemaining),
+          value: formatCountdown(shownSecondsRemaining),
           sub: 'Deposit window closes in',
           metaLabel: 'Progress',
-          metaValue: `${progressPct}%`
+          metaValue: `${shownProgressPct}%`
         }
       }
 
-      const emptyRound = Number(roundInfo.totalTickets ?? 0) === 0 || BigInt(roundInfo.totalPrincipalMON ?? 0n) === 0n
+      const emptyRound = Number(shownRoundInfo?.totalTickets ?? 0) === 0 || BigInt(shownRoundInfo?.totalPrincipalMON ?? 0n) === 0n
       if (emptyRound) {
         return {
           heading: 'Round Closed - Awaiting Keeper Skip',
           value: '00:00:00',
           sub: 'No tickets sold. Keeper will advance to next round.',
           metaLabel: 'Next action',
-          metaValue: ACTION_LABELS[nextAction] ?? 'Skip'
+          metaValue: shownIsCurrentRound ? (ACTION_LABELS[nextAction] ?? 'Skip') : 'Skip'
         }
       }
 
@@ -1197,19 +1163,19 @@ export default function App() {
         value: '00:00:00',
         sub: 'Deposits closed — funds are earning yield while awaiting draw',
         metaLabel: 'Next action',
-        metaValue: ACTION_LABELS[nextAction] ?? 'Commit'
+        metaValue: shownIsCurrentRound ? (ACTION_LABELS[nextAction] ?? 'Commit') : 'Commit'
       }
     }
 
-    if (currentState === 1) {
-      const targetBlock = roundInfo ? Number(roundInfo.targetBlockNumber ?? 0) : 0
-      if (settlementSecondsRemaining > 0) {
+    if (shownState === 1) {
+      const targetBlock = Number(shownRoundInfo?.targetBlockNumber ?? 0)
+      if (shownSettlementSecs > 0) {
         return {
           heading: 'Winner Reveal Pending',
-          value: formatCountdown(settlementSecondsRemaining),
+          value: formatCountdown(shownSettlementSecs),
           sub: `Draw unlock at block ${targetBlock.toLocaleString()}`,
           metaLabel: 'Next action',
-          metaValue: ACTION_LABELS[nextAction] ?? 'Draw'
+          metaValue: shownIsCurrentRound ? (ACTION_LABELS[nextAction] ?? 'Draw') : 'Draw'
         }
       }
 
@@ -1218,47 +1184,47 @@ export default function App() {
         value: 'Finalizing…',
         sub: targetBlock > 0 ? `Waiting for draw at block ${targetBlock.toLocaleString()}` : 'Round is being finalized',
         metaLabel: 'Next action',
-        metaValue: ACTION_LABELS[nextAction] ?? 'Settle'
+        metaValue: shownIsCurrentRound ? (ACTION_LABELS[nextAction] ?? 'Settle') : 'Settle'
       }
     }
 
-    if (currentState === 2) {
-      const targetBlock = roundInfo ? Number(roundInfo.targetBlockNumber ?? 0) : 0
-      const completionEpoch = roundInfo ? Number(roundInfo.unstakeCompletionEpoch ?? 0) : 0
+    if (shownState === 2) {
+      const targetBlock = Number(shownRoundInfo?.targetBlockNumber ?? 0)
+      const completionEpoch = Number(shownRoundInfo?.unstakeCompletionEpoch ?? 0)
       const epochBased = completionEpoch > 0 && currentInternalEpoch > 0
 
-      if (settlementSecondsRemaining > 0 && settlementSecondsRemaining <= 86400) {
+      if (shownSettlementSecs > 0 && shownSettlementSecs <= 86400) {
         return {
           heading: 'Winner Revealed',
-          value: formatCountdown(settlementSecondsRemaining),
+          value: formatCountdown(shownSettlementSecs),
           sub: 'Round is wrapping up',
           metaLabel: 'Next action',
-          metaValue: ACTION_LABELS[nextAction] ?? 'Settle'
+          metaValue: shownIsCurrentRound ? (ACTION_LABELS[nextAction] ?? 'Settle') : 'Settle'
         }
       }
 
-      if (settlementSecondsRemaining > 86400) {
+      if (shownSettlementSecs > 86400) {
         return {
-          heading: 'Vault Locked \u2014 Accumulating Yield',
-          value: formatCountdown(settlementSecondsRemaining),
+          heading: 'Vault Locked — Accumulating Yield',
+          value: formatCountdown(shownSettlementSecs),
           sub: epochBased
             ? 'Yield window in progress'
             : 'Yield building for prize',
           metaLabel: 'Est. unlock',
-          metaValue: formatCountdown(Math.max(0, settlementSecondsRemaining - 86400))
+          metaValue: formatCountdown(Math.max(0, shownSettlementSecs - 86400))
         }
       }
 
       return {
         heading: 'Winner Revealed',
-        value: 'Finalizing\u2026',
+        value: 'Finalizing…',
         sub: targetBlock > 0 ? `Target block ${targetBlock.toLocaleString()}` : 'Round is being finalized',
         metaLabel: 'Next action',
-        metaValue: ACTION_LABELS[nextAction] ?? 'Settle'
+        metaValue: shownIsCurrentRound ? (ACTION_LABELS[nextAction] ?? 'Settle') : 'Settle'
       }
     }
 
-    if (currentState === 3) {
+    if (shownState === 3) {
       return {
         heading: 'Settled — Withdraw Available',
         value: 'Settled',
@@ -1275,9 +1241,9 @@ export default function App() {
       metaLabel: 'Progress',
       metaValue: '0%'
     }
-  }, [currentState, nextAction, progressPct, secondsRemaining, roundInfo, settlementSecondsRemaining, currentInternalEpoch, shownIsCurrentRound, shownState])
+  }, [isDeadRound, shownState, shownSecondsRemaining, shownProgressPct, shownRoundInfo, shownSettlementSecs, shownIsCurrentRound, nextAction, currentInternalEpoch])
 
-  const timerProgressPct = currentState === 0 ? progressPct : currentState === 3 ? 100 : 50
+  const timerProgressPct = shownState === 0 ? shownProgressPct : shownState === 3 ? 100 : 50
   const timerIsClock = /^\d+:\d{2}:\d{2}:\d{2}$/.test(timerCard.value)
 
   // Compute settlement seconds for the shown round (not just the current round)
