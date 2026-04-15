@@ -512,7 +512,7 @@ export default function App() {
   const expectedChainId = import.meta.env.VITE_CHAIN_ID ? Number(import.meta.env.VITE_CHAIN_ID) : 143
   const estimatedApyPercent = import.meta.env.VITE_ESTIMATED_APY_PERCENT ? Number(import.meta.env.VITE_ESTIMATED_APY_PERCENT) : 12
   const poolDeployBlock = import.meta.env.VITE_POOL_DEPLOY_BLOCK ? Number(import.meta.env.VITE_POOL_DEPLOY_BLOCK) : 0
-  const configuredDepositWindowSec = import.meta.env.VITE_DEPOSIT_WINDOW_SEC ? Number(import.meta.env.VITE_DEPOSIT_WINDOW_SEC) : 0
+  const configuredDepositWindowSec = import.meta.env.VITE_DEPOSIT_WINDOW_SEC ? Number(import.meta.env.VITE_DEPOSIT_WINDOW_SEC) : 86400
 
   const [account, setAccount] = useState('')
   const [balance, setBalance] = useState('0')
@@ -1026,11 +1026,16 @@ export default function App() {
     return Math.max(0, Number(roundInfo.salesEndTime) - now)
   }, [now, roundInfo])
 
+  const depositWindowSec = useMemo(() => {
+    const fallback = Math.min(86400, Math.max(0, configuredDepositWindowSec || 86400))
+    return fallback || 86400
+  }, [configuredDepositWindowSec])
+
   const progressPct = useMemo(() => {
-    if (!roundDuration || !roundInfo) return 0
-    const elapsed = Math.max(0, roundDuration - secondsRemaining)
-    return Math.min(100, Math.round((elapsed / roundDuration) * 100))
-  }, [roundDuration, secondsRemaining, roundInfo])
+    if (!depositWindowSec || !roundInfo) return 0
+    const elapsed = Math.max(0, depositWindowSec - secondsRemaining)
+    return Math.min(100, Math.round((elapsed / depositWindowSec) * 100))
+  }, [depositWindowSec, secondsRemaining, roundInfo])
 
   const currentState = roundInfo ? Number(roundInfo.state) : null
   const isOpenState = currentState === 0
@@ -1120,10 +1125,10 @@ export default function App() {
   const isDeadRound = shownState === 3 && Number(shownRoundInfo?.totalTickets ?? 0) === 0
 
   const shownProgressPct = useMemo(() => {
-    if (!roundDuration || !shownRoundInfo) return 0
-    const elapsed = Math.max(0, roundDuration - shownSecondsRemaining)
-    return Math.min(100, Math.round((elapsed / roundDuration) * 100))
-  }, [roundDuration, shownSecondsRemaining, shownRoundInfo])
+    if (!depositWindowSec || !shownRoundInfo) return 0
+    const elapsed = Math.max(0, depositWindowSec - shownSecondsRemaining)
+    return Math.min(100, Math.round((elapsed / depositWindowSec) * 100))
+  }, [depositWindowSec, shownSecondsRemaining, shownRoundInfo])
 
   // Compute settlement seconds for the shown round (not just the current round)
   const shownSettlementSecs = useMemo(() => {
@@ -1169,11 +1174,11 @@ export default function App() {
       const emptyRound = Number(shownRoundInfo?.totalTickets ?? 0) === 0 || BigInt(shownRoundInfo?.totalPrincipalMON ?? 0n) === 0n
       if (emptyRound) {
         return {
-          heading: 'Round Closed - Awaiting Keeper Skip',
+          heading: 'Round Closed',
           value: '00:00:00',
-          sub: 'No tickets sold. Keeper will advance to next round.',
+          sub: 'No tickets sold in this round.',
           metaLabel: 'Next action',
-          metaValue: shownIsCurrentRound ? (ACTION_LABELS[nextAction] ?? 'Skip') : 'Skip'
+          metaValue: shownIsCurrentRound ? (ACTION_LABELS[nextAction] ?? 'Skip') : 'Closed'
         }
       }
 
