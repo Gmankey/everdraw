@@ -98,32 +98,9 @@ function normalizeError(e) {
   return msg
 }
 
-async function fetchNonce(address) {
-  const rpcUrl = import.meta.env.VITE_RPC_URL || 'https://rpc.monad.xyz'
-  for (let i = 0; i < 5; i++) {
-    try {
-      const res = await fetch(rpcUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: Date.now(),
-          method: 'eth_getTransactionCount',
-          params: [address.toLowerCase(), 'pending']
-        })
-      })
-      if (res.status === 429) {
-        await new Promise((r) => setTimeout(r, 700 * (i + 1)))
-        continue
-      }
-      const json = await res.json()
-      const n = parseInt(json.result, 16)
-      if (!isNaN(n) && n >= 0) return n
-    } catch {}
-    await new Promise((r) => setTimeout(r, 400))
-  }
-  throw new Error('Could not fetch nonce, RPC rate limited, try again in a few seconds')
-}
+// Nonce management removed — wallet (MetaMask/Rabby) handles nonces correctly.
+// Manual nonce injection caused persistent "invalid value for value.nonce" errors
+// because ethers v6 BrowserProvider routes through EIP-1193 request(), not send().
 
 const MONAD_TESTNET_CHAIN_PARAMS = {
   chainId: '0x279F',
@@ -560,7 +537,7 @@ export default function App() {
   const [previousParticipants, setPreviousParticipants] = useState([])
   const participantsCacheRef = useRef(new Map())
   const [winnersUserPrincipalWei, setWinnersUserPrincipalWei] = useState(0n)
-  const [claimFlow, setClaimFlow] = useState({ open: false, mode: 'winner', rid: null, principalWei: 0n, prizeWei: 0n })
+  const [claimFlow, setClaimFlow] = useState({ open: false, mode: 'winner', rid: null, poolAddr: '', principalWei: 0n, prizeWei: 0n })
   const [claimRedirectWarningOpen, setClaimRedirectWarningOpen] = useState(false)
   const [actionBusy, setActionBusy] = useState(false)
   const [withdrawingRid, setWithdrawingRid] = useState(null)
@@ -1010,7 +987,6 @@ export default function App() {
       await ensureCorrectNetwork(provider, expectedChainId)
       if (!account) throw new Error('No wallet connected')
       const signer = await provider.getSigner(account)
-      const nonce = await fetchNonce(account)
       const pool = new ethers.Contract(poolAddress, POOL_ABI, signer)
 
       const value = ticketPrice * BigInt(n)
@@ -1028,8 +1004,7 @@ export default function App() {
       }
 
       setStatus('Waiting for wallet confirmation...')
-      console.log('[buy] nonce:', nonce, 'isNaN:', isNaN(nonce), 'type:', typeof nonce)
-      const tx = await pool.buyTickets(n, { value, gasLimit, nonce })
+      const tx = await pool.buyTickets(n, { value, gasLimit })
       setStatus(`Submitted: ${tx.hash.slice(0, 10)}... waiting for confirmation...`)
 
       await tx.wait()
@@ -1412,49 +1387,62 @@ export default function App() {
   useEffect(() => {
     let cancelled = false
     const loadMyRounds = async () => {
-      if (!account || !poolAddress || !roundId) {
+      if (!account || !poolAddresses.length) {
         if (!cancelled) setMyRounds([])
         return
       }
       try {
         const provider = await getReadProvider()
-        const pool = new ethers.Contract(poolAddress, POOL_ABI, provider)
-        const cur = Number(roundId)
         const rows = []
 
-        // Scan a wider range so older participation still appears in "My Rounds".
-        const fromRid = Math.max(0, cur - 10)
-        for (let rid = fromRid; rid <= cur; rid++) {
-          let info
+        for (const addr of poolAddresses) {
+          if (!ethers.isAddress(addr)) continue
+          const pool = new ethers.Contract(addr, POOL_ABI, provider)
+
+          let cur = 0
           try {
-            info = await pool.getRoundInfo(BigInt(rid))
+            cur = Number(await pool.currentRoundId())
           } catch {
             continue
           }
 
-          // Some states/contracts may revert here; treat as 0 so one bad round doesn't wipe the list.
-          let principal = 0n
-          try {
-            principal = await pool.principalMON(BigInt(rid), account)
-          } catch {
-            principal = 0n
-          }
+          const fromRid = Math.max(0, cur - 10)
+          for (let rid = fromRid; rid <= cur; rid++) {
+            let info
+            try {
+              info = await pool.getRoundInfo(BigInt(rid))
+            } catch {
+              continue
+            }
 
-          const isWinner = account.toLowerCase() === String(info.winner || '').toLowerCase()
-          if (principal > 0n || isWinner) {
-            rows.push({
-              rid,
-              state: Number(info.state),
-              isWinner,
-              prizeClaimed: Boolean(info.prizeClaimed),
-              principalWei: principal,
-              principalMon: Number(ethers.formatEther(principal)).toFixed(4),
-              yieldWei: BigInt(info.yieldMON || 0n),
-              canWithdraw: Number(info.state) === 3 && principal > 0n,
-            })
+            let principal = 0n
+            try {
+              principal = await pool.principalMON(BigInt(rid), account)
+            } catch {
+              principal = 0n
+            }
+
+            const isWinner = account.toLowerCase() === String(info.winner || '').toLowerCase()
+            if (principal > 0n || isWinner) {
+              rows.push({
+                rid,
+                poolAddr: addr,
+                state: Number(info.state),
+                isWinner,
+                prizeClaimed: Boolean(info.prizeClaimed),
+                principalWei: principal,
+                principalMon: Number(ethers.formatEther(principal)).toFixed(4),
+                yieldWei: BigInt(info.yieldMON || 0n),
+                canWithdraw: Number(info.state) === 3 && principal > 0n,
+              })
+            }
           }
         }
-        rows.sort((a, b) => b.rid - a.rid)
+
+        rows.sort((a, b) => {
+          if (b.rid !== a.rid) return b.rid - a.rid
+          return a.poolAddr.localeCompare(b.poolAddr)
+        })
         if (!cancelled) setMyRounds(rows)
       } catch {
         if (!cancelled) setMyRounds([])
@@ -1462,7 +1450,7 @@ export default function App() {
     }
     loadMyRounds()
     return () => { cancelled = true }
-  }, [account, poolAddress, roundId])
+  }, [account, poolAddresses, roundId])
 
   const myRoundsStats = useMemo(() => {
     const lockedWei = myRounds
@@ -1485,7 +1473,7 @@ export default function App() {
     }
   }, [myRounds])
 
-  const runSignedAction = useCallback(async (label, fn) => {
+  const runSignedAction = useCallback(async (label, fn, targetPoolAddress = poolAddress) => {
     try {
       setActionBusy(true)
       setActionError('')
@@ -1493,16 +1481,15 @@ export default function App() {
 
       const walletProvider = getWalletProvider()
       if (!walletProvider) throw new Error('Wallet required')
-      if (!poolAddress) throw new Error('Missing pool address')
+      if (!targetPoolAddress) throw new Error('Missing pool address')
       if (!account) throw new Error('No wallet connected')
 
       const provider = new ethers.BrowserProvider(walletProvider)
       await ensureCorrectNetwork(provider, expectedChainId)
       const signer = await provider.getSigner(account)
-      const nonce = await fetchNonce(account)
-      const pool = new ethers.Contract(poolAddress, POOL_ABI, signer)
+      const pool = new ethers.Contract(targetPoolAddress, POOL_ABI, signer)
 
-      await fn(pool, nonce)
+      await fn(pool)
       await refresh()
       setActionStatus(`${label}: success`)
       return true
@@ -1515,36 +1502,36 @@ export default function App() {
     }
   }, [account, expectedChainId, poolAddress, refresh])
 
-  const handleClaimPrize = useCallback(async (rid = winnersRoundId) => {
+  const handleClaimPrize = useCallback(async (rid = winnersRoundId, targetPoolAddress = poolAddress) => {
     if (!rid) return false
-    return await runSignedAction('Claim prize', async (pool, nonce) => {
-      const tx = await pool.claimPrize(BigInt(rid), { gasLimit: 500000n, nonce })
+    return await runSignedAction('Claim prize', async (pool) => {
+      const tx = await pool.claimPrize(BigInt(rid), { gasLimit: 500000n })
       setActionStatus(`Claim prize: submitted ${tx.hash.slice(0, 10)}...`)
       await tx.wait()
-    })
-  }, [winnersRoundId, runSignedAction])
+    }, targetPoolAddress)
+  }, [poolAddress, winnersRoundId, runSignedAction])
 
-  const handleWithdraw = useCallback(async (rid = winnersRoundId) => {
+  const handleWithdraw = useCallback(async (rid = winnersRoundId, targetPoolAddress = poolAddress) => {
     if (!rid) return false
-    return await runSignedAction('Withdraw', async (pool, nonce) => {
-      const tx = await pool.withdrawPrincipal(BigInt(rid), { gasLimit: 500000n, nonce })
+    return await runSignedAction('Withdraw', async (pool) => {
+      const tx = await pool.withdrawPrincipal(BigInt(rid), { gasLimit: 500000n })
       setActionStatus(`Withdraw: submitted ${tx.hash.slice(0, 10)}...`)
       await tx.wait()
-    })
-  }, [winnersRoundId, runSignedAction])
+    }, targetPoolAddress)
+  }, [poolAddress, winnersRoundId, runSignedAction])
 
-  const handleWithdrawForRound = useCallback(async (rid) => {
-    setWithdrawingRid(rid)
+  const handleWithdrawForRound = useCallback(async (rid, targetPoolAddress = poolAddress) => {
+    setWithdrawingRid(`${targetPoolAddress}:${rid}`)
     try {
-      await runSignedAction(`Withdraw (Round #${rid})`, async (pool, nonce) => {
-        const tx = await pool.withdrawPrincipal(BigInt(rid), { gasLimit: 500000n, nonce })
+      await runSignedAction(`Withdraw (Round #${rid})`, async (pool) => {
+        const tx = await pool.withdrawPrincipal(BigInt(rid), { gasLimit: 500000n })
         setActionStatus(`Withdraw (Round #${rid}): submitted ${tx.hash.slice(0, 10)}...`)
         await tx.wait()
-      })
+      }, targetPoolAddress)
     } finally {
       setWithdrawingRid(null)
     }
-  }, [runSignedAction])
+  }, [poolAddress, runSignedAction])
 
   const closeClaimFlow = useCallback(() => {
     if (actionBusy) return
@@ -1562,36 +1549,37 @@ export default function App() {
       open: true,
       mode: next.mode,
       rid: next.rid ?? null,
+      poolAddr: next.poolAddr ?? poolAddress,
       principalWei: next.principalWei ?? 0n,
       prizeWei: next.prizeWei ?? 0n,
     })
-  }, [])
+  }, [poolAddress])
 
   const handleClaimOnly = useCallback(async () => {
     if (!claimFlow.rid) return
     if (claimFlow.mode !== 'winner') {
-      const ok = await handleClaimPrize(claimFlow.rid)
+      const ok = await handleClaimPrize(claimFlow.rid, claimFlow.poolAddr)
       if (ok) setClaimFlow((prev) => ({ ...prev, open: false }))
       return
     }
-    const ok = await runSignedAction('Claim and withdraw', async (pool, nonce) => {
-      const claimTx = await pool.claimPrize(BigInt(claimFlow.rid), { gasLimit: 500000n, nonce })
+    const ok = await runSignedAction('Claim and withdraw', async (pool) => {
+      const claimTx = await pool.claimPrize(BigInt(claimFlow.rid), { gasLimit: 500000n })
       setActionStatus(`Claim prize: submitted ${claimTx.hash.slice(0, 10)}...`)
       await claimTx.wait()
       setActionStatus('Prize claimed, withdrawing principal...')
-      const withdrawTx = await pool.withdrawPrincipal(BigInt(claimFlow.rid), { gasLimit: 500000n, nonce: nonce + 1 })
+      const withdrawTx = await pool.withdrawPrincipal(BigInt(claimFlow.rid), { gasLimit: 500000n })
       setActionStatus(`Withdraw principal: submitted ${withdrawTx.hash.slice(0, 10)}...`)
       await withdrawTx.wait()
-    })
+    }, claimFlow.poolAddr)
     if (ok) setClaimFlow((prev) => ({ ...prev, open: false }))
-  }, [claimFlow.mode, claimFlow.rid, handleClaimPrize, runSignedAction])
+  }, [claimFlow.mode, claimFlow.poolAddr, claimFlow.rid, handleClaimPrize, runSignedAction])
 
   const handleWithdrawOnly = useCallback(async () => {
-    const ok = await handleWithdraw(claimFlow.rid)
+    const ok = await handleWithdraw(claimFlow.rid, claimFlow.poolAddr)
     if (ok) {
       setClaimFlow((prev) => ({ ...prev, open: false }))
     }
-  }, [claimFlow.rid, handleWithdraw])
+  }, [claimFlow.poolAddr, claimFlow.rid, handleWithdraw])
 
   const handleRedeposit = useCallback(async () => {
     if (!poolAddress) {
@@ -1606,7 +1594,7 @@ export default function App() {
     const redepositTickets = ticketPrice > 0n ? claimFlow.prizeWei / ticketPrice : 0n
     const redepositValue = redepositTickets * ticketPrice
 
-    await runSignedAction('Claim and re-deposit', async (pool, nonce) => {
+    await runSignedAction('Claim and re-deposit', async (pool) => {
       if (!salesOpen || !roundId) {
         throw new Error('No open vault is currently accepting deposits')
       }
@@ -1620,11 +1608,11 @@ export default function App() {
         throw new Error('Prize is too large to convert into a safe ticket count')
       }
 
-      const claimTx = await pool.claimPrize(BigInt(claimFlow.rid), { gasLimit: 500000n, nonce })
+      const claimTx = await pool.claimPrize(BigInt(claimFlow.rid), { gasLimit: 500000n })
       setActionStatus(`Claim prize: submitted ${claimTx.hash.slice(0, 10)}...`)
       await claimTx.wait()
 
-      const withdrawTx = await pool.withdrawPrincipal(BigInt(claimFlow.rid), { gasLimit: 500000n, nonce: nonce + 1 })
+      const withdrawTx = await pool.withdrawPrincipal(BigInt(claimFlow.rid), { gasLimit: 500000n })
       setActionStatus(`Withdraw principal: submitted ${withdrawTx.hash.slice(0, 10)}...`)
       await withdrawTx.wait()
 
@@ -1632,7 +1620,6 @@ export default function App() {
       const buyTx = await pool.buyTickets(Number(redepositTickets), {
         value: redepositValue,
         gasLimit: 700000n,
-        nonce: nonce + 2,
       })
       setActionStatus(`Re-deposit: submitted ${buyTx.hash.slice(0, 10)}...`)
       await buyTx.wait()
@@ -1655,15 +1642,15 @@ export default function App() {
     }
 
     if (claimFlow.mode === 'winner') {
-      const ok = await runSignedAction('Claim, withdraw, and convert', async (pool, nonce) => {
-        const claimTx = await pool.claimPrize(BigInt(claimFlow.rid), { gasLimit: 500000n, nonce })
+      const ok = await runSignedAction('Claim, withdraw, and convert', async (pool) => {
+        const claimTx = await pool.claimPrize(BigInt(claimFlow.rid), { gasLimit: 500000n })
         setActionStatus(`Claim prize: submitted ${claimTx.hash.slice(0, 10)}...`)
         await claimTx.wait()
         setActionStatus('Prize claimed, withdrawing principal...')
-        const withdrawTx = await pool.withdrawPrincipal(BigInt(claimFlow.rid), { gasLimit: 500000n, nonce: nonce + 1 })
+        const withdrawTx = await pool.withdrawPrincipal(BigInt(claimFlow.rid), { gasLimit: 500000n })
         setActionStatus(`Withdraw principal: submitted ${withdrawTx.hash.slice(0, 10)}...`)
         await withdrawTx.wait()
-      })
+      }, claimFlow.poolAddr)
 
       if (!ok) return
 
@@ -1821,12 +1808,13 @@ export default function App() {
                         onClick={() => openClaimFlow({
                           mode: (r.isWinner && !r.prizeClaimed) ? 'winner' : 'principal',
                           rid: r.rid,
+                          poolAddr: r.poolAddr,
                           principalWei: r.principalWei || 0n,
                           prizeWei: r.yieldWei || 0n,
                         })}
-                        disabled={withdrawingRid === r.rid}
+                        disabled={withdrawingRid === `${r.poolAddr}:${r.rid}`}
                       >
-                        {withdrawingRid === r.rid ? pendingActionLabel : actionLabel}
+                        {withdrawingRid === `${r.poolAddr}:${r.rid}` ? pendingActionLabel : actionLabel}
                       </button>
                     ) : r.state === 0 ? (
                       <button
