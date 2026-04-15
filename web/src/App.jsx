@@ -1125,6 +1125,25 @@ export default function App() {
     return Math.min(100, Math.round((elapsed / roundDuration) * 100))
   }, [roundDuration, shownSecondsRemaining, shownRoundInfo])
 
+  // Compute settlement seconds for the shown round (not just the current round)
+  const shownSettlementSecs = useMemo(() => {
+    if (shownIsCurrentRound) return settlementSecondsRemaining
+    if (!shownRoundInfo) return 0
+    const st = Number(shownRoundInfo.state)
+    if (st === 3 || (st !== 1 && st !== 2)) return 0
+    const completionEpoch = Number(shownRoundInfo.unstakeCompletionEpoch ?? 0)
+    if (completionEpoch > 0 && currentInternalEpoch > 0) {
+      const EPOCH_LENGTH = 50_000
+      const BLOCK_TIME_SEC = 0.4
+      const epochsLeft = completionEpoch - currentInternalEpoch
+      if (epochsLeft <= 0) return 0
+      const blocksIntoEpoch = latestBlockNumber % EPOCH_LENGTH
+      const blocksRemaining = (EPOCH_LENGTH - blocksIntoEpoch) + (epochsLeft - 1) * EPOCH_LENGTH
+      return Math.max(0, Math.ceil(blocksRemaining * BLOCK_TIME_SEC))
+    }
+    return 0
+  }, [shownIsCurrentRound, settlementSecondsRemaining, shownRoundInfo, currentInternalEpoch, latestBlockNumber])
+
   const timerCard = useMemo(() => {
     if (isDeadRound) {
       return {
@@ -1245,25 +1264,6 @@ export default function App() {
 
   const timerProgressPct = shownState === 0 ? shownProgressPct : shownState === 3 ? 100 : 50
   const timerIsClock = /^\d+:\d{2}:\d{2}:\d{2}$/.test(timerCard.value)
-
-  // Compute settlement seconds for the shown round (not just the current round)
-  const shownSettlementSecs = useMemo(() => {
-    if (shownIsCurrentRound) return settlementSecondsRemaining
-    if (!shownRoundInfo) return 0
-    const st = Number(shownRoundInfo.state)
-    if (st === 3 || (st !== 1 && st !== 2)) return 0
-    const completionEpoch = Number(shownRoundInfo.unstakeCompletionEpoch ?? 0)
-    if (completionEpoch > 0 && currentInternalEpoch > 0) {
-      const EPOCH_LENGTH = 50_000
-      const BLOCK_TIME_SEC = 0.4
-      const epochsLeft = completionEpoch - currentInternalEpoch
-      if (epochsLeft <= 0) return 0
-      const blocksIntoEpoch = latestBlockNumber % EPOCH_LENGTH
-      const blocksRemaining = (EPOCH_LENGTH - blocksIntoEpoch) + (epochsLeft - 1) * EPOCH_LENGTH
-      return Math.max(0, Math.ceil(blocksRemaining * BLOCK_TIME_SEC))
-    }
-    return 0
-  }, [shownIsCurrentRound, settlementSecondsRemaining, shownRoundInfo, currentInternalEpoch, latestBlockNumber])
 
   const isUnstaking = shownState === 2 && shownSettlementSecs > 0 && shownSettlementSecs <= 86400
   const drawFinished = !isDeadRound && (shownState === 3 || isUnstaking)
