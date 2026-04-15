@@ -1031,6 +1031,11 @@ export default function App() {
     return fallback || 86400
   }, [configuredDepositWindowSec])
 
+  const displayedSecondsRemaining = useMemo(() => {
+    if (!roundInfo || Number(roundInfo.state ?? -1) !== 0) return 0
+    return Math.min(secondsRemaining, depositWindowSec)
+  }, [roundInfo, secondsRemaining, depositWindowSec])
+
   const progressPct = useMemo(() => {
     if (!depositWindowSec || !roundInfo) return 0
     const elapsed = Math.max(0, depositWindowSec - secondsRemaining)
@@ -1065,9 +1070,10 @@ export default function App() {
   const shownState = shownRoundInfo ? Number(shownRoundInfo.state) : -1
   const shownVaultLabel = mainView === 'vaultA' ? 'Vault A' : mainView === 'vaultB' ? 'Vault B' : 'Previous Vault'
   const wrongNetwork = expectedChainId && connectedChainId && expectedChainId !== connectedChainId
-  const shownSecondsRemaining = shownRoundInfo ? Math.max(0, Number(shownRoundInfo.salesEndTime ?? 0) - now) : 0
+  const rawShownSecondsRemaining = shownRoundInfo ? Math.max(0, Number(shownRoundInfo.salesEndTime ?? 0) - now) : 0
+  const shownSecondsRemaining = shownState === 0 ? Math.min(rawShownSecondsRemaining, depositWindowSec) : rawShownSecondsRemaining
   const shownSalesOpen = shownState === 0 && shownSecondsRemaining > 0
-  const salesOpen = shownIsCurrentRound ? shownSalesOpen : isOpenState && secondsRemaining > 0
+  const salesOpen = shownIsCurrentRound ? shownSalesOpen : isOpenState && displayedSecondsRemaining > 0
   const canBuyTx = !!account && shownIsCurrentRound && shownSalesOpen && !loading
 
   const buyDisabledReason = useMemo(() => {
