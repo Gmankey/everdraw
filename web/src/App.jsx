@@ -125,8 +125,24 @@ function normalizeError(e) {
   return msg
 }
 
-// Nonce management removed — wallet (MetaMask/Rabby) handles nonces correctly.
-// Manual nonce injection caused persistent "invalid value for value.nonce" errors
+// Nonce fetch with retry — rpc.monad.xyz occasionally 429s during heavy polling.
+// Ethers' internal nonce fetch silently returns undefined on 429 → BigInt(undefined) throws.
+// We fetch it ourselves with exponential backoff so one rate-limit blip doesn't kill the tx.
+async function fetchNonceWithRetry(account, maxRetries = 6) {
+  const BASE_MS = 250
+  let lastErr
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const provider = await getReadProvider()
+      const nonce = await provider.getTransactionCount(account, 'pending')
+      if (typeof nonce === 'number' && Number.isFinite(nonce)) return nonce
+    } catch (e) {
+      lastErr = e
+    }
+    if (i < maxRetries - 1) await new Promise(r => setTimeout(r, BASE_MS * (i + 1)))
+  }
+  throw lastErr || new Error('Failed to fetch nonce after retries')
+}
 // because ethers v6 BrowserProvider routes through EIP-1193 request(), not send().
 
 const MONAD_TESTNET_CHAIN_PARAMS = {
@@ -934,7 +950,8 @@ export default function App() {
       }
 
       setStatus('Waiting for wallet confirmation...')
-      const tx = await pool.buyTickets(n, { value, gasLimit })
+      const nonce = await fetchNonceWithRetry(account)
+      const tx = await pool.buyTickets(n, { value, gasLimit, nonce })
       setStatus(`Submitted: ${tx.hash.slice(0, 10)}... waiting for confirmation...`)
 
       await tx.wait()
@@ -1403,8 +1420,9 @@ export default function App() {
       await ensureCorrectNetwork(provider, expectedChainId)
       const signer = await provider.getSigner(account)
       const pool = new ethers.Contract(targetPoolAddress, POOL_ABI, signer)
+      const nonce = await fetchNonceWithRetry(account)
 
-      await fn(pool)
+      await fn(pool, nonce)
       await refresh()
       setActionStatus(`${label}: success`)
       return true
@@ -1419,8 +1437,8 @@ export default function App() {
 
   const handleClaimPrize = useCallback(async (rid = winnersRoundId, targetPoolAddress = poolAddress) => {
     if (!rid) return false
-    return await runSignedAction('Claim prize', async (pool) => {
-      const tx = await pool.claimPrize(BigInt(rid), { gasLimit: 500000n })
+    return await runSignedAction('Claim prize', async (pool, nonce) => {
+      const tx = await pool.claimPrize(BigInt(rid), { gasLimit: 500000n, nonce })
       setActionStatus(`Claim prize: submitted ${tx.hash.slice(0, 10)}...`)
       await tx.wait()
     }, targetPoolAddress)
@@ -1428,8 +1446,8 @@ export default function App() {
 
   const handleWithdraw = useCallback(async (rid = winnersRoundId, targetPoolAddress = poolAddress) => {
     if (!rid) return false
-    return await runSignedAction('Withdraw', async (pool) => {
-      const tx = await pool.withdrawPrincipal(BigInt(rid), { gasLimit: 500000n })
+    return await runSignedAction('Withdraw', async (pool, nonce) => {
+      const tx = await pool.withdrawPrincipal(BigInt(rid), { gasLimit: 500000n, nonce })
       setActionStatus(`Withdraw: submitted ${tx.hash.slice(0, 10)}...`)
       await tx.wait()
     }, targetPoolAddress)
@@ -1438,8 +1456,8 @@ export default function App() {
   const handleWithdrawForRound = useCallback(async (rid, targetPoolAddress = poolAddress) => {
     setWithdrawingRid(`${targetPoolAddress}:${rid}`)
     try {
-      await runSignedAction(`Withdraw (Round #${rid})`, async (pool) => {
-        const tx = await pool.withdrawPrincipal(BigInt(rid), { gasLimit: 500000n })
+      await runSignedAction(`Withdraw (Round #${rid})`, async (pool, nonce) => {
+        const tx = await pool.withdrawPrincipal(BigInt(rid), { gasLimit: 500000n, nonce })
         setActionStatus(`Withdraw (Round #${rid}): submitted ${tx.hash.slice(0, 10)}...`)
         await tx.wait()
       }, targetPoolAddress)
@@ -1477,12 +1495,12 @@ export default function App() {
       if (ok) setClaimFlow((prev) => ({ ...prev, open: false }))
       return
     }
-    const ok = await runSignedAction('Claim and withdraw', async (pool) => {
-      const claimTx = await pool.claimPrize(BigInt(claimFlow.rid), { gasLimit: 500000n })
+    const ok = await runSignedAction('Claim and withdraw', async (pool, nonce) => {
+      const claimTx = await pool.claimPrize(BigInt(claimFlow.rid), { gasLimit: 500000n, nonce })
       setActionStatus(`Claim prize: submitted ${claimTx.hash.slice(0, 10)}...`)
       await claimTx.wait()
       setActionStatus('Prize claimed, withdrawing principal...')
-      const withdrawTx = await pool.withdrawPrincipal(BigInt(claimFlow.rid), { gasLimit: 500000n })
+      const withdrawTx = await pool.withdrawPrincipal(BigInt(claimFlow.rid), { gasLimit: 500000n, nonce: nonce + 1 })
       setActionStatus(`Withdraw principal: submitted ${withdrawTx.hash.slice(0, 10)}...`)
       await withdrawTx.wait()
     }, claimFlow.poolAddr)
@@ -1509,7 +1527,7 @@ export default function App() {
     const redepositTickets = ticketPrice > 0n ? claimFlow.prizeWei / ticketPrice : 0n
     const redepositValue = redepositTickets * ticketPrice
 
-    await runSignedAction('Claim and re-deposit', async (pool) => {
+    await runSignedAction('Claim and re-deposit', async (pool, nonce) => {
       if (!salesOpen || !roundId) {
         throw new Error('No open vault is currently accepting deposits')
       }
@@ -1523,11 +1541,11 @@ export default function App() {
         throw new Error('Prize is too large to convert into a safe ticket count')
       }
 
-      const claimTx = await pool.claimPrize(BigInt(claimFlow.rid), { gasLimit: 500000n })
+      const claimTx = await pool.claimPrize(BigInt(claimFlow.rid), { gasLimit: 500000n, nonce })
       setActionStatus(`Claim prize: submitted ${claimTx.hash.slice(0, 10)}...`)
       await claimTx.wait()
 
-      const withdrawTx = await pool.withdrawPrincipal(BigInt(claimFlow.rid), { gasLimit: 500000n })
+      const withdrawTx = await pool.withdrawPrincipal(BigInt(claimFlow.rid), { gasLimit: 500000n, nonce: nonce + 1 })
       setActionStatus(`Withdraw principal: submitted ${withdrawTx.hash.slice(0, 10)}...`)
       await withdrawTx.wait()
 
@@ -1535,6 +1553,7 @@ export default function App() {
       const buyTx = await pool.buyTickets(Number(redepositTickets), {
         value: redepositValue,
         gasLimit: 700000n,
+        nonce: nonce + 2,
       })
       setActionStatus(`Re-deposit: submitted ${buyTx.hash.slice(0, 10)}...`)
       await buyTx.wait()
@@ -1557,12 +1576,12 @@ export default function App() {
     }
 
     if (claimFlow.mode === 'winner') {
-      const ok = await runSignedAction('Claim, withdraw, and convert', async (pool) => {
-        const claimTx = await pool.claimPrize(BigInt(claimFlow.rid), { gasLimit: 500000n })
+      const ok = await runSignedAction('Claim, withdraw, and convert', async (pool, nonce) => {
+        const claimTx = await pool.claimPrize(BigInt(claimFlow.rid), { gasLimit: 500000n, nonce })
         setActionStatus(`Claim prize: submitted ${claimTx.hash.slice(0, 10)}...`)
         await claimTx.wait()
         setActionStatus('Prize claimed, withdrawing principal...')
-        const withdrawTx = await pool.withdrawPrincipal(BigInt(claimFlow.rid), { gasLimit: 500000n })
+        const withdrawTx = await pool.withdrawPrincipal(BigInt(claimFlow.rid), { gasLimit: 500000n, nonce: nonce + 1 })
         setActionStatus(`Withdraw principal: submitted ${withdrawTx.hash.slice(0, 10)}...`)
         await withdrawTx.wait()
       }, claimFlow.poolAddr)
