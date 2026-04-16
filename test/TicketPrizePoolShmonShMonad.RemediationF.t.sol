@@ -49,7 +49,7 @@ contract TicketPrizePoolShmonShMonad_RemediationF_Test is Test {
 
     function setUp() public {
         shmon = new RemediationShMonad();
-        pool = new TicketPrizePoolShmonShMonad(TICKET_PRICE, COMMIT_DELAY, ROUND_DUR, address(shmon));
+        pool = new TicketPrizePoolShmonShMonad(TICKET_PRICE, COMMIT_DELAY, ROUND_DUR, 0, address(shmon));
         pool.setKeeper(keeper, true);
 
         vm.deal(alice, 100 ether);
@@ -81,7 +81,10 @@ contract TicketPrizePoolShmonShMonad_RemediationF_Test is Test {
         pool.drawWinner(rid);
     }
 
-    function test_F01_drawWinner_rejectsNonKeeper() public {
+    // V1.2: drawWinner, recommit, executeNext are now permissionless.
+    // These tests verify non-keeper callers CAN call them (opposite of V1 behavior).
+
+    function test_F01_drawWinner_permissionless() public {
         _buy(alice, 1);
         _warpPastSalesEnd();
         pool.commitDraw(1);
@@ -90,11 +93,10 @@ contract TicketPrizePoolShmonShMonad_RemediationF_Test is Test {
         vm.roll(target + 1);
 
         vm.prank(outsider);
-        vm.expectRevert(TicketPrizePoolShmonShMonad.NotKeeper.selector);
-        pool.drawWinner(1);
+        pool.drawWinner(1);  // should succeed, no revert
     }
 
-    function test_F02_recommit_rejectsNonKeeper() public {
+    function test_F02_recommit_permissionless() public {
         _buy(alice, 1);
         _warpPastSalesEnd();
         pool.commitDraw(1);
@@ -103,17 +105,15 @@ contract TicketPrizePoolShmonShMonad_RemediationF_Test is Test {
         vm.roll(target + 256);
 
         vm.prank(outsider);
-        vm.expectRevert(TicketPrizePoolShmonShMonad.NotKeeper.selector);
-        pool.recommit(1);
+        pool.recommit(1);  // should succeed, no revert
     }
 
-    function test_F03_executeNext_rejectsNonKeeper() public {
+    function test_F03_executeNext_permissionless() public {
         _buy(alice, 1);
         _warpPastSalesEnd();
 
         vm.prank(outsider);
-        vm.expectRevert(TicketPrizePoolShmonShMonad.NotKeeper.selector);
-        pool.executeNext();
+        pool.executeNext();  // should succeed, no revert
     }
 
     function test_F04_recommit_revertsAtFourthAttempt() public {

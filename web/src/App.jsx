@@ -8,6 +8,27 @@ import { modal } from './walletModal.ts'
 import './App.css'
 import './shmon.css'
 
+// In-memory RPC cache
+const _rpcCache = new Map()
+function _cached(key, ttlMs, fetcher) {
+  const hit = _rpcCache.get(key)
+  if (hit && Date.now() - hit.ts < ttlMs) return Promise.resolve(hit.value)
+  const p = fetcher().then(v => { _rpcCache.set(key, { value: v, ts: Date.now() }); return v })
+  _rpcCache.set(key, { value: p, ts: Date.now() })
+  return p
+}
+async function getCachedRoundInfo(pool, poolAddress, rid) {
+  const key = `roundInfo:${poolAddress}:${rid}`
+  const hit = _rpcCache.get(key)
+  if (hit && hit.value && !hit.value.then) {
+    const isSettled = Number(hit.value.state) === 3
+    if (isSettled || (Date.now() - hit.ts < 8_000)) return hit.value
+  }
+  const info = await pool.getRoundInfo(rid)
+  _rpcCache.set(key, { value: info, ts: Date.now() })
+  return info
+}
+
 function getWalletProvider() {
   return modal.getWalletProvider() || window.ethereum || null
 }
@@ -17,7 +38,9 @@ const POOL_ABI = [
   'function getRoundInfo(uint256 rid) view returns (uint8 state,uint64 salesEndTime,uint32 totalTickets,uint256 totalPrincipalMON,uint256 totalShmonShares,uint256 targetBlockNumber,address winner,uint32 winningTicket,uint64 unstakeCompletionEpoch,uint256 monReceived,uint256 yieldMON,uint256 lossRatio,bool prizeClaimed)',
   'function nextExecutable() view returns (uint256 rid,uint8 action)',
   'function ticketPriceMON() view returns (uint96)',
-  'function roundDurationSec() view returns (uint32)',
+  'function depositPeriodSec() view returns (uint32)',
+  'function yieldPeriodSec() view returns (uint32)',
+  'function getCommitAfterTime(uint256) view returns (uint64)',
   'function shmon() view returns (address)',
   'function buyTickets(uint32 ticketCount) payable',
   'function claimPrize(uint256 rid)',
@@ -76,14 +99,18 @@ function formatCountdown(seconds) {
   return `${d}:${h}:${m}:${s}`
 }
 
+let _readProvider = null
 async function getReadProvider() {
-  if (import.meta.env.VITE_RPC_URL) {
-    return new ethers.JsonRpcProvider(import.meta.env.VITE_RPC_URL)
+  if (!_readProvider) {
+    if (import.meta.env.VITE_RPC_URL) {
+      _readProvider = new ethers.JsonRpcProvider(import.meta.env.VITE_RPC_URL)
+    } else if (window.ethereum) {
+      _readProvider = new ethers.BrowserProvider(window.ethereum)
+    } else {
+      throw new Error('Missing VITE_RPC_URL and no wallet found')
+    }
   }
-  if (window.ethereum) {
-    return new ethers.BrowserProvider(window.ethereum)
-  }
-  throw new Error('Missing VITE_RPC_URL and no wallet found')
+  return _readProvider
 }
 
 function normalizeError(e) {
@@ -512,7 +539,7 @@ export default function App() {
   const expectedChainId = import.meta.env.VITE_CHAIN_ID ? Number(import.meta.env.VITE_CHAIN_ID) : 143
   const estimatedApyPercent = import.meta.env.VITE_ESTIMATED_APY_PERCENT ? Number(import.meta.env.VITE_ESTIMATED_APY_PERCENT) : 12
   const poolDeployBlock = import.meta.env.VITE_POOL_DEPLOY_BLOCK ? Number(import.meta.env.VITE_POOL_DEPLOY_BLOCK) : 0
-  const configuredDepositWindowSec = import.meta.env.VITE_DEPOSIT_WINDOW_SEC ? Number(import.meta.env.VITE_DEPOSIT_WINDOW_SEC) : 86400
+  const configuredDepositWindowSec = import.meta.env.VITE_DEPOSIT_WINDOW_SEC ? Number(import.meta.env.VITE_DEPOSIT_WINDOW_SEC) : 0
 
   const [account, setAccount] = useState('')
   const [balance, setBalance] = useState('0')
@@ -527,6 +554,7 @@ export default function App() {
   const [nextAction, setNextAction] = useState(0)
   const [ticketPrice, setTicketPrice] = useState(0n)
   const [roundDuration, setRoundDuration] = useState(0)
+  const [yieldPeriod, setYieldPeriod] = useState(0)
   const [now, setNow] = useState(Math.floor(Date.now() / 1000))
   const [showWinnersView, setShowWinnersView] = useState(false)
   const [winnersTransitioning, setWinnersTransitioning] = useState(false)
@@ -595,8 +623,8 @@ export default function App() {
     const summaries = await Promise.all(poolAddresses.map(async (addr) => {
       try {
         const pool = new ethers.Contract(addr, POOL_ABI, provider)
-        const rid = await pool.currentRoundId()
-        const info = await pool.getRoundInfo(rid)
+        const rid = await _cached(`currentRound:${addr}`, 10_000, () => pool.currentRoundId())
+        const info = await getCachedRoundInfo(pool, addr, rid)
         const state = Number(info.state)
         const salesEndTime = Number(info.salesEndTime)
         const secs = Math.max(0, salesEndTime - Math.floor(Date.now() / 1000))
@@ -655,28 +683,31 @@ export default function App() {
       nextExecutable,
       price,
       duration,
+      yieldDur,
       latestBlock,
       network,
       shmonAddr,
       accountBalance,
     ] = await Promise.all([
-      pool.currentRoundId(),
+      _cached(`currentRound:${poolAddress}`, 10_000, () => pool.currentRoundId()),
       pool.nextExecutable(),
-      pool.ticketPriceMON(),
-      pool.roundDurationSec(),
+      _cached(`ticketPrice:${poolAddress}`, 86400_000 * 365, () => pool.ticketPriceMON()),
+      _cached(`deposit:${poolAddress}`, 86400_000 * 365, () => pool.depositPeriodSec()),
+      pool.yieldPeriodSec(),
       provider.getBlockNumber(),
       provider.getNetwork(),
       pool.shmon().catch(() => ethers.ZeroAddress),
       account ? provider.getBalance(account).catch(() => null) : Promise.resolve(null),
     ])
 
-    const info = await pool.getRoundInfo(rid)
+    const info = await getCachedRoundInfo(pool, poolAddress, rid)
 
     setRoundId(rid.toString())
     setRoundInfo(info)
     setNextAction(Number(nextExecutable?.[1] ?? 0))
     setTicketPrice(price)
     setRoundDuration(Number(duration))
+    setYieldPeriod(Number(yieldDur))
     setLatestBlockNumber(Number(latestBlock))
     setConnectedChainId(Number(network.chainId))
 
@@ -696,7 +727,7 @@ export default function App() {
 
     if (Number(rid) > 0) {
       const prevRid = Number(rid) - 1
-      const prevInfo = await pool.getRoundInfo(BigInt(prevRid))
+      const prevInfo = await getCachedRoundInfo(pool, poolAddress, BigInt(prevRid))
       setPreviousRoundId(String(prevRid))
       setPreviousRoundInfo(prevInfo)
     } else {
@@ -716,7 +747,7 @@ export default function App() {
     } else {
       const scanRids = []
       for (let r = Number(rid) - 1; r >= Math.max(1, Number(rid) - 3); r--) scanRids.push(r)
-      const results = await Promise.all(scanRids.map((r) => pool.getRoundInfo(BigInt(r)).catch(() => null)))
+      const results = await Promise.all(scanRids.map((r) => getCachedRoundInfo(pool, poolAddress, BigInt(r)).catch(() => null)))
       for (let i = 0; i < results.length; i++) {
         const si = results[i]
         if (si && Number(si.state) === 3 && Number(si.totalTickets) > 0) {
@@ -742,171 +773,70 @@ export default function App() {
       setNow(Math.floor(Date.now() / 1000))
     }, 1000)
 
-    let vaultTick = 0
     const dataRefresh = setInterval(() => {
       refresh().catch(() => {})
-      if (vaultTick % 2 === 0) refreshVaultSummaries().catch(() => {})
-      vaultTick += 1
-    }, 30000)
+    }, 60000)
+
+    const vaultRefresh = setInterval(() => {
+      refreshVaultSummaries().catch(() => {})
+    }, 120000)
 
     return () => {
       clearInterval(clockTick)
       clearInterval(dataRefresh)
+      clearInterval(vaultRefresh)
     }
   }, [poolAddress, refresh, refreshVaultSummaries])
 
   const loadParticipantsForView = useCallback(async (view) => {
-    if (!poolAddress || !ethers.isAddress(poolAddress)) return
-
     const currentRidNum = Number(roundId) || 0
     const prevRidNum = Number(previousRoundId) || 0
     const vaultARoundIdNum = currentRidNum % 2 === 1 ? currentRidNum : prevRidNum
-    const vaultARoundInfoValue = currentRidNum % 2 === 1 ? roundInfo : previousRoundInfo
     const vaultBRoundIdNum = currentRidNum % 2 === 0 ? currentRidNum : prevRidNum
-    const vaultBRoundInfoValue = currentRidNum % 2 === 0 ? roundInfo : previousRoundInfo
 
     let targetRoundId = 0
-    let targetInfo = null
     let setter = null
 
     if (view === 'vaultA') {
       targetRoundId = vaultARoundIdNum
-      targetInfo = vaultARoundInfoValue
       setter = setParticipants
     } else if (view === 'vaultB') {
       targetRoundId = vaultBRoundIdNum
-      targetInfo = vaultBRoundInfoValue
       setter = setPreviousParticipants
     } else if (view === 'previous') {
       targetRoundId = Number(settledRoundId) || 0
-      targetInfo = settledRoundInfo
       setter = setSettledParticipants
     } else {
       return
     }
 
-    if (!targetRoundId || !targetInfo) {
+    if (!targetRoundId) {
       setter?.([])
       return
     }
 
-    const cacheKey = `${poolAddress.toLowerCase()}:${targetRoundId}`
-    const cached = participantsCacheRef.current.get(cacheKey)
-    if (cached) {
-      setter(cached)
-      return
-    }
-
-    const inflightKey = `${view}:${cacheKey}`
-    if (participantLoadRef.current.key === inflightKey) return
-    participantLoadRef.current.key = inflightKey
-
     try {
-      const provider = await getReadProvider()
-      const pool = new ethers.Contract(poolAddress, POOL_ABI, provider)
-      const step = 100
-      const estimatedBlocksPerSecond = 2
-      const scanBufferBlocks = 1000
-      const latestBlock = Number(await provider.getBlockNumber())
-      const deployFloor = poolDeployBlock > 0 ? poolDeployBlock : 0
-      const contractDepositWindowSec = Number(roundDuration || 0)
-      const fallbackDepositWindowSec = Math.min(86400, Math.max(0, configuredDepositWindowSec || 0))
-      const depositWindowSec = Math.min(86400, Math.max(contractDepositWindowSec, fallbackDepositWindowSec))
-
-      const getRoundStartBlock = async () => {
-        let searchFrom = deployFloor
-        let searchTo = latestBlock
-
-        if (targetInfo?.salesEndTime) {
-          const salesEnd = Number(targetInfo.salesEndTime)
-          const secondsAgo = Math.max(0, Math.floor(Date.now() / 1000) - salesEnd)
-          const estimatedSalesEndBlock = Math.max(deployFloor, latestBlock - Math.ceil(secondsAgo * estimatedBlocksPerSecond))
-          const depositWindowBlocks = Math.ceil(depositWindowSec * estimatedBlocksPerSecond)
-          searchFrom = Math.max(deployFloor, estimatedSalesEndBlock - depositWindowBlocks - scanBufferBlocks)
-          searchTo = Math.min(latestBlock, estimatedSalesEndBlock + scanBufferBlocks)
-        }
-
-        for (let from = searchFrom; from <= searchTo; from += step) {
-          const to = Math.min(searchTo, from + step - 1)
-          try {
-            const events = await pool.queryFilter(pool.filters.RoundStarted(BigInt(targetRoundId)), from, to)
-            if (events.length > 0) return Number(events[0].blockNumber)
-          } catch {
-            continue
-          }
-        }
-
-        return null
+      const res = await fetch(`https://everdraw-indexer.fly.dev/api/rounds/${targetRoundId}/participants`)
+      if (!res.ok) {
+        console.warn('[EverDraw] indexer participants fetch failed:', res.status)
+        setter([])
+        return
       }
-
-      const byWallet = new Map()
-      const ingestLogs = (logs) => {
-        for (const log of logs) {
-          const buyer = log?.args?.buyer
-          const t = Number(log?.args?.ticketCount ?? 0)
-          const paidWei = BigInt(log?.args?.monPaid ?? 0n)
-          if (!buyer || t <= 0) continue
-          const key = buyer.toLowerCase()
-          if (!byWallet.has(key)) byWallet.set(key, { wallet: buyer, tickets: 0, depositedWei: 0n })
-          const row = byWallet.get(key)
-          row.tickets += t
-          row.depositedWei += paidWei
-        }
-      }
-
-      const roundStartBlock = await getRoundStartBlock()
-      let scanFrom = deployFloor
-      let scanTo = latestBlock
-
-      if (roundStartBlock != null) {
-        const depositWindowBlocks = Math.ceil(depositWindowSec * estimatedBlocksPerSecond)
-        scanFrom = Math.max(deployFloor, roundStartBlock)
-        scanTo = Math.min(latestBlock, roundStartBlock + depositWindowBlocks + scanBufferBlocks)
-      }
-
-      for (let from = scanFrom; from <= scanTo; from += step) {
-        const to = Math.min(scanTo, from + step - 1)
-        try {
-          const chunk = await pool.queryFilter(pool.filters.TicketsBought(BigInt(targetRoundId)), from, to)
-          ingestLogs(chunk)
-        } catch {
-          continue
-        }
-      }
-
-      const totalTicketsNum = Number(targetInfo.totalTickets ?? 0)
-      if (byWallet.size === 0 && totalTicketsNum > 0 && (scanFrom !== deployFloor || scanTo !== latestBlock)) {
-        for (let from = deployFloor; from <= latestBlock; from += step) {
-          const to = Math.min(latestBlock, from + step - 1)
-          try {
-            const chunk = await pool.queryFilter(pool.filters.TicketsBought(BigInt(targetRoundId)), from, to)
-            ingestLogs(chunk)
-          } catch {
-            continue
-          }
-        }
-      }
-
-      const built = [...byWallet.values()]
-        .map((p) => ({
-          wallet: p.wallet,
-          walletShort: shortAddr(p.wallet),
-          tickets: p.tickets,
-          sharePct: totalTicketsNum > 0 ? ((p.tickets / totalTicketsNum) * 100).toFixed(2) : '0.00',
-          depositedMon: Number(ethers.formatEther(p.depositedWei)).toFixed(4),
-        }))
-        .sort((a, b) => b.tickets - a.tickets)
-
-      participantsCacheRef.current.set(cacheKey, built)
+      const data = await res.json()
+      const totalTicketsNum = data.reduce((acc, p) => acc + (Number(p.tickets) || 0), 0)
+      const built = data.map((p) => ({
+        wallet: p.wallet,
+        walletShort: shortAddr(p.wallet),
+        tickets: Number(p.tickets) || 0,
+        sharePct: totalTicketsNum > 0 ? ((Number(p.tickets) / totalTicketsNum) * 100).toFixed(2) : '0.00',
+        depositedMon: Number(ethers.formatEther(BigInt(p.monPaid || '0'))).toFixed(4),
+      })).sort((a, b) => b.tickets - a.tickets)
       setter(built)
-    } catch {
+    } catch (e) {
+      console.warn('[EverDraw] indexer participants fetch error:', e)
       setter([])
-    } finally {
-      if (participantLoadRef.current.key === inflightKey) {
-        participantLoadRef.current.key = ''
-      }
     }
-  }, [poolAddress, roundId, previousRoundId, roundInfo, previousRoundInfo, settledRoundId, settledRoundInfo, poolDeployBlock, roundDuration])
+  }, [roundId, previousRoundId, settledRoundId])
 
   useEffect(() => {
     if (mainView === 'myrounds') return
@@ -1027,14 +957,10 @@ export default function App() {
   }, [now, roundInfo])
 
   const depositWindowSec = useMemo(() => {
-    const fallback = Math.min(86400, Math.max(0, configuredDepositWindowSec || 86400))
-    return fallback || 86400
-  }, [configuredDepositWindowSec])
-
-  const displayedSecondsRemaining = useMemo(() => {
-    if (!roundInfo || Number(roundInfo.state ?? -1) !== 0) return 0
-    return Math.min(secondsRemaining, depositWindowSec)
-  }, [roundInfo, secondsRemaining, depositWindowSec])
+    const contractDepositWindowSec = Number(roundDuration || 0)
+    const fallbackDepositWindowSec = Math.min(86400, Math.max(0, configuredDepositWindowSec || 0))
+    return Math.max(contractDepositWindowSec, fallbackDepositWindowSec)
+  }, [roundDuration, configuredDepositWindowSec])
 
   const progressPct = useMemo(() => {
     if (!depositWindowSec || !roundInfo) return 0
@@ -1070,10 +996,9 @@ export default function App() {
   const shownState = shownRoundInfo ? Number(shownRoundInfo.state) : -1
   const shownVaultLabel = mainView === 'vaultA' ? 'Vault A' : mainView === 'vaultB' ? 'Vault B' : 'Previous Vault'
   const wrongNetwork = expectedChainId && connectedChainId && expectedChainId !== connectedChainId
-  const rawShownSecondsRemaining = shownRoundInfo ? Math.max(0, Number(shownRoundInfo.salesEndTime ?? 0) - now) : 0
-  const shownSecondsRemaining = shownState === 0 ? Math.min(rawShownSecondsRemaining, depositWindowSec) : rawShownSecondsRemaining
+  const shownSecondsRemaining = shownRoundInfo ? Math.max(0, Number(shownRoundInfo.salesEndTime ?? 0) - now) : 0
   const shownSalesOpen = shownState === 0 && shownSecondsRemaining > 0
-  const salesOpen = shownIsCurrentRound ? shownSalesOpen : isOpenState && displayedSecondsRemaining > 0
+  const salesOpen = shownIsCurrentRound ? shownSalesOpen : isOpenState && secondsRemaining > 0
   const canBuyTx = !!account && shownIsCurrentRound && shownSalesOpen && !loading
 
   const buyDisabledReason = useMemo(() => {
@@ -1188,12 +1113,25 @@ export default function App() {
         }
       }
 
+      const commitAfterTime = Number(shownRoundInfo?.salesEndTime ?? 0) + yieldPeriod
+      const yieldSecsRemaining = Math.max(0, commitAfterTime - now)
+
+      if (yieldSecsRemaining > 0) {
+        return {
+          heading: 'Yield Accumulating',
+          value: formatCountdown(yieldSecsRemaining),
+          sub: 'Vault locked -- yield building for prize',
+          metaLabel: 'Winner reveal in',
+          metaValue: formatCountdown(yieldSecsRemaining)
+        }
+      }
+
       return {
-        heading: 'Yield Accruing',
-        value: '00:00:00',
-        sub: 'Deposits closed — funds are earning yield while awaiting draw',
+        heading: 'Round Finalizing',
+        value: 'Processing...',
+        sub: 'Yield complete -- awaiting draw',
         metaLabel: 'Next action',
-        metaValue: shownIsCurrentRound ? (ACTION_LABELS[nextAction] ?? 'Commit') : 'Commit'
+        metaValue: 'Commit'
       }
     }
 
@@ -1271,7 +1209,7 @@ export default function App() {
       metaLabel: 'Progress',
       metaValue: '0%'
     }
-  }, [isDeadRound, shownState, shownSecondsRemaining, shownProgressPct, shownRoundInfo, shownSettlementSecs, shownIsCurrentRound, nextAction, currentInternalEpoch])
+  }, [isDeadRound, shownState, shownSecondsRemaining, shownProgressPct, shownRoundInfo, shownSettlementSecs, shownIsCurrentRound, nextAction, currentInternalEpoch, yieldPeriod, now])
 
   const timerProgressPct = shownState === 0 ? shownProgressPct : shownState === 3 ? 100 : 50
   const timerIsClock = /^\d+:\d{2}:\d{2}:\d{2}$/.test(timerCard.value)
@@ -1378,7 +1316,7 @@ export default function App() {
 
           let cur = 0
           try {
-            cur = Number(await pool.currentRoundId())
+            cur = Number(await _cached(`currentRound:${addr}`, 10_000, () => pool.currentRoundId()))
           } catch {
             continue
           }
@@ -1387,7 +1325,7 @@ export default function App() {
           for (let rid = fromRid; rid <= cur; rid++) {
             let info
             try {
-              info = await pool.getRoundInfo(BigInt(rid))
+              info = await getCachedRoundInfo(pool, addr, BigInt(rid))
             } catch {
               continue
             }
