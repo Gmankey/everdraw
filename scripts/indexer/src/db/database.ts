@@ -16,6 +16,13 @@ export function openDatabase(dbPath = process.env.INDEXER_DB_PATH ?? DEFAULT_DB_
 export function applySchema(db: Database.Database, schemaPath = SCHEMA_PATH): void {
   const schemaSql = fs.readFileSync(schemaPath, 'utf8');
   db.exec(schemaSql);
+  const cols = db.prepare("SELECT COUNT(*) as c FROM pragma_table_info('wallet_rounds') WHERE name='pool_address'").get() as { c: number };
+  if (cols.c === 0) {
+    db.exec('DROP TABLE IF EXISTS wallet_rounds');
+    db.exec('DROP TABLE IF EXISTS rounds');
+    db.exec(schemaSql);
+    console.log('[db] migrated to multi-pool schema - derived tables will rebuild on next sync');
+  }
   ensureRoundsColumns(db);
   ensureWalletRoundsColumns(db);
 }
@@ -23,6 +30,10 @@ export function applySchema(db: Database.Database, schemaPath = SCHEMA_PATH): vo
 function ensureRoundsColumns(db: Database.Database): void {
   const columns = db.prepare("PRAGMA table_info(rounds)").all() as Array<{ name: string }>;
   const names = new Set(columns.map((column) => column.name));
+
+  if (!names.has('pool_address')) {
+    return;
+  }
 
   if (!names.has('winner')) {
     db.exec('ALTER TABLE rounds ADD COLUMN winner TEXT');
@@ -36,6 +47,10 @@ function ensureRoundsColumns(db: Database.Database): void {
 function ensureWalletRoundsColumns(db: Database.Database): void {
   const columns = db.prepare("PRAGMA table_info(wallet_rounds)").all() as Array<{ name: string }>;
   const names = new Set(columns.map((column) => column.name));
+
+  if (!names.has('pool_address')) {
+    return;
+  }
 
   if (!names.has('prize_claimed')) {
     db.exec("ALTER TABLE wallet_rounds ADD COLUMN prize_claimed TEXT NOT NULL DEFAULT '0'");

@@ -29,6 +29,7 @@ export interface RawEventRow {
 
 export interface RoundRow {
   roundId: number;
+  poolAddress: string;
   state: RoundState;
   isSkipped: 0 | 1;
   openedAt: string | null;
@@ -52,6 +53,7 @@ export interface RoundRow {
 export interface WalletRoundRow {
   wallet: string;
   roundId: number;
+  poolAddress: string;
   tickets: number;
   monPaid: string;
   won: 0 | 1;

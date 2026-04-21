@@ -41,6 +41,7 @@ export function createApiServer(params: {
   app.get('/api/rounds', (_req, res) => {
     const rounds = roundsRepo.listAll().map((row) => ({
       roundId: row.roundId,
+      poolAddress: row.poolAddress,
       state: row.state,
       ticketCount: row.ticketCount,
       uniqueWallets: row.uniqueWalletCount,
@@ -70,6 +71,7 @@ export function createApiServer(params: {
 
     const participants = walletRoundsRepo.listByRound(roundId).map((row) => ({
       wallet: row.wallet,
+      poolAddress: row.poolAddress,
       tickets: row.tickets,
       monPaid: row.monPaid,
       won: row.won,
@@ -78,6 +80,27 @@ export function createApiServer(params: {
     }));
 
     res.json(participants);
+  });
+
+  app.get('/api/wallets/:wallet/rounds', (req, res) => {
+    const { wallet } = req.params;
+    if (!/^0x[0-9a-fA-F]{40}$/i.test(wallet)) {
+      res.status(400).json({ error: 'invalid wallet address' });
+      return;
+    }
+    const rows = walletRoundsRepo.listByWalletWithRound(wallet);
+    res.json(rows.map((row) => ({
+      poolAddress: row.poolAddress,
+      roundId: row.roundId,
+      tickets: row.tickets,
+      monPaid: row.monPaid,
+      won: row.won,
+      prizeClaimed: row.prizeClaimed,
+      principalWithdrawn: row.principalWithdrawn,
+      state: row.state ?? 'open',
+      salesEndTime: row.salesEndTime ?? null,
+      isSkipped: row.isSkipped ?? 0,
+    })));
   });
 
   return {

@@ -4,6 +4,7 @@ import type { RawEventRow, WalletRoundRow } from '../types/domain.js';
 import { nowIso } from '../utils/time.js';
 
 type WalletRoundAccumulator = {
+  poolAddress: string;
   wallet: string;
   roundId: number;
   tickets: number;
@@ -34,15 +35,12 @@ export function createDeriveWalletRoundsService(
         .sort(sortEvents);
 
       const grouped = new Map<string, WalletRoundAccumulator>();
-      const touchedRounds = new Set<number>();
 
       for (const event of finalizedEvents) {
         if (event.roundId == null) continue;
-        touchedRounds.add(event.roundId);
         if (!event.wallet) continue;
 
-        const key = `${event.wallet}:${event.roundId}`;
-        const acc = getOrCreate(grouped, event.wallet, event.roundId);
+        const acc = getOrCreate(grouped, event.contractAddress, event.wallet, event.roundId);
 
         switch (event.eventName) {
           case 'TicketsBought': {
@@ -88,11 +86,9 @@ export function createDeriveWalletRoundsService(
           default:
             break;
         }
-
-        grouped.set(key, acc);
       }
 
-      const byRound = new Map<number, WalletRoundRow[]>();
+      walletRoundsRepo.deleteAll();
 
       for (const acc of grouped.values()) {
         const now = nowIso();
@@ -101,6 +97,7 @@ export function createDeriveWalletRoundsService(
         const row: WalletRoundRow = {
           wallet: acc.wallet,
           roundId: acc.roundId,
+          poolAddress: acc.poolAddress,
           tickets: acc.tickets,
           monPaid: acc.monPaid.toString(),
           won: acc.won,
@@ -112,13 +109,7 @@ export function createDeriveWalletRoundsService(
           updatedAt: now,
         };
 
-        const list = byRound.get(acc.roundId) ?? [];
-        list.push(row);
-        byRound.set(acc.roundId, list);
-      }
-
-      for (const roundId of touchedRounds) {
-        walletRoundsRepo.replaceForRound(roundId, byRound.get(roundId) ?? []);
+        walletRoundsRepo.upsert(row);
       }
     },
   };
@@ -132,14 +123,16 @@ function sortEvents(a: RawEventRow, b: RawEventRow): number {
 
 function getOrCreate(
   map: Map<string, WalletRoundAccumulator>,
+  poolAddress: string,
   wallet: string,
   roundId: number
 ): WalletRoundAccumulator {
-  const key = `${wallet}:${roundId}`;
+  const key = `${poolAddress}:${wallet}:${roundId}`;
   const existing = map.get(key);
   if (existing) return existing;
 
   const created: WalletRoundAccumulator = {
+    poolAddress,
     wallet,
     roundId,
     tickets: 0,
