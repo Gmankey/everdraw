@@ -1,39 +1,39 @@
-# Claiming & Withdrawing
+# Claiming and Withdrawing
 
-Once a round settles (after the ~7 day finalization period), all participants can action their funds from the "View Previous Draw" page.
+Once a round settles, your principal and any prize are available from the "Previous Vault" view. Settlement happens within a few seconds of the lock period ending. There is no waiting queue inside EverDraw.
 
 ---
 
 ## If you won
 
-**Step 1 — Claim your prize**
+1. Open the previous vault view. Your address is in the winner spotlight.
+2. Click **Claim Prize** and confirm the transaction. The prize lands in your wallet as shMON.
+3. Click **Withdraw Principal** to receive your original deposit back, also in shMON. This is a separate transaction.
 
-On the Previous Draw page, your address will appear in the winner spotlight. Click "Claim Prize" and confirm the transaction. This sends the yield prize to your wallet.
-
-**Step 2 — Withdraw your principal**
-
-After claiming, click "Withdraw Tokens" to return your original MON deposit. This is a separate transaction.
-
-You must claim the prize before it expires. Unclaimed prizes roll into the next round's prize pool.
+The two actions can also run in one signed batch from the redemption modal.
 
 ---
 
 ## If you didn't win
 
-Click "Withdraw Tokens" on the Previous Draw page and confirm the transaction. Your exact MON principal is returned — no slippage, no fees, no loss regardless of the outcome.
+Click **Withdraw Principal** on the previous vault view. Your exact deposit is returned in shMON. No fees, no slippage, no loss.
+
+---
+
+## Want raw MON instead of shMON?
+
+Choose **Withdraw and Convert** in the redemption modal. EverDraw releases your shMON and forwards you to shmonad.xyz, where you can unstake to MON. That conversion goes through Monad's epoch unstaking queue, which takes about 7 days. The wait sits with shMonad, not with EverDraw.
+
+Most users skip this step. Keeping your position in shMON means you can re-enter the next EverDraw round immediately, and your shMON keeps earning staking yield in the meantime.
 
 ---
 
 ## Timing
 
-The "Withdraw Tokens" button will be greyed out with a countdown if the round has not yet settled. This countdown reflects the remaining time in ShMON's unstaking queue. This is not configurable — it is an on-chain constraint from the ShMON protocol.
-
-Once the countdown reaches zero, the button activates and withdrawal is available at any time with no deadline.
+The withdraw button is disabled with a countdown until the round settles. Once settled, the button is permanently active. There is no expiry on principal withdrawal and no expiry on prize claims. Funds sit in the contract until you action them.
 
 ---
 
-## There is no penalty for not acting immediately
+## Keep playing
 
-Settled funds sit in the contract indefinitely until claimed. There is no expiry on principal withdrawals. Take your time.
-
-Prize claims do have an expiry window — unclaimed prizes eventually roll forward to seed the next prize pool. The UI displays the claim deadline clearly.
+The redemption modal also offers **Keep Playing**, which routes your shMON straight into the next open vault. Useful if you want to re-enter without manually moving funds.

@@ -1,13 +1,13 @@
 # Checking Results
 
-Winners and settlement outcomes appear in the **Previous Draw** view once a round settles.
+Settlement outcomes appear in the **Previous Vault** view a few seconds after a round's lock period ends.
 
-Use the vault's current/previous toggle to open the most recent settled round and review:
+Use the current/previous toggle to open the most recent settled round. You'll see:
 
 - Winner address
 - Winning ticket
 - Total tickets
-- Prize amount
-- Your participation and claim/withdraw status
+- Prize amount in shMON
+- Your participation, claim status, and withdraw status
 
-If the round is still in finalization, the UI will show countdown timing until settlement.
+If you opened a vault while it is still locked, the UI shows the countdown to settlement. Results appear automatically once the keeper completes the draw.

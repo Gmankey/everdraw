@@ -1,21 +1,23 @@
-# Phase 1 — Launch
+# Phase 1: Launch
 
-**Timeline: Now → Month 2**
+**Timeline: now to month 2.**
 
 Ship the product. Prove the loop works in the real world.
 
-Phase 1 is deliberately focused on simplicity. Two concurrent vaults run in parallel on a staggered schedule so there is always an open vault accepting deposits. The priority is not complexity — it is creating real winners as fast as possible.
+Phase 1 is deliberately simple. Two MON vaults run on offset weekly schedules so the worst case wait for an open deposit window is around 2.5 days. Vault A opens every Wednesday at 13:00 UTC. Vault B opens every Sunday at 01:00 UTC. Each runs a 24 hour deposit window followed by a 6 day lock. The priority is creating real winners as fast as possible, not maximising features.
 
 **What launches:**
-- MON prize vault with 24-hour deposit windows
-- Staggered multi-vault system (2 vaults running simultaneously)
-- Automated keeper infrastructure for commit → draw → settle
-- Live winner results on-chain and in the UI
-- Prize pool seeding to ensure Day 1 prizes are meaningful enough to drive social sharing
 
-**What we're validating:**
+- MON prize vault contracts on Monad mainnet (V2)
+- Two vault staggered cadence
+- Automated keeper for commit and settle
+- Live winner results on chain and in the UI
+- shMonad points integration via Merkl readable position surface
+
+**What we are validating:**
+
 - Do users deposit?
 - Do winners share?
-- Does the engagement loop work in the real world?
+- Does the engagement loop work?
 
-The first real winners on Monad are the protocol's most important marketing asset. Phase 1 is about creating those moments.
+The first real winners are the protocol's most important marketing asset. Phase 1 is about creating those moments.

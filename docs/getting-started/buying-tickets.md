@@ -1,51 +1,34 @@
 # Buying Tickets
 
-## Prerequisites
+## What you need
 
-- A wallet compatible with Monad (MetaMask, Rabby, or any EVM wallet)
-- MON on Monad mainnet
-- That's it
+A wallet on Monad mainnet and some MON. That's it.
 
 ---
 
-## Step by step
+## Steps
 
-**1. Go to the EverDraw app**
+**1. Open the app.** Go to [everdraw.xyz](https://everdraw.xyz). The current open vault is the landing view.
 
-Navigate to [everdraw.xyz](https://everdraw.xyz). You'll land on the current open vault.
+**2. Connect your wallet.** Click "Connect Wallet" and approve. If your wallet is not on Monad, EverDraw prompts you to switch. If Monad isn't configured, it prompts to add the network.
 
-**2. Connect your wallet**
+**3. Check the vault state.**
 
-Click "Connect Wallet" in the top right. Approve the connection in your wallet.
+- **Green ring**: vault is open, deposits accepted, countdown shows time left in the 24 hour window.
+- **Purple ring**: vault is locked, yield accruing, countdown shows time until settlement.
 
-If your wallet is not on Monad mainnet, EverDraw will automatically prompt you to switch networks. Approve the switch — or if Monad isn't in your wallet yet, approve the "Add Network" prompt that follows. You do not need to configure anything manually.
+**4. Buy.** Enter how many tickets you want. Each ticket costs 1 MON. Click "Buy Tickets" and sign the transaction. Your MON is staked as shMON the moment the transaction confirms, and your ticket count appears on the stat cards.
 
-**3. Check the vault status**
+You can also pay with shMON if you already hold it. Toggle the deposit asset on the buy form.
 
-The vault graphic shows the current state:
-- **Green ring** — vault is open, tickets available
-- **Purple ring** — vault is locked, in finalization
-
-The countdown timer shows exactly how much time remains in the deposit window.
-
-**4. Enter your ticket count and buy**
-
-Enter how many tickets you want to purchase in the input field. Each ticket costs 1 MON. Click "Buy Tickets" and confirm the transaction in your wallet.
-
-Your MON is immediately staked via ShMON on confirmation. The stat cards update to show your ticket count and deposit.
-
-**5. Wait for the draw**
-
-That's all you need to do. The round runs automatically. The draw executes when the sales window closes and the keeper processes the committed block. You'll find the results in "View Previous Draw" once the round settles.
+**5. Wait for the draw.** The round runs itself. The keeper closes the deposit window after 24 hours and draws a winner six days later. Results show up under "Previous Vault" once the round settles.
 
 ---
 
 ## Things to know
 
-**You can buy multiple times in the same round.** Your ticket counts accumulate. Two purchases of 5 tickets each is the same as one purchase of 10 tickets.
-
-**You can buy tickets in multiple rounds simultaneously.** Each round tracks your position independently.
-
-**Ticket count determines probability, not deposit size in a vacuum.** If you buy 10 tickets and the total round tickets are 100, your probability is 10% regardless of the MON value. Ticket price is fixed at 1 MON.
-
-**You cannot withdraw during an open round.** Your principal is committed until the round settles. Plan accordingly.
+- You can buy multiple times in the same round. Counts add up.
+- You can hold positions in both vaults at once. Each is independent.
+- Probability is your tickets divided by total tickets. Ticket price is fixed at 1 MON.
+- Buys are blocked in the last 30 seconds before the deposit window closes, to avoid transactions reverting on the boundary.
+- You cannot withdraw mid round. Plan your deposit timing.
