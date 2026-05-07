@@ -32,8 +32,3 @@ Most users skip this step. Keeping your position in shMON means you can re-enter
 
 The withdraw button is disabled with a countdown until the round settles. Once settled, the button is permanently active. There is no expiry on principal withdrawal and no expiry on prize claims. Funds sit in the contract until you action them.
 
----
-
-## Keep playing
-
-The redemption modal also offers **Keep Playing**, which routes your shMON straight into the next open vault. Useful if you want to re-enter without manually moving funds.

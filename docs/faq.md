@@ -26,6 +26,12 @@ The 7 day timer you may have heard about applies only if you choose to convert y
 
 ---
 
+**Why is my shMON balance lower after withdrawing than what I deposited?**
+
+EverDraw holds your deposit as shMON, which earns staking yield by its share rate going up over time. When the round settles, you receive the shMON share count equivalent to your original MON deposit at the new (higher) share rate. The number of shares is smaller, but each share is worth more, so the MON value is unchanged. Convert those shares to MON on shmonad.xyz and you get back exactly what you put in.
+
+---
+
 **What if no one buys tickets in a round?**
 
 The round is marked Skipped by the keeper. No funds are at risk and no prize is paid. The next round opens on schedule.

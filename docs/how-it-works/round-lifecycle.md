@@ -1,67 +1,69 @@
 # Round Lifecycle
 
-A round runs for one week. The first 24 hours are the deposit window. The next 6 days are the lock, where your shMON balance grows in value as Monad's staking yield accrues. At the end of the lock, the keeper draws a winner and the cycle starts again.
+Every round runs for one week. The first 24 hours are the deposit window. The next 6 days are the lock, where your deposit earns staking yield. At the end of the lock, a winner is drawn and the previous round opens for claim and withdrawal. The same vault's next deposit window opens at that exact moment.
 
-EverDraw runs two vaults on offset weekly schedules. Vault A opens every Wednesday at 13:00 UTC. Vault B opens every Sunday at 01:00 UTC. The worst case wait for the next deposit window is around 2.5 days.
+The UI walks you through 4 stages.
 
 ---
 
-## State 1. Open
+## 1. Deposit
 
 **Duration: 24 hours.**
 
-The vault accepts deposits. You can buy tickets at any point in the window. Each purchase is staked as shMON inside the contract and starts accruing yield immediately.
+The vault is open. Buy tickets at any point in the window. Each ticket costs 1 MON, and your deposit is held as shMON inside the vault. Yield starts accruing the moment your transaction confirms.
 
-The UI shows a green progress ring with the time remaining. When the timer hits zero, deposits close and the lock begins.
+The countdown ring runs green. Buys are disabled in the final 30 seconds before the window closes to avoid transactions reverting on the boundary.
 
-You cannot withdraw during an open round. Your principal stays in the vault until the round settles.
-
----
-
-## State 2. Committed
-
-The keeper closes the round and records a target block number. That block hash is the source of randomness for the draw. This happens automatically the moment the lock period elapses, and the new deposit window for next week opens at the same time.
-
-If nobody bought tickets, the round goes straight to **Skipped** and no draw runs.
+You cannot withdraw mid round. Plan your deposit timing accordingly.
 
 ---
 
-## State 3. Lock (yield accrual)
+## 2. Yield Accruing
 
 **Duration: 6 days.**
 
-Your shMON sits in the vault and earns Monad's staking yield. Nothing else happens on chain. The UI shows a purple ring counting down to settlement.
+The deposit window has closed. Your shMON sits in the vault and earns Monad's native staking yield. The countdown ring runs purple. Nothing else happens on chain. There is no internal unstaking, the contract holds shMON the whole time.
 
-The yield accrued during the lock is the prize. There is no unstaking step. The contract holds shMON the whole time.
-
----
-
-## State 4. Settled
-
-A few seconds after the lock ends, the keeper reads the committed block hash and computes the winning ticket. The winner is recorded on chain. The previous round is now visible under "Previous Vault" in the UI.
-
-From this point:
-
-- **Winners** can claim the prize and withdraw their principal.
-- **Everyone else** can withdraw their principal.
-
-Both actions are available immediately. There is no claim deadline.
-
-If the keeper somehow misses the settlement window for more than 255 blocks (the EVM block hash retention limit), the round goes to **Failed** and every depositor can withdraw their original shMON. No prize is paid. This has never happened in production and is not a state users should plan around.
+The yield earned during these 6 days is the prize. The longer the lock, the bigger the pot.
 
 ---
 
-## Timeline
+## 3. Winner Revealed
 
-| State | Duration | Happening |
+When the lock countdown reaches zero, the keeper closes the round and records a target block number on chain. Three blocks later (around six seconds on Monad), it reads that block's hash and uses it to compute the winning ticket. The winner's address is written to chain immediately.
+
+At the same moment the round closes, the vault's next deposit window opens. Vault A re-opens every Wednesday at 13:00 UTC. Vault B every Sunday at 01:00 UTC. The cycle restarts with no gap.
+
+The randomness is verifiable. The target block is committed before it is mined, so nobody, including the keeper, can know the winning number in advance.
+
+---
+
+## 4. Claim / Withdraw
+
+The just-finished round becomes available for action.
+
+- **Winners** claim the prize.
+- **Everyone else** withdraws their principal.
+
+Claims and withdrawals stay open indefinitely. Funds sit in the contract until you action them. There is no expiry.
+
+---
+
+## Timeline at a glance
+
+| Stage | Duration | Happening |
 |---|---|---|
-| Open | 24 hours | Deposits accepted |
-| Committed | one keeper transaction | Random source locked, next round opens |
-| Lock | 6 days | shMON accrues staking yield (the prize) |
-| Settled | indefinite | Claim and withdraw available |
+| Deposit | 24 hours | Tickets accepted |
+| Yield Accruing | 6 days | shMON earns staking yield |
+| Winner Revealed | seconds | Draw runs, next deposit window opens |
+| Claim / Withdraw | indefinite | Funds available to action |
 
 ---
 
-## Two vaults, offset by 3.5 days
+## Edge cases
 
-Vault A and Vault B run the same lifecycle on different anchors. At any given moment, exactly one is in its lock period and the other is around 3.5 days away from its next open. You don't have to choose between them. They are the same product on staggered schedules so you never wait a full week to deposit.
+**Skipped.** If nobody bought tickets in the round, no draw runs. The next deposit window opens on schedule. No funds are at risk because there were none.
+
+**Failed.** If the keeper somehow misses the settlement window for more than 255 blocks (Monad's block hash retention limit), the round is finalized without a draw and every depositor can withdraw their original principal. No prize is paid. This has never happened in production and is not a state users should plan around.
+
+

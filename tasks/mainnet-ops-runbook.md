@@ -151,3 +151,67 @@ Before production config changes:
 - [ ] Confirm `active (running)`
 - [ ] Run `npm run keeper:health`
 - [ ] Watch logs for 10–15 minutes
+
+---
+
+## 9) V2 two-vault staggered redeploy ops
+
+**Applies to:** `TicketPrizePoolShmonV2` two-vault deployment per ADR-0001, ADR-0004, ADR-0005, and ADR-0006.
+
+### Vault A pre-deploy checklist
+
+- [ ] Confirm final Merkl metadata strings with PM before deploy:
+  - `name = "EverDraw shMON Position"`
+  - `symbol = "EVRDRAW-SHMON"`
+- [ ] Confirm deploy params:
+  - `ROUND_DURATION_SEC=86400`
+  - `YIELD_PERIOD_SEC=518100`
+- [x] PM-approved target anchor: Wednesday 13:00 UTC for 2026-05-06 redeploy, after the Wednesday 12:00 UTC window was aborted per timing guardrail.
+- [ ] Submit the deploy transaction within the PM-approved window for the current attempt. For 2026-05-06 Vault A: submit at 12:59:50–12:59:55 UTC; abort config swaps if mined before 12:59:50 UTC or after 13:00:30 UTC. Per ADR-0005, the block timestamp of Vault A's first opened round becomes the permanent weekly anchor.
+- [ ] Record Vault A address, deploy tx, deploy block, and first `RoundStarted.salesEndTime`.
+
+### Vault B deploy trigger
+
+- [ ] Schedule Vault B deployment exactly 3.5 days after Vault A's first round opens; with the 2026-05-06 13:00 UTC Vault A target, this is Sunday 2026-05-10 01:00 UTC.
+- [ ] For Vault B, stage at T-15, run T-4 dry-run, then submit at 00:59:52 UTC inside the 00:59:50–01:00:30 UTC window; abort config swaps if mined outside that window.
+- [ ] Use the same constructor params as Vault A unless PM explicitly changes ticket price or owner.
+- [ ] Record Vault B address, deploy tx, deploy block, and first `RoundStarted.salesEndTime`.
+- [ ] Register both Vault A and Vault B addresses with Merkl/shMonad after deployment.
+
+### Keeper V2 env/config
+
+Use `scripts/keeper-execute-next-v2.js` for the fresh vaults.
+
+Required:
+- `RPC_URL`
+- `RPC_URL_FALLBACK` — distinct Monad mainnet RPC endpoint for `ethers.FallbackProvider`
+- `PRIVATE_KEY`
+- `POOL_ADDRESSES_V2=<vaultA>,<vaultB>`
+- `POOL_SCHEDULE_V2=<vaultA>:Wed:13,<vaultB>:Sun:01` — replace placeholders with the fresh deployed addresses for the 2026-05-06 13:00 UTC / 2026-05-10 01:00 UTC schedule.
+
+Keeper behavior:
+- Polling stays at `KEEPER_INTERVAL_MS=30000`.
+- `commit()` is gated to the pool's configured weekly anchor window, ±60 seconds.
+- `settle()` / mark-failed settlement is not anchor-gated and should run as soon as `nextExecutable()` allows it.
+- Existing retry-on-next-tick and Telegram alert thresholds remain unchanged.
+
+### Keeper anchor-shift recovery (ADR-0005 H)
+
+If a keeper outage or bad config causes a vault to commit outside the intended weekday/time anchor:
+
+1. Pause the affected vault as owner with `pause()`.
+2. Wait until the next correct weekly anchor time for that vault.
+3. At the target moment, unpause with `unpause()` and let the keeper execute the next eligible `commit()` cycle.
+4. A skipped/missed round during outage recovery is acceptable for Phase 1 per ADR-0005 H.
+5. Update `POOL_SCHEDULE_V2` only if PM intentionally accepts the new anchor.
+
+Do not add an absolute-time scheduling contract change or timed-deploy tooling for this recovery path; both are explicitly out of scope.
+
+### Retiring current Vault A
+
+Current V2 vault to retire later: `0xed67ad46C694a5e963119a1Ca5F88eEBbb6e5a8a`.
+
+After its current round settles and the user withdraws principal:
+- [ ] Remove the old address from keeper `POOL_ADDRESSES_V2`.
+- [ ] Remove the old address from frontend `VITE_POOL_ADDRESSES_V2`.
+- [ ] Keep historical indexer data; do not delete on-chain or DB history.

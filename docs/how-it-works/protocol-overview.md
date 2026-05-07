@@ -16,14 +16,17 @@ At the end of the lock, the keeper draws a winner
 Winner takes the accumulated yield
 Everyone else gets their full principal back
   ↓
-A new round opens at the same moment
+A new round opens immediately
 ```
 
 ## The no loss guarantee
 
-Your principal is never at risk. When you deposit, the contract holds shMON shares against your principal until the round settles. Win or lose, you get those shares back. The prize is funded entirely by staking yield, not by other depositors.
+1 MON in, 1 MON out. Win or lose.
 
-This is enforced at the contract level. Per user principal accounting and prize accounting are separate state. There is no admin function that can move user funds.
+Your deposit goes to work earning staking yield while the round runs. At settlement, all of that yield pools into a single prize and goes to the winning ticket(s). Every other ticket redeems for its full face value in MON. The prize is funded by yield, never by other depositors.
+
+This is enforced at the contract level. Principal and prize are tracked as separate state. There is no admin function that can move user funds.
+
 
 ## Round progression
 

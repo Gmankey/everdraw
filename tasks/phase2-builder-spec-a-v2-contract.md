@@ -504,7 +504,31 @@ Add to `POOL_ABI_V2` constant:
   2. If insufficient, show "Approve shMON" button → calls `shmon.approve(poolAddress, sharesOwed)` (or MAX_UINT with a checkbox toggle)
   3. After approve confirmation, enable "Buy Tickets"
   4. Calls `pool.buyTicketsShmon(n)` (no value)
-- Gas estimation: use `pool.buyTicketsShmon.estimateGas(n)` pattern same as the fix we added for V1 buyTickets.
+
+### CRITICAL: Raw eth_sendTransaction pattern (V1.2 lesson)
+**ALL frontend transaction calls MUST use the raw `provider.send('eth_sendTransaction', [...])` pattern** — NOT signer-backed ethers contract methods. Ethers v6 `BrowserProvider` calls `populateTransaction` internally, which fetches nonce/fee data through MetaMask's wallet RPC. If that RPC is rate-limited (429), nonce comes back as `undefined` → `BigInt(undefined)` → crash.
+
+The proven pattern (already live in V1.2 `buyTickets`):
+```js
+// All reads from Alchemy (readProvider), never wallet RPC
+const readProvider = await getReadProvider()
+const callData = new ethers.Interface(POOL_ABI_V2).encodeFunctionData('buyTicketsMON', [n])
+const gasLimit = (await readProvider.estimateGas({ from: account, to: poolAddress, data: callData, value })) * 3n / 2n
+const nonce = await fetchNonceWithRetry(account)
+const feeData = await readProvider.getFeeData()
+const gasPrice = feeData.gasPrice ?? feeData.maxFeePerGas
+
+// Send via raw eth_sendTransaction — bypasses ethers populateTransaction
+const txHash = await provider.send('eth_sendTransaction', [{
+  from: account, to: poolAddress, data: callData,
+  value: ethers.toBeHex(value),
+  gas: ethers.toBeHex(gasLimit),
+  nonce: ethers.toBeHex(nonce),
+  gasPrice: ethers.toBeHex(gasPrice),
+}])
+await readProvider.waitForTransaction(txHash)
+```
+Apply this to: `buyTicketsMON`, `buyTicketsShmon`, `shmon.approve`, `withdrawPrincipal`, `claimPrize`, and any multi-step flows. For multi-step flows, increment nonce manually: `nonce + 1`, `nonce + 2`.
 
 ### Withdraw flow for Vault C
 - "Withdraw Principal" button → calls `withdrawPrincipal(rid)` → shMON arrives
