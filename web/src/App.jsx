@@ -130,18 +130,43 @@ function PointsHeaderWidget({ account, points }) {
   const [open, setOpen] = useState(false)
   if (!account) return null
   const p = points || {}
+  const lifetimePoints = Number(p.lifetime_points || 0)
+  const streakWeeks = Number(p.current_streak_weeks || 0)
+  const multiplier = (Number(p.current_multiplier_x100 || 100) / 100).toFixed(2)
+  const nextTier = p.next_tier_threshold ?? (streakWeeks < 4 ? 4 : streakWeeks < 8 ? 8 : streakWeeks < 13 ? 13 : streakWeeks < 26 ? 26 : null)
+  const tierStart = streakWeeks >= 26 ? 26 : streakWeeks >= 13 ? 13 : streakWeeks >= 8 ? 8 : streakWeeks >= 4 ? 4 : 0
+  const tierEnd = nextTier || Math.max(10, streakWeeks)
+  const tierProgress = Math.max(0, Math.min(1, (streakWeeks - tierStart) / Math.max(1, tierEnd - tierStart)))
+  const litDots = Math.round(tierProgress * 10)
+  const nextMilestone = p.next_milestone ?? [4, 13, 26, 52].find((m) => m > streakWeeks) ?? null
+  const milestoneText = nextMilestone
+    ? `${Math.max(0, nextMilestone - streakWeeks)} week${nextMilestone - streakWeeks === 1 ? '' : 's'} to next milestone`
+    : 'All visible milestones claimed'
+
   return (
     <div className="points-header">
-      <button className="points-pill" type="button" onClick={() => setOpen((v) => !v)}>
-        <span>{Number(p.lifetime_points || 0).toLocaleString()} pts</span>
-        <span>🔥 {p.current_streak_weeks || 0}w</span>
+      <button className="points-pill" type="button" onClick={() => setOpen((v) => !v)} aria-label={`${lifetimePoints.toLocaleString()} points, ${streakWeeks} week streak`}>
+        <span className="points-pill-stat points-pill-points" title="Points"><span aria-hidden="true">✦</span>{lifetimePoints.toLocaleString()}</span>
+        <span className="points-pill-stat points-pill-streak" title="Weekly streak"><span aria-hidden="true">🔥</span>{streakWeeks}</span>
       </button>
       {open ? (
         <div className="points-popover">
-          <div className={tierClass(p.current_tier)}>{p.current_tier || 'Bronze'}</div>
-          <strong>{Number(p.lifetime_points || 0).toLocaleString()} lifetime points</strong>
-          <span>×{(Number(p.current_multiplier_x100 || 100) / 100).toFixed(2)} active multiplier</span>
-          <a href="#profile">View profile →</a>
+          <div className="points-popover-kicker">Total points balance</div>
+          <div className="points-popover-total">{lifetimePoints.toLocaleString()}</div>
+          <div className="points-multiplier-pill"><span>Active multiplier</span><strong>{multiplier}x</strong></div>
+
+          <div className="points-streak-mini">
+            <div>
+              <span className="points-popover-kicker">Weekly participation</span>
+              <strong>{streakWeeks} Week Streak</strong>
+            </div>
+            <div className="points-streak-dots" aria-label={`${litDots} of 10 streak progress dots active`}>
+              {Array.from({ length: 10 }).map((_, i) => <span key={i} className={i < litDots ? 'lit' : ''} />)}
+            </div>
+          </div>
+
+          <div className="points-next-milestone">{milestoneText}</div>
+          <a href="#profile" className="points-profile-link">View profile →</a>
         </div>
       ) : null}
     </div>
