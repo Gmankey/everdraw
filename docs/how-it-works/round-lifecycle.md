@@ -1,72 +1,69 @@
 # Round Lifecycle
 
-Every EverDraw round moves through four states. Understanding these states tells you exactly what to expect at any point.
+Every round runs for one week. The first 24 hours are the deposit window. The next 6 days are the lock, where your deposit earns staking yield. At the end of the lock, a winner is drawn and the previous round opens for claim and withdrawal. The same vault's next deposit window opens at that exact moment.
+
+The UI walks you through 4 stages.
 
 ---
 
-## State 1 — Open 🟢
+## 1. Deposit
 
-**Duration:** 24 hours
+**Duration: 24 hours.**
 
-The vault is live and accepting deposits. You can buy tickets at any point during this window. Your MON is staked via ShMON immediately on purchase and starts generating yield from the moment you deposit.
+The vault is open. Buy tickets at any point in the window. Each ticket costs 1 MON, and your deposit is held as shMON inside the vault. Yield starts accruing the moment your transaction confirms.
 
-The vault UI shows a green progress ring counting down the time remaining. When the timer reaches zero, the vault locks.
+The countdown ring runs green. Buys are disabled in the final 30 seconds before the window closes to avoid transactions reverting on the boundary.
 
-**What you can do:** Buy tickets. Multiple purchases in the same round are supported and cumulative.
-
-**What you cannot do:** Withdraw during an open round. Your principal is committed for the duration of the round.
+You cannot withdraw mid round. Plan your deposit timing accordingly.
 
 ---
 
-## State 2 — Committed
+## 2. Yield Accruing
 
-**Duration:** ~10 blocks (seconds)
+**Duration: 6 days.**
 
-Sales close. A target block number is recorded on-chain — this is the source of the draw's randomness. The commitment happens in a single keeper transaction immediately after the sales window ends.
+The deposit window has closed. Your shMON sits in the vault and earns Monad's native staking yield. The countdown ring runs purple. Nothing else happens on chain. There is no internal unstaking, the contract holds shMON the whole time.
 
-A new round opens simultaneously in State 1 so deposits continue flowing into the next vault without interruption.
-
-**What you can do:** Nothing required. This state is automated.
+The yield earned during these 6 days is the prize. The longer the lock, the bigger the pot.
 
 ---
 
-## State 3 — Finalizing ⏳
+## 3. Winner Revealed
 
-**Duration:** ~7 days
+When the lock countdown reaches zero, the keeper closes the round and records a target block number on chain. Three blocks later (around six seconds on Monad), it reads that block's hash and uses it to compute the winning ticket. The winner's address is written to chain immediately.
 
-The winner is drawn using the committed block hash. The full prize pool is unstaked from ShMON via the protocol's unstake request. ShMON operates on an epoch-based unstaking queue, and this process takes approximately 7 days to complete.
+At the same moment the round closes, the vault's next deposit window opens. Vault A re-opens every Wednesday at 13:00 UTC. Vault B every Sunday at 01:00 UTC. The cycle restarts with no gap.
 
-During finalization, your principal and the prize pool are in the unstaking queue. Nothing is claimable yet. The vault shows a purple ring in the UI.
-
-**What you can do:** Nothing required. Continue depositing into open rounds.
-
-**Why 7 days?** This is a ShMON protocol constraint, not an EverDraw design choice. ShMON's epoch-based unstaking is part of Monad's staking security model. EverDraw's Phase 2 architecture (continuous TWAB deposits) is designed to abstract this wait time away entirely for users.
+The randomness is verifiable. The target block is committed before it is mined, so nobody, including the keeper, can know the winning number in advance.
 
 ---
 
-## State 4 — Settled ✅
+## 4. Claim / Withdraw
 
-Unstaking completes. The contract receives the MON back, calculates the prize yield, and makes funds available for withdrawal and claiming.
+The just-finished round becomes available for action.
 
-**What you can do:**
-- **Winners:** Claim the yield prize, then withdraw principal
-- **Everyone else:** Withdraw principal
+- **Winners** claim the prize.
+- **Everyone else** withdraws their principal.
 
-Both actions are available from the "Previous Draw" view in the UI.
+Claims and withdrawals stay open indefinitely. Funds sit in the contract until you action them. There is no expiry.
 
 ---
 
-## Round timeline summary
+## Timeline at a glance
 
-| State | Duration | What's happening |
+| Stage | Duration | Happening |
 |---|---|---|
-| Open | 24 hours | Ticket sales live |
-| Committed | ~10 blocks | Randomness source locked |
-| Finalizing | ~7 days | ShMON unstaking queue |
-| Settled | Ongoing | Claim / withdraw available |
+| Deposit | 24 hours | Tickets accepted |
+| Yield Accruing | 6 days | shMON earns staking yield |
+| Winner Revealed | seconds | Draw runs, next deposit window opens |
+| Claim / Withdraw | indefinite | Funds available to action |
 
 ---
 
-## Multi-vault staggering
+## Edge cases
 
-EverDraw runs multiple vaults in parallel on a staggered schedule. At any given time, at least one vault is in State 1 (Open) accepting new deposits. This means you never have to wait for a new round to open — there is always somewhere to put your MON to work immediately.
+**Skipped.** If nobody bought tickets in the round, no draw runs. The next deposit window opens on schedule. No funds are at risk because there were none.
+
+**Failed.** If the keeper somehow misses the settlement window for more than 255 blocks (Monad's block hash retention limit), the round is finalized without a draw and every depositor can withdraw their original principal. No prize is paid. This has never happened in production and is not a state users should plan around.
+
+

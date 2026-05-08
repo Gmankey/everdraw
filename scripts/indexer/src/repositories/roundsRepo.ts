@@ -11,6 +11,7 @@ export function createRoundsRepo(db: Database.Database): RoundsRepo {
   const upsertStmt = db.prepare(`
     INSERT INTO rounds (
       round_id,
+      pool_address,
       state,
       is_skipped,
       opened_at,
@@ -31,6 +32,7 @@ export function createRoundsRepo(db: Database.Database): RoundsRepo {
       updated_at
     ) VALUES (
       @roundId,
+      @poolAddress,
       @state,
       @isSkipped,
       @openedAt,
@@ -50,7 +52,7 @@ export function createRoundsRepo(db: Database.Database): RoundsRepo {
       @winningTicket,
       @updatedAt
     )
-    ON CONFLICT(round_id) DO UPDATE SET
+    ON CONFLICT(round_id, pool_address) DO UPDATE SET
       state = excluded.state,
       is_skipped = excluded.is_skipped,
       opened_at = excluded.opened_at,
@@ -74,6 +76,7 @@ export function createRoundsRepo(db: Database.Database): RoundsRepo {
   const listAllStmt = db.prepare(`
     SELECT
       round_id as roundId,
+      pool_address as poolAddress,
       state,
       is_skipped as isSkipped,
       opened_at as openedAt,
@@ -93,7 +96,7 @@ export function createRoundsRepo(db: Database.Database): RoundsRepo {
       winning_ticket as winningTicket,
       updated_at as updatedAt
     FROM rounds
-    ORDER BY round_id DESC
+    ORDER BY round_id DESC, pool_address ASC
   `);
 
   const deleteAllStmt = db.prepare('DELETE FROM rounds');

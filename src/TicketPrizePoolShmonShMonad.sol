@@ -102,6 +102,7 @@ contract TicketPrizePoolShmonShMonad {
         if (r.salesEndTime == 0) _legacyRevert("bad round");
         if (r.state != RoundState.Open) _legacyRevert("bad state");
         if (block.timestamp < r.salesEndTime) _legacyRevert("sales not ended");
+        if (block.timestamp < uint256(r.salesEndTime) + uint256(yieldPeriodSec)) _legacyRevert("yield not complete");
         if (r.totalTickets == 0) _legacyRevert("no tickets");
 
         _commitDraw(rid);
@@ -123,7 +124,7 @@ contract TicketPrizePoolShmonShMonad {
         _skipRound(rid);
     }
 
-    function drawWinner(uint256 rid) external whenNotPaused onlyKeeper {
+    function drawWinner(uint256 rid) external whenNotPaused {
         RoundData storage r = rounds[rid];
 
         if (r.salesEndTime == 0) _legacyRevert("bad round");
@@ -146,7 +147,7 @@ contract TicketPrizePoolShmonShMonad {
         _settleRound(rid);
     }
 
-    function recommit(uint256 rid) external whenNotPaused onlyKeeper {
+    function recommit(uint256 rid) external whenNotPaused {
         _recommit(rid);
     }
 
@@ -260,6 +261,7 @@ contract TicketPrizePoolShmonShMonad {
     error NothingToRecover();
     error AlreadyClaimedRecovery();
     error SalesNotEnded();
+    error YieldNotComplete();
     error SalesEnded();
     error ZeroTickets();
     error WrongValue();
@@ -279,7 +281,8 @@ contract TicketPrizePoolShmonShMonad {
 
     uint96 public immutable ticketPriceMON;
     uint32 public immutable commitDelayBlocks;
-    uint32 public immutable roundDurationSec;
+    uint32 public immutable depositPeriodSec;
+    uint32 public immutable yieldPeriodSec;
     IShMonad public immutable shmon;
     uint8 public constant MAX_RECOMMITS_PER_ROUND = 3;
 
@@ -340,7 +343,8 @@ contract TicketPrizePoolShmonShMonad {
     constructor(
         uint96 _ticketPriceMON,
         uint32 _commitDelayBlocks,
-        uint32 _roundDurationSec,
+        uint32 _depositPeriodSec,
+        uint32 _yieldPeriodSec,
         address _shmon
     ) {
         if (
@@ -348,8 +352,9 @@ contract TicketPrizePoolShmonShMonad {
             _shmon == address(0) ||
             _commitDelayBlocks == 0 ||
             _commitDelayBlocks > 5000 ||
-            _roundDurationSec < 60 ||
-            _roundDurationSec > 30 days
+            _depositPeriodSec < 60 ||
+            _depositPeriodSec > 30 days ||
+            _yieldPeriodSec > 30 days
         ) revert BadConfig();
 
         owner = msg.sender;
@@ -357,7 +362,8 @@ contract TicketPrizePoolShmonShMonad {
 
         ticketPriceMON = _ticketPriceMON;
         commitDelayBlocks = _commitDelayBlocks;
-        roundDurationSec = _roundDurationSec;
+        depositPeriodSec = _depositPeriodSec;
+        yieldPeriodSec = _yieldPeriodSec;
         shmon = IShMonad(_shmon);
 
         // start round 1
@@ -366,7 +372,7 @@ contract TicketPrizePoolShmonShMonad {
 
         RoundData storage r = rounds[1];
         r.state = RoundState.Open;
-        r.salesEndTime = uint64(block.timestamp + _roundDurationSec);
+        r.salesEndTime = uint64(block.timestamp + _depositPeriodSec);
 
         emit RoundStarted(1, r.salesEndTime);
     }
@@ -424,7 +430,7 @@ contract TicketPrizePoolShmonShMonad {
     /// @notice The ONE function an automation bot can call repeatedly.
     ///         Anyone can call it too (permissionless fallback).
     /// @dev Picks a round and runs exactly one step.
-    function executeNext() external whenNotPaused onlyKeeper returns (uint256 rid, NextAction action) {
+    function executeNext() external whenNotPaused returns (uint256 rid, NextAction action) {
         (rid, action) = nextExecutable();
         if (action == NextAction.None) {
             return (rid, action);
@@ -435,7 +441,7 @@ contract TicketPrizePoolShmonShMonad {
     }
 
     /// @notice Manual/targeted: do the next step for a specific round.
-    function executeNext(uint256 rid) external whenNotPaused onlyKeeper returns (NextAction action) {
+    function executeNext(uint256 rid) external whenNotPaused returns (NextAction action) {
         action = nextAction(rid);
         if (action == NextAction.None) return action;
 
@@ -491,7 +497,7 @@ contract TicketPrizePoolShmonShMonad {
         // 2) Commit
         if (
             r.state == RoundState.Open &&
-            block.timestamp >= r.salesEndTime &&
+            block.timestamp >= uint256(r.salesEndTime) + uint256(yieldPeriodSec) &&
             r.totalTickets > 0
         ) return NextAction.Commit;
 
@@ -558,6 +564,7 @@ contract TicketPrizePoolShmonShMonad {
 
         if (r.state != RoundState.Open) revert BadState();
         if (block.timestamp < r.salesEndTime) revert SalesNotEnded();
+        if (block.timestamp < uint256(r.salesEndTime) + uint256(yieldPeriodSec)) revert YieldNotComplete();
         if (r.totalTickets == 0) revert ZeroTickets();
 
         r.targetBlockNumber = block.number + commitDelayBlocks;
@@ -686,7 +693,7 @@ contract TicketPrizePoolShmonShMonad {
         currentRoundId += 1;
         RoundData storage r = rounds[currentRoundId];
         r.state = RoundState.Open;
-        r.salesEndTime = uint64(block.timestamp + roundDurationSec);
+        r.salesEndTime = uint64(block.timestamp + depositPeriodSec);
         emit RoundStarted(currentRoundId, r.salesEndTime);
     }
 
@@ -777,6 +784,12 @@ contract TicketPrizePoolShmonShMonad {
     function getRoundTimes(uint256 rid) external view returns (uint64 salesEndTime, uint64 unstakeCompletionEpoch) {
         RoundData storage r = rounds[rid];
         return (r.salesEndTime, r.unstakeCompletionEpoch);
+    }
+
+    function getCommitAfterTime(uint256 rid) external view returns (uint64) {
+        RoundData storage r = rounds[rid];
+        if (r.salesEndTime == 0) return 0;
+        return uint64(uint256(r.salesEndTime) + uint256(yieldPeriodSec));
     }
 
     function getRoundState(uint256 rid) external view returns (RoundState) {

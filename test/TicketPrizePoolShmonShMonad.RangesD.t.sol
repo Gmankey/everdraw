@@ -31,7 +31,7 @@ contract TicketPrizePoolShmonShMonad_RangesD_Test is Test {
 
     function setUp() public {
         shmon = new RangeShMonad();
-        pool = new TicketPrizePoolShmonShMonad(TICKET_PRICE, COMMIT_DELAY, ROUND_DUR, address(shmon));
+        pool = new TicketPrizePoolShmonShMonad(TICKET_PRICE, COMMIT_DELAY, ROUND_DUR, 0, address(shmon));
     }
 
     function _fund(address a, uint256 amt) internal {

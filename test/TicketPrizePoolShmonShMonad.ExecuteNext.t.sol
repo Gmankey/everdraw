@@ -46,7 +46,7 @@ contract TicketPrizePoolShmonShMonad_ExecuteNext_Test is Test {
 
     function setUp() public {
         shmon = new ExecuteShMonad();
-        pool = new TicketPrizePoolShmonShMonad(TICKET_PRICE, COMMIT_DELAY, ROUND_DUR, address(shmon));
+        pool = new TicketPrizePoolShmonShMonad(TICKET_PRICE, COMMIT_DELAY, ROUND_DUR, 0, address(shmon));
         vm.deal(alice, 100 ether);
     }
 

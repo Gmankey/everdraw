@@ -5,6 +5,7 @@ import { nowIso } from '../utils/time.js';
 
 type RoundAccumulator = {
   roundId: number;
+  poolAddress: string;
   state: RoundRow['state'];
   isSkipped: 0 | 1;
   openedAt: string | null;
@@ -43,11 +44,11 @@ export function createDeriveRoundsService(
         .filter((event) => event.roundId != null)
         .sort(sortEvents);
 
-      const rounds = new Map<number, RoundAccumulator>();
+      const rounds = new Map<string, RoundAccumulator>();
 
       for (const event of finalizedEvents) {
         const roundId = event.roundId!;
-        const acc = getOrCreate(rounds, roundId);
+        const acc = getOrCreate(rounds, event.contractAddress, roundId);
 
         switch (event.eventName) {
           case 'RoundStarted': {
@@ -122,9 +123,12 @@ export function createDeriveRoundsService(
         }
       }
 
+      roundsRepo.deleteAll();
+
       for (const acc of rounds.values()) {
         const row: RoundRow = {
           roundId: acc.roundId,
+          poolAddress: acc.poolAddress,
           state: acc.state,
           isSkipped: acc.isSkipped,
           openedAt: acc.openedAt,
@@ -158,14 +162,17 @@ function sortEvents(a: RawEventRow, b: RawEventRow): number {
 }
 
 function getOrCreate(
-  map: Map<number, RoundAccumulator>,
+  map: Map<string, RoundAccumulator>,
+  poolAddress: string,
   roundId: number
 ): RoundAccumulator {
-  const existing = map.get(roundId);
+  const key = `${poolAddress}:${roundId}`;
+  const existing = map.get(key);
   if (existing) return existing;
 
   const created: RoundAccumulator = {
     roundId,
+    poolAddress,
     state: 'open',
     isSkipped: 0,
     openedAt: null,
@@ -185,7 +192,7 @@ function getOrCreate(
     winningTicket: null,
   };
 
-  map.set(roundId, created);
+  map.set(key, created);
   return created;
 }
 

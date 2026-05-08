@@ -5,6 +5,7 @@ export interface WalletRoundsRepo {
   upsert(row: WalletRoundRow): void;
   replaceForRound(roundId: number, rows: WalletRoundRow[]): void;
   listByRound(roundId: number): WalletRoundRow[];
+  listByWalletWithRound(wallet: string): Array<WalletRoundRow & { state: string; salesEndTime: string | null; isSkipped: number }>;
   listAll(): WalletRoundRow[];
   deleteAll(): void;
   countDistinctWalletsSettledOnly(): number;
@@ -16,6 +17,7 @@ export function createWalletRoundsRepo(db: Database.Database): WalletRoundsRepo 
     INSERT INTO wallet_rounds (
       wallet,
       round_id,
+      pool_address,
       tickets,
       mon_paid,
       won,
@@ -28,6 +30,7 @@ export function createWalletRoundsRepo(db: Database.Database): WalletRoundsRepo 
     ) VALUES (
       @wallet,
       @roundId,
+      @poolAddress,
       @tickets,
       @monPaid,
       @won,
@@ -38,7 +41,7 @@ export function createWalletRoundsRepo(db: Database.Database): WalletRoundsRepo 
       @createdAt,
       @updatedAt
     )
-    ON CONFLICT(wallet, round_id) DO UPDATE SET
+    ON CONFLICT(wallet, round_id, pool_address) DO UPDATE SET
       tickets = excluded.tickets,
       mon_paid = excluded.mon_paid,
       won = excluded.won,
@@ -58,6 +61,7 @@ export function createWalletRoundsRepo(db: Database.Database): WalletRoundsRepo 
     SELECT
       wallet,
       round_id as roundId,
+      pool_address as poolAddress,
       tickets,
       mon_paid as monPaid,
       won,
@@ -69,13 +73,37 @@ export function createWalletRoundsRepo(db: Database.Database): WalletRoundsRepo 
       updated_at as updatedAt
     FROM wallet_rounds
     WHERE round_id = ?
-    ORDER BY tickets DESC, wallet ASC
+    ORDER BY tickets DESC, wallet ASC, pool_address ASC
+  `);
+
+  const listByWalletWithRoundStmt = db.prepare(`
+    SELECT
+      wr.wallet,
+      wr.round_id AS roundId,
+      wr.pool_address AS poolAddress,
+      wr.tickets,
+      wr.mon_paid AS monPaid,
+      wr.won,
+      wr.withdrew,
+      wr.prize_claimed AS prizeClaimed,
+      wr.principal_withdrawn AS principalWithdrawn,
+      wr.net_position AS netPosition,
+      wr.created_at AS createdAt,
+      wr.updated_at AS updatedAt,
+      r.state,
+      r.sales_end_time AS salesEndTime,
+      r.is_skipped AS isSkipped
+    FROM wallet_rounds wr
+    LEFT JOIN rounds r ON r.round_id = wr.round_id AND r.pool_address = wr.pool_address
+    WHERE LOWER(wr.wallet) = LOWER(?)
+    ORDER BY wr.round_id DESC
   `);
 
   const listAllStmt = db.prepare(`
     SELECT
       wallet,
       round_id as roundId,
+      pool_address as poolAddress,
       tickets,
       mon_paid as monPaid,
       won,
@@ -86,7 +114,7 @@ export function createWalletRoundsRepo(db: Database.Database): WalletRoundsRepo 
       created_at as createdAt,
       updated_at as updatedAt
     FROM wallet_rounds
-    ORDER BY round_id DESC, tickets DESC, wallet ASC
+    ORDER BY round_id DESC, pool_address ASC, tickets DESC, wallet ASC
   `);
 
   const deleteAllStmt = db.prepare('DELETE FROM wallet_rounds');
@@ -94,7 +122,7 @@ export function createWalletRoundsRepo(db: Database.Database): WalletRoundsRepo 
   const countDistinctWalletsSettledOnlyStmt = db.prepare(`
     SELECT COUNT(DISTINCT wr.wallet) as count
     FROM wallet_rounds wr
-    INNER JOIN rounds r ON r.round_id = wr.round_id
+    INNER JOIN rounds r ON r.round_id = wr.round_id AND r.pool_address = wr.pool_address
     WHERE r.state = 'settled'
   `);
 
@@ -103,7 +131,7 @@ export function createWalletRoundsRepo(db: Database.Database): WalletRoundsRepo 
     FROM (
       SELECT wr.wallet, COUNT(*) as round_count
       FROM wallet_rounds wr
-      INNER JOIN rounds r ON r.round_id = wr.round_id
+      INNER JOIN rounds r ON r.round_id = wr.round_id AND r.pool_address = wr.pool_address
       WHERE r.state = 'settled'
       GROUP BY wr.wallet
     )
@@ -125,6 +153,9 @@ export function createWalletRoundsRepo(db: Database.Database): WalletRoundsRepo 
     },
     listByRound(roundId) {
       return listByRoundStmt.all(roundId) as WalletRoundRow[];
+    },
+    listByWalletWithRound(wallet) {
+      return listByWalletWithRoundStmt.all(wallet) as Array<WalletRoundRow & { state: string; salesEndTime: string | null; isSkipped: number }>;
     },
     listAll() {
       return listAllStmt.all() as WalletRoundRow[];

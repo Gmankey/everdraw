@@ -8,17 +8,19 @@ async function main() {
 
   const ticketPrice = process.env.TICKET_PRICE_MON || "1";
   const commitDelayBlocks = Number(process.env.COMMIT_DELAY_BLOCKS || 5);
-  const roundDurationSec = Number(process.env.ROUND_DURATION_SEC || 600);
+  const depositPeriodSec = Number(process.env.DEPOSIT_PERIOD_SEC || 86400);
+  const yieldPeriodSec = Number(process.env.YIELD_PERIOD_SEC || 604800);
 
   const [deployer] = await ethers.getSigners();
   console.log("Deploying with:", deployer.address);
-  console.log({ shmon, ticketPrice, commitDelayBlocks, roundDurationSec });
+  console.log({ shmon, ticketPrice, commitDelayBlocks, depositPeriodSec, yieldPeriodSec });
 
   const Factory = await ethers.getContractFactory("TicketPrizePoolShmonShMonad");
   const pool = await Factory.deploy(
     ethers.parseEther(ticketPrice),
     commitDelayBlocks,
-    roundDurationSec,
+    depositPeriodSec,
+    yieldPeriodSec,
     shmon
   );
   await pool.waitForDeployment();

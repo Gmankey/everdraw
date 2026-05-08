@@ -102,7 +102,7 @@ contract TicketPrizePoolShmonShMonad_SecurityE_Test is Test {
 
     function _deploy(uint16 payoutBps, uint256 bonusWei) internal {
         shmon = new SecurityShMonad(payoutBps, bonusWei);
-        pool = new TicketPrizePoolShmonShMonad(TICKET_PRICE, COMMIT_DELAY, ROUND_DUR, address(shmon));
+        pool = new TicketPrizePoolShmonShMonad(TICKET_PRICE, COMMIT_DELAY, ROUND_DUR, 0, address(shmon));
 
         if (bonusWei > 0) vm.deal(address(shmon), bonusWei);
     }

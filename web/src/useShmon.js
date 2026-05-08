@@ -5,7 +5,7 @@ import { modal } from './walletModal'
 export const SHMON_ADDRESS = '0x1B68626dCa36c7fE922fD2d55E4f631d962dE19c'
 const PENDING_KEY = 'everdraw:shmon:pending'
 export const EPOCH_SECONDS_ESTIMATE = 20 * 60 * 60
-const EVENT_SCAN_BLOCKS = 120_000n
+const EVENT_SCAN_BLOCKS = 20_000n
 
 const SHMON_ABI = [
   'function balanceOf(address) view returns (uint256)',
@@ -183,7 +183,7 @@ export function useShmon({ account, expectedChainId, getReadProvider, ensureCorr
     if (!account) return
     const id = window.setInterval(() => {
       refresh()
-    }, 30000)
+    }, 60000)
     return () => window.clearInterval(id)
   }, [account, refresh])
 

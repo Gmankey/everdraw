@@ -1,4 +1,4 @@
-import { Contract, JsonRpcProvider, Interface, ethers } from 'ethers';
+import { JsonRpcProvider, Interface, ethers } from 'ethers';
 import type { Block } from 'ethers';
 import { nowIso } from '../utils/time.js';
 import type { SupportedEventName, RawEventRow } from '../types/domain.js';
@@ -39,7 +39,6 @@ export function createIndexerRunner(input: {
 }): IndexerRunner {
   const { config, rawEventsRepo, indexerStateRepo, deriveRoundsService, deriveWalletRoundsService, deriveWalletStatsService } = input;
   const provider = new JsonRpcProvider(config.rpcUrl);
-  const contract = new Contract(config.poolAddress, POOL_EVENT_ABI, provider);
   const iface = new Interface(POOL_EVENT_ABI);
 
   return {
@@ -61,7 +60,12 @@ export function createIndexerRunner(input: {
       let chunkCount = 0;
       for (let start = fromBlock; start <= toBlock; start += config.chunkSize) {
         const end = Math.min(toBlock, start + config.chunkSize - 1);
-        const rows = await fetchChunk({ provider, iface, contractAddress: config.poolAddress, fromBlock: start, toBlock: end, interChunkDelayMs: 50 });
+        const rowArrays = await Promise.all(
+          config.poolAddresses.map((addr) =>
+            fetchChunk({ provider, iface, contractAddress: addr, fromBlock: start, toBlock: end, interChunkDelayMs: 50 })
+          )
+        );
+        const rows = rowArrays.flat();
         if (rows.length > 0) await sleep(500);
         rawEventsRepo.deleteForBlockRange(start, end);
         rawEventsRepo.upsertMany(rows);

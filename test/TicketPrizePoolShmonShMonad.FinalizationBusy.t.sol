@@ -59,7 +59,7 @@ contract TicketPrizePoolShmonShMonad_FinalizationBusy_Test is Test {
 
     function setUp() public {
         shmon = new MockShMonad();
-        pool = new TicketPrizePoolShmonShMonad(PRICE, DELAY, DUR, address(shmon));
+        pool = new TicketPrizePoolShmonShMonad(PRICE, DELAY, DUR, 0, address(shmon));
 
         vm.deal(alice, 10 ether);
         vm.deal(bob,   10 ether);

@@ -21,7 +21,8 @@ CREATE INDEX IF NOT EXISTS idx_raw_events_round_id ON raw_events(round_id);
 CREATE INDEX IF NOT EXISTS idx_raw_events_wallet ON raw_events(wallet);
 
 CREATE TABLE IF NOT EXISTS rounds (
-  round_id INTEGER PRIMARY KEY,
+  round_id INTEGER NOT NULL,
+  pool_address TEXT NOT NULL DEFAULT '',
   state TEXT NOT NULL CHECK (
     state IN ('open', 'committed', 'drawn', 'unstaking', 'settled', 'skipped')
   ),
@@ -41,12 +42,14 @@ CREATE TABLE IF NOT EXISTS rounds (
   winner_wallets_count INTEGER NOT NULL DEFAULT 0,
   winner TEXT,
   winning_ticket INTEGER,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (round_id, pool_address)
 );
 
 CREATE TABLE IF NOT EXISTS wallet_rounds (
   wallet TEXT NOT NULL,
   round_id INTEGER NOT NULL,
+  pool_address TEXT NOT NULL DEFAULT '',
   tickets INTEGER NOT NULL DEFAULT 0,
   mon_paid TEXT NOT NULL DEFAULT '0',
   won INTEGER NOT NULL DEFAULT 0,
@@ -56,10 +59,11 @@ CREATE TABLE IF NOT EXISTS wallet_rounds (
   net_position TEXT NOT NULL DEFAULT '0',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  PRIMARY KEY (wallet, round_id)
+  PRIMARY KEY (wallet, round_id, pool_address)
 );
 
 CREATE INDEX IF NOT EXISTS idx_wallet_rounds_round_id ON wallet_rounds(round_id);
+CREATE INDEX IF NOT EXISTS idx_wallet_rounds_wallet ON wallet_rounds(wallet);
 
 CREATE TABLE IF NOT EXISTS wallet_stats (
   wallet TEXT PRIMARY KEY,

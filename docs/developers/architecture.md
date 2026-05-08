@@ -1,82 +1,82 @@
 # Architecture
 
-EverDraw consists of three core components and one upcoming module. Each is independently deployable and maintained.
+EverDraw has four components. The smart contract is the source of truth. Everything else reads from it.
 
 ---
 
-## Smart contract — Prize Vault
+## Prize vault contract
 
-The core protocol logic lives in a single Solidity contract: `TicketPrizePoolShmonShMonad.sol`.
+Solidity contract `TicketPrizePoolShmonV2`. One instance per vault. Two are deployed on Monad mainnet, on offset weekly schedules.
 
-**Responsibilities:**
-- Accepts MON deposits and issues tickets
-- Stakes deposited MON via ShMON
-- Manages round state transitions (Open → Committed → Finalizing → Settled)
-- Executes the commit-reveal draw mechanism
-- Tracks per-user principal balances
-- Processes unstaking from ShMON
-- Distributes prize yield and returns principal on claim/withdraw
+Responsibilities:
 
-**Key design decisions:**
-- Single contract, no proxy pattern — reduces attack surface and upgrade complexity
-- All round state is stored on-chain — no off-chain indexer required to determine round outcomes
-- Principal tracking is per-round per-address — no cross-round state entanglement
-- Block hash randomness — no oracle dependency for draws
-- `executeNext()` — a single public function that advances the round lifecycle. Anyone can call it. The keeper is a convenience, not a dependency.
+- Accepts MON or shMON, issues tickets
+- Holds deposits as shMON shares (no internal unstaking, ever)
+- Manages round state (Open, Committed, Settled, Skipped, Failed)
+- Runs the commit reveal draw using a Monad block hash
+- Tracks per user principal per round
+- Returns shMON on withdraw and pays the prize on claim
+- Exposes a Merkl readable position surface for shMonad's points indexer
 
----
+Design choices:
 
-## CampaignManager (Phase 2)
-
-A second contract that enables protocol-funded prize campaigns.
-
-**Responsibilities:**
-- Accept campaign creation from any protocol (`createCampaign()`)
-- Hold campaign funds in escrow
-- Verify eligibility via on-chain snapshots or Merkle proofs
-- Execute draws on the campaign schedule
-- Manage winner claims
-
-The CampaignManager is independent from the core prize vault. Yield-driven vaults and campaign-funded vaults operate on the same infrastructure but through separate contract interfaces.
+- Single contract, no proxy. Smaller attack surface and no upgrade keys.
+- All round state on chain. No off chain indexer needed for correctness.
+- Per round per address principal accounting. No cross round entanglement.
+- Block hash randomness. No oracle dependency.
+- `commit` and `settle` are public. Anyone can advance the lifecycle. The keeper is convenience.
 
 ---
 
-## Keeper bot
+## Keeper
 
-An automated off-chain service that monitors the contract and calls state-transition functions at the correct times.
+Off chain service that polls `nextExecutable()` and submits the corresponding transaction. Two responsibilities specific to V2:
 
-**Responsibilities:**
-- Monitor `nextExecutable()` to determine what action is due
-- Execute state transitions (commit, draw, settle, skip) via `executeNext()`
-- Preflight safety checks before each transaction (simulates the call, checks gas, verifies state preconditions)
-- Telegram alerting for all actions, errors, and anomalies
-- systemd service management for reliability and auto-restart
+- **Anchor gate.** Even when the contract reports `Commit` is eligible, the keeper waits until the configured weekday and time before firing. This is what keeps each vault's deposit window opening on a fixed weekly anchor.
+- **Multi pool.** One keeper process services every pool address listed in `POOL_ADDRESSES_V2`, each on its own anchor.
 
-The keeper is non-privileged — it cannot access user funds or modify contract state beyond the defined state transitions. Any wallet can call `executeNext()`. The keeper simply ensures it's called reliably and on schedule. If the keeper goes down, rounds pause until it recovers or someone else calls the function — but no funds are at risk.
+The keeper is not privileged. It can only call public functions. If it goes offline, deposits and round progression pause until it recovers or someone else calls in.
+
+[More on the keeper](keeper-bot.md)
+
+---
+
+## Indexer
+
+A Hono service backed by SQLite. Reads on chain events and exposes HTTP APIs the frontend consumes for participants, history, and withdrawal latency metrics. Pool aware. Multi RPC failover.
+
+The frontend can run without it (it reads contract state via RPC directly), but historical views and aggregate metrics depend on it.
 
 ---
 
 ## Frontend
 
-A React application that provides the user interface for all protocol interactions.
+React app at [everdraw.xyz](https://everdraw.xyz).
 
-**Responsibilities:**
-- Real-time round state display (price, TVL, your position, countdown)
-- Ticket purchasing with automatic network switching
-- Previous draw results and participant table
-- Prize claiming and principal withdrawal
-- Multi-pool support via `VITE_POOL_ADDRESSES`
+- Real time round state per vault (price, TVL, your position, countdown)
+- Buy with MON or shMON
+- Previous draw view per pool
+- Claim and withdraw flows
+- 30 second buy cutoff before deposit windows close
+- Multi pool via `VITE_POOL_ADDRESSES_V2`
+
+---
+
+## CampaignManager (Phase 2)
+
+A second contract that lets any Monad protocol fund a branded prize campaign without changes to their own infrastructure. Out of scope for Phase 1. See [Phase 2](../vision/phase-2.md).
 
 ---
 
 ## Data flow
 
 ```
-User → Frontend → Prize Vault → ShMON
- ↑
- Keeper Bot
-
-Protocol → CampaignManager → Draw + Claims
+User wallet ──► Frontend ──► Vault contract ──► shMON
+                                ▲
+                                │
+                            Keeper bot
+                                │
+Indexer ────────────────────────┘ (read events)
 ```
 
-The frontend reads contract state directly via RPC (no subgraph dependency in the current architecture). The keeper monitors contract state independently and submits transactions on schedule.
+The frontend reads contract state directly via RPC. The indexer follows events independently and is not on the write path.

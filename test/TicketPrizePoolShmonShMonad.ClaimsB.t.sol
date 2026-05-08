@@ -54,7 +54,7 @@ contract TicketPrizePoolShmonShMonad_ClaimsB_Test is Test {
 
     function _deploy(uint16 payoutBps, uint256 bonusWei) internal {
         shmon = new ClaimsShMonad(payoutBps, bonusWei);
-        pool = new TicketPrizePoolShmonShMonad(PRICE, COMMIT_DELAY, ROUND_SEC, address(shmon));
+        pool = new TicketPrizePoolShmonShMonad(PRICE, COMMIT_DELAY, ROUND_SEC, 0, address(shmon));
 
         vm.deal(alice, 100 ether);
         vm.deal(bob, 100 ether);

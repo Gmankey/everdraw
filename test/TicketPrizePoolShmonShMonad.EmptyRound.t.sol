@@ -36,7 +36,7 @@ contract TicketPrizePoolShmonShMonad_EmptyRound_Test is Test {
 
     function setUp() public {
         shmon = new MockShMonad();
-        pool = new TicketPrizePoolShmonShMonad(PRICE, COMMIT_DELAY, ROUND_SEC, address(shmon));
+        pool = new TicketPrizePoolShmonShMonad(PRICE, COMMIT_DELAY, ROUND_SEC, 0, address(shmon));
         vm.deal(user, 10 ether);
     }
 

@@ -14,7 +14,8 @@ contract DeployTicketPrizePoolShmonShMonad is Script {
         TicketPrizePoolShmonShMonad pool = new TicketPrizePoolShmonShMonad(
             1 ether,    // ticket price in MON
             10,         // commit delay blocks
-            345600,     // round duration (4 days)
+            86400,      // deposit period (1 day)
+            604800,     // yield period (7 days)
             shmon
         );
 

@@ -1,64 +1,55 @@
-# Phase 2 — Continuous Deposits + Campaign Infrastructure
+# Phase 2: Continuous Deposits and Campaign Infrastructure
 
-**Timeline: Month 2–6**
+**Timeline: month 2 to 6.**
 
-Phase 2 delivers two major capabilities: continuous prize savings for users via TWAB, and campaign infrastructure for protocols via the CampaignManager.
+Phase 2 ships two major capabilities. Continuous prize savings for users via TWAB. Campaign infrastructure for protocols via the CampaignManager.
 
 ---
 
 ## Continuous Deposits: TWAB
 
-### The problem Phase 2 solves for users
+### The problem
 
-Round-based mechanics have a fundamental UX flaw: if you arrive at the wrong time, you wait. Miss the window and you can't deposit. Buy in early and your MON is locked longer than necessary. The timing of your deposit affects the experience.
+Round based mechanics have a UX cost. If you arrive at the wrong time, you wait. Miss the deposit window and you can't enter that round. Buy in early and your principal is locked longer than necessary. Timing affects experience.
 
-### The solution: Time-Weighted Average Balance
+### The solution: Time Weighted Average Balance
 
-Instead of buying tickets for a specific round, users simply deposit MON. The protocol tracks each wallet's balance over time using a time-weighted average. Your probability of winning in any draw equals your TWAB divided by the total pool TWAB over the draw period.
+Instead of buying tickets for a specific round, you simply deposit MON. The protocol tracks each wallet's balance over time using a time weighted average. Your probability of winning in any draw equals your TWAB divided by the total pool TWAB across the draw period.
 
-Deposit Tuesday. Withdraw Friday. You earn chances proportional to every day your MON was in the vault. No windows to hit. No timing games.
+Deposit Tuesday. Withdraw Friday. You earn chances proportional to every day your MON was in the vault. No windows. No timing games.
 
-**This changes everything:**
-- No more "missed the window"
-- No more "come back in 7 days"
-- Timing attacks become impossible — depositing right before a draw is worthless because your average balance over the draw period is negligible
-- Draws can run daily instead of weekly. More winners. More engagement.
+This changes the experience materially:
+
+- No more "missed the window."
+- Timing attacks become impossible. Depositing right before a draw is worthless because your average balance over the period is negligible.
+- Draws can run daily instead of weekly. More winners, more engagement.
 
 ### Automatic prize distribution
 
-Winners no longer claim manually. An incentivised keeper network distributes prizes directly to winner wallets. Users wake up with MON they didn't expect — the most delightful UX in DeFi.
+Winners no longer claim manually. An incentivised keeper network distributes prizes directly to winner wallets. You wake up with MON you didn't expect.
 
-### The user experience in Phase 2
+### Phase 2 user experience
 
-*Deposit MON. Forget about it. Check if you won.*
-
-That's it.
+Deposit MON. Forget about it. Check if you won.
 
 ---
 
 ## CampaignManager: Prize Infrastructure for Protocols
 
-### The problem Phase 2 solves for protocols
+### The problem
 
-Every Monad protocol with a growth budget faces the same challenge: acquiring users who actually stay. Airdrops produce one-time engagement. Points programs face fatigue. Liquidity mining creates mercenary capital. Protocols need a retention tool that creates recurring engagement — not a one-time dump.
+Every Monad protocol with a growth budget faces the same challenge. Acquire users who actually stay. Airdrops produce one shot engagement. Points programs face fatigue. Liquidity mining creates mercenary capital. Protocols need a tool that creates recurring engagement instead of a one shot dump.
 
-### The solution: Branded prize campaigns
+### The solution: branded prize campaigns
 
-EverDraw's CampaignManager contract lets any protocol on Monad run a branded prize campaign with a single treasury transfer. No contract changes on the protocol's side. No audit required. No yield source needed.
+The CampaignManager contract lets any Monad protocol run a branded prize campaign with a single treasury transfer. No contract changes on the protocol's side. No audit. No yield source needed.
 
-**How it works:**
+A protocol calls `createCampaign()`, specifies prize token and budget, draw frequency, and eligibility criteria, then funds the campaign with a token transfer. EverDraw handles draw execution, winner selection, claim flows, and frontend integration. Eligibility is verified on chain via token snapshots or Merkle allowlists.
 
-A protocol calls `createCampaign()` on EverDraw's CampaignManager, specifying:
-- Prize token and budget
-- Draw frequency (weekly, daily, custom)
-- Eligibility criteria (token holders, stakers, LP providers, custom)
+The protocol keeps its branding and user relationship. EverDraw provides the trusted neutral prize engine.
 
-They fund the campaign with a token transfer. EverDraw handles everything else — draw execution, winner selection, claim flows, and frontend integration. Eligibility is verified on-chain via token balance snapshots or Merkle allowlists.
+### Why this beats airdrops
 
-**The result:** Any Monad protocol can run branded prize campaigns through EverDraw's audited infrastructure instead of building their own mechanics from scratch. The protocol keeps its user relationship and branding. EverDraw provides the trusted, neutral prize engine.
+An airdrop takes a budget and distributes it once. Users claim, sell, and leave. A prize campaign takes the same budget and spreads it across recurring weekly engagement events. Users participate to win, come back each week, and winners generate organic content every draw.
 
-### Why this is better than airdrops
-
-An airdrop takes a growth budget and distributes it once. Users claim, sell, and leave. A prize campaign takes the same budget and distributes it as recurring weekly engagement events. Users participate for the chance to win, come back each week, and winners generate organic social content every single draw.
-
-Same budget. Recurring engagement instead of one-time extraction.
+Same budget. Recurring engagement instead of one shot extraction.
