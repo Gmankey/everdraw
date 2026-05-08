@@ -137,6 +137,137 @@ function shortAddr(addr) {
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`
 }
 
+
+function getIndexerBaseUrl() {
+  return String(import.meta.env.VITE_INDEXER_URL || INDEXER_URL || 'https://everdraw-indexer.fly.dev').replace(/\/$/, '')
+}
+
+function tierClass(tier) {
+  return `tier-chip tier-${String(tier || 'Bronze').toLowerCase()}`
+}
+
+function PointsHeaderWidget({ account, points }) {
+  const [open, setOpen] = useState(false)
+  if (!account) return null
+  const p = points || {}
+  return (
+    <div className="points-header">
+      <button className="points-pill" type="button" onClick={() => setOpen((v) => !v)}>
+        <span>{Number(p.lifetime_points || 0).toLocaleString()} pts</span>
+        <span>🔥 {p.current_streak_weeks || 0}w</span>
+      </button>
+      {open ? (
+        <div className="points-popover">
+          <div className={tierClass(p.current_tier)}>{p.current_tier || 'Bronze'}</div>
+          <strong>{Number(p.lifetime_points || 0).toLocaleString()} lifetime points</strong>
+          <span>×{(Number(p.current_multiplier_x100 || 100) / 100).toFixed(2)} active multiplier</span>
+          <a href="#profile">View profile →</a>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function PointsBreakdown({ item }) {
+  if (!item) return null
+  const bonuses = item.bonuses_breakdown || {}
+  const bonusText = Object.entries(bonuses).map(([k, v]) => `${k.replaceAll('_', ' ')} +${v}`).join(', ')
+  return (
+    <div className="points-earned-line">
+      +{item.total_points} points earned
+      <small>base {item.base_points}, streak ×{(item.multiplier_x100 / 100).toFixed(2)}{bonusText ? `, ${bonusText}` : ''}</small>
+    </div>
+  )
+}
+
+function ProfilePage({ account, points, history }) {
+  if (!account) return <section className="participants-card points-page"><h2>Your Points</h2><p>Connect a wallet to view your EverDraw points profile.</p></section>
+  const streakWeeks = Number(points?.current_streak_weeks || 0)
+  const multiplierX100 = Number(points?.current_multiplier_x100 || 100)
+  const nextTier = points?.next_tier_threshold ?? (streakWeeks < 4 ? 4 : streakWeeks < 8 ? 8 : streakWeeks < 13 ? 13 : streakWeeks < 26 ? 26 : null)
+  const milestoneBonus = { 4: 50, 13: 200, 26: 500, 52: 1000 }
+  const nextMilestone = points?.next_milestone ?? [4, 13, 26, 52].find((m) => m > streakWeeks) ?? null
+  const nextMilestoneReward = nextMilestone ? milestoneBonus[nextMilestone] : null
+  const progressTarget = nextMilestone || nextTier || Math.max(1, streakWeeks)
+  const progress = Math.min(100, (streakWeeks / progressTarget) * 100)
+  const ensName = points?.ens && !ethers.isAddress(points.ens) && points.ens.toLowerCase() !== account.toLowerCase() ? points.ens : ''
+  const recentRounds = (history || []).slice(0, 12)
+  const bonusChips = [
+    { label: 'First Deposit', unlocked: !!points?.has_received_first_deposit_bonus },
+    { label: 'First Win', unlocked: !!points?.has_received_first_win_bonus },
+    { label: 'Streak Milestone', unlocked: Number(points?.highest_streak_milestone_awarded || 0) > 0, detail: Number(points?.highest_streak_milestone_awarded || 0) > 0 ? `${points.highest_streak_milestone_awarded}w` : null },
+  ]
+  return (
+    <section className="participants-card points-page">
+      <div className="points-page-head">
+        <div>
+          <h2>{ensName || 'Your Points'}</h2>
+          <span>{shortAddr(account)}</span>
+        </div>
+        <div className={tierClass(points?.current_tier)}>{points?.current_tier || 'Bronze'}</div>
+      </div>
+      <div className="points-big">{Number(points?.lifetime_points || 0).toLocaleString()} <span>points</span></div>
+      <div className="points-streak-card">
+        <div className="points-streak-title">🔥 {streakWeeks} week streak</div>
+        <div className="points-progress"><span style={{ width: `${progress}%` }} /></div>
+        <div className="points-highlight-grid">
+          <div className="points-highlight-card">
+            <span>Active multiplier</span>
+            <strong>×{(multiplierX100 / 100).toFixed(2)}</strong>
+            <small>{points?.current_tier || 'Bronze'} tier</small>
+          </div>
+          <div className="points-highlight-card">
+            <span>Next milestone</span>
+            <strong>{nextMilestone ? `${nextMilestone} weeks` : 'Complete'}</strong>
+            <small>{nextMilestoneReward ? `+${nextMilestoneReward} point bonus` : 'All streak milestones cleared'}</small>
+          </div>
+        </div>
+      </div>
+      <h3>Recent rounds</h3>
+      <div className="participants-table">
+        <div className="participants-row participants-header"><span>Round</span><span>Base</span><span>Multiplier</span><span>Bonuses</span><span>Total</span></div>
+        {recentRounds.length === 0 ? (
+          <div className="points-empty-state">No rounds yet. Buy a ticket to start earning.</div>
+        ) : recentRounds.map((h) => (
+          <div className="participants-row" key={`${h.pool_address}:${h.round_id}`}><span>#{h.round_id}</span><span>{h.base_points}</span><span>×{(h.multiplier_x100 / 100).toFixed(2)}</span><span>{Object.keys(h.bonuses_breakdown || {}).join(', ') || '—'}</span><span>+{h.total_points}</span></div>
+        ))}
+      </div>
+      <h3>Bonuses</h3>
+      <div className="points-bonus-chips">
+        {bonusChips.map((chip) => (
+          <span className={`points-bonus-chip ${chip.unlocked ? 'unlocked' : 'locked'}`} key={chip.label}>
+            {chip.label}{chip.detail ? ` · ${chip.detail}` : ''}
+            <small>{chip.unlocked ? 'Unlocked' : 'To unlock'}</small>
+          </span>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function LeaderboardPage({ account }) {
+  const [period, setPeriod] = useState('all')
+  const [rows, setRows] = useState([])
+  useEffect(() => {
+    fetch(`${getIndexerBaseUrl()}/api/leaderboard?limit=100&period=${period}`)
+      .then((r) => r.ok ? r.json() : [])
+      .then((data) => setRows(Array.isArray(data) ? data : []))
+      .catch(() => setRows([]))
+  }, [period])
+  const currentRow = account ? rows.find((r) => r.wallet?.toLowerCase() === account.toLowerCase()) : null
+  return (
+    <section className="participants-card points-page">
+      <div className="points-page-head"><h2>Leaderboard</h2><div><button className="max-btn" onClick={() => setPeriod('all')}>All time</button><button className="max-btn" onClick={() => setPeriod('month')}>This month</button></div></div>
+      <div className="participants-table leaderboard-table">
+        <div className="participants-row participants-header"><span>#</span><span>Wallet</span><span>Tier</span><span>Streak</span><span>Points</span></div>
+        {rows.map((r, i) => <div className="participants-row" key={r.wallet}><span>{i + 1}</span><span>{r.ens || shortAddr(r.wallet)}</span><span><span className={tierClass(r.current_tier)}>{r.current_tier}</span></span><span>🔥 {r.current_streak_weeks}w</span><span>{Number(period === 'month' ? r.month_points : r.lifetime_points).toLocaleString()}</span></div>)}
+      </div>
+      {account && !currentRow ? <div className="leaderboard-sticky">Your wallet is currently outside the top 100. Keep cooking, boss.</div> : null}
+    </section>
+  )
+}
+
+
 function formatCountdown(seconds) {
   if (seconds <= 0) return '0m'
   const d = Math.floor(seconds / 86400)
@@ -234,7 +365,7 @@ async function ensureCorrectNetwork(provider, expectedChainId) {
   }
 }
 
-function Header({ account, onConnect, currentPage }) {
+function Header({ account, onConnect, currentPage, points }) {
   return (
     <header>
       <div className="logo">
@@ -245,6 +376,8 @@ function Header({ account, onConnect, currentPage }) {
         <a href="#vault" className={`nav-link ${currentPage === 'vault' ? 'active' : ''}`}>Vault</a>
         <a href="#shmon" className={`nav-link ${currentPage === 'shmon' ? 'active' : ''}`}>shMON</a>
         <a href="#stats" className={`nav-link ${currentPage === 'stats' ? 'active' : ''}`}>Stats</a>
+        <a href="#profile" className={`nav-link ${currentPage === 'profile' ? 'active' : ''}`}>Profile</a>
+        <a href="#leaderboard" className={`nav-link ${currentPage === 'leaderboard' ? 'active' : ''}`}>Leaderboard</a>
         <a href="https://docs.everdraw.xyz" target="_blank" rel="noopener noreferrer" className="nav-link">Docs</a>
         <a href="https://x.com/everdrawing" target="_blank" rel="noopener noreferrer" className="nav-link nav-link-x" aria-label="X / Twitter">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
@@ -252,6 +385,7 @@ function Header({ account, onConnect, currentPage }) {
           </svg>
         </a>
       </nav>
+      <PointsHeaderWidget account={account} points={points} />
       <button className="btn" onClick={onConnect}>
         {account ? shortAddr(account) : 'Connect Wallet'}
       </button>
@@ -635,12 +769,16 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState(() => {
     if (window.location.hash === '#stats') return 'stats'
     if (window.location.hash === '#shmon') return 'shmon'
+    if (window.location.hash === '#profile') return 'profile'
+    if (window.location.hash === '#leaderboard') return 'leaderboard'
     return 'vault'
   })
   useEffect(() => {
     function onHashChange() {
       if (window.location.hash === '#stats') setCurrentPage('stats')
       else if (window.location.hash === '#shmon') setCurrentPage('shmon')
+      else if (window.location.hash === '#profile') setCurrentPage('profile')
+      else if (window.location.hash === '#leaderboard') setCurrentPage('leaderboard')
       else setCurrentPage('vault')
     }
     window.addEventListener('hashchange', onHashChange)
@@ -706,6 +844,10 @@ export default function App() {
   const [buyWithShmon, setBuyWithShmon] = useState(false)
   const [vaultBPending, setVaultBPending] = useState(false)
   const [tokenDropdownOpen, setTokenDropdownOpen] = useState(false)
+  const [pointsProfile, setPointsProfile] = useState(null)
+  const [pointsHistory, setPointsHistory] = useState([])
+  const [pointsPreview, setPointsPreview] = useState(null)
+  const [pointsBanner, setPointsBanner] = useState(null)
 
   useEffect(() => {
     if (!allPoolAddresses.length) {
@@ -737,6 +879,48 @@ export default function App() {
       doorAudioRef.current = null
     }
   }, [])
+
+
+  useEffect(() => {
+    let cancelled = false
+    if (!account) {
+      setPointsProfile(null)
+      setPointsHistory([])
+      return () => { cancelled = true }
+    }
+    Promise.all([
+      fetch(`${getIndexerBaseUrl()}/api/points/${account}`).then((r) => r.ok ? r.json() : null),
+      fetch(`${getIndexerBaseUrl()}/api/points/${account}/history?limit=12`).then((r) => r.ok ? r.json() : []),
+    ]).then(([profile, history]) => {
+      if (cancelled) return
+      setPointsProfile(profile)
+      setPointsHistory(Array.isArray(history) ? history : [])
+    }).catch(() => {
+      if (!cancelled) {
+        setPointsProfile(null)
+        setPointsHistory([])
+      }
+    })
+    return () => { cancelled = true }
+  }, [account])
+
+  useEffect(() => {
+    let cancelled = false
+    if (!account || !poolAddress || !ticketCountInput) {
+      setPointsPreview(null)
+      return () => { cancelled = true }
+    }
+    const timer = setTimeout(() => {
+      const tickets = Math.max(0, Math.floor(Number(ticketCountInput || 0)))
+      if (!tickets) { setPointsPreview(null); return }
+      const url = new URL(`${getIndexerBaseUrl()}/api/points/preview`)
+      url.searchParams.set('wallet', account)
+      url.searchParams.set('pool', poolAddress)
+      url.searchParams.set('tickets', String(tickets))
+      fetch(url).then((r) => r.ok ? r.json() : null).then((data) => { if (!cancelled) setPointsPreview(data) }).catch(() => { if (!cancelled) setPointsPreview(null) })
+    }, 250)
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [account, poolAddress, ticketCountInput])
 
   const refreshVaultSummaries = useCallback(async () => {
     if (!allPoolAddresses.length) {
@@ -1158,7 +1342,9 @@ export default function App() {
       : participants
   const shownIsCurrentRound = shownRoundId === roundId
   const shownState = shownRoundInfo ? Number(shownRoundInfo.state) : -1
-  const shownVaultLabel = isV2Pool ? 'Vault C' : mainView === 'vaultA' ? 'Vault A' : mainView === 'vaultB' ? 'Vault B' : 'Previous Vault'
+  const shownVaultLabel = isV2Pool
+    ? (selectedPoolAddress.toLowerCase() === poolAddressesV2[1]?.toLowerCase() || vaultBPending ? 'Vault B' : 'Vault A')
+    : mainView === 'vaultA' ? 'Vault A' : mainView === 'vaultB' ? 'Vault B' : 'Previous Vault'
   const wrongNetwork = expectedChainId && connectedChainId && expectedChainId !== connectedChainId
   const shownSecondsRemaining = shownRoundInfo ? Math.max(0, Number(shownRoundInfo.salesEndTime ?? 0) - now) : 0
   const shownCommitAfterRemaining = shownRoundInfo && isV2Pool ? Math.max(0, Number(commitAfterTime || 0) - now) : 0
@@ -1935,6 +2121,18 @@ export default function App() {
     }
   }, [account, expectedChainId, isV2Pool, poolAddress, refresh, ticketCountInput])
 
+
+  const setMaxTickets = useCallback(() => {
+    try {
+      if (!ticketPrice || ticketPrice <= 0n) return
+      const available = isV2Pool && buyWithShmon ? BigInt(shmonMonBalance || 0n) : ethers.parseEther(String(balance || '0'))
+      const max = available / ticketPrice
+      if (max > 0n) setTicketCountInput(max > 1000000n ? '1000000' : max.toString())
+    } catch {
+      // ignore malformed balance state
+    }
+  }, [balance, buyWithShmon, isV2Pool, shmonMonBalance, ticketPrice])
+
   const openWinnersWithTransition = useCallback(() => {
     if (winnersTransitioning) return
 
@@ -2015,8 +2213,11 @@ export default function App() {
           />
         ) : (
           <>
-            <Header account={account} onConnect={connectWallet} currentPage={currentPage} />
+            <Header account={account} onConnect={connectWallet} currentPage={currentPage} points={pointsProfile} />
+            {pointsBanner ? <div className="points-banner"><span>{pointsBanner}</span><button onClick={() => setPointsBanner(null)}>×</button></div> : null}
         {currentPage === 'stats' ? <StatsPage /> : null}
+            {currentPage === 'profile' ? <ProfilePage account={account} points={pointsProfile} history={pointsHistory} /> : null}
+            {currentPage === 'leaderboard' ? <LeaderboardPage account={account} /> : null}
             {currentPage === 'vault' && (<>
 
 
@@ -2206,7 +2407,7 @@ export default function App() {
                       <span>
                         Balance: {isV2Pool && buyWithShmon ? `${formatMon(shmonMonBalance)} shMON` : `${Number(balance).toFixed(4)} MON`}
                       </span>
-                      <button className="max-btn" onClick={() => setTicketCountInput('1')}>Reset</button>
+                      <button className="max-btn" onClick={setMaxTickets}>MAX</button>
                     </div>
                   </div>
 
@@ -2273,6 +2474,7 @@ export default function App() {
                                       : 'Buy Unavailable'}
                     </button>
                     {(loading || wrongNetwork || !salesOpen || !account || !shownIsCurrentRound) && buyDisabledReason ? <p className="deposit-caption">{buyDisabledReason}</p> : null}
+                    {pointsPreview ? <p className="deposit-caption points-preview">You'll earn approximately {pointsPreview.estimated_total ?? 0} points this round.</p> : null}
                   </div>
 
                   {status ? <p className="deposit-caption">{status}</p> : null}
