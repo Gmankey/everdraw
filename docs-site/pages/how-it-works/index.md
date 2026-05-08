@@ -1,14 +1,8 @@
 # How It Works
 
-EverDraw follows a simple loop:
+In phase 1, EverDraw runs a simple loop. Collect deposits, stake them as shMON, pool the yield, draw one winner, return principal to everyone. Two vaults run on offset weekly schedules so there is rarely more than 3.5 days between open deposit windows.
 
-1. Users deposit MON into the active round
-2. The vault generates yield during the round
-3. A winner is drawn at the end
-4. The winner claims the prize and everyone can withdraw principal
-
-If you want more detail:
-
-- [Protocol Overview](protocol-overview.md) — the core mechanic and prize logic
-- [Round Lifecycle](round-lifecycle.md) — what happens during each round
-- [Winner Selection](winner-selection.md) — how tickets and draw odds work
+* [Protocol Overview](protocol-overview.md). The core loop, tickets, no loss guarantee.
+* [Round Lifecycle](round-lifecycle.md). Each round's states and timing.
+* [Winner Selection](winner-selection.md). Commit reveal mechanics and probability.
+* [Points](points.md). How loyalty is rewarded.

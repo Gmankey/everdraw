@@ -1,6 +1,5 @@
 export default {
   index: 'Overview',
-  'connect-wallet': 'Connect Wallet',
   'buying-tickets': 'Buying Tickets',
   'checking-results': 'Checking Results',
   'claiming-withdrawing': 'Claiming & Withdrawing',
