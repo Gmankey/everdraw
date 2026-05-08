@@ -356,7 +356,6 @@ function Header({ account, onConnect, currentPage, points }) {
       </div>
       <nav className="nav-links">
         <a href="#vault" className={`nav-link ${currentPage === 'vault' ? 'active' : ''}`}>Vault</a>
-        <a href="#shmon" className={`nav-link ${currentPage === 'shmon' ? 'active' : ''}`}>shMON</a>
         <a href="#stats" className={`nav-link ${currentPage === 'stats' ? 'active' : ''}`}>Stats</a>
         <a href="#profile" className={`nav-link ${currentPage === 'profile' ? 'active' : ''}`}>Profile</a>
         <a href="#leaderboard" className={`nav-link ${currentPage === 'leaderboard' ? 'active' : ''}`}>Leaderboard</a>
