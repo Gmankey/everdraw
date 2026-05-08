@@ -37,9 +37,6 @@ This turns prize campaigns from "experiment" into "measurable growth channel," w
 
 Users browse all active prize vaults on Monad by asset, yield rate, prize size, draw frequency, and depositor count. The marketplace makes EverDraw the destination for "where should my idle assets work?"
 
-## Protocol Revenue
-
-EverDraw takes a small percentage of yield flowing through the factory. More vaults equals more yield flowing equals more revenue. The protocol grows with the Monad ecosystem without relying on token emissions or treasury drawdowns.
 
 ## Sponsored Deposits
 

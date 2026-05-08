@@ -26,8 +26,6 @@ This page will update with the audit report, scope, and findings when complete.
 
 **Non upgradeable.** No proxy. No upgrade key. The deployed contract is the contract. This eliminates upgrade related attack vectors at the cost of flexibility.
 
-**No house edge.** 100% of staking yield in Phase 1 goes to the prize pool. EverDraw does not take a fee in Phase 1. A small protocol fee is planned for Phase 4 and applied to yield flowing through the permissionless factory, not to user deposits.
-
 **No oracle dependency.** Winner selection uses Monad block hashes via a commit reveal scheme. No external oracle, no VRF subscription, no third party randomness assumption.
 
 **Minimal admin surface.** The owner can pause, unpause, transfer ownership (two step), and update the ticket price between rounds. The owner cannot access user funds, change draw outcomes, alter committed parameters mid round, or interfere with claims and withdrawals.

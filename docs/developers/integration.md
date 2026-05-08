@@ -1,6 +1,10 @@
 # Integration Guide
 
-## Reading round data
+EverDraw exposes two interfaces. The vault contract for on chain state, and the indexer API for derived state (participation history, points, leaderboards). Use the contract for ground truth, use the indexer for anything that would otherwise require scanning logs.
+
+---
+
+## Reading round data from the contract
 
 ```javascript
 const roundId = await pool.currentRoundId()
@@ -59,3 +63,108 @@ Both pools emit `Deposit(address indexed recipient, uint256 amount)` on every ti
 ## ABI
 
 `out/TicketPrizePoolShmonV2.sol/TicketPrizePoolShmonV2.json` in the repo, or the verified contract page on MonadVision.
+
+---
+
+## Indexer API
+
+Base URL: `https://everdraw-indexer.fly.dev`
+
+The indexer is multi pool aware and follows on chain events with a few seconds of lag. CORS is open. All responses are JSON.
+
+### Rounds
+
+```
+GET /api/rounds?pool=<address>&limit=20
+GET /api/rounds/:roundId?pool=<address>
+GET /api/rounds/:roundId/participants?pool=<address>
+```
+
+The `pool` query parameter is required when more than one pool is being indexed. Without it, the legacy single pool form is used and may merge data across pools.
+
+### Wallet history
+
+```
+GET /api/wallets/:wallet/rounds?limit=50
+```
+
+Returns every round the wallet participated in across all pools, sorted newest first. Includes settled outcome (won or not), principal, prize if any, withdraw timestamp.
+
+### Points
+
+The points endpoints back the profile page and leaderboard.
+
+```
+GET /api/points/:wallet
+```
+
+Returns:
+
+```json
+{
+  "wallet": "0x...",
+  "ens": null,
+  "lifetime_points": 0,
+  "current_streak_weeks": 0,
+  "longest_streak_weeks": 0,
+  "current_multiplier_x100": 100,
+  "current_tier": "Bronze",
+  "consecutive_non_wins": 0,
+  "highest_streak_milestone_awarded": 0,
+  "has_received_first_deposit_bonus": 0,
+  "has_received_first_win_bonus": 0,
+  "next_tier_threshold": 4,
+  "next_milestone": 4,
+  "rank": 1
+}
+```
+
+```
+GET /api/points/:wallet/history?limit=12
+```
+
+Returns an array of per round point awards with the breakdown:
+
+```json
+[
+  {
+    "pool_address": "0x...",
+    "round_id": 28,
+    "base_points": 2,
+    "multiplier_x100": 100,
+    "bonuses_breakdown": {},
+    "total_points": 2,
+    "awarded_at_unix": 1746724800
+  }
+]
+```
+
+```
+GET /api/leaderboard?limit=100&period=all
+GET /api/leaderboard?limit=100&period=month
+```
+
+```
+GET /api/points/preview?wallet=<address>&pool=<address>&tickets=<n>
+```
+
+Estimates the points the wallet would earn by buying `n` tickets in the active round of `pool` right now, including the streak multiplier and any applicable both-vaults bonus. Read only, does not write state. Used by the frontend's deposit preview line.
+
+### Multipliers and tiers
+
+The multiplier and tier values returned by the points API match the table in the [Points](../how-it-works/points.md) doc. Consumers should not hard code the ladder, prefer the `current_multiplier_x100` and `current_tier` fields returned by the API, since the ladder may evolve in future phases.
+
+### Health and metadata
+
+```
+GET /api/health
+```
+
+Returns the indexer's current `latestBlock`, the pool addresses it is following, and the points-start cutoff block (only events at or after this block contribute to points, per ADR-0008).
+
+### Schema notes
+
+- All wallet addresses are returned lowercase.
+- `ens` is best effort. If the resolver is slow or unavailable, the field is `null`. Consumers should fall back to the shortened address.
+- Timestamps are unix seconds.
+- Numeric fields that represent shMON shares or MON wei are decimal strings to avoid JS precision loss.

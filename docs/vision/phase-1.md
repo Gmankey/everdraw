@@ -1,6 +1,6 @@
 # Phase 1: Launch
 
-**Timeline: now to month 2.**
+**Timeline: Now**
 
 Ship the product. Prove the loop works in the real world.
 
@@ -16,8 +16,8 @@ Phase 1 is deliberately simple. Two MON vaults run on offset weekly schedules so
 
 **What we are validating:**
 
-- Do users deposit?
+- What gets users to deposit into Everdraw?
 - Do winners share?
 - Does the engagement loop work?
 
-The first real winners are the protocol's most important marketing asset. Phase 1 is about creating those moments.
+The first few vault users are the protocol's most important asset. Phase 1 is about creating those moments.

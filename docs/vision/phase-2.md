@@ -22,15 +22,11 @@ This changes the experience materially:
 
 - No more "missed the window."
 - Timing attacks become impossible. Depositing right before a draw is worthless because your average balance over the period is negligible.
-- Draws can run daily instead of weekly. More winners, more engagement.
+- Draws can run more flexibly instead of weekly.
 
 ### Automatic prize distribution
 
 Winners no longer claim manually. An incentivised keeper network distributes prizes directly to winner wallets. You wake up with MON you didn't expect.
-
-### Phase 2 user experience
-
-Deposit MON. Forget about it. Check if you won.
 
 ---
 

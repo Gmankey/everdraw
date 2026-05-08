@@ -22,9 +22,9 @@ Click **Withdraw Principal** on the previous vault view. Your exact deposit is r
 
 ## Want raw MON instead of shMON?
 
-Choose **Withdraw and Convert** in the redemption modal. EverDraw releases your shMON and forwards you to shmonad.xyz, where you can unstake to MON. That conversion goes through Monad's epoch unstaking queue, which takes about 7 days. The wait sits with shMonad, not with EverDraw.
+Choose **Withdraw and Convert** in the redemption modal. EverDraw releases your shMON and forwards you to shmonad.xyz, where you can unstake to MON. That conversion goes through Monad's epoch unstaking queue, which takes around 18 to 22 hours. The wait sits with shMonad, not with EverDraw.
 
-Most users skip this step. Keeping your position in shMON means you can re-enter the next EverDraw round immediately, and your shMON keeps earning staking yield in the meantime.
+Note that keeping your position in shMON means you can re-enter the next EverDraw round immediately, and your shMON keeps earning staking yield in the meantime.
 
 ---
 
