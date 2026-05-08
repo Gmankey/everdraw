@@ -2287,13 +2287,13 @@ export default function App() {
               <span>My Rounds</span>
               <span>{myRounds.length} Records</span>
             </div>
-            <div className="participants-table">
-              <div className="participants-row participants-header">
+            <div className="participants-table my-rounds rounds-table">
+              <div className="participants-row participants-header rounds-row">
                 <span>#</span><span>Round / Status</span><span>Result</span><span>Principal</span><span>Prize</span><span>Action</span>
               </div>
               {myRounds.length === 0 ? (
-                <div className="participants-row">
-                  <span>—</span><span>No prior rounds found for this wallet</span><span>—</span><span>0.0000 MON</span><span>—</span><span>—</span>
+                <div className="participants-row rounds-row">
+                  <span>—</span><span>No prior rounds found for this wallet</span><span>—</span><span>0.0000 MON</span><span>—</span><span className="action-cell">—</span>
                 </div>
               ) : myRounds.map((r) => {
                 const myRoundStatusLabel = r.isV2
@@ -2321,13 +2321,13 @@ export default function App() {
                   ? `${r.prizeClaimed ? 'Claimed' : 'Prize'}: ${Number(ethers.formatEther(r.prizeWei || 0n)).toFixed(2)} MON`
                   : '—'
                 return (
-                <div className="participants-row" key={`${r.poolAddr}:${r.rid}`}>
+                <div className="participants-row rounds-row" key={`${r.poolAddr}:${r.rid}`}>
                   <span>{r.rid}</span>
                   <span>Round #{r.rid} {'\u00B7'} {myRoundStatusLabel}</span>
                   <span>{myRoundResultLabel}</span>
                   <span>{r.principalMon} MON</span>
                   <span className={r.isWinner ? (r.prizeClaimed ? 'my-rounds-prize claimed' : 'my-rounds-prize won') : 'my-rounds-prize'}>{prizeLabel}</span>
-                  <span>
+                  <span className="action-cell">
                     {r.canWithdraw ? (
                       <button
                         className="max-btn"
