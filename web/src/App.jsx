@@ -2393,22 +2393,6 @@ export default function App() {
                   Opening Soon
                 </div>
               </div>
-            ) : !buyFormOpen ? (
-              <div className="card">
-                <div className="card-header">
-                  <div className="card-title">Vault locked</div>
-                  {shownRoundId && Number(shownRoundId) > 0 ? (
-                    <div style={{ fontSize: '0.82rem', color: 'rgba(155,109,255,0.8)', marginTop: '2px' }}>
-                      {shownVaultLabel} · Round #{shownRoundId}
-                    </div>
-                  ) : null}
-                </div>
-                <div className="deposit-area" style={{ justifyContent: 'center', textAlign: 'center' }}>
-                  <div style={{ display: 'inline-flex', alignSelf: 'center', padding: '8px 14px', borderRadius: '999px', border: '1px solid rgba(155,109,255,0.35)', color: '#c4b5fd', fontSize: '0.78rem', fontWeight: 800, letterSpacing: '0.14em' }}>LOCKED</div>
-                  <div className="card-title" style={{ fontSize: '1.35rem' }}>{shownYieldAccruing ? 'Deposits closed — yield accruing' : 'Deposits closed'}</div>
-                  <p className="deposit-caption" style={{ margin: 0 }}>{buyDisabledReason || 'This vault is not accepting tickets right now.'}</p>
-                </div>
-              </div>
             ) : (
               <div className="card">
                 <div className="card-header">
@@ -2489,16 +2473,16 @@ export default function App() {
                         ? 'Submitting...'
                         : !account
                           ? 'Connect Wallet to Buy'
-                          : isV2Pool
-                            ? `Buy with ${buyWithShmon ? 'shMON' : 'MON'}`
-                            : isDeadRound
-                              ? 'Vault Cycling — Next Round Soon'
-                              : !shownIsCurrentRound
-                                ? 'This Vault is Locked'
-                                : !salesOpen
-                                  ? 'Buy Unavailable'
-                                  : wrongNetwork
-                                    ? 'Wrong network — click Buy to switch automatically'
+                          : isDeadRound
+                            ? 'Vault Cycling — Next Round Soon'
+                            : !shownIsCurrentRound
+                              ? 'This Vault is Locked'
+                              : !salesOpen
+                                ? 'Deposits closed'
+                                : wrongNetwork
+                                  ? 'Wrong network — click Buy to switch automatically'
+                                  : isV2Pool
+                                    ? `Buy with ${buyWithShmon ? 'shMON' : 'MON'}`
                                     : canBuyTx
                                       ? 'Buy Tickets'
                                       : 'Buy Unavailable'}
