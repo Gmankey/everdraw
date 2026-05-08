@@ -2,46 +2,33 @@
 
 ## What you need
 
-- A Monad-compatible wallet
-- MON on Monad mainnet
+A wallet on Monad mainnet and some MON or shMON. That's it.
 
 ---
 
-## Step by step
+## Steps
 
-**1. Open EverDraw**
+**1. Open the app.** Go to [everdraw.xyz](https://everdraw.xyz). The current open vault is the landing view.
 
-Go to [everdraw.xyz](https://everdraw.xyz).
+**2. Connect your wallet.** Click "Connect Wallet" and approve. If your wallet is not on Monad, EverDraw prompts you to switch. If Monad isn't configured, it prompts to add the network.
 
-**2. Connect your wallet**
+**3. Check the vault state.**
 
-Click **Connect Wallet** and approve the connection.
+- **Green ring**: vault is open, deposits accepted, countdown shows time left in the 24 hour window.
+- **Purple ring**: vault is locked, yield accruing, countdown shows time until settlement.
 
-If your wallet is on the wrong network, EverDraw will prompt you to switch to Monad mainnet.
+**4. Buy.** Enter how many tickets you want. Each ticket costs 1 MON. Click "Buy Tickets" and sign the transaction. Your MON is staked as shMON the moment the transaction confirms, and your ticket count appears on the stat cards.
 
-**3. Check the vault status**
+You can also pay with shMON if you already hold it. Toggle the deposit asset on the buy form.
 
-The app shows the current round status:
-
-- **Vault open — accepting deposits**
-- **Vault locked — accumulating yield**
-- **Winner revealed**
-- **Settled — claim / withdraw available**
-
-**4. Enter your tickets and confirm**
-
-Each ticket costs 1 MON. Enter the number of tickets you want, click **Buy Tickets**, and confirm in your wallet.
-
-**5. Wait for the result**
-
-Once your transaction confirms, your tickets are in the round. When the round ends, you can check results in the **Previous Vault** view.
+**5. Wait for the draw.** The round runs itself. The keeper closes the deposit window after 24 hours and draws a winner six days later. Results show up under "Previous Vault" once the round settles.
 
 ---
 
 ## Things to know
 
-**You can buy more than once in the same round.** Your tickets add up.
-
-**Ticket count determines your odds.** If you hold 10 out of 100 tickets, your chance of winning is 10%.
-
-**You cannot withdraw from an active round.** Your deposit stays committed until the round finishes.
+- You can buy multiple times in the same round. Counts add up.
+- You can hold positions in both vaults at once. Each is independent.
+- Probability is your tickets divided by total tickets. Ticket price is fixed at 1 MON.
+- Buys are blocked in the last 30 seconds before the deposit window closes, to avoid transactions reverting on the boundary.
+- You cannot withdraw mid round. Plan your deposit timing.

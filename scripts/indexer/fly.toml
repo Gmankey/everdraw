@@ -7,6 +7,7 @@ primary_region = "sjc"
   PORT = "3001"
   DB_PATH = "/data/everdraw.db"
   NODE_ENV = "production"
+  POINTS_START_UNIX = "1778217646"
 
 [mounts]
   source = "everdraw_indexer_data"

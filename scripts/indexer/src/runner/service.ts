@@ -7,6 +7,7 @@ import type { IndexerStateRepo } from '../repositories/indexerStateRepo.js';
 import type { DeriveRoundsService } from '../services/deriveRounds.js';
 import type { DeriveWalletRoundsService } from '../services/deriveWalletRounds.js';
 import type { DeriveWalletStatsService } from '../services/deriveWalletStats.js';
+import type { DerivePointsService } from '../services/derivePoints.js';
 import type { RunnerConfig } from './config.js';
 import { POOL_EVENT_ABI } from './abi.js';
 
@@ -36,8 +37,9 @@ export function createIndexerRunner(input: {
   deriveRoundsService: DeriveRoundsService;
   deriveWalletRoundsService: DeriveWalletRoundsService;
   deriveWalletStatsService: DeriveWalletStatsService;
+  derivePointsService?: DerivePointsService;
 }): IndexerRunner {
-  const { config, rawEventsRepo, indexerStateRepo, deriveRoundsService, deriveWalletRoundsService, deriveWalletStatsService } = input;
+  const { config, rawEventsRepo, indexerStateRepo, deriveRoundsService, deriveWalletRoundsService, deriveWalletStatsService, derivePointsService } = input;
   const provider = new JsonRpcProvider(config.rpcUrl);
   const iface = new Interface(POOL_EVENT_ABI);
 
@@ -82,6 +84,7 @@ export function createIndexerRunner(input: {
         deriveRoundsService.rebuildFromRaw();
         deriveWalletRoundsService.rebuildFromRaw();
         deriveWalletStatsService.rebuild();
+        derivePointsService?.rebuildSettlementPoints();
       }
       indexerStateRepo.set(LAST_FINALIZED_BLOCK_KEY, String(toBlock), nowIso());
 

@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS wallet_rounds (
   withdrew INTEGER NOT NULL DEFAULT 0,
   prize_claimed TEXT NOT NULL DEFAULT '0',
   principal_withdrawn TEXT NOT NULL DEFAULT '0',
+  withdrawn_at TEXT,
   net_position TEXT NOT NULL DEFAULT '0',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -107,3 +108,36 @@ CREATE TABLE IF NOT EXISTS indexer_state (
   value TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS wallet_points (
+  wallet TEXT PRIMARY KEY,
+  lifetime_points INTEGER NOT NULL DEFAULT 0,
+  has_received_first_deposit_bonus INTEGER NOT NULL DEFAULT 0,
+  has_received_first_win_bonus INTEGER NOT NULL DEFAULT 0,
+  highest_streak_milestone_awarded INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS wallet_streaks (
+  wallet TEXT PRIMARY KEY,
+  current_streak_weeks INTEGER NOT NULL DEFAULT 0,
+  longest_streak_weeks INTEGER NOT NULL DEFAULT 0,
+  last_checkpoint_unix INTEGER,
+  consecutive_non_wins INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS wallet_round_points (
+  wallet TEXT NOT NULL,
+  pool_address TEXT NOT NULL,
+  round_id INTEGER NOT NULL,
+  base_points INTEGER NOT NULL,
+  multiplier_x100 INTEGER NOT NULL,
+  bonuses_breakdown TEXT NOT NULL,
+  total_points INTEGER NOT NULL,
+  awarded_at_unix INTEGER NOT NULL,
+  PRIMARY KEY (wallet, pool_address, round_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_round_points_wallet ON wallet_round_points(wallet);
+CREATE INDEX IF NOT EXISTS idx_wallet_points_lifetime ON wallet_points(lifetime_points DESC);

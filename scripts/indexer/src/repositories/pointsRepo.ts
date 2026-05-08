@@ -1,0 +1,186 @@
+import type Database from 'better-sqlite3';
+import type { WalletPointsRow, WalletRoundPointsRow, WalletStreakRow } from '../types/domain.js';
+
+export interface PointsProfile extends WalletPointsRow, WalletStreakRow {}
+
+export interface PointsRepo {
+  resetRoundPointsAndTotals(): void;
+  ensureWallet(wallet: string, nowUnix: number): void;
+  getWalletPoints(wallet: string): WalletPointsRow | null;
+  getWalletStreak(wallet: string): WalletStreakRow | null;
+  getProfile(wallet: string): PointsProfile | null;
+  upsertWalletPoints(row: WalletPointsRow): void;
+  upsertWalletStreak(row: WalletStreakRow): void;
+  insertRoundPoints(row: WalletRoundPointsRow): void;
+  awardBonus(wallet: string, points: number, nowUnix: number): void;
+  listHistory(wallet: string, limit: number): WalletRoundPointsRow[];
+  listLeaderboard(limit: number, period: 'all' | 'month'): Array<{ wallet: string; lifetimePoints: number; monthPoints?: number; currentStreakWeeks: number }>;
+  getRank(wallet: string, period: 'all' | 'month'): number | null;
+  listWalletsWithDeposits(): string[];
+  hasAnySettledRoundBetween(fromUnix: number, toUnix: number): boolean;
+  hasActivePositionAt(wallet: string, checkpointUnix: number, poolAddress?: string): boolean;
+  hadFirstDepositBefore(wallet: string, poolAddress: string, roundId: number): boolean;
+  hasOtherActivePoolAt(wallet: string, poolAddress: string, atUnix: number): boolean;
+}
+
+export function createPointsRepo(db: Database.Database): PointsRepo {
+  const resetTx = db.transaction(() => {
+    db.prepare('DELETE FROM wallet_round_points').run();
+    db.prepare(`
+      UPDATE wallet_points SET
+        lifetime_points =
+          CASE WHEN highest_streak_milestone_awarded >= 4 THEN 50 ELSE 0 END +
+          CASE WHEN highest_streak_milestone_awarded >= 13 THEN 200 ELSE 0 END +
+          CASE WHEN highest_streak_milestone_awarded >= 26 THEN 500 ELSE 0 END +
+          CASE WHEN highest_streak_milestone_awarded >= 52 THEN 1000 ELSE 0 END,
+        has_received_first_deposit_bonus = 0,
+        has_received_first_win_bonus = 0,
+        updated_at = CAST(strftime('%s','now') AS INTEGER)
+    `).run();
+    db.prepare("UPDATE wallet_streaks SET consecutive_non_wins = 0, updated_at = CAST(strftime('%s','now') AS INTEGER)").run();
+  });
+
+  const ensureWalletStmt = db.prepare(`
+    INSERT INTO wallet_points (wallet, updated_at) VALUES (LOWER(?), ?)
+    ON CONFLICT(wallet) DO NOTHING
+  `);
+  const ensureStreakStmt = db.prepare(`
+    INSERT INTO wallet_streaks (wallet, updated_at) VALUES (LOWER(?), ?)
+    ON CONFLICT(wallet) DO NOTHING
+  `);
+  const getPointsStmt = db.prepare(`
+    SELECT wallet, lifetime_points AS lifetimePoints,
+      has_received_first_deposit_bonus AS hasReceivedFirstDepositBonus,
+      has_received_first_win_bonus AS hasReceivedFirstWinBonus,
+      highest_streak_milestone_awarded AS highestStreakMilestoneAwarded,
+      updated_at AS updatedAt
+    FROM wallet_points WHERE LOWER(wallet) = LOWER(?)
+  `);
+  const getStreakStmt = db.prepare(`
+    SELECT wallet, current_streak_weeks AS currentStreakWeeks,
+      longest_streak_weeks AS longestStreakWeeks,
+      last_checkpoint_unix AS lastCheckpointUnix,
+      consecutive_non_wins AS consecutiveNonWins,
+      updated_at AS updatedAt
+    FROM wallet_streaks WHERE LOWER(wallet) = LOWER(?)
+  `);
+  const upsertPointsStmt = db.prepare(`
+    INSERT INTO wallet_points (wallet, lifetime_points, has_received_first_deposit_bonus, has_received_first_win_bonus, highest_streak_milestone_awarded, updated_at)
+    VALUES (LOWER(@wallet), @lifetimePoints, @hasReceivedFirstDepositBonus, @hasReceivedFirstWinBonus, @highestStreakMilestoneAwarded, @updatedAt)
+    ON CONFLICT(wallet) DO UPDATE SET lifetime_points = excluded.lifetime_points,
+      has_received_first_deposit_bonus = excluded.has_received_first_deposit_bonus,
+      has_received_first_win_bonus = excluded.has_received_first_win_bonus,
+      highest_streak_milestone_awarded = excluded.highest_streak_milestone_awarded,
+      updated_at = excluded.updated_at
+  `);
+  const upsertStreakStmt = db.prepare(`
+    INSERT INTO wallet_streaks (wallet, current_streak_weeks, longest_streak_weeks, last_checkpoint_unix, consecutive_non_wins, updated_at)
+    VALUES (LOWER(@wallet), @currentStreakWeeks, @longestStreakWeeks, @lastCheckpointUnix, @consecutiveNonWins, @updatedAt)
+    ON CONFLICT(wallet) DO UPDATE SET current_streak_weeks = excluded.current_streak_weeks,
+      longest_streak_weeks = excluded.longest_streak_weeks,
+      last_checkpoint_unix = excluded.last_checkpoint_unix,
+      consecutive_non_wins = excluded.consecutive_non_wins,
+      updated_at = excluded.updated_at
+  `);
+  const insertRoundPointsStmt = db.prepare(`
+    INSERT INTO wallet_round_points (wallet, pool_address, round_id, base_points, multiplier_x100, bonuses_breakdown, total_points, awarded_at_unix)
+    VALUES (LOWER(@wallet), LOWER(@poolAddress), @roundId, @basePoints, @multiplierX100, @bonusesBreakdown, @totalPoints, @awardedAtUnix)
+    ON CONFLICT(wallet, pool_address, round_id) DO UPDATE SET base_points = excluded.base_points,
+      multiplier_x100 = excluded.multiplier_x100,
+      bonuses_breakdown = excluded.bonuses_breakdown,
+      total_points = excluded.total_points,
+      awarded_at_unix = excluded.awarded_at_unix
+  `);
+  const awardBonusStmt = db.prepare('UPDATE wallet_points SET lifetime_points = lifetime_points + ?, updated_at = ? WHERE LOWER(wallet) = LOWER(?)');
+  const historyStmt = db.prepare(`
+    SELECT wallet, pool_address AS poolAddress, round_id AS roundId, base_points AS basePoints,
+      multiplier_x100 AS multiplierX100, bonuses_breakdown AS bonusesBreakdown, total_points AS totalPoints,
+      awarded_at_unix AS awardedAtUnix
+    FROM wallet_round_points WHERE LOWER(wallet) = LOWER(?)
+    ORDER BY awarded_at_unix DESC, round_id DESC LIMIT ?
+  `);
+
+  return {
+    resetRoundPointsAndTotals() { resetTx(); },
+    ensureWallet(wallet, nowUnix) { ensureWalletStmt.run(wallet, nowUnix); ensureStreakStmt.run(wallet, nowUnix); },
+    getWalletPoints(wallet) { return (getPointsStmt.get(wallet) as WalletPointsRow | undefined) ?? null; },
+    getWalletStreak(wallet) { return (getStreakStmt.get(wallet) as WalletStreakRow | undefined) ?? null; },
+    getProfile(wallet) {
+      const points = this.getWalletPoints(wallet);
+      const streak = this.getWalletStreak(wallet);
+      return points && streak ? { ...points, ...streak } : null;
+    },
+    upsertWalletPoints(row) { upsertPointsStmt.run(row); },
+    upsertWalletStreak(row) { upsertStreakStmt.run(row); },
+    insertRoundPoints(row) { insertRoundPointsStmt.run(row); },
+    awardBonus(wallet, points, nowUnix) { awardBonusStmt.run(points, nowUnix, wallet); },
+    listHistory(wallet, limit) { return historyStmt.all(wallet, Math.max(1, Math.min(100, limit))) as WalletRoundPointsRow[]; },
+    listLeaderboard(limit, period) {
+      if (period === 'month') {
+        return db.prepare(`
+          SELECT wp.wallet, wp.lifetime_points AS lifetimePoints, COALESCE(SUM(wrp.total_points), 0) AS monthPoints,
+            COALESCE(ws.current_streak_weeks, 0) AS currentStreakWeeks
+          FROM wallet_points wp
+          LEFT JOIN wallet_round_points wrp ON wrp.wallet = wp.wallet AND wrp.awarded_at_unix >= CAST(strftime('%s','now','start of month') AS INTEGER)
+          LEFT JOIN wallet_streaks ws ON ws.wallet = wp.wallet
+          GROUP BY wp.wallet ORDER BY monthPoints DESC, wp.wallet ASC LIMIT ?
+        `).all(Math.max(1, Math.min(500, limit))) as Array<{ wallet: string; lifetimePoints: number; monthPoints: number; currentStreakWeeks: number }>;
+      }
+      return db.prepare(`
+        SELECT wp.wallet, wp.lifetime_points AS lifetimePoints, COALESCE(ws.current_streak_weeks, 0) AS currentStreakWeeks
+        FROM wallet_points wp LEFT JOIN wallet_streaks ws ON ws.wallet = wp.wallet
+        ORDER BY wp.lifetime_points DESC, wp.wallet ASC LIMIT ?
+      `).all(Math.max(1, Math.min(500, limit))) as Array<{ wallet: string; lifetimePoints: number; currentStreakWeeks: number }>;
+    },
+    getRank(wallet, period) {
+      const row = period === 'month'
+        ? db.prepare(`
+            SELECT rank FROM (
+              SELECT wallet, RANK() OVER (ORDER BY month_points DESC, wallet ASC) AS rank FROM (
+                SELECT wp.wallet, COALESCE(SUM(wrp.total_points), 0) AS month_points
+                FROM wallet_points wp LEFT JOIN wallet_round_points wrp ON wrp.wallet = wp.wallet AND wrp.awarded_at_unix >= CAST(strftime('%s','now','start of month') AS INTEGER)
+                GROUP BY wp.wallet
+              )
+            ) WHERE LOWER(wallet) = LOWER(?)
+          `).get(wallet) as { rank: number } | undefined
+        : db.prepare(`SELECT rank FROM (SELECT wallet, RANK() OVER (ORDER BY lifetime_points DESC, wallet ASC) AS rank FROM wallet_points) WHERE LOWER(wallet) = LOWER(?)`).get(wallet) as { rank: number } | undefined;
+      return row?.rank ?? null;
+    },
+    listWalletsWithDeposits() {
+      return db.prepare('SELECT DISTINCT LOWER(wallet) AS wallet FROM wallet_rounds WHERE tickets > 0 ORDER BY wallet ASC').all().map((r: any) => r.wallet as string);
+    },
+    hasAnySettledRoundBetween(fromUnix, toUnix) {
+      const row = db.prepare(`SELECT COUNT(*) AS c FROM rounds WHERE state = 'settled' AND settled_at IS NOT NULL AND CAST(strftime('%s', settled_at) AS INTEGER) >= ? AND CAST(strftime('%s', settled_at) AS INTEGER) < ?`).get(fromUnix, toUnix) as { c: number };
+      return row.c > 0;
+    },
+    hasActivePositionAt(wallet, checkpointUnix, poolAddress) {
+      const params: Array<string | number> = [wallet, checkpointUnix, checkpointUnix];
+      let poolSql = '';
+      if (poolAddress) { poolSql = ' AND LOWER(wr.pool_address) = LOWER(?)'; params.push(poolAddress); }
+      const row = db.prepare(`
+        SELECT COUNT(*) AS c FROM wallet_rounds wr
+        JOIN rounds r ON r.round_id = wr.round_id AND r.pool_address = wr.pool_address
+        WHERE LOWER(wr.wallet) = LOWER(?) AND wr.tickets > 0
+          AND r.state IN ('open','committed')
+          AND (r.opened_at IS NULL OR CAST(strftime('%s', r.opened_at) AS INTEGER) <= ?)
+          AND (r.settled_at IS NULL OR CAST(strftime('%s', r.settled_at) AS INTEGER) >= ?)
+          ${poolSql}
+      `).get(...params) as { c: number };
+      return row.c > 0;
+    },
+    hadFirstDepositBefore(wallet, poolAddress, roundId) {
+      const row = db.prepare(`SELECT COUNT(*) AS c FROM wallet_rounds WHERE LOWER(wallet) = LOWER(?) AND tickets > 0 AND (round_id < ? OR (round_id = ? AND LOWER(pool_address) < LOWER(?)))`).get(wallet, roundId, roundId, poolAddress) as { c: number };
+      return row.c > 0;
+    },
+    hasOtherActivePoolAt(wallet, poolAddress, atUnix) {
+      const row = db.prepare(`
+        SELECT COUNT(*) AS c FROM wallet_rounds wr JOIN rounds r ON r.round_id = wr.round_id AND r.pool_address = wr.pool_address
+        WHERE LOWER(wr.wallet) = LOWER(?) AND LOWER(wr.pool_address) <> LOWER(?) AND wr.tickets > 0
+          AND r.state IN ('open','committed','drawn','unstaking','settled')
+          AND (r.opened_at IS NULL OR CAST(strftime('%s', r.opened_at) AS INTEGER) <= ?)
+          AND (r.settled_at IS NULL OR CAST(strftime('%s', r.settled_at) AS INTEGER) >= ?)
+      `).get(wallet, poolAddress, atUnix, atUnix) as { c: number };
+      return row.c > 0;
+    },
+  };
+}

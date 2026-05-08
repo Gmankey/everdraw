@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "rebuild": "ts-node src/rebuild.ts",
+    "reset:points": "tsx scripts/reset-points-tables.ts",
     "auth:start": "tsx src/auth/server.ts",
     "run": "tsx src/run.ts",
     "start": "tsx src/index.ts"

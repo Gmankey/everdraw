@@ -1,41 +1,34 @@
-# Claiming & Withdrawing
+# Claiming and Withdrawing
 
-Once a round is finalized, actions are available from the **Previous Vault** view.
+Once a round settles, your principal and any prize are available from the "Previous Vault" view. Settlement happens within a few seconds of the lock period ending. There is no waiting queue inside EverDraw.
 
 ---
 
 ## If you won
 
-**1. Claim your prize**
+1. Open the previous vault view. Your address is in the winner spotlight.
+2. Click **Claim Prize** and confirm the transaction. The prize lands in your wallet as shMON.
+3. Click **Withdraw Principal** to receive your original deposit back, also in shMON. This is a separate transaction.
 
-Click **Claim Prize** and confirm the transaction.
-
-**2. Withdraw your principal**
-
-After that, click **Withdraw Tokens** to return your original MON deposit.
-
-These are separate actions.
+The two actions can also run in one signed batch from the redemption modal.
 
 ---
 
 ## If you didn't win
 
-Click **Withdraw Tokens** and confirm the transaction.
+Click **Withdraw Principal** on the previous vault view. Your exact deposit is returned in shMON. No fees, no slippage, no loss.
 
-Your principal is returned to you.
+---
+
+## Want raw MON instead of shMON?
+
+Choose **Withdraw and Convert** in the redemption modal. EverDraw releases your shMON and forwards you to shmonad.xyz, where you can unstake to MON. That conversion goes through Monad's epoch unstaking queue, which takes around 18 to 22 hours. The wait sits with shMonad, not with EverDraw.
+
+Note that keeping your position in shMON means you can re-enter the next EverDraw round immediately, and your shMON keeps earning staking yield in the meantime.
 
 ---
 
 ## Timing
 
-Claim and withdraw become available after the round is finalized.
+The withdraw button is disabled with a countdown until the round settles. Once settled, the button is permanently active. There is no expiry on principal withdrawal and no expiry on prize claims. Funds sit in the contract until you action them.
 
-If the buttons are not active yet, the round is still finishing.
-
----
-
-## Deadlines
-
-Principal withdrawals do not expire.
-
-Prize claims may have a claim window shown in the UI. If a prize is left unclaimed, it can roll forward into a future round.

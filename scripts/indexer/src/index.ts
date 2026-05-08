@@ -5,9 +5,11 @@ import { createRoundsRepo } from './repositories/roundsRepo.js';
 import { createWalletRoundsRepo } from './repositories/walletRoundsRepo.js';
 import { createWalletStatsRepo } from './repositories/walletStatsRepo.js';
 import { createIndexerStateRepo } from './repositories/indexerStateRepo.js';
+import { createPointsRepo } from './repositories/pointsRepo.js';
 import { createDeriveRoundsService } from './services/deriveRounds.js';
 import { createDeriveWalletRoundsService } from './services/deriveWalletRounds.js';
 import { createDeriveWalletStatsService } from './services/deriveWalletStats.js';
+import { createDerivePointsService } from './services/derivePoints.js';
 import { getRunnerConfig } from './runner/config.js';
 import { createIndexerRunner } from './runner/service.js';
 import { createApiServer } from './server.js';
@@ -25,10 +27,12 @@ async function main(): Promise<void> {
   const walletRoundsRepo = createWalletRoundsRepo(db);
   const walletStatsRepo = createWalletStatsRepo(db);
   const indexerStateRepo = createIndexerStateRepo(db);
+  const pointsRepo = createPointsRepo(db);
 
   const deriveRoundsService = createDeriveRoundsService(rawEventsRepo, roundsRepo);
   const deriveWalletRoundsService = createDeriveWalletRoundsService(rawEventsRepo, walletRoundsRepo);
   const deriveWalletStatsService = createDeriveWalletStatsService(walletRoundsRepo, walletStatsRepo);
+  const derivePointsService = createDerivePointsService({ pointsRepo, roundsRepo, walletRoundsRepo });
 
   const runner = createIndexerRunner({
     config: getRunnerConfig(),
@@ -37,6 +41,7 @@ async function main(): Promise<void> {
     deriveRoundsService,
     deriveWalletRoundsService,
     deriveWalletStatsService,
+    derivePointsService,
   });
 
   const server = createApiServer({
@@ -44,6 +49,7 @@ async function main(): Promise<void> {
     runner,
     roundsRepo,
     walletRoundsRepo,
+    pointsRepo,
     startedAt,
   });
 
