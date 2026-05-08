@@ -1731,7 +1731,8 @@ export default function App() {
       }
       try {
         const provider = await getReadProvider()
-        const rows = []
+        const rowsByKey = new Map()
+        const putRow = (row) => rowsByKey.set(`${String(row.poolAddr).toLowerCase()}:${row.rid}`, row)
 
         for (const addr of poolAddresses) {
           if (!ethers.isAddress(addr)) continue
@@ -1758,7 +1759,7 @@ export default function App() {
             if (!info) return
             const isWinner = account.toLowerCase() === String(info.winner || '').toLowerCase()
             if (principal > 0n || isWinner) {
-              rows.push({
+              putRow({
                 rid,
                 poolAddr: addr,
                 isV2: false,
@@ -1786,24 +1787,31 @@ export default function App() {
           if (!ethers.isAddress(r.poolAddress)) continue
           const isV2round = poolAddressesV2.some((a) => a.toLowerCase() === r.poolAddress.toLowerCase())
           const salesEndSec = r.salesEndTime ? Math.floor(new Date(r.salesEndTime).getTime() / 1000) : 0
-          rows.push({
+          const monPaidWei = BigInt(r.monPaid || '0')
+          const principalWithdrawnWei = BigInt(r.principalWithdrawn || '0')
+          const remainingPrincipalWei = principalWithdrawnWei >= monPaidWei ? 0n : monPaidWei - principalWithdrawnWei
+          const normalizedState = isV2round
+            ? (r.state === 'open' ? 0 : r.state === 'committed' ? 1 : r.state === 'settled' ? 2 : r.state === 'skipped' ? 3 : 0)
+            : (r.state === 'settled' || r.state === 'skipped' ? 3 : r.state === 'drawn' || r.state === 'unstaking' ? 2 : r.state === 'committed' ? 1 : 0)
+          putRow({
             rid: r.roundId,
             poolAddr: r.poolAddress,
             isV2: isV2round,
-            state: r.state === 'open' ? 0 : r.state === 'committed' ? 1 : r.state === 'settled' ? 2 : r.state === 'skipped' ? 3 : 0,
+            state: normalizedState,
             salesEndTime: salesEndSec,
             commitAfterTime: salesEndSec + (isV2round ? 604800 : 0),
             isWinner: r.won === 1,
             prizeClaimed: r.prizeClaimed !== '0',
-            principalWei: BigInt(r.monPaid || '0'),
-            principalMon: Number(ethers.formatEther(BigInt(r.monPaid || '0'))).toFixed(4),
+            principalWei: remainingPrincipalWei,
+            principalMon: Number(ethers.formatEther(remainingPrincipalWei)).toFixed(4),
             withdrawableShares: 0n,
             withdrawableMon: null,
             prizeWei: BigInt(r.prizeClaimed || '0'),
-            canWithdraw: ['settled', 'skipped'].includes(r.state) && BigInt(r.monPaid || '0') > 0n && r.principalWithdrawn === '0',
+            canWithdraw: ['settled', 'skipped'].includes(r.state) && remainingPrincipalWei > 0n,
           })
         }
 
+        const rows = Array.from(rowsByKey.values())
         rows.sort((a, b) => b.rid !== a.rid ? b.rid - a.rid : a.poolAddr.localeCompare(b.poolAddr))
         assertNotAborted(ac.signal)
         setMyRounds(rows)
@@ -1814,6 +1822,15 @@ export default function App() {
     loadMyRounds()
     return () => ac.abort()
   }, [account, poolAddresses, poolAddressesV2, roundId])
+
+  const poolDisplayLabel = useCallback((addr, isV2 = false) => {
+    const lc = String(addr || '').toLowerCase()
+    const v2Index = poolAddressesV2.findIndex((a) => a.toLowerCase() === lc)
+    if (v2Index >= 0) return v2Index === 0 ? 'Vault A' : v2Index === 1 ? 'Vault B' : `Vault ${v2Index + 1}`
+    const legacyIndex = poolAddresses.findIndex((a) => a.toLowerCase() === lc)
+    if (legacyIndex >= 0) return `Legacy ${legacyIndex % 2 === 0 ? 'Vault A' : 'Vault B'}`
+    return isV2 ? 'Vault' : `Legacy ${shortAddr(addr)}`
+  }, [poolAddresses, poolAddressesV2])
 
   const myRoundsStats = useMemo(() => {
     const lockedWei = myRounds
@@ -2337,7 +2354,7 @@ export default function App() {
                 return (
                 <div className="participants-row rounds-row" key={`${r.poolAddr}:${r.rid}`}>
                   <span>{r.rid}</span>
-                  <span>Round #{r.rid} {'\u00B7'} {myRoundStatusLabel}</span>
+                  <span>{poolDisplayLabel(r.poolAddr, r.isV2)} {'\u00B7'} Round #{r.rid} {'\u00B7'} {myRoundStatusLabel}</span>
                   <span>{myRoundResultLabel}</span>
                   <span>{r.principalMon} MON</span>
                   <span className={r.isWinner ? (r.prizeClaimed ? 'my-rounds-prize claimed' : 'my-rounds-prize won') : 'my-rounds-prize'}>{prizeLabel}</span>
