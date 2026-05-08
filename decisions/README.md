@@ -52,3 +52,5 @@ Anything still unconfirmed.
 - [ADR-0005 — UX and operational decisions for the two-vault redeploy](0005-ux-and-ops-decisions.md)
 - [ADR-0006 — Merkl-readable position surface on V2 vault](0006-merkl-readable-position-surface.md)
 - [ADR-0007 — Defer "Keep Playing" to Phase 2 (TWAB)](0007-defer-keep-playing-to-phase-2.md)
+- [ADR-0008 — EverDraw points system design](0008-points-system-design.md)
+- [ADR-0009 — Frontend per-pool fetch hygiene](0009-frontend-per-pool-fetch-hygiene.md)

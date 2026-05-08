@@ -7,29 +7,9 @@ import { StatsPage } from './Stats.jsx'
 import { modal } from './walletModal.ts'
 import monIcon from './assets/MON.png'
 import shmonIcon from './assets/shmon.png'
+import { _cached, assertNotAborted, getCachedRoundInfo, isAbortError, withAbort } from './rpcCache.js'
 import './App.css'
 import './shmon.css'
-
-// In-memory RPC cache
-const _rpcCache = new Map()
-function _cached(key, ttlMs, fetcher) {
-  const hit = _rpcCache.get(key)
-  if (hit && Date.now() - hit.ts < ttlMs) return Promise.resolve(hit.value)
-  const p = fetcher().then(v => { _rpcCache.set(key, { value: v, ts: Date.now() }); return v })
-  _rpcCache.set(key, { value: p, ts: Date.now() })
-  return p
-}
-async function getCachedRoundInfo(pool, poolAddress, rid) {
-  const key = `roundInfo:${poolAddress}:${rid}`
-  const hit = _rpcCache.get(key)
-  if (hit && hit.value && !hit.value.then) {
-    const isSettled = Number(hit.value.state) === 3
-    if (isSettled || (Date.now() - hit.ts < 8_000)) return hit.value
-  }
-  const info = await pool.getRoundInfo(rid)
-  _rpcCache.set(key, { value: info, ts: Date.now() })
-  return info
-}
 
 function getWalletProvider() {
   return modal.getWalletProvider() || window.ethereum || null
@@ -249,10 +229,12 @@ function LeaderboardPage({ account }) {
   const [period, setPeriod] = useState('all')
   const [rows, setRows] = useState([])
   useEffect(() => {
-    fetch(`${getIndexerBaseUrl()}/api/leaderboard?limit=100&period=${period}`)
+    const ac = new AbortController()
+    fetch(`${getIndexerBaseUrl()}/api/leaderboard?limit=100&period=${period}`, { signal: ac.signal })
       .then((r) => r.ok ? r.json() : [])
-      .then((data) => setRows(Array.isArray(data) ? data : []))
-      .catch(() => setRows([]))
+      .then((data) => { assertNotAborted(ac.signal); setRows(Array.isArray(data) ? data : []) })
+      .catch((err) => { if (!isAbortError(err)) setRows([]) })
+    return () => ac.abort()
   }, [period])
   const currentRow = account ? rows.find((r) => r.wallet?.toLowerCase() === account.toLowerCase()) : null
   return (
@@ -882,33 +864,33 @@ export default function App() {
 
 
   useEffect(() => {
-    let cancelled = false
+    const ac = new AbortController()
     if (!account) {
       setPointsProfile(null)
       setPointsHistory([])
-      return () => { cancelled = true }
+      return () => ac.abort()
     }
     Promise.all([
-      fetch(`${getIndexerBaseUrl()}/api/points/${account}`).then((r) => r.ok ? r.json() : null),
-      fetch(`${getIndexerBaseUrl()}/api/points/${account}/history?limit=12`).then((r) => r.ok ? r.json() : []),
+      fetch(`${getIndexerBaseUrl()}/api/points/${account}`, { signal: ac.signal }).then((r) => r.ok ? r.json() : null),
+      fetch(`${getIndexerBaseUrl()}/api/points/${account}/history?limit=12`, { signal: ac.signal }).then((r) => r.ok ? r.json() : []),
     ]).then(([profile, history]) => {
-      if (cancelled) return
+      assertNotAborted(ac.signal)
       setPointsProfile(profile)
       setPointsHistory(Array.isArray(history) ? history : [])
-    }).catch(() => {
-      if (!cancelled) {
+    }).catch((err) => {
+      if (!isAbortError(err)) {
         setPointsProfile(null)
         setPointsHistory([])
       }
     })
-    return () => { cancelled = true }
+    return () => ac.abort()
   }, [account])
 
   useEffect(() => {
-    let cancelled = false
+    const ac = new AbortController()
     if (!account || !poolAddress || !ticketCountInput) {
       setPointsPreview(null)
-      return () => { cancelled = true }
+      return () => ac.abort()
     }
     const timer = setTimeout(() => {
       const tickets = Math.max(0, Math.floor(Number(ticketCountInput || 0)))
@@ -917,12 +899,15 @@ export default function App() {
       url.searchParams.set('wallet', account)
       url.searchParams.set('pool', poolAddress)
       url.searchParams.set('tickets', String(tickets))
-      fetch(url).then((r) => r.ok ? r.json() : null).then((data) => { if (!cancelled) setPointsPreview(data) }).catch(() => { if (!cancelled) setPointsPreview(null) })
+      fetch(url, { signal: ac.signal })
+        .then((r) => r.ok ? r.json() : null)
+        .then((data) => { assertNotAborted(ac.signal); setPointsPreview(data) })
+        .catch((err) => { if (!isAbortError(err)) setPointsPreview(null) })
     }, 250)
-    return () => { cancelled = true; clearTimeout(timer) }
+    return () => { ac.abort(); clearTimeout(timer) }
   }, [account, poolAddress, ticketCountInput])
 
-  const refreshVaultSummaries = useCallback(async () => {
+  const refreshVaultSummaries = useCallback(async ({ signal } = {}) => {
     if (!allPoolAddresses.length) {
       setVaultSummaries([])
       return
@@ -930,15 +915,16 @@ export default function App() {
     const provider = await getReadProvider()
     const summaries = await Promise.all(allPoolAddresses.map(async (addr) => {
       try {
+        assertNotAborted(signal)
         const v2 = poolAddressesV2.some((a) => a.toLowerCase() === addr.toLowerCase())
         const abi = v2 ? POOL_V2_ABI : POOL_ABI
         const pool = new ethers.Contract(addr, abi, provider)
-        const rid = await _cached(`currentRound:${addr}`, 10_000, () => pool.currentRoundId())
-        const info = await getCachedRoundInfo(pool, addr, rid)
+        const rid = await _cached(`currentRound:${addr}`, 10_000, () => pool.currentRoundId(), signal)
+        const info = await getCachedRoundInfo(pool, addr, rid, signal)
         const state = Number(info.state)
         const salesEndTime = Number(info.salesEndTime)
         const nowSec = Math.floor(Date.now() / 1000)
-        const commitAfter = v2 ? Number(await pool.getCommitAfterTime(rid).catch(() => 0)) : 0
+        const commitAfter = v2 ? Number(await withAbort(pool.getCommitAfterTime(rid).catch(() => 0), signal)) : 0
         const secs = Math.max(0, salesEndTime - nowSec)
         const yieldSecs = Math.max(0, commitAfter - nowSec)
         return {
@@ -981,15 +967,17 @@ export default function App() {
       return a.poolAddress.localeCompare(b.poolAddress)
     })
 
+    assertNotAborted(signal)
     setVaultSummaries(summaries)
   }, [allPoolAddresses, poolAddressesV2])
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async ({ signal } = {}) => {
     if (!poolAddress) return
     if (!ethers.isAddress(poolAddress)) {
       throw new Error('Invalid VITE_POOL_ADDRESS. Use a 0x... contract address.')
     }
     const provider = await getReadProvider()
+    assertNotAborted(signal)
     const pool = new ethers.Contract(poolAddress, activePoolAbi, provider)
 
     const [
@@ -1003,19 +991,20 @@ export default function App() {
       shmonAddr,
       accountBalance,
     ] = await Promise.all([
-      _cached(`currentRound:${poolAddress}`, 10_000, () => pool.currentRoundId()),
-      pool.nextExecutable(),
-      _cached(`ticketPrice:${poolAddress}`, 86400_000 * 365, () => pool.ticketPriceMON()),
-      _cached(`deposit:${poolAddress}`, 86400_000 * 365, () => isV2Pool ? pool.roundDurationSec() : pool.depositPeriodSec()),
-      isV2Pool ? pool.yieldPeriodSec().catch(() => 0) : pool.yieldPeriodSec(),
-      provider.getBlockNumber(),
-      provider.getNetwork(),
-      pool.shmon().catch(() => ethers.ZeroAddress),
-      account ? provider.getBalance(account).catch(() => null) : Promise.resolve(null),
+      _cached(`currentRound:${poolAddress}`, 10_000, () => pool.currentRoundId(), signal),
+      withAbort(pool.nextExecutable(), signal),
+      _cached(`ticketPrice:${poolAddress}`, 86400_000 * 365, () => pool.ticketPriceMON(), signal),
+      _cached(`deposit:${poolAddress}`, 86400_000 * 365, () => isV2Pool ? pool.roundDurationSec() : pool.depositPeriodSec(), signal),
+      withAbort(isV2Pool ? pool.yieldPeriodSec().catch(() => 0) : pool.yieldPeriodSec(), signal),
+      withAbort(provider.getBlockNumber(), signal),
+      withAbort(provider.getNetwork(), signal),
+      withAbort(pool.shmon().catch(() => ethers.ZeroAddress), signal),
+      account ? withAbort(provider.getBalance(account).catch(() => null), signal) : Promise.resolve(null),
     ])
 
-    const info = await getCachedRoundInfo(pool, poolAddress, rid)
+    const info = await getCachedRoundInfo(pool, poolAddress, rid, signal)
 
+    assertNotAborted(signal)
     setRoundId(rid.toString())
     setRoundInfo(info)
     setNextAction(Number(nextExecutable?.[1] ?? 0))
@@ -1033,12 +1022,13 @@ export default function App() {
       if (ethers.isAddress(shmonAddr) && shmonAddr !== ethers.ZeroAddress) {
         const shmon = new ethers.Contract(shmonAddr, SHMON_READ_ABI, provider)
         const [ep, shmonBal] = await Promise.all([
-          shmon.getInternalEpoch(),
-          account ? shmon.balanceOf(account).catch(() => 0n) : Promise.resolve(0n),
+          withAbort(shmon.getInternalEpoch(), signal),
+          account ? withAbort(shmon.balanceOf(account).catch(() => 0n), signal) : Promise.resolve(0n),
         ])
+        assertNotAborted(signal)
         setCurrentInternalEpoch(Number(ep))
         if (account) {
-          const monBal = shmonBal > 0n ? await _cached(`shmonMonBal:${account}:${shmonAddr}`, 15_000, () => shmon.convertToAssets(shmonBal)) : 0n
+          const monBal = shmonBal > 0n ? await _cached(`shmonMonBal:${account}:${shmonAddr}`, 15_000, () => shmon.convertToAssets(shmonBal), signal) : 0n
           setShmonMonBalance(monBal)
         }
       }
@@ -1047,7 +1037,8 @@ export default function App() {
     }
 
     if (isV2Pool) {
-      const commitAt = Number(await pool.getCommitAfterTime(rid).catch(() => 0))
+      const commitAt = Number(await withAbort(pool.getCommitAfterTime(rid).catch(() => 0), signal))
+      assertNotAborted(signal)
       setCommitAfterTime(commitAt)
     } else {
       setCommitAfterTime(0)
@@ -1055,7 +1046,8 @@ export default function App() {
 
     if (Number(rid) > 0) {
       const prevRid = Number(rid) - 1
-      const prevInfo = await getCachedRoundInfo(pool, poolAddress, BigInt(prevRid))
+      const prevInfo = await getCachedRoundInfo(pool, poolAddress, BigInt(prevRid), signal)
+      assertNotAborted(signal)
       setPreviousRoundId(String(prevRid))
       setPreviousRoundInfo(prevInfo)
     } else {
@@ -1075,7 +1067,7 @@ export default function App() {
     } else {
       const scanRids = []
       for (let r = Number(rid) - 1; r >= Math.max(1, Number(rid) - 3); r--) scanRids.push(r)
-      const results = await Promise.all(scanRids.map((r) => getCachedRoundInfo(pool, poolAddress, BigInt(r)).catch(() => null)))
+      const results = await Promise.all(scanRids.map((r) => getCachedRoundInfo(pool, poolAddress, BigInt(r), signal).catch(() => null)))
       for (let i = 0; i < results.length; i++) {
         const si = results[i]
         if (si && Number(si.state) === 3 && Number(si.totalTickets) > 0) {
@@ -1085,6 +1077,7 @@ export default function App() {
         }
       }
     }
+    assertNotAborted(signal)
     if (sRid) settledRidCacheRef.current = sRid
     setSettledRoundId(sRid ? String(sRid) : '0')
     if (sInfo) setSettledRoundInfo(sInfo)
@@ -1094,29 +1087,31 @@ export default function App() {
 
   useEffect(() => {
     if (!poolAddress) return
-    refresh().catch((e) => setError(normalizeError(e) || 'Failed to load round data'))
-    refreshVaultSummaries().catch(() => {})
+    const ac = new AbortController()
+    refresh({ signal: ac.signal }).catch((e) => { if (!isAbortError(e)) setError(normalizeError(e) || 'Failed to load round data') })
+    refreshVaultSummaries({ signal: ac.signal }).catch(() => {})
 
     const clockTick = setInterval(() => {
       setNow(Math.floor(Date.now() / 1000))
     }, 1000)
 
     const dataRefresh = setInterval(() => {
-      refresh().catch(() => {})
+      refresh({ signal: ac.signal }).catch(() => {})
     }, 60000)
 
     const vaultRefresh = setInterval(() => {
-      refreshVaultSummaries().catch(() => {})
+      refreshVaultSummaries({ signal: ac.signal }).catch(() => {})
     }, 120000)
 
     return () => {
+      ac.abort()
       clearInterval(clockTick)
       clearInterval(dataRefresh)
       clearInterval(vaultRefresh)
     }
   }, [poolAddress, refresh, refreshVaultSummaries])
 
-  const loadParticipantsForView = useCallback(async (view) => {
+  const loadParticipantsForView = useCallback(async (view, { signal } = {}) => {
     const currentRidNum = Number(roundId) || 0
     const prevRidNum = Number(previousRoundId) || 0
     const vaultARoundIdNum = currentRidNum % 2 === 1 ? currentRidNum : prevRidNum
@@ -1144,7 +1139,7 @@ export default function App() {
     }
 
     try {
-      const res = await fetch(`https://everdraw-indexer.fly.dev/api/rounds/${targetRoundId}/participants`)
+      const res = await fetch(`https://everdraw-indexer.fly.dev/api/rounds/${targetRoundId}/participants`, { signal })
       if (!res.ok) {
         console.warn('[EverDraw] indexer participants fetch failed:', res.status)
         setter([])
@@ -1159,16 +1154,21 @@ export default function App() {
         sharePct: totalTicketsNum > 0 ? ((Number(p.tickets) / totalTicketsNum) * 100).toFixed(2) : '0.00',
         depositedMon: Number(ethers.formatEther(BigInt(p.monPaid || '0'))).toFixed(4),
       })).sort((a, b) => b.tickets - a.tickets)
+      assertNotAborted(signal)
       setter(built)
     } catch (e) {
-      console.warn('[EverDraw] indexer participants fetch error:', e)
-      setter([])
+      if (!isAbortError(e)) {
+        console.warn('[EverDraw] indexer participants fetch error:', e)
+        setter([])
+      }
     }
   }, [roundId, previousRoundId, settledRoundId])
 
   useEffect(() => {
     if (mainView === 'myrounds') return
-    loadParticipantsForView(mainView).catch(() => {})
+    const ac = new AbortController()
+    loadParticipantsForView(mainView, { signal: ac.signal }).catch((err) => { if (!isAbortError(err)) console.warn('[EverDraw] participants load failed:', err) })
+    return () => ac.abort()
   }, [mainView, loadParticipantsForView])
 
   const connectWallet = useCallback(async () => {
@@ -1691,32 +1691,34 @@ export default function App() {
   const sfxTestMode = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('sfxtest') === '1'
 
   useEffect(() => {
-    let cancelled = false
+    const ac = new AbortController()
     const loadPrincipal = async () => {
       if (!account || !poolAddress || !winnersRoundId) {
-        if (!cancelled) setWinnersUserPrincipalWei(0n)
+        setWinnersUserPrincipalWei(0n)
         return
       }
       try {
         const provider = await getReadProvider()
+        assertNotAborted(ac.signal)
         const pool = new ethers.Contract(poolAddress, activePoolAbi, provider)
         const v = isV2Pool
-          ? (await pool.getUserPosition(BigInt(winnersRoundId), account))[0]
-          : await pool.principalMON(BigInt(winnersRoundId), account)
-        if (!cancelled) setWinnersUserPrincipalWei(BigInt(v))
-      } catch {
-        if (!cancelled) setWinnersUserPrincipalWei(0n)
+          ? (await withAbort(pool.getUserPosition(BigInt(winnersRoundId), account), ac.signal))[0]
+          : await withAbort(pool.principalMON(BigInt(winnersRoundId), account), ac.signal)
+        assertNotAborted(ac.signal)
+        setWinnersUserPrincipalWei(BigInt(v))
+      } catch (err) {
+        if (!isAbortError(err)) setWinnersUserPrincipalWei(0n)
       }
     }
     loadPrincipal()
-    return () => { cancelled = true }
+    return () => ac.abort()
   }, [account, poolAddress, winnersRoundId, activePoolAbi, isV2Pool])
 
   useEffect(() => {
-    let cancelled = false
+    const ac = new AbortController()
     const loadMyRounds = async () => {
       if (!account || !poolAddresses.length) {
-        if (!cancelled) setMyRounds([])
+        setMyRounds([])
         return
       }
       try {
@@ -1729,17 +1731,17 @@ export default function App() {
 
           let cur = 0
           try {
-            cur = Number(await _cached(`currentRound:${addr}`, 10_000, () => pool.currentRoundId()))
-          } catch { continue }
+            cur = Number(await _cached(`currentRound:${addr}`, 10_000, () => pool.currentRoundId(), ac.signal))
+          } catch (err) { if (isAbortError(err)) throw err; continue }
 
           const rids = []
           for (let rid = 1; rid <= cur; rid++) rids.push(rid)
 
           const [infos, principals] = await Promise.all([
             Promise.all(rids.map(rid =>
-              getCachedRoundInfo(pool, addr, BigInt(rid)).catch(() => null)
+              getCachedRoundInfo(pool, addr, BigInt(rid), ac.signal).catch(() => null)
             )),
-            Promise.all(rids.map(rid => pool.principalMON(BigInt(rid), account).catch(() => 0n)))
+            Promise.all(rids.map(rid => withAbort(pool.principalMON(BigInt(rid), account).catch(() => 0n), ac.signal)))
           ])
 
           rids.forEach((rid, i) => {
@@ -1768,9 +1770,9 @@ export default function App() {
           })
         }
 
-        const indexerRows = await fetch(`${INDEXER_URL}/api/wallets/${account}/rounds`)
+        const indexerRows = await fetch(`${INDEXER_URL}/api/wallets/${account}/rounds`, { signal: ac.signal })
           .then((r) => r.json())
-          .catch(() => [])
+          .catch((err) => { if (isAbortError(err)) throw err; return [] })
 
         for (const r of indexerRows) {
           if (!ethers.isAddress(r.poolAddress)) continue
@@ -1795,13 +1797,14 @@ export default function App() {
         }
 
         rows.sort((a, b) => b.rid !== a.rid ? b.rid - a.rid : a.poolAddr.localeCompare(b.poolAddr))
-        if (!cancelled) setMyRounds(rows)
-      } catch {
-        if (!cancelled) setMyRounds([])
+        assertNotAborted(ac.signal)
+        setMyRounds(rows)
+      } catch (err) {
+        if (!isAbortError(err)) setMyRounds([])
       }
     }
     loadMyRounds()
-    return () => { cancelled = true }
+    return () => ac.abort()
   }, [account, poolAddresses, poolAddressesV2, roundId])
 
   const myRoundsStats = useMemo(() => {
