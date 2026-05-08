@@ -2404,7 +2404,7 @@ export default function App() {
                   ) : null}
                 </div>
                 <div className="deposit-area" style={{ justifyContent: 'center', textAlign: 'center' }}>
-                  <div style={{ fontSize: '2.2rem', lineHeight: 1 }}>🔒</div>
+                  <div style={{ display: 'inline-flex', alignSelf: 'center', padding: '8px 14px', borderRadius: '999px', border: '1px solid rgba(155,109,255,0.35)', color: '#c4b5fd', fontSize: '0.78rem', fontWeight: 800, letterSpacing: '0.14em' }}>LOCKED</div>
                   <div className="card-title" style={{ fontSize: '1.35rem' }}>{shownYieldAccruing ? 'Deposits closed — yield accruing' : 'Deposits closed'}</div>
                   <p className="deposit-caption" style={{ margin: 0 }}>{buyDisabledReason || 'This vault is not accepting tickets right now.'}</p>
                 </div>
