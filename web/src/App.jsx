@@ -1245,7 +1245,8 @@ export default function App() {
       await ensureCorrectNetwork(provider, expectedChainId)
       if (!account) throw new Error('No wallet connected')
 
-      if (!shownIsCurrentRound || !shownSalesOpen) throw new Error('Deposits are closed for this round')
+      const currentSalesOpen = roundInfo && Number(roundInfo.state) === 0 && Math.max(0, Number(roundInfo.salesEndTime ?? 0) - Math.floor(Date.now() / 1000)) > 0
+      if (!currentSalesOpen) throw new Error('Deposits are closed for this round')
 
       const value = ticketPrice * BigInt(n)
       if (value === 0n) throw new Error('Ticket price not loaded yet — please wait a moment and try again')
@@ -1293,7 +1294,7 @@ export default function App() {
     } finally {
       setLoading(false)
     }
-  }, [account, expectedChainId, poolAddress, refresh, ticketCountInput, ticketPrice, activePoolAbi, isV2Pool, shownIsCurrentRound, shownSalesOpen])
+  }, [account, expectedChainId, poolAddress, refresh, ticketCountInput, ticketPrice, activePoolAbi, isV2Pool, roundInfo])
 
   const secondsRemaining = useMemo(() => {
     if (!roundInfo) return 0
@@ -2074,7 +2075,8 @@ export default function App() {
 
       if (!poolAddress) throw new Error('Missing V2 pool address')
       if (!isV2Pool) throw new Error('Selected pool is not V2')
-      if (!shownIsCurrentRound || !shownSalesOpen) throw new Error('Deposits are closed for this round')
+      const currentSalesOpen = roundInfo && Number(roundInfo.state) === 0 && Math.max(0, Number(roundInfo.salesEndTime ?? 0) - Math.floor(Date.now() / 1000)) > 0
+      if (!currentSalesOpen) throw new Error('Deposits are closed for this round')
       const walletProvider = getWalletProvider()
       if (!walletProvider) throw new Error('Wallet required')
 
@@ -2131,7 +2133,7 @@ export default function App() {
     } finally {
       setLoading(false)
     }
-  }, [account, expectedChainId, isV2Pool, poolAddress, refresh, ticketCountInput, shownIsCurrentRound, shownSalesOpen])
+  }, [account, expectedChainId, isV2Pool, poolAddress, refresh, ticketCountInput, roundInfo])
 
 
   const setMaxTickets = useCallback(() => {
