@@ -43,9 +43,11 @@ The keeper is not privileged. It can only call public functions. If it goes offl
 
 ## Indexer
 
-A Hono service backed by SQLite. Reads on chain events and exposes HTTP APIs the frontend consumes for participants, history, and withdrawal latency metrics. Pool aware. Multi RPC failover.
+A Hono service backed by SQLite. Reads on chain events and exposes HTTP APIs the frontend consumes for participants, history, withdrawal latency metrics, and the EverDraw points system. Pool aware. Multi RPC failover.
 
-The frontend can run without it (it reads contract state via RPC directly), but historical views and aggregate metrics depend on it.
+The frontend can run without it for live round state (it reads contracts via RPC directly), but historical views, aggregate metrics, and the points page all depend on it.
+
+API documented in [Integration](integration.md#indexer-api). Points formula and tier ladder are defined in [Points](../how-it-works/points.md).
 
 ---
 

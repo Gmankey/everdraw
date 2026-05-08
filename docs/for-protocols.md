@@ -12,9 +12,8 @@ Most growth budgets go into one of three buckets:
 
 - **Airdrops.** One shot distribution, 90% farmer churn, tokens dumped on day one.
 - **Liquidity mining.** Mercenary capital that exits the moment incentives stop.
-- **Points programs.** Increasing user fatigue, unclear value, gameable.
 
-All produce one shot engagement. Users arrive for the reward and leave when it is claimed. The budget is gone. The users are gone.
+These produce one shot engagement. Users arrive for the reward and leave when it is claimed. The budget is gone. The users are gone.
 
 ---
 
@@ -59,7 +58,7 @@ Verification is on chain. No trust assumptions, no self reporting.
 
 **Recurring, not one shot.** A weekly draw brings users back 52 times a year. An airdrop brings them once.
 
-**Organic virality.** Every winner posts about it. Every draw is content your protocol benefits from without paying for it.
+**Organic virality.** Winners tend to post about it. Every draw has potential to spawn great content.
 
 **Composable.** Multiple protocols can co fund one mega draw and create ecosystem wide events no single protocol could produce alone.
 

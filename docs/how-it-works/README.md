@@ -5,3 +5,4 @@ In phase 1, EverDraw runs a simple loop. Collect deposits, stake them as shMON, 
 * [Protocol Overview](protocol-overview.md). The core loop, tickets, no loss guarantee.
 * [Round Lifecycle](round-lifecycle.md). Each round's states and timing.
 * [Winner Selection](winner-selection.md). Commit reveal mechanics and probability.
+* [Points](points.md). How loyalty is rewarded.

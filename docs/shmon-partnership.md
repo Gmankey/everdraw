@@ -16,9 +16,9 @@ The yield is structural. It does not come from a lending market, a token emissio
 
 When you deposit into EverDraw, your MON is staked as shMON immediately and held inside the vault as shMON shares. Yield accrues passively for the 6 day lock as the shMON share rate moves. The total yield accumulated across all positions in a round is the prize.
 
-There is no internal unstaking step. The vault holds shMON the whole time, settles in shMON, and pays winners and depositors in shMON. If you want raw MON, you unstake outside EverDraw on shmonad.xyz, which goes through Monad's epoch unstaking queue. Most users keep their position in shMON and re-enter the next round directly.
+There is no internal unstaking step. The vault holds shMON the whole time, settles in shMON, and pays winners and depositors in shMON. If you want raw MON, you unstake outside EverDraw on shmonad.xyz, which goes through Monad's epoch unstaking queue.
 
-You can also deposit using shMON you already hold. Both deposit paths land at the same internal accounting.
+You can also deposit using shMON you already hold. Both deposit paths land at the same internal accounting. 
 
 ---
 

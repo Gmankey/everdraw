@@ -2,7 +2,7 @@
 
 ## What you need
 
-A wallet on Monad mainnet and some MON. That's it.
+A wallet on Monad mainnet and some MON or shMON. That's it.
 
 ---
 
