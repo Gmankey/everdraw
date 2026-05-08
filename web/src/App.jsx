@@ -828,7 +828,6 @@ export default function App() {
   const [tokenDropdownOpen, setTokenDropdownOpen] = useState(false)
   const [pointsProfile, setPointsProfile] = useState(null)
   const [pointsHistory, setPointsHistory] = useState([])
-  const [pointsPreview, setPointsPreview] = useState(null)
   const [pointsBanner, setPointsBanner] = useState(null)
 
   useEffect(() => {
@@ -885,27 +884,6 @@ export default function App() {
     })
     return () => ac.abort()
   }, [account])
-
-  useEffect(() => {
-    const ac = new AbortController()
-    if (!account || !poolAddress || !ticketCountInput) {
-      setPointsPreview(null)
-      return () => ac.abort()
-    }
-    const timer = setTimeout(() => {
-      const tickets = Math.max(0, Math.floor(Number(ticketCountInput || 0)))
-      if (!tickets) { setPointsPreview(null); return }
-      const url = new URL(`${getIndexerBaseUrl()}/api/points/preview`)
-      url.searchParams.set('wallet', account)
-      url.searchParams.set('pool', poolAddress)
-      url.searchParams.set('tickets', String(tickets))
-      fetch(url, { signal: ac.signal })
-        .then((r) => r.ok ? r.json() : null)
-        .then((data) => { assertNotAborted(ac.signal); setPointsPreview(data) })
-        .catch((err) => { if (!isAbortError(err)) setPointsPreview(null) })
-    }, 250)
-    return () => { ac.abort(); clearTimeout(timer) }
-  }, [account, poolAddress, ticketCountInput])
 
   const refreshVaultSummaries = useCallback(async ({ signal } = {}) => {
     if (!allPoolAddresses.length) {
@@ -2505,7 +2483,6 @@ export default function App() {
                                       : 'Buy Unavailable'}
                     </button>
                     {(loading || wrongNetwork || !salesOpen || !account || !shownIsCurrentRound) && buyDisabledReason ? <p className="deposit-caption">{buyDisabledReason}</p> : null}
-                    {pointsPreview ? <p className="deposit-caption points-preview">You'll earn approximately {pointsPreview.estimated_total ?? 0} points this round.</p> : null}
                   </div>
 
                   {status ? <p className="deposit-caption">{status}</p> : null}
