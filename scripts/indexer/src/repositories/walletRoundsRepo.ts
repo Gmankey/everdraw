@@ -3,8 +3,8 @@ import type { WalletRoundRow } from '../types/domain.js';
 
 export interface WalletRoundsRepo {
   upsert(row: WalletRoundRow): void;
-  replaceForRound(roundId: number, rows: WalletRoundRow[]): void;
-  listByRound(roundId: number): WalletRoundRow[];
+  replaceForRound(roundId: number, rows: WalletRoundRow[], poolAddress?: string): void;
+  listByRound(roundId: number, poolAddress?: string): WalletRoundRow[];
   listByWalletWithRound(wallet: string): Array<WalletRoundRow & { state: string; salesEndTime: string | null; isSkipped: number }>;
   listAll(): WalletRoundRow[];
   deleteAll(): void;
@@ -24,6 +24,7 @@ export function createWalletRoundsRepo(db: Database.Database): WalletRoundsRepo 
       withdrew,
       prize_claimed,
       principal_withdrawn,
+      withdrawn_at,
       net_position,
       created_at,
       updated_at
@@ -37,6 +38,7 @@ export function createWalletRoundsRepo(db: Database.Database): WalletRoundsRepo 
       @withdrew,
       @prizeClaimed,
       @principalWithdrawn,
+      @withdrawnAt,
       @netPosition,
       @createdAt,
       @updatedAt
@@ -48,13 +50,14 @@ export function createWalletRoundsRepo(db: Database.Database): WalletRoundsRepo 
       withdrew = excluded.withdrew,
       prize_claimed = excluded.prize_claimed,
       principal_withdrawn = excluded.principal_withdrawn,
+      withdrawn_at = excluded.withdrawn_at,
       net_position = excluded.net_position,
       updated_at = excluded.updated_at
   `);
 
   const deleteForRoundStmt = db.prepare(`
     DELETE FROM wallet_rounds
-    WHERE round_id = ?
+    WHERE round_id = ? AND (? IS NULL OR LOWER(pool_address) = LOWER(?))
   `);
 
   const listByRoundStmt = db.prepare(`
@@ -68,11 +71,12 @@ export function createWalletRoundsRepo(db: Database.Database): WalletRoundsRepo 
       withdrew,
       prize_claimed as prizeClaimed,
       principal_withdrawn as principalWithdrawn,
+      withdrawn_at as withdrawnAt,
       net_position as netPosition,
       created_at as createdAt,
       updated_at as updatedAt
     FROM wallet_rounds
-    WHERE round_id = ?
+    WHERE round_id = ? AND (? IS NULL OR LOWER(pool_address) = LOWER(?))
     ORDER BY tickets DESC, wallet ASC, pool_address ASC
   `);
 
@@ -87,6 +91,7 @@ export function createWalletRoundsRepo(db: Database.Database): WalletRoundsRepo 
       wr.withdrew,
       wr.prize_claimed AS prizeClaimed,
       wr.principal_withdrawn AS principalWithdrawn,
+      wr.withdrawn_at AS withdrawnAt,
       wr.net_position AS netPosition,
       wr.created_at AS createdAt,
       wr.updated_at AS updatedAt,
@@ -110,6 +115,7 @@ export function createWalletRoundsRepo(db: Database.Database): WalletRoundsRepo 
       withdrew,
       prize_claimed as prizeClaimed,
       principal_withdrawn as principalWithdrawn,
+      withdrawn_at as withdrawnAt,
       net_position as netPosition,
       created_at as createdAt,
       updated_at as updatedAt
@@ -137,8 +143,8 @@ export function createWalletRoundsRepo(db: Database.Database): WalletRoundsRepo 
     )
   `);
 
-  const replaceForRoundTx = db.transaction((roundId: number, rows: WalletRoundRow[]) => {
-    deleteForRoundStmt.run(roundId);
+  const replaceForRoundTx = db.transaction((roundId: number, rows: WalletRoundRow[], poolAddress?: string) => {
+    deleteForRoundStmt.run(roundId, poolAddress ?? null, poolAddress ?? null);
     for (const row of rows) {
       upsertStmt.run(row);
     }
@@ -148,11 +154,11 @@ export function createWalletRoundsRepo(db: Database.Database): WalletRoundsRepo 
     upsert(row) {
       upsertStmt.run(row);
     },
-    replaceForRound(roundId, rows) {
-      replaceForRoundTx(roundId, rows);
+    replaceForRound(roundId, rows, poolAddress) {
+      replaceForRoundTx(roundId, rows, poolAddress);
     },
-    listByRound(roundId) {
-      return listByRoundStmt.all(roundId) as WalletRoundRow[];
+    listByRound(roundId, poolAddress) {
+      return listByRoundStmt.all(roundId, poolAddress ?? null, poolAddress ?? null) as WalletRoundRow[];
     },
     listByWalletWithRound(wallet) {
       return listByWalletWithRoundStmt.all(wallet) as Array<WalletRoundRow & { state: string; salesEndTime: string | null; isSkipped: number }>;

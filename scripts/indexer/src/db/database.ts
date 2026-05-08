@@ -5,7 +5,7 @@ import path from 'node:path';
 const DEFAULT_DB_PATH = path.resolve(process.cwd(), 'data', 'indexer.sqlite');
 const SCHEMA_PATH = path.resolve(process.cwd(), 'src', 'db', 'schema.sql');
 
-export function openDatabase(dbPath = process.env.INDEXER_DB_PATH ?? DEFAULT_DB_PATH): Database.Database {
+export function openDatabase(dbPath = process.env.INDEXER_DB_PATH ?? process.env.DB_PATH ?? DEFAULT_DB_PATH): Database.Database {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   const db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
@@ -58,5 +58,9 @@ function ensureWalletRoundsColumns(db: Database.Database): void {
 
   if (!names.has('principal_withdrawn')) {
     db.exec("ALTER TABLE wallet_rounds ADD COLUMN principal_withdrawn TEXT NOT NULL DEFAULT '0'");
+  }
+
+  if (!names.has('withdrawn_at')) {
+    db.exec('ALTER TABLE wallet_rounds ADD COLUMN withdrawn_at TEXT');
   }
 }

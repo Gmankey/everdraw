@@ -10,6 +10,7 @@ RUN npm ci --production=false
 
 COPY tsconfig.json ./
 COPY src/ ./src/
+COPY scripts/ ./scripts/
 
 # Data directory for persistent SQLite volume
 RUN mkdir -p /data

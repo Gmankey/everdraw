@@ -104,6 +104,7 @@ export function createDeriveWalletRoundsService(
           withdrew: acc.withdrew,
           prizeClaimed: acc.prizeClaimed.toString(),
           principalWithdrawn: acc.principalWithdrawn.toString(),
+          withdrawnAt: null,
           netPosition: netPosition.toString(),
           createdAt: now,
           updatedAt: now,

@@ -7,6 +7,7 @@ export type SupportedEventName =
   | 'UnstakeRequested'
   | 'RoundSettled'
   | 'RoundSkipped'
+  | 'RoundFailed'
   | 'TicketsBought'
   | 'PrizeClaimed'
   | 'PrincipalWithdrawn';
@@ -60,6 +61,7 @@ export interface WalletRoundRow {
   withdrew: 0 | 1;
   prizeClaimed: string;
   principalWithdrawn: string;
+  withdrawnAt: string | null;
   netPosition: string;
   createdAt: string;
   updatedAt: string;
@@ -83,4 +85,33 @@ export interface IndexerStateRow {
   key: string;
   value: string;
   updatedAt: string;
+}
+
+export interface WalletPointsRow {
+  wallet: string;
+  lifetimePoints: number;
+  hasReceivedFirstDepositBonus: 0 | 1;
+  hasReceivedFirstWinBonus: 0 | 1;
+  highestStreakMilestoneAwarded: number;
+  updatedAt: number;
+}
+
+export interface WalletStreakRow {
+  wallet: string;
+  currentStreakWeeks: number;
+  longestStreakWeeks: number;
+  lastCheckpointUnix: number | null;
+  consecutiveNonWins: number;
+  updatedAt: number;
+}
+
+export interface WalletRoundPointsRow {
+  wallet: string;
+  poolAddress: string;
+  roundId: number;
+  basePoints: number;
+  multiplierX100: number;
+  bonusesBreakdown: string;
+  totalPoints: number;
+  awardedAtUnix: number;
 }
