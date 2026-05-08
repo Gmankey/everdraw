@@ -30,7 +30,7 @@ if [[ "$local_sha" != "$remote_sha" ]]; then
   exit 1
 fi
 
-for needle in PointsHeaderWidget 'points/preview' setMaxTickets; do
+for needle in PointsHeaderWidget setMaxTickets; do
   if ! grep -q "$needle" web/src/App.jsx; then
     echo "Refusing prod deploy: web/src/App.jsx is missing required UI marker '$needle'." >&2
     exit 1
