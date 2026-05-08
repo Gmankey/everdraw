@@ -924,7 +924,7 @@ export default function App() {
         const state = Number(info.state)
         const salesEndTime = Number(info.salesEndTime)
         const nowSec = Math.floor(Date.now() / 1000)
-        const commitAfter = v2 ? Number(await withAbort(pool.getCommitAfterTime(rid).catch(() => 0), signal)) : 0
+        const commitAfter = v2 ? Number(await _cached(`commitAfter:${addr}:${rid}`, 5_000, () => pool.getCommitAfterTime(rid).catch(() => 0), signal)) : 0
         const secs = Math.max(0, salesEndTime - nowSec)
         const yieldSecs = Math.max(0, commitAfter - nowSec)
         return {
@@ -992,14 +992,14 @@ export default function App() {
       accountBalance,
     ] = await Promise.all([
       _cached(`currentRound:${poolAddress}`, 10_000, () => pool.currentRoundId(), signal),
-      withAbort(pool.nextExecutable(), signal),
+      _cached(`nextExecutable:${poolAddress}`, 5_000, () => pool.nextExecutable(), signal),
       _cached(`ticketPrice:${poolAddress}`, 86400_000 * 365, () => pool.ticketPriceMON(), signal),
       _cached(`deposit:${poolAddress}`, 86400_000 * 365, () => isV2Pool ? pool.roundDurationSec() : pool.depositPeriodSec(), signal),
-      withAbort(isV2Pool ? pool.yieldPeriodSec().catch(() => 0) : pool.yieldPeriodSec(), signal),
-      withAbort(provider.getBlockNumber(), signal),
-      withAbort(provider.getNetwork(), signal),
-      withAbort(pool.shmon().catch(() => ethers.ZeroAddress), signal),
-      account ? withAbort(provider.getBalance(account).catch(() => null), signal) : Promise.resolve(null),
+      _cached(`yieldPeriod:${poolAddress}`, 86400_000 * 365, () => isV2Pool ? pool.yieldPeriodSec().catch(() => 0) : pool.yieldPeriodSec(), signal),
+      _cached('provider:blockNumber', 2_000, () => provider.getBlockNumber(), signal),
+      _cached('provider:network', 60_000, () => provider.getNetwork(), signal),
+      _cached(`shmon:${poolAddress}`, 86400_000 * 365, () => pool.shmon().catch(() => ethers.ZeroAddress), signal),
+      account ? _cached(`balance:${account}`, 5_000, () => provider.getBalance(account).catch(() => null), signal) : Promise.resolve(null),
     ])
 
     const info = await getCachedRoundInfo(pool, poolAddress, rid, signal)
@@ -1022,8 +1022,8 @@ export default function App() {
       if (ethers.isAddress(shmonAddr) && shmonAddr !== ethers.ZeroAddress) {
         const shmon = new ethers.Contract(shmonAddr, SHMON_READ_ABI, provider)
         const [ep, shmonBal] = await Promise.all([
-          withAbort(shmon.getInternalEpoch(), signal),
-          account ? withAbort(shmon.balanceOf(account).catch(() => 0n), signal) : Promise.resolve(0n),
+          _cached(`shmonEpoch:${shmonAddr}`, 5_000, () => shmon.getInternalEpoch(), signal),
+          account ? _cached(`shmonBalance:${account}:${shmonAddr}`, 5_000, () => shmon.balanceOf(account).catch(() => 0n), signal) : Promise.resolve(0n),
         ])
         assertNotAborted(signal)
         setCurrentInternalEpoch(Number(ep))
@@ -1037,7 +1037,7 @@ export default function App() {
     }
 
     if (isV2Pool) {
-      const commitAt = Number(await withAbort(pool.getCommitAfterTime(rid).catch(() => 0), signal))
+      const commitAt = Number(await _cached(`commitAfter:${poolAddress}:${rid}`, 5_000, () => pool.getCommitAfterTime(rid).catch(() => 0), signal))
       assertNotAborted(signal)
       setCommitAfterTime(commitAt)
     } else {
@@ -1245,6 +1245,8 @@ export default function App() {
       await ensureCorrectNetwork(provider, expectedChainId)
       if (!account) throw new Error('No wallet connected')
 
+      if (!shownIsCurrentRound || !shownSalesOpen) throw new Error('Deposits are closed for this round')
+
       const value = ticketPrice * BigInt(n)
       if (value === 0n) throw new Error('Ticket price not loaded yet — please wait a moment and try again')
 
@@ -1291,7 +1293,7 @@ export default function App() {
     } finally {
       setLoading(false)
     }
-  }, [account, expectedChainId, poolAddress, refresh, ticketCountInput, ticketPrice, activePoolAbi, isV2Pool])
+  }, [account, expectedChainId, poolAddress, refresh, ticketCountInput, ticketPrice, activePoolAbi, isV2Pool, shownIsCurrentRound, shownSalesOpen])
 
   const secondsRemaining = useMemo(() => {
     if (!roundInfo) return 0
@@ -1351,7 +1353,8 @@ export default function App() {
   const shownSalesOpen = shownState === 0 && shownSecondsRemaining > 0
   const shownYieldAccruing = isV2Pool && shownState === 0 && shownSecondsRemaining === 0 && shownCommitAfterRemaining > 0
   const salesOpen = shownIsCurrentRound ? shownSalesOpen : isOpenState && secondsRemaining > 0
-  const canBuyTx = !!account && shownIsCurrentRound && shownSalesOpen && !loading
+  const buyFormOpen = shownIsCurrentRound && shownSalesOpen
+  const canBuyTx = !!account && buyFormOpen && !loading
 
   const buyDisabledReason = useMemo(() => {
     if (loading) return 'Transaction in progress'
@@ -1365,6 +1368,10 @@ export default function App() {
     if (wrongNetwork) return 'Wrong network — click Buy to switch automatically'
     return ''
   }, [loading, shownIsCurrentRound, shownSalesOpen, shownYieldAccruing, shownState, account, wrongNetwork])
+
+  useEffect(() => {
+    if (!buyFormOpen && /missing revert data|SalesEnded|sales ended/i.test(error || '')) setError('')
+  }, [buyFormOpen, error])
 
   const settlementSecondsRemaining = useMemo(() => {
     if (!roundInfo) return 0
@@ -1702,8 +1709,8 @@ export default function App() {
         assertNotAborted(ac.signal)
         const pool = new ethers.Contract(poolAddress, activePoolAbi, provider)
         const v = isV2Pool
-          ? (await withAbort(pool.getUserPosition(BigInt(winnersRoundId), account), ac.signal))[0]
-          : await withAbort(pool.principalMON(BigInt(winnersRoundId), account), ac.signal)
+          ? (await _cached(`userPosition:${poolAddress}:${winnersRoundId}:${account}`, 5_000, () => pool.getUserPosition(BigInt(winnersRoundId), account), ac.signal))[0]
+          : await _cached(`principal:${poolAddress}:${winnersRoundId}:${account}`, 5_000, () => pool.principalMON(BigInt(winnersRoundId), account), ac.signal)
         assertNotAborted(ac.signal)
         setWinnersUserPrincipalWei(BigInt(v))
       } catch (err) {
@@ -1741,7 +1748,7 @@ export default function App() {
             Promise.all(rids.map(rid =>
               getCachedRoundInfo(pool, addr, BigInt(rid), ac.signal).catch(() => null)
             )),
-            Promise.all(rids.map(rid => withAbort(pool.principalMON(BigInt(rid), account).catch(() => 0n), ac.signal)))
+            Promise.all(rids.map(rid => _cached(`principal:${addr}:${rid}:${account}`, 10_000, () => pool.principalMON(BigInt(rid), account).catch(() => 0n), ac.signal)))
           ])
 
           rids.forEach((rid, i) => {
@@ -2067,6 +2074,7 @@ export default function App() {
 
       if (!poolAddress) throw new Error('Missing V2 pool address')
       if (!isV2Pool) throw new Error('Selected pool is not V2')
+      if (!shownIsCurrentRound || !shownSalesOpen) throw new Error('Deposits are closed for this round')
       const walletProvider = getWalletProvider()
       if (!walletProvider) throw new Error('Wallet required')
 
@@ -2080,8 +2088,9 @@ export default function App() {
 
       const readProvider = await getReadProvider()
       const pool = new ethers.Contract(poolAddress, POOL_V2_ABI, readProvider)
-      const shmonAddress = await pool.shmon()
-      const sharesOwed = BigInt(await pool.getFunction('ticketPriceMON').staticCall()) * BigInt(n)
+      const shmonAddress = await _cached(`shmon:${poolAddress}`, 86400_000 * 365, () => pool.shmon())
+      const ticketPriceForShares = await _cached(`ticketPrice:${poolAddress}`, 86400_000 * 365, () => pool.getFunction('ticketPriceMON').staticCall())
+      const sharesOwed = BigInt(ticketPriceForShares) * BigInt(n)
       const nonce = await fetchNonceWithRetry(account)
       const feeData = await readProvider.getFeeData()
       const gasPrice = feeData.gasPrice ?? feeData.maxFeePerGas
@@ -2122,7 +2131,7 @@ export default function App() {
     } finally {
       setLoading(false)
     }
-  }, [account, expectedChainId, isV2Pool, poolAddress, refresh, ticketCountInput])
+  }, [account, expectedChainId, isV2Pool, poolAddress, refresh, ticketCountInput, shownIsCurrentRound, shownSalesOpen])
 
 
   const setMaxTickets = useCallback(() => {
@@ -2380,6 +2389,22 @@ export default function App() {
                 <div className="card-header"><div className="card-title">VAULT B</div></div>
                 <div style={{ padding: '2.5rem 1rem', textAlign: 'center', color: 'rgba(155,109,255,0.5)', fontSize: '1rem' }}>
                   Opening Soon
+                </div>
+              </div>
+            ) : !buyFormOpen ? (
+              <div className="card">
+                <div className="card-header">
+                  <div className="card-title">Vault locked</div>
+                  {shownRoundId && Number(shownRoundId) > 0 ? (
+                    <div style={{ fontSize: '0.82rem', color: 'rgba(155,109,255,0.8)', marginTop: '2px' }}>
+                      {shownVaultLabel} · Round #{shownRoundId}
+                    </div>
+                  ) : null}
+                </div>
+                <div className="deposit-area" style={{ justifyContent: 'center', textAlign: 'center' }}>
+                  <div style={{ fontSize: '2.2rem', lineHeight: 1 }}>🔒</div>
+                  <div className="card-title" style={{ fontSize: '1.35rem' }}>{shownYieldAccruing ? 'Deposits closed — yield accruing' : 'Deposits closed'}</div>
+                  <p className="deposit-caption" style={{ margin: 0 }}>{buyDisabledReason || 'This vault is not accepting tickets right now.'}</p>
                 </div>
               </div>
             ) : (

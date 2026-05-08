@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ethers } from 'ethers'
 import { modal } from './walletModal'
+import { _cached } from './rpcCache.js'
 
 export const SHMON_ADDRESS = '0x1B68626dCa36c7fE922fD2d55E4f631d962dE19c'
 const PENDING_KEY = 'everdraw:shmon:pending'
@@ -67,7 +68,7 @@ async function scanPendingFromEvents(contract, account) {
   const provider = contract.runner?.provider
   if (!provider) return null
 
-  const latestBlock = BigInt(await provider.getBlockNumber())
+  const latestBlock = BigInt(await _cached('provider:blockNumber', 2_000, () => provider.getBlockNumber()))
   const fromBlock = latestBlock > EVENT_SCAN_BLOCKS ? latestBlock - EVENT_SCAN_BLOCKS : 0n
   const events = await contract.queryFilter(contract.filters.RequestUnstake(account), Number(fromBlock), Number(latestBlock))
   const latestEvent = events.at(-1)
@@ -132,17 +133,17 @@ export function useShmon({ account, expectedChainId, getReadProvider, ensureCorr
       const provider = await getReadProvider()
       const contract = new ethers.Contract(SHMON_ADDRESS, SHMON_ABI, provider)
 
-      const balance = await contract.balanceOf(account)
+      const balance = await _cached(`shmonBalance:${account}:${SHMON_ADDRESS}`, 5_000, () => contract.balanceOf(account))
 
-      const epochResult = await contract.getInternalEpoch()
+      const epochResult = await _cached(`shmonEpoch:${SHMON_ADDRESS}`, 5_000, () => contract.getInternalEpoch())
         .then((value) => ({ ok: true, value }))
         .catch((error) => ({ ok: false, error }))
       const epoch = epochResult.ok ? epochResult.value : null
 
       const assetsResult = balance > 0n
         ? await Promise.allSettled([
-            contract.convertToAssets(balance),
-            contract.previewRedeem(balance),
+            _cached(`shmonConvert:${SHMON_ADDRESS}:${balance}`, 5_000, () => contract.convertToAssets(balance)),
+            _cached(`shmonPreviewRedeem:${SHMON_ADDRESS}:${balance}`, 5_000, () => contract.previewRedeem(balance)),
           ])
         : []
       const monEquivalent = balance > 0n && assetsResult[0]?.status === 'fulfilled' ? assetsResult[0].value : 0n
@@ -197,7 +198,7 @@ export function useShmon({ account, expectedChainId, getReadProvider, ensureCorr
 
     setState((s) => ({ ...s, txBusy: true, error: '', success: '' }))
     try {
-      const currentEpoch = await contract.getInternalEpoch()
+      const currentEpoch = await _cached(`shmonEpoch:${SHMON_ADDRESS}`, 5_000, () => contract.getInternalEpoch())
       const tx = await contract.requestUnstake(shares)
       const receipt = await tx.wait()
       let completionEpoch = (currentEpoch + 1n).toString()
@@ -278,13 +279,13 @@ export function useShmon({ account, expectedChainId, getReadProvider, ensureCorr
   const previewScheduledAssets = useCallback(async (shares) => {
     const provider = await getReadProvider()
     const contract = new ethers.Contract(SHMON_ADDRESS, SHMON_ABI, provider)
-    return contract.convertToAssets(shares)
+    return _cached(`shmonConvert:${SHMON_ADDRESS}:${shares}`, 5_000, () => contract.convertToAssets(shares))
   }, [getReadProvider])
 
   const previewInstantAssets = useCallback(async (shares) => {
     const provider = await getReadProvider()
     const contract = new ethers.Contract(SHMON_ADDRESS, SHMON_ABI, provider)
-    return contract.previewRedeem(shares)
+    return _cached(`shmonPreviewRedeem:${SHMON_ADDRESS}:${shares}`, 5_000, () => contract.previewRedeem(shares))
   }, [getReadProvider])
 
   const pendingSummary = useMemo(() => {
