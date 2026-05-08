@@ -2471,14 +2471,14 @@ export default function App() {
                     >
                       {loading
                         ? 'Submitting...'
-                        : !account
-                          ? 'Connect Wallet to Buy'
-                          : isDeadRound
-                            ? 'Vault Cycling — Next Round Soon'
-                            : !shownIsCurrentRound
-                              ? 'This Vault is Locked'
-                              : !salesOpen
-                                ? 'Deposits closed'
+                        : isDeadRound
+                          ? 'Vault Cycling — Next Round Soon'
+                          : !shownIsCurrentRound
+                            ? 'This Vault is Locked'
+                            : !salesOpen
+                              ? 'Deposits closed'
+                              : !account
+                                ? 'Connect Wallet to Buy'
                                 : wrongNetwork
                                   ? 'Wrong network — click Buy to switch automatically'
                                   : isV2Pool
