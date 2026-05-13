@@ -1462,6 +1462,7 @@ export default function App() {
   const shownCommitAfterRemaining = shownRoundInfo && isV2Pool ? Math.max(0, Number(commitAfterTime || 0) - now) : 0
   const shownSalesOpen = shownState === 0 && shownSecondsRemaining > 0
   const shownYieldAccruing = isV2Pool && shownState === 0 && shownSecondsRemaining === 0 && shownCommitAfterRemaining > 0
+  const shownSettled = isSettledState(shownState, isV2Pool)
   const salesOpen = shownIsCurrentRound ? shownSalesOpen : isOpenState && secondsRemaining > 0
   const buyFormOpen = shownIsCurrentRound && shownSalesOpen
   const canBuyTx = !!account && buyFormOpen && !loading
@@ -1580,6 +1581,25 @@ export default function App() {
 
       if (shownState === 2) {
         return {
+          heading: 'Winner Revealed',
+          value: shownSettlementSecs > 0 ? formatCountdown(shownSettlementSecs) : 'Finalizing...',
+          sub: shownRoundInfo?.winner ? `Winner: ${shortAddr(shownRoundInfo.winner)}` : 'Round is being finalized',
+          metaLabel: 'Vault status',
+          metaValue: 'Finalizing'
+        }
+      }
+
+      if (shownState === 3) {
+        if (Number(shownRoundInfo?.totalTickets ?? 0) === 0) {
+          return {
+            heading: 'Round Skipped',
+            value: 'Skipped',
+            sub: 'No entries in this round',
+            metaLabel: 'Vault status',
+            metaValue: 'Skipped'
+          }
+        }
+        return {
           heading: 'Round Complete',
           value: 'Complete',
           sub: shownRoundInfo?.winner ? `Winner: ${shortAddr(shownRoundInfo.winner)}` : 'Redeem and claim are now available',
@@ -1588,23 +1608,13 @@ export default function App() {
         }
       }
 
-      if (shownState === 3) {
-        return {
-          heading: 'Round Skipped',
-          value: 'Skipped',
-          sub: 'No entries in this round',
-          metaLabel: 'Vault status',
-          metaValue: 'Skipped'
-        }
-      }
-
       if (shownState === 4) {
         return {
-          heading: 'Round Cancelled',
-          value: 'Cancelled',
-          sub: 'Redeem is available',
+          heading: 'Round Complete',
+          value: 'Complete',
+          sub: shownRoundInfo?.winner ? `Winner: ${shortAddr(shownRoundInfo.winner)}` : 'Redeem and claim are now available',
           metaLabel: 'Vault status',
-          metaValue: 'Failed'
+          metaValue: 'Settled'
         }
       }
     }
@@ -1739,11 +1749,11 @@ export default function App() {
     }
   }, [isV2Pool, isDeadRound, shownState, shownSecondsRemaining, shownCommitAfterRemaining, shownYieldAccruing, shownProgressPct, shownRoundInfo, shownSettlementSecs, shownIsCurrentRound, nextAction, currentInternalEpoch, yieldPeriod, now])
 
-  const timerProgressPct = shownState === 0 ? shownProgressPct : shownState === 3 ? 100 : 50
+  const timerProgressPct = shownState === 0 ? shownProgressPct : shownSettled ? 100 : 50
   const timerIsClock = /^\d+:\d{2}:\d{2}:\d{2}$/.test(timerCard.value)
 
   const isUnstaking = !isV2Pool && shownState === 2 && shownSettlementSecs > 0 && shownSettlementSecs <= 86400
-  const drawFinished = !isDeadRound && (shownState === 3 || isUnstaking)
+  const drawFinished = !isDeadRound && (shownSettled || isUnstaking)
   const activeRoundInfo = shownRoundInfo ?? roundInfo
   const activeRoundId = shownRoundId || roundId
 
@@ -2454,7 +2464,7 @@ export default function App() {
                     : r.state === 1 ? 'Drawing'
                     : r.state === 2 ? 'Settled'
                     : r.state === 3 ? 'Skipped'
-                    : r.state === 4 ? 'Cancelled'
+                    : r.state === 4 ? 'Settled'
                     : 'Unknown')
                   : (r.state === 0 ? 'Accepting Deposits'
                     : r.state === 1 ? 'Draw Pending'
@@ -2525,6 +2535,41 @@ export default function App() {
                 <div className="card-header"><div className="card-title">VAULT B</div></div>
                 <div style={{ padding: '2.5rem 1rem', textAlign: 'center', color: 'rgba(155,109,255,0.5)', fontSize: '1rem' }}>
                   Opening Soon
+                </div>
+              </div>
+            ) : mainView === 'previous' && shownSettled ? (
+              <div className="card previous-vault-card">
+                <div className="card-header">
+                  <div className="card-title">Previous Vault</div>
+                  {shownRoundId && Number(shownRoundId) > 0 ? (
+                    <div style={{ fontSize: '0.82rem', color: 'rgba(155,109,255,0.8)', marginTop: '2px' }}>
+                      {shownVaultLabel} · Round #{shownRoundId}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="previous-vault-summary">
+                  <div className="previous-vault-row">
+                    <span>Status</span>
+                    <strong>Complete</strong>
+                  </div>
+                  <div className="previous-vault-row">
+                    <span>Total Tickets</span>
+                    <strong>{Number(shownRoundInfo?.totalTickets ?? 0).toLocaleString()}</strong>
+                  </div>
+                  <div className="previous-vault-row">
+                    <span>Winner</span>
+                    <strong>{shownRoundInfo?.winner ? shortAddr(shownRoundInfo.winner) : '—'}</strong>
+                  </div>
+                  <div className="previous-vault-row">
+                    <span>Prize Yield</span>
+                    <strong>{Number(ethers.formatEther(roundYieldWei(shownRoundInfo, isV2Pool))).toFixed(4)} MON</strong>
+                  </div>
+
+                  <button className="btn deposit-btn" onClick={() => setShowWinnersView(true)}>
+                    View Winners
+                  </button>
+                  <p className="deposit-caption">This round is complete. New deposits are only available in the active vault.</p>
                 </div>
               </div>
             ) : (

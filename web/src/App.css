@@ -1309,3 +1309,29 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
   top: -12px;
   opacity: 0.72;
 }
+
+.previous-vault-summary {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1.25rem;
+}
+
+.previous-vault-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 0;
+  border-bottom: 1px solid rgba(155, 109, 255, 0.18);
+  color: rgba(225, 216, 255, 0.58);
+}
+
+.previous-vault-row strong {
+  color: #fff;
+  font-weight: 800;
+  text-align: right;
+}
+
+.previous-vault-card .deposit-btn {
+  margin-top: 1.25rem;
+}
