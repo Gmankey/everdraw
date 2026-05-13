@@ -2442,7 +2442,17 @@ export default function App() {
             </>
           )}
           <div className="vault-bar-divider"></div>
-          <button className={`vault-aux-btn ${mainView === 'previous' ? 'active' : ''}`} onClick={() => setMainView('previous')} disabled={!settledRoundInfo}>Previous Vault</button>
+          <button
+            className={`vault-aux-btn ${mainView === 'previous' ? 'active' : ''}`}
+            onClick={() => {
+              if (isV2Pool && poolAddressesV2[0]) {
+                setVaultBPending(false)
+                setSelectedPoolAddress(poolAddressesV2[0])
+              }
+              setMainView('previous')
+            }}
+            disabled={!settledRoundInfo && !(isV2Pool && poolAddressesV2[0])}
+          >Previous Vault</button>
           <button className={`vault-aux-btn ${mainView === 'myrounds' ? 'active' : ''}`} onClick={() => setMainView('myrounds')}>My Rounds</button>
         </section>
 
