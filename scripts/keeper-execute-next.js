@@ -64,6 +64,7 @@ const MAX_PRIORITY_FEE_GWEI = process.env.KEEPER_MAX_PRIORITY_FEE_GWEI
   ? Number(process.env.KEEPER_MAX_PRIORITY_FEE_GWEI)
   : undefined
 const DRY_RUN = String(process.env.KEEPER_DRY_RUN || 'false').toLowerCase() === 'true'
+const RUN_ONCE = String(process.env.KEEPER_ONCE || 'false').toLowerCase() === 'true'
 
 const LOW_BALANCE_MON = Number(process.env.KEEPER_LOW_BALANCE_MON || '0.2')
 const ERROR_ALERT_THRESHOLD = Number(process.env.KEEPER_ERROR_ALERT_THRESHOLD || '3')
@@ -370,10 +371,16 @@ async function main() {
   const net = await provider.getNetwork()
   const addr = await wallet.getAddress()
   console.log(
-    `${ts()} [keeper] start pid=${process.pid} chainId=${net.chainId} wallet=${addr} pools=${POOL_ADDRESSES.length} poolAddresses=${POOL_ADDRESSES.join(',')} intervalMs=${INTERVAL_MS} dryRun=${DRY_RUN} preflight=${KEEPER_PREFLIGHT} telegram=${TELEGRAM_ENABLED} telegramTimeoutMs=${TELEGRAM_TIMEOUT_MS} telegramRetries=${TELEGRAM_RETRIES} lowBalanceMon=${LOW_BALANCE_MON} errorAlertThreshold=${ERROR_ALERT_THRESHOLD}`,
+    `${ts()} [keeper] start pid=${process.pid} chainId=${net.chainId} wallet=${addr} pools=${POOL_ADDRESSES.length} poolAddresses=${POOL_ADDRESSES.join(',')} intervalMs=${INTERVAL_MS} dryRun=${DRY_RUN} once=${RUN_ONCE} preflight=${KEEPER_PREFLIGHT} telegram=${TELEGRAM_ENABLED} telegramTimeoutMs=${TELEGRAM_TIMEOUT_MS} telegramRetries=${TELEGRAM_RETRIES} lowBalanceMon=${LOW_BALANCE_MON} errorAlertThreshold=${ERROR_ALERT_THRESHOLD}`,
   )
 
   await checkBalance(true)
+
+  if (RUN_ONCE) {
+    await tick()
+    console.log(`${ts()} [keeper] once complete`)
+    return
+  }
 
   process.on('SIGINT', async () => {
     console.log(`${ts()} [keeper] SIGINT received, shutting down...`)
