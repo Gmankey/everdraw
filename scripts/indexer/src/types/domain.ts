@@ -92,6 +92,9 @@ export interface WalletPointsRow {
   lifetimePoints: number;
   hasReceivedFirstDepositBonus: 0 | 1;
   hasReceivedFirstWinBonus: 0 | 1;
+  hasReceivedOnTheDoubleBonus: 0 | 1;
+  hasReceivedComebackKingBonus: 0 | 1;
+  highestLossStreakBonusAwarded: number;
   highestStreakMilestoneAwarded: number;
   updatedAt: number;
 }

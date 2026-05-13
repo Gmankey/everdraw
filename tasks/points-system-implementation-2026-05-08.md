@@ -20,6 +20,9 @@ CREATE TABLE IF NOT EXISTS wallet_points (
   lifetime_points INTEGER NOT NULL DEFAULT 0,
   has_received_first_deposit_bonus INTEGER NOT NULL DEFAULT 0,
   has_received_first_win_bonus INTEGER NOT NULL DEFAULT 0,
+  has_received_on_the_double_bonus INTEGER NOT NULL DEFAULT 0,
+  has_received_comeback_king_bonus INTEGER NOT NULL DEFAULT 0,
+  highest_loss_streak_bonus_awarded INTEGER NOT NULL DEFAULT 0,
   highest_streak_milestone_awarded INTEGER NOT NULL DEFAULT 0,
   updated_at INTEGER NOT NULL
 );
@@ -39,7 +42,7 @@ CREATE TABLE IF NOT EXISTS wallet_round_points (
   round_id INTEGER NOT NULL,
   base_points INTEGER NOT NULL,
   multiplier_x100 INTEGER NOT NULL,         -- 100 = 1.0x, 200 = 2.0x
-  bonuses_breakdown TEXT NOT NULL,          -- JSON: {"both_vaults": 10, "loss_streak": 20, "win": 25}
+  bonuses_breakdown TEXT NOT NULL,          -- JSON: {"on_the_double": 50, "loss_streak": 50, "comeback_king": 100, "win": 25}
   total_points INTEGER NOT NULL,
   awarded_at_unix INTEGER NOT NULL,
   PRIMARY KEY (wallet, pool_address, round_id)
@@ -63,20 +66,23 @@ bonuses            = {}
 if round was won by this wallet:
   bonuses.win = 25
 
-if user_holds_position_in_other_vault_at_this_checkpoint:
-  bonuses.both_vaults = round((base_points * multiplier_x100 / 100) * 0.10)
+if not has_received_on_the_double_bonus and user_holds_position_in_other_vault_at_this_checkpoint:
+  bonuses.on_the_double = 50
+  set has_received_on_the_double_bonus = true
 
-if consecutive_non_wins >= 10 and not winning this round:
-  bonuses.loss_streak = round((base_points * multiplier_x100 / 100) * 0.20)
+next_non_win_streak = winning ? 0 : consecutive_non_wins + 1
+if not winning this round and next_non_win_streak crosses 10 / 26 / 52:
+  bonuses.loss_streak = {50, 200, 500}[threshold]
+  set highest_loss_streak_bonus_awarded = threshold
 
 # One-time bonuses
 if not has_received_first_deposit_bonus and this is wallet's first ever deposit:
   bonuses.first_deposit = 25
   set has_received_first_deposit_bonus = true
 
-if not has_received_first_win_bonus and round won by this wallet:
-  bonuses.first_win = 100
-  set has_received_first_win_bonus = true
+if not has_received_comeback_king_bonus and round won by this wallet and wallet had a prior deposit before this round:
+  bonuses.comeback_king = 100
+  set has_received_comeback_king_bonus = true
 
 total = round(base_points * multiplier_x100 / 100) + sum(bonuses)
 

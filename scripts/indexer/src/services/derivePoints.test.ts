@@ -14,6 +14,7 @@ const pointsRepo = createPointsRepo(db);
 const service = createDerivePointsService({ pointsRepo, roundsRepo, walletRoundsRepo });
 
 const wallet = '0x00000000000000000000000000000000000000aa';
+const instantWinner = '0x00000000000000000000000000000000000000bb';
 const poolA = '0x00000000000000000000000000000000000000a1';
 const poolB = '0x00000000000000000000000000000000000000b2';
 
@@ -25,8 +26,8 @@ function round(roundId: number, poolAddress: string, state: 'open' | 'settled' |
     uniqueWalletCount: 0, winnerWalletsCount: winner ? 1 : 0, winner, winningTicket: null, updatedAt: new Date().toISOString(),
   });
 }
-function wr(roundId: number, poolAddress: string, tickets: number, won: 0 | 1) {
-  walletRoundsRepo.upsert({ wallet, roundId, poolAddress, tickets, monPaid: String(tickets), won, withdrew: 0, prizeClaimed: '0', principalWithdrawn: '0', withdrawnAt: null, netPosition: '0', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+function wr(roundId: number, poolAddress: string, tickets: number, won: 0 | 1, w = wallet) {
+  walletRoundsRepo.upsert({ wallet: w, roundId, poolAddress, tickets, monPaid: String(tickets), won, withdrew: 0, prizeClaimed: '0', principalWithdrawn: '0', withdrawnAt: null, netPosition: '0', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
 }
 
 round(1, poolA, 'settled', '2026-05-03T00:00:00.000Z');
@@ -35,8 +36,9 @@ wr(1, poolA, 10, 0);
 wr(1, poolB, 3, 0);
 service.rebuildSettlementPoints();
 let profile = pointsRepo.getProfile(wallet)!;
-assert.equal(profile.lifetimePoints, 36); // 10 base + 1 both-vaults + 25 first-deposit
+assert.equal(profile.lifetimePoints, 85); // 10 base + 50 On the Double + 25 first-deposit
 assert.equal(profile.hasReceivedFirstDepositBonus, 1);
+assert.equal(profile.hasReceivedOnTheDoubleBonus, 1);
 assert.equal(profile.consecutiveNonWins, 1);
 
 round(2, poolA, 'settled', '2026-05-10T00:00:00.000Z', wallet);
@@ -44,8 +46,16 @@ wr(2, poolA, 5, 1);
 service.rebuildSettlementPoints();
 profile = pointsRepo.getProfile(wallet)!;
 assert.equal(profile.hasReceivedFirstWinBonus, 1);
+assert.equal(profile.hasReceivedComebackKingBonus, 1);
 assert.equal(profile.consecutiveNonWins, 0);
 assert.ok(profile.lifetimePoints > 100);
+
+round(3, poolA, 'settled', '2026-05-11T00:00:00.000Z', instantWinner);
+wr(3, poolA, 7, 1, instantWinner);
+service.rebuildSettlementPoints();
+const instantWinnerProfile = pointsRepo.getProfile(instantWinner)!;
+assert.equal(instantWinnerProfile.hasReceivedComebackKingBonus, 0);
+assert.equal(instantWinnerProfile.hasReceivedFirstDepositBonus, 1);
 
 profile = pointsRepo.getProfile(wallet)!;
 pointsRepo.upsertWalletStreak({ ...profile, currentStreakWeeks: 2, longestStreakWeeks: 2, lastCheckpointUnix: 0, consecutiveNonWins: 7, updatedAt: 1 });

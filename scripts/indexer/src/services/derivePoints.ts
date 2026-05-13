@@ -2,7 +2,7 @@ import type { PointsRepo } from '../repositories/pointsRepo.js';
 import type { RoundsRepo } from '../repositories/roundsRepo.js';
 import type { WalletRoundsRepo } from '../repositories/walletRoundsRepo.js';
 import { nowUnix } from '../utils/time.js';
-import { calculateRoundPoints, STREAK_MILESTONE_POINTS } from './pointsMath.js';
+import { calculateRoundPoints, lossStreakThresholdBonus, STREAK_MILESTONE_POINTS } from './pointsMath.js';
 
 export interface DerivePointsService {
   rebuildSettlementPoints(): void;
@@ -49,17 +49,22 @@ export function createDerivePointsService(input: {
           const streak = pointsRepo.getWalletStreak(wallet)!;
           const won = participant.won === 1 || (round.winner != null && round.winner.toLowerCase() === wallet);
           const firstDeposit = points.hasReceivedFirstDepositBonus === 0;
-          const firstWin = points.hasReceivedFirstWinBonus === 0 && won;
-          const hasBothVaults = !skippedOrFailed && pointsRepo.hasOtherActivePoolAt(wallet, round.poolAddress, awardedAtUnix);
+          const hadPriorDeposit = pointsRepo.hadFirstDepositBefore(wallet, round.roundId);
+          const comebackKing = points.hasReceivedComebackKingBonus === 0 && won && hadPriorDeposit;
+          const onTheDouble = points.hasReceivedOnTheDoubleBonus === 0 && !skippedOrFailed && pointsRepo.hasOtherActivePoolAt(wallet, round.poolAddress, awardedAtUnix);
+          const nextConsecutiveNonWins = skippedOrFailed ? streak.consecutiveNonWins : (won ? 0 : streak.consecutiveNonWins + 1);
+          const lossStreakBonus = !won && !skippedOrFailed
+            ? lossStreakThresholdBonus(nextConsecutiveNonWins, points.highestLossStreakBonusAwarded)
+            : null;
 
           const result = calculateRoundPoints({
             tickets: participant.tickets,
             streakWeeks: streak.currentStreakWeeks,
             won,
-            hasBothVaults,
-            consecutiveNonWins: streak.consecutiveNonWins,
+            onTheDouble,
+            lossStreakBonusPoints: lossStreakBonus?.points ?? 0,
             firstDeposit,
-            firstWin,
+            comebackKing,
             skippedOrFailed,
           });
 
@@ -78,13 +83,16 @@ export function createDerivePointsService(input: {
             ...points,
             lifetimePoints: points.lifetimePoints + result.totalPoints,
             hasReceivedFirstDepositBonus: firstDeposit ? 1 : points.hasReceivedFirstDepositBonus,
-            hasReceivedFirstWinBonus: firstWin ? 1 : points.hasReceivedFirstWinBonus,
+            hasReceivedFirstWinBonus: comebackKing ? 1 : points.hasReceivedFirstWinBonus,
+            hasReceivedOnTheDoubleBonus: onTheDouble ? 1 : points.hasReceivedOnTheDoubleBonus,
+            hasReceivedComebackKingBonus: comebackKing ? 1 : points.hasReceivedComebackKingBonus,
+            highestLossStreakBonusAwarded: lossStreakBonus?.threshold ?? points.highestLossStreakBonusAwarded,
             updatedAt: timestamp,
           });
 
           pointsRepo.upsertWalletStreak({
             ...streak,
-            consecutiveNonWins: skippedOrFailed ? streak.consecutiveNonWins : (won ? 0 : streak.consecutiveNonWins + 1),
+            consecutiveNonWins: nextConsecutiveNonWins,
             updatedAt: timestamp,
           });
         }

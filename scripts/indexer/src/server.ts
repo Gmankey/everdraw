@@ -5,7 +5,7 @@ import type { IndexerRunner } from './runner/service.js';
 import type { RoundsRepo } from './repositories/roundsRepo.js';
 import type { WalletRoundsRepo } from './repositories/walletRoundsRepo.js';
 import type { PointsRepo } from './repositories/pointsRepo.js';
-import { calculateRoundPoints, getMultiplierX100, getTier, nextMilestone, nextTierThreshold } from './services/pointsMath.js';
+import { calculateRoundPoints, getMultiplierX100, getTier, lossStreakThresholdBonus, nextMilestone, nextTierThreshold } from './services/pointsMath.js';
 
 export interface ApiServer {
   start(): Promise<Server>;
@@ -78,10 +78,10 @@ export function createApiServer(params: {
       tickets,
       streakWeeks: streak?.currentStreakWeeks ?? 0,
       won: false,
-      hasBothVaults: false,
-      consecutiveNonWins: streak?.consecutiveNonWins ?? 0,
+      onTheDouble: false,
+      lossStreakBonusPoints: lossStreakThresholdBonus((streak?.consecutiveNonWins ?? 0) + 1, points?.highestLossStreakBonusAwarded ?? 0)?.points ?? 0,
       firstDeposit: !points || points.hasReceivedFirstDepositBonus === 0,
-      firstWin: false,
+      comebackKing: false,
     });
     res.json({
       estimated_base_points: result.basePoints,
@@ -110,8 +110,11 @@ export function createApiServer(params: {
       current_tier: getTier(currentStreakWeeks),
       consecutive_non_wins: profile?.consecutiveNonWins ?? 0,
       highest_streak_milestone_awarded: profile?.highestStreakMilestoneAwarded ?? 0,
+      highest_loss_streak_bonus_awarded: profile?.highestLossStreakBonusAwarded ?? 0,
       has_received_first_deposit_bonus: profile?.hasReceivedFirstDepositBonus ?? 0,
       has_received_first_win_bonus: profile?.hasReceivedFirstWinBonus ?? 0,
+      has_received_on_the_double_bonus: profile?.hasReceivedOnTheDoubleBonus ?? 0,
+      has_received_comeback_king_bonus: profile?.hasReceivedComebackKingBonus ?? 0,
       next_tier_threshold: nextTierThreshold(currentStreakWeeks),
       next_milestone: nextMilestone(currentStreakWeeks),
       rank: profile ? pointsRepo.getRank(wallet, 'all') : null,

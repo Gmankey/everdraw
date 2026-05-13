@@ -52,14 +52,16 @@ Layered on top of base × multiplier. Additive in points.
 **One-time per wallet:**
 
 - First deposit: +25 points.
-- First win: +100 points.
+- Comeback King: +100 points, awarded on the first win only if the wallet had a prior deposit before that winning round. A same-round first deposit + win does not trigger it.
+- On the Double: +50 points, awarded once when the wallet has active positions in two vaults at the award checkpoint.
+- Loss-streak threshold bonuses: +50 at 10, +200 at 26, and +500 at 52 consecutive non-winning settled rounds. Each threshold fires once.
 - First time hitting 4-week, 13-week, 26-week, 52-week streak: +50, +200, +500, +1000 points respectively.
 
 **Recurring:**
 
 - Win bonus: +25 points per round won.
-- Both-vaults bonus: +10% on the round's points if the user has an active deposit in both Vault A and Vault B at the same weekly checkpoint.
-- Loss-streak consolation: after 10 consecutive non-winning rounds, +20% on round points until the user wins. Resets on first win.
+
+The previous recurring both-vault +10% and recurring loss-streak +20% mechanics are intentionally removed. On the Double rewards trying both vaults without making dust deposits in a second vault a perpetual farming strategy. Loss-streak thresholds reward unlucky participation without creating a permanent multiplier that runs until the next win. Skipped/failed rounds do not count toward the loss streak and do not break it.
 
 ### What's not in Phase 1
 

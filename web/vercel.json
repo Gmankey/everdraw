@@ -1,0 +1,7 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    { "source": "/blog/drawn-back-to-defi", "destination": "/index.html" },
+    { "source": "/articles/drawn-back-to-defi", "destination": "/index.html" }
+  ]
+}

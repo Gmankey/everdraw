@@ -25,6 +25,7 @@ export function applySchema(db: Database.Database, schemaPath = SCHEMA_PATH): vo
   }
   ensureRoundsColumns(db);
   ensureWalletRoundsColumns(db);
+  ensureWalletPointsColumns(db);
 }
 
 function ensureRoundsColumns(db: Database.Database): void {
@@ -62,5 +63,24 @@ function ensureWalletRoundsColumns(db: Database.Database): void {
 
   if (!names.has('withdrawn_at')) {
     db.exec('ALTER TABLE wallet_rounds ADD COLUMN withdrawn_at TEXT');
+  }
+}
+
+function ensureWalletPointsColumns(db: Database.Database): void {
+  const columns = db.prepare("PRAGMA table_info(wallet_points)").all() as Array<{ name: string }>;
+  const names = new Set(columns.map((column) => column.name));
+
+  if (columns.length === 0) return;
+
+  if (!names.has('has_received_on_the_double_bonus')) {
+    db.exec('ALTER TABLE wallet_points ADD COLUMN has_received_on_the_double_bonus INTEGER NOT NULL DEFAULT 0');
+  }
+
+  if (!names.has('has_received_comeback_king_bonus')) {
+    db.exec('ALTER TABLE wallet_points ADD COLUMN has_received_comeback_king_bonus INTEGER NOT NULL DEFAULT 0');
+  }
+
+  if (!names.has('highest_loss_streak_bonus_awarded')) {
+    db.exec('ALTER TABLE wallet_points ADD COLUMN highest_loss_streak_bonus_awarded INTEGER NOT NULL DEFAULT 0');
   }
 }

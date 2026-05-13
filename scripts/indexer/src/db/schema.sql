@@ -114,6 +114,9 @@ CREATE TABLE IF NOT EXISTS wallet_points (
   lifetime_points INTEGER NOT NULL DEFAULT 0,
   has_received_first_deposit_bonus INTEGER NOT NULL DEFAULT 0,
   has_received_first_win_bonus INTEGER NOT NULL DEFAULT 0,
+  has_received_on_the_double_bonus INTEGER NOT NULL DEFAULT 0,
+  has_received_comeback_king_bonus INTEGER NOT NULL DEFAULT 0,
+  highest_loss_streak_bonus_awarded INTEGER NOT NULL DEFAULT 0,
   highest_streak_milestone_awarded INTEGER NOT NULL DEFAULT 0,
   updated_at INTEGER NOT NULL
 );

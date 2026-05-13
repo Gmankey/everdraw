@@ -50,6 +50,12 @@ function resolvePoolAddresses() {
 const RPC_URL = process.env.RPC_URL
 const PRIVATE_KEY = process.env.PRIVATE_KEY
 const POOL_ADDRESSES = resolvePoolAddresses()
+const POOL_ADDRESSES_V2 = new Set(
+  (process.env.POOL_ADDRESSES_V2 || '')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean),
+)
 
 const INTERVAL_MS = Number(process.env.KEEPER_INTERVAL_MS || 30_000)
 const GAS_LIMIT = process.env.KEEPER_GAS_LIMIT ? Number(process.env.KEEPER_GAS_LIMIT) : undefined
@@ -75,6 +81,9 @@ const execFileAsync = promisify(execFile)
 const ABI = [
   'function nextExecutable() view returns (uint256 rid, uint8 action)',
   'function executeNext() returns (uint256 rid, uint8 action)',
+  'function commit(uint256 rid)',
+  'function settle(uint256 rid)',
+  'function markFailed(uint256 rid)',
 ]
 
 const ACTION_NAMES = {
@@ -86,11 +95,19 @@ const ACTION_NAMES = {
   5: 'Recommit',
 }
 
+const ACTION_NAMES_V2 = {
+  0: 'None',
+  1: 'Commit',
+  2: 'Settle',
+  3: 'Settle',
+}
+
 const provider = new ethers.JsonRpcProvider(RPC_URL)
 const wallet = new ethers.Wallet(PRIVATE_KEY, provider)
 const pools = POOL_ADDRESSES.map((address) => ({
   address,
   contract: new ethers.Contract(address, ABI, wallet),
+  isV2: POOL_ADDRESSES_V2.has(address.toLowerCase()),
   consecutiveErrors: 0,
 }))
 
@@ -251,10 +268,10 @@ function txOptions() {
 }
 
 async function tickPool(poolCtx) {
-  const { address, contract } = poolCtx
+  const { address, contract, isV2 } = poolCtx
   const [rid, action] = await contract.nextExecutable()
   const actionNum = Number(action)
-  const actionName = ACTION_NAMES[actionNum] ?? `Unknown(${actionNum})`
+  const actionName = (isV2 ? ACTION_NAMES_V2 : ACTION_NAMES)[actionNum] ?? `Unknown(${actionNum})`
 
   if (actionNum === 0) {
     console.log(`${ts()} [keeper][pool=${address}] idle rid=${rid} action=${actionName}`)
@@ -265,7 +282,7 @@ async function tickPool(poolCtx) {
 
   console.log(`${ts()} [keeper][pool=${address}] pending rid=${rid} action=${actionName}`)
 
-  if (actionNum === 5) {
+  if (!isV2 && actionNum === 5) {
     const msg = `${ts()} [keeper][pool=${address}][WARN] recommit required rid=${rid} (missed draw window / blockhash expiry)`
     console.warn(msg)
     await sendTelegram(`⚠️ Monad Keeper recommit\n${msg}`)
@@ -280,12 +297,30 @@ async function tickPool(poolCtx) {
 
   const opts = txOptions()
 
+  const execCall = () => {
+    if (!isV2) return contract.executeNext(opts)
+    if (actionNum === 1) return contract.commit(rid, opts)
+    if (actionNum === 2 || actionNum === 3) return contract.settle(rid, opts)
+    throw new Error(`unsupported V2 action=${actionNum}`)
+  }
+
+  const preflightCall = () => {
+    if (!isV2) return contract.executeNext.staticCall(opts)
+    if (actionNum === 1) return contract.commit.staticCall(rid, opts)
+    if (actionNum === 2 || actionNum === 3) return contract.settle.staticCall(rid, opts)
+    throw new Error(`unsupported V2 action=${actionNum}`)
+  }
+
   if (KEEPER_PREFLIGHT) {
     try {
-      await contract.executeNext.staticCall(opts)
+      await preflightCall()
     } catch (e) {
       const msg = e?.shortMessage || e?.reason || e?.message || String(e)
-      const kind = actionNum === 4 ? 'settle precheck not ready' : 'precheck blocked'
+      const isExpectedSettleRetry = (!isV2 && actionNum === 4) || (isV2 && (actionNum === 2 || actionNum === 3))
+      if (!isExpectedSettleRetry) {
+        throw new Error(`precheck blocked rid=${rid} action=${actionName}: ${msg}`)
+      }
+      const kind = 'settle precheck not ready'
       console.log(`${ts()} [keeper][pool=${address}] ${kind} rid=${rid} action=${actionName}: ${msg} (no tx sent)`)
       if (tickCount % HEARTBEAT_LOG_EVERY_TICKS === 0) keeperHeartbeat(address, rid, actionName)
       poolCtx.consecutiveErrors = 0
@@ -293,7 +328,7 @@ async function tickPool(poolCtx) {
     }
   }
 
-  const tx = await contract.executeNext(opts)
+  const tx = await execCall()
   console.log(`${ts()} [keeper][pool=${address}] sent tx=${tx.hash}`)
 
   const rcpt = await tx.wait(1)
@@ -340,12 +375,14 @@ async function main() {
 
   await checkBalance(true)
 
-  process.on('SIGINT', () => {
+  process.on('SIGINT', async () => {
     console.log(`${ts()} [keeper] SIGINT received, shutting down...`)
+    await sendTelegram(`🚨 Monad Keeper SIGINT received, shutting down\ntime=${ts()}\npid=${process.pid}`)
     running = false
   })
-  process.on('SIGTERM', () => {
+  process.on('SIGTERM', async () => {
     console.log(`${ts()} [keeper] SIGTERM received, shutting down...`)
+    await sendTelegram(`🚨 Monad Keeper SIGTERM received, shutting down\ntime=${ts()}\npid=${process.pid}`)
     running = false
   })
   process.on('beforeExit', (code) => {

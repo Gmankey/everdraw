@@ -132,16 +132,6 @@ function PointsHeaderWidget({ account, points }) {
   const p = points || {}
   const lifetimePoints = Number(p.lifetime_points || 0)
   const streakWeeks = Number(p.current_streak_weeks || 0)
-  const multiplier = (Number(p.current_multiplier_x100 || 100) / 100).toFixed(2)
-  const nextTier = p.next_tier_threshold ?? (streakWeeks < 4 ? 4 : streakWeeks < 8 ? 8 : streakWeeks < 13 ? 13 : streakWeeks < 26 ? 26 : null)
-  const tierStart = streakWeeks >= 26 ? 26 : streakWeeks >= 13 ? 13 : streakWeeks >= 8 ? 8 : streakWeeks >= 4 ? 4 : 0
-  const tierEnd = nextTier || Math.max(10, streakWeeks)
-  const tierProgress = Math.max(0, Math.min(1, (streakWeeks - tierStart) / Math.max(1, tierEnd - tierStart)))
-  const litDots = Math.round(tierProgress * 10)
-  const nextMilestone = p.next_milestone ?? [4, 13, 26, 52].find((m) => m > streakWeeks) ?? null
-  const milestoneText = nextMilestone
-    ? `${Math.max(0, nextMilestone - streakWeeks)} week${nextMilestone - streakWeeks === 1 ? '' : 's'} to next milestone`
-    : 'All visible milestones claimed'
 
   return (
     <div className="points-header">
@@ -150,23 +140,10 @@ function PointsHeaderWidget({ account, points }) {
         <span className="points-pill-stat points-pill-streak" title="Weekly streak"><span aria-hidden="true">🔥</span>{streakWeeks}</span>
       </button>
       {open ? (
-        <div className="points-popover">
+        <div className="points-popover points-popover-simple">
           <div className="points-popover-kicker">Total points balance</div>
           <div className="points-popover-total">{lifetimePoints.toLocaleString()}</div>
-          <div className="points-multiplier-pill"><span>Active multiplier</span><strong>{multiplier}x</strong></div>
-
-          <div className="points-streak-mini">
-            <div>
-              <span className="points-popover-kicker">Weekly participation</span>
-              <strong>{streakWeeks} Week Streak</strong>
-            </div>
-            <div className="points-streak-dots" aria-label={`${litDots} of 10 streak progress dots active`}>
-              {Array.from({ length: 10 }).map((_, i) => <span key={i} className={i < litDots ? 'lit' : ''} />)}
-            </div>
-          </div>
-
-          <div className="points-next-milestone">{milestoneText}</div>
-          <a href="#profile" className="points-profile-link">View profile →</a>
+          <a href="#profile" className="points-profile-link">Show profile →</a>
         </div>
       ) : null}
     </div>
@@ -190,18 +167,33 @@ function ProfilePage({ account, points, history }) {
   const streakWeeks = Number(points?.current_streak_weeks || 0)
   const multiplierX100 = Number(points?.current_multiplier_x100 || 100)
   const nextTier = points?.next_tier_threshold ?? (streakWeeks < 4 ? 4 : streakWeeks < 8 ? 8 : streakWeeks < 13 ? 13 : streakWeeks < 26 ? 26 : null)
-  const milestoneBonus = { 4: 50, 13: 200, 26: 500, 52: 1000 }
   const nextMilestone = points?.next_milestone ?? [4, 13, 26, 52].find((m) => m > streakWeeks) ?? null
-  const nextMilestoneReward = nextMilestone ? milestoneBonus[nextMilestone] : null
   const progressTarget = nextMilestone || nextTier || Math.max(1, streakWeeks)
   const progress = Math.min(100, (streakWeeks / progressTarget) * 100)
+  const dotCount = 52
+  const litDots = Math.max(0, Math.min(dotCount, streakWeeks))
+  const highestMilestoneAwarded = Number(points?.highest_streak_milestone_awarded || 0)
+  const streakMilestones = [
+    { weeks: 4, label: 'Seedling streak' },
+    { weeks: 13, label: 'Sprouters streak' },
+    { weeks: 26, label: 'Flourishers streak' },
+    { weeks: 52, label: 'Evergreen streak' },
+  ].map((m) => ({ ...m, claimed: highestMilestoneAwarded >= m.weeks || streakWeeks >= m.weeks }))
+  const noWinWeeks = Number(points?.consecutive_non_wins || points?.current_no_win_streak_weeks || points?.no_win_streak_weeks || 0)
+  const highestLossAwarded = Number(points?.highest_loss_streak_bonus_awarded || 0)
+  const firstDepositDone = Boolean(Number(points?.has_received_first_deposit_bonus || 0) || points?.first_deposit_completed || points?.has_deposited || Number(points?.deposit_count || 0) > 0)
+  const comebackKingDone = Boolean(Number(points?.has_received_comeback_king_bonus || points?.has_received_first_win_bonus || 0) || points?.first_win_completed || points?.has_won || Number(points?.win_count || 0) > 0)
+  const twoVaultsDone = Boolean(Number(points?.has_received_on_the_double_bonus || 0) || points?.two_vaults_completed || Number(points?.vault_count || points?.vaults_entered || 0) >= 2)
+  const bonuses = [
+    { key: 'first-deposit', label: 'First Deposit', unlocked: firstDepositDone },
+    { key: 'comeback-king', label: comebackKingDone ? 'Comeback King' : '???', unlocked: comebackKingDone, hidden: !comebackKingDone },
+    { key: 'on-the-double', label: twoVaultsDone ? 'On the Double' : '???', unlocked: twoVaultsDone, hidden: !twoVaultsDone },
+    { key: 'rising', label: highestLossAwarded >= 10 || noWinWeeks >= 10 ? 'Rising' : '???', unlocked: highestLossAwarded >= 10 || noWinWeeks >= 10, hidden: highestLossAwarded < 10 && noWinWeeks < 10 },
+    { key: 'ascended', label: highestLossAwarded >= 26 || noWinWeeks >= 26 ? 'Ascended' : '???', unlocked: highestLossAwarded >= 26 || noWinWeeks >= 26, hidden: highestLossAwarded < 26 && noWinWeeks < 26 },
+    { key: 'transcended', label: highestLossAwarded >= 52 || noWinWeeks >= 52 ? 'Transcended' : '???', unlocked: highestLossAwarded >= 52 || noWinWeeks >= 52, hidden: highestLossAwarded < 52 && noWinWeeks < 52 },
+  ]
   const ensName = points?.ens && !ethers.isAddress(points.ens) && points.ens.toLowerCase() !== account.toLowerCase() ? points.ens : ''
   const recentRounds = (history || []).slice(0, 12)
-  const bonusChips = [
-    { label: 'First Deposit', unlocked: !!points?.has_received_first_deposit_bonus },
-    { label: 'First Win', unlocked: !!points?.has_received_first_win_bonus },
-    { label: 'Streak Milestone', unlocked: Number(points?.highest_streak_milestone_awarded || 0) > 0, detail: Number(points?.highest_streak_milestone_awarded || 0) > 0 ? `${points.highest_streak_milestone_awarded}w` : null },
-  ]
   return (
     <section className="participants-card points-page">
       <div className="points-page-head">
@@ -211,40 +203,57 @@ function ProfilePage({ account, points, history }) {
         </div>
         <div className={tierClass(points?.current_tier)}>{points?.current_tier || 'Bronze'}</div>
       </div>
-      <div className="points-big">{Number(points?.lifetime_points || 0).toLocaleString()} <span>points</span></div>
-      <div className="points-streak-card">
-        <div className="points-streak-title">🔥 {streakWeeks} week streak</div>
-        <div className="points-progress"><span style={{ width: `${progress}%` }} /></div>
-        <div className="points-highlight-grid">
-          <div className="points-highlight-card">
-            <span>Active multiplier</span>
-            <strong>×{(multiplierX100 / 100).toFixed(2)}</strong>
-            <small>{points?.current_tier || 'Bronze'} tier</small>
+      <div className="points-profile-layout points-profile-layout-rewards">
+        <div className="points-profile-summary points-profile-main-card rewards-main-card">
+          <div className="points-popover-kicker rewards-kicker">Total points balance</div>
+          <div className="points-profile-total rewards-total">{Number(points?.lifetime_points || 0).toLocaleString()}</div>
+          <div className="points-multiplier-pill rewards-multiplier-pill"><span>Active multiplier</span><strong>{(multiplierX100 / 100).toFixed(2)}x</strong></div>
+
+          <div className="points-streak-mini rewards-streak-block">
+            <div>
+              <span className="points-popover-kicker">Weekly participation</span>
+              <strong>{streakWeeks} Week Streak</strong>
+            </div>
+            <div className="points-streak-dots points-streak-dots-52" aria-label={`${litDots} of ${dotCount} weeks active`}>
+              {Array.from({ length: dotCount }).map((_, i) => {
+                const week = i + 1
+                const milestone = streakMilestones.find((m) => m.weeks === week)
+                return <span key={week} title={milestone ? `${milestone.label} · Week ${week}` : `Week ${week}`} className={`${i < litDots ? 'lit' : ''} ${milestone ? 'milestone-dot' : ''} ${milestone?.claimed ? 'claimed' : ''}`} />
+              })}
+            </div>
           </div>
-          <div className="points-highlight-card">
-            <span>Next milestone</span>
-            <strong>{nextMilestone ? `${nextMilestone} weeks` : 'Complete'}</strong>
-            <small>{nextMilestoneReward ? `+${nextMilestoneReward} point bonus` : 'All streak milestones cleared'}</small>
-          </div>
+          <div className="points-progress" aria-label={`Progress to ${progressTarget} week target`}><span style={{ width: `${progress}%` }} /></div>
         </div>
+
+        <aside className="points-profile-side rewards-side-card">
+          <div className="points-milestones-panel rewards-milestones-panel rewards-bonuses-panel">
+            <h3>Bonuses</h3>
+            <div className="points-milestone-list rewards-bonus-list">
+              {bonuses.map((bonus) => (
+                <div className={`points-milestone-row rewards-bonus-row ${bonus.unlocked ? 'claimed' : 'locked'} ${bonus.hidden ? 'hidden-bonus' : ''}`} key={bonus.key}>
+                  <span className="points-milestone-icon" aria-hidden="true">{bonus.unlocked ? '✓' : bonus.hidden ? '?' : ''}</span>
+                  <div>
+                    <strong>{bonus.label}</strong>
+                    <small>{bonus.hidden ? 'Reveal by playing' : bonus.unlocked ? 'Unlocked' : 'Available bonus'}</small>
+                  </div>
+                  <span className="points-milestone-status">{bonus.unlocked ? 'Unlocked' : bonus.hidden ? '???' : 'Lock'}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </aside>
       </div>
-      <h3>Recent rounds</h3>
-      <div className="participants-table">
-        <div className="participants-row participants-header"><span>Round</span><span>Base</span><span>Multiplier</span><span>Bonuses</span><span>Total</span></div>
-        {recentRounds.length === 0 ? (
-          <div className="points-empty-state">No rounds yet. Buy a ticket to start earning.</div>
-        ) : recentRounds.map((h) => (
-          <div className="participants-row" key={`${h.pool_address}:${h.round_id}`}><span>#{h.round_id}</span><span>{h.base_points}</span><span>×{(h.multiplier_x100 / 100).toFixed(2)}</span><span>{Object.keys(h.bonuses_breakdown || {}).join(', ') || '—'}</span><span>+{h.total_points}</span></div>
-        ))}
-      </div>
-      <h3>Bonuses</h3>
-      <div className="points-bonus-chips">
-        {bonusChips.map((chip) => (
-          <span className={`points-bonus-chip ${chip.unlocked ? 'unlocked' : 'locked'}`} key={chip.label}>
-            {chip.label}{chip.detail ? ` · ${chip.detail}` : ''}
-            <small>{chip.unlocked ? 'Unlocked' : 'To unlock'}</small>
-          </span>
-        ))}
+
+      <div className="points-recent-rounds">
+        <h3>Recent rounds</h3>
+        <div className="participants-table">
+          <div className="participants-row participants-header"><span>Round</span><span>Base</span><span>Multiplier</span><span>Bonuses</span><span>Total</span></div>
+          {recentRounds.length === 0 ? (
+            <div className="points-empty-state">No rounds yet. Buy a ticket to start earning.</div>
+          ) : recentRounds.map((h) => (
+            <div className="participants-row" key={`${h.pool_address}:${h.round_id}`}><span>#{h.round_id}</span><span>{h.base_points}</span><span>×{(h.multiplier_x100 / 100).toFixed(2)}</span><span>{Object.keys(h.bonuses_breakdown || {}).join(', ') || '—'}</span><span>+{h.total_points}</span></div>
+          ))}
+        </div>
       </div>
     </section>
   )
@@ -372,6 +381,93 @@ async function ensureCorrectNetwork(provider, expectedChainId) {
   }
 }
 
+
+function FounderLaunchArticle() {
+  return (
+    <main className="article-page">
+      <a href="/" className="back-link article-back">← Back to EverDraw</a>
+      <article className="founder-article">
+        <header className="article-hero">
+          <div className="article-hero-glow" aria-hidden="true" />
+          <div className="article-kicker">Founder Note</div>
+          <h1>Drawn Back to DeFi: Why I Built EverDraw</h1>
+          <div className="article-meta">By Gman · May 13, 2026</div>
+          <div className="article-hero-tags" aria-label="EverDraw themes">
+            <span>Principal protected</span>
+            <span>Monad native</span>
+            <span>Yield-funded prizes</span>
+          </div>
+        </header>
+
+        <section>
+          <h2>When DeFi Felt Alive</h2>
+          <p>I came into DeFi through the same door as most. The yield farming, LP positions, ridiculous APYs, new communities, that was where crypto first felt alive to me. Back then, it almost felt like you could close your eyes, throw a dart at a new chain, and somehow still find a net profit. Ethereum, Polygon, Fantom, Avalanche; each ecosystem felt like another frontier, and if you were early enough, curious enough, and stubborn enough to learn, there was real opportunity waiting somewhere. Who still remembers the era of the “rebasing” token? Those were the days.</p>
+          <p>Now there are more protocols than ever, but the rewards often feel smaller, more fragmented, and less worth the effort required to chase them. Users are not only spreading their liquidity across too many places; they are spreading their time and attention too.</p>
+        </section>
+
+        <section>
+          <h2>The Feeling Prediction Markets Found</h2>
+          <p>I think that is why prediction markets found so much oxygen. Prediction markets did not beat DeFi on fundamentals. They beat it on feeling. They gave people back that dopamine hit and, more importantly, they gave people a shot at something that could feel meaningful very quickly. In this economy, a lot of people are desperate to get at least one foot out of the meat grinder.</p>
+          <p>I do not say that as an attack on prediction markets. Their success is a signal. People have not stopped wanting upside or excitement. What they have lost is the sense that DeFi is still the place that gives them that feeling.</p>
+          <p>The irony is that this version of hope often ends the same way... users get wrecked. To gain the upside, users are asked to accept ruin as the price of admission.</p>
+          <p>People still want to dream. But they should not have to sleep on a bed of dynamite to do so.</p>
+          <blockquote className="article-pullquote">People still want to dream. But they should not have to sleep on a bed of dynamite to do so.</blockquote>
+          <p>That is why I built EverDraw.</p>
+        </section>
+
+        <section>
+          <h2>What EverDraw Is</h2>
+          <p>EverDraw is a principal-protected prize layer for Monad. Users deposit MON. The deposit is held as shMON and earns staking yield. All yield accumulated that round is pooled into one prize. At the end of the round, one winner takes the entire pool. But the best part is everyone else gets their entire principal back.</p>
+          <blockquote className="article-pullquote article-pullquote-center">Win the pot, or keep your lot.</blockquote>
+          <p>That is the product in its simplest form. No liquidations. No impermanent loss. No active position management. No complicated strategy. You enter the draw, the yield does its work, and either you win the pot or you get back your original deposit.</p>
+          <p>EverDraw keeps the thing people still want — a shot at meaningful upside — while removing the part that usually makes that shot destructive.</p>
+        </section>
+
+        <section>
+          <h2>The Difference Is in the Details</h2>
+          <p>I also want to be honest about what EverDraw is and is not. Principal-protected prize savings is not a brand-new idea, and I am not interested in pretending otherwise. Versions of this concept have existed before, both in traditional finance and in crypto. The difference is in the specific combination EverDraw is building around: Monad staking yield through shMON, and a long-term vision where draws become engagement infrastructure rather than just a standalone vault. Let’s talk about both.</p>
+          <p>First, the yield source. Most prize-savings products have to send user deposits into lending markets to generate yield. That can work, but it also means the prize is tied to lending demand, utilisation, borrow rates, and the risk assumptions of another protocol. EverDraw’s first version works differently because it is built on Monad staking yield through shMON. The deposited MON becomes productive through staking, and that staking yield becomes the prize. This is one of the reasons EverDraw makes sense on Monad specifically: the chain gives us a native yield source that can be turned into a shared prize without depending on a third-party lending market or inflationary incentives that disappear when a campaign ends.</p>
+          <p>Second, the vision. A simple prize-savings product is useful, but on its own it is still just a product. EverDraw starts with a simple user-facing vault because that is the cleanest way to prove the loop, but the larger idea is to turn the draw mechanic into an engagement layer for Monad. That means more assets, more draw formats, protocol campaigns, sponsored prize pools, and eventually tools that let other projects use recurring prize mechanics to distribute rewards.</p>
+        </section>
+
+        <section>
+          <h2>From Vault to Engagement Layer</h2>
+          <p>This matters because DeFi does not just have a liquidity problem. It has a retention problem. Airdrops create a single burst of attention. Liquidity mining often attracts mercenary capital that leaves as soon as rewards dry up. Protocols keep paying users to show up once, then struggle to make them stay.</p>
+          <p>EverDraw provides an alternative model: recurring participation built around anticipation rather than obligation. If a protocol has yield, it can turn that yield into a reason for users to return. If a community wants a shared weekly moment, it can create one. If an ecosystem wants activity that feels less extractive and more fun, prize savings can become a useful primitive.</p>
+          <p>That is the part that excites me most. EverDraw starts as a simple user product, but the long-term vision is an engagement layer where yield becomes something people can feel, not just something displayed as a small percentage on a dashboard.</p>
+        </section>
+
+        <section>
+          <h2>Why Monad</h2>
+          <p>Monad is the right home for that vision. I have been in Monad since the early days, creating, participating, learning, and believing alongside the ecosystem before EverDraw existed. I was not looking for a hot chain to attach a product to. I wanted to build something that made sense for the community I was already part of.</p>
+          <p>The alignment is also practical. EverDraw deposits become shMON exposure. The prize comes from Monad staking yield. Instead of being another app that fragments attention and pulls capital away from the ecosystem, EverDraw is designed to draw capital back into Monad and make that capital productive inside the network.</p>
+        </section>
+
+        <section>
+          <h2>For Everyone Still Drawn to the Dream</h2>
+          <p>EverDraw is designed to make anticipation feel sustainable. You can care about the outcome without needing to put your whole stack at risk. You can miss the prize and still remain intact. You can return for the next draw not because you were trapped, liquidated, or diluted into staying, but because the product gives you a clean reason to try again.</p>
+          <p>The first EverDraw vault is coming very soon. Follow <a href="https://x.com/everdrawing" target="_blank" rel="noopener noreferrer">@everdrawing</a> and stay tuned for the launch.</p>
+          <p>With EverDraw I am not promising guaranteed riches, I am promising a chance to say WAGMI again.</p>
+          <p>For everyone still drawn to the dream.</p>
+        </section>
+
+        <footer className="article-cta article-cta-feature">
+          <div className="article-cta-copy">
+            <span>The first vault is coming soon</span>
+            <strong>Follow EverDraw for launch updates.</strong>
+            <p>Win the pot. Or keep your lot.</p>
+          </div>
+          <div className="article-cta-links">
+            <a href="/">Open app</a>
+            <a href="https://docs.everdraw.xyz" target="_blank" rel="noopener noreferrer">Docs</a>
+            <a href="https://x.com/everdrawing" target="_blank" rel="noopener noreferrer">Follow @everdrawing</a>
+          </div>
+        </footer>
+      </article>
+    </main>
+  )
+}
+
 function Header({ account, onConnect, currentPage, points }) {
   return (
     <header>
@@ -380,10 +476,11 @@ function Header({ account, onConnect, currentPage, points }) {
         EverDraw
       </div>
       <nav className="nav-links">
-        <a href="#vault" className={`nav-link ${currentPage === 'vault' ? 'active' : ''}`}>Vault</a>
-        <a href="#stats" className={`nav-link ${currentPage === 'stats' ? 'active' : ''}`}>Stats</a>
-        <a href="#profile" className={`nav-link ${currentPage === 'profile' ? 'active' : ''}`}>Profile</a>
-        <a href="#leaderboard" className={`nav-link ${currentPage === 'leaderboard' ? 'active' : ''}`}>Leaderboard</a>
+        <a href="/#vault" className={`nav-link ${currentPage === 'vault' ? 'active' : ''}`}>Vault</a>
+        <a href="/#stats" className={`nav-link ${currentPage === 'stats' ? 'active' : ''}`}>Stats</a>
+        <a href="/#profile" className={`nav-link ${currentPage === 'profile' ? 'active' : ''}`}>Profile</a>
+        <a href="/#leaderboard" className={`nav-link ${currentPage === 'leaderboard' ? 'active' : ''}`}>Leaderboard</a>
+        <a href="/articles/drawn-back-to-defi" className={`nav-link ${currentPage === 'article' ? 'active' : ''}`}>Articles</a>
         <a href="https://docs.everdraw.xyz" target="_blank" rel="noopener noreferrer" className="nav-link">Docs</a>
         <a href="https://x.com/everdrawing" target="_blank" rel="noopener noreferrer" className="nav-link nav-link-x" aria-label="X / Twitter">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
@@ -419,29 +516,22 @@ function ClaimFlowModal({ open, mode, busy, status, error, onClose, onClaimOnly,
 
   const isWinner = mode === 'winner'
   const heroEyebrow = ''
-  const heroTitle = isV2 ? 'Choose your redemption action' : 'How do you want to claim this round?'
+  const heroTitle = 'How do you want to claim this round?'
   const heroBody = ''
 
   const options = isV2
     ? (isWinner
       ? [
           {
-            kicker: busy ? 'Working...' : 'CLAIM PRIZE',
-            title: 'Claim prize',
+            kicker: busy ? 'Working...' : 'SIMPLE CLAIM',
+            title: 'Withdraw Shmon directly to wallet ',
             body: '',
             onClick: onClaimOnly,
             tone: 'primary',
           },
           {
-            kicker: busy ? 'Working...' : 'REDEEM',
-            title: 'Redeem tickets to shMON wallet balance',
-            body: '',
-            onClick: onWithdrawOnly,
-            tone: 'default',
-          },
-          {
-            kicker: busy ? 'Working...' : 'REDEEM AS MON',
-            title: 'Redeem, then open shmonad.xyz',
+            kicker: busy ? 'Working...' : 'REDEEM AND CONVERT',
+            title: 'Redeem shMON and convert to MON',
             body: '',
             onClick: onWithdrawAndConvert,
             tone: 'default',
@@ -449,15 +539,15 @@ function ClaimFlowModal({ open, mode, busy, status, error, onClose, onClaimOnly,
         ]
       : [
           {
-            kicker: busy ? 'Working...' : 'REDEEM',
-            title: 'Redeem tickets to shMON wallet balance',
+            kicker: busy ? 'Working...' : 'WITHDRAW PRINCIPAL',
+            title: 'Withdraw principal directly to wallet',
             body: '',
             onClick: onWithdrawOnly,
             tone: 'primary',
           },
           {
-            kicker: busy ? 'Working...' : 'REDEEM AS MON',
-            title: 'Redeem, then open shmonad.xyz',
+            kicker: busy ? 'Working...' : 'WITHDRAW AND CONVERT',
+            title: 'Withdraw principal and convert to MON',
             body: '',
             onClick: onWithdrawAndConvert,
             tone: 'default',
@@ -480,8 +570,8 @@ function ClaimFlowModal({ open, mode, busy, status, error, onClose, onClaimOnly,
           tone: 'primary',
         },
         {
-          kicker: busy ? 'Working...' : 'CLAIM AND CONVERT',
-          title: 'Claim Shmon and convert to MON',
+          kicker: busy ? 'Working...' : 'REDEEM AND CONVERT',
+          title: 'Redeem shMON and convert to MON',
           body: '',
           onClick: onWithdrawAndConvert,
           tone: 'default',
@@ -543,7 +633,7 @@ function ClaimFlowModal({ open, mode, busy, status, error, onClose, onClaimOnly,
             </div>
           </div>
         ) : (
-          <div className="claim-flow-grid">
+          <div className={`claim-flow-grid ${options.length === 2 ? 'two-options' : ''}`}>
             {options.map((option) => (
               <button
                 key={option.title}
@@ -773,6 +863,7 @@ function RoundProgressSteps({ state, settlementSecs, secondsRemaining }) {
 export default function App() {
   // Hash-based page routing
   const [currentPage, setCurrentPage] = useState(() => {
+    if (window.location.pathname === '/blog/drawn-back-to-defi' || window.location.pathname === '/articles/drawn-back-to-defi') return 'article'
     if (window.location.hash === '#stats') return 'stats'
     if (window.location.hash === '#shmon') return 'shmon'
     if (window.location.hash === '#profile') return 'profile'
@@ -781,7 +872,8 @@ export default function App() {
   })
   useEffect(() => {
     function onHashChange() {
-      if (window.location.hash === '#stats') setCurrentPage('stats')
+      if (window.location.pathname === '/blog/drawn-back-to-defi' || window.location.pathname === '/articles/drawn-back-to-defi') setCurrentPage('article')
+      else if (window.location.hash === '#stats') setCurrentPage('stats')
       else if (window.location.hash === '#shmon') setCurrentPage('shmon')
       else if (window.location.hash === '#profile') setCurrentPage('profile')
       else if (window.location.hash === '#leaderboard') setCurrentPage('leaderboard')
@@ -1956,7 +2048,14 @@ export default function App() {
   const handleClaimOnly = useCallback(async () => {
     if (!claimFlow.rid) return
     if (isV2Pool) {
-      const ok = await handleClaimPrize(claimFlow.rid, claimFlow.poolAddr)
+      if (claimFlow.mode === 'winner') {
+        const claimOk = await handleClaimPrize(claimFlow.rid, claimFlow.poolAddr)
+        if (!claimOk) return
+        const withdrawOk = await handleWithdraw(claimFlow.rid, claimFlow.poolAddr)
+        if (withdrawOk) setClaimFlow((prev) => ({ ...prev, open: false }))
+        return
+      }
+      const ok = await handleWithdraw(claimFlow.rid, claimFlow.poolAddr)
       if (ok) setClaimFlow((prev) => ({ ...prev, open: false }))
       return
     }
@@ -1973,7 +2072,7 @@ export default function App() {
       setActionStatus(`Withdraw principal: submitted ${String(withdrawTxHash).slice(0, 10)}...`)
     }, claimFlow.poolAddr)
     if (ok) setClaimFlow((prev) => ({ ...prev, open: false }))
-  }, [claimFlow.mode, claimFlow.poolAddr, claimFlow.rid, handleClaimPrize, runSignedAction, isV2Pool])
+  }, [claimFlow.mode, claimFlow.poolAddr, claimFlow.rid, handleClaimPrize, handleWithdraw, runSignedAction, isV2Pool])
 
   const handleWithdrawOnly = useCallback(async () => {
     const ok = await handleWithdraw(claimFlow.rid, claimFlow.poolAddr)
@@ -2036,29 +2135,29 @@ export default function App() {
       return
     }
 
-    // Open a blank window synchronously while still in user-gesture context.
-    // Browsers block window.open() called after await — opening now and navigating later bypasses that.
-    const newWin = window.open('about:blank', '_blank', 'noreferrer')
+    const openShmonad = () => {
+      window.location.assign('https://shmonad.xyz')
+    }
 
     if (isV2Pool && claimFlow.mode === 'winner') {
       const claimOk = await handleClaimPrize(claimFlow.rid, claimFlow.poolAddr)
-      if (!claimOk) { newWin?.close(); return }
+      if (!claimOk) return
       const withdrawOk = await handleWithdraw(claimFlow.rid, claimFlow.poolAddr)
-      if (!withdrawOk) { newWin?.close(); return }
-      if (newWin) newWin.location.href = 'https://shmonad.xyz'
+      if (!withdrawOk) return
       setClaimRedirectWarningOpen(false)
       setClaimFlow((prev) => ({ ...prev, open: false }))
       setActionStatus('Tickets redeemed. Opening shmonad.xyz to convert to MON...')
+      openShmonad()
       return
     }
 
     if (isV2Pool) {
       const ok = await handleWithdraw(claimFlow.rid, claimFlow.poolAddr)
-      if (!ok) { newWin?.close(); return }
-      if (newWin) newWin.location.href = 'https://shmonad.xyz'
+      if (!ok) return
       setClaimRedirectWarningOpen(false)
       setClaimFlow((prev) => ({ ...prev, open: false }))
       setActionStatus('Tickets redeemed. Opening shmonad.xyz to convert to MON...')
+      openShmonad()
       return
     }
 
@@ -2070,20 +2169,20 @@ export default function App() {
         const withdrawTxHash = await sendTx('withdrawPrincipal', [BigInt(claimFlow.rid)], 500000n, { nonceOffset: 1 })
         setActionStatus(`Withdraw principal: submitted ${String(withdrawTxHash).slice(0, 10)}...`)
       }, claimFlow.poolAddr)
-      if (!ok) { newWin?.close(); return }
-      if (newWin) newWin.location.href = 'https://shmonad.xyz'
+      if (!ok) return
       setClaimRedirectWarningOpen(false)
       setClaimFlow((prev) => ({ ...prev, open: false }))
       setActionStatus('Prize and principal withdrawn. Continue MON conversion in shmonad.xyz.')
+      openShmonad()
       return
     }
 
     const ok = await handleWithdraw(claimFlow.rid)
-    if (!ok) { newWin?.close(); return }
-    if (newWin) newWin.location.href = 'https://shmonad.xyz'
+    if (!ok) return
     setClaimRedirectWarningOpen(false)
     setClaimFlow((prev) => ({ ...prev, open: false }))
     setActionStatus('Principal withdrawn. Continue MON conversion in shmonad.xyz.')
+    openShmonad()
   }, [claimFlow.mode, claimFlow.rid, claimFlow.poolAddr, handleClaimPrize, handleWithdraw, isV2Pool, runSignedAction])
 
   const buyTicketsShmon = useCallback(async () => {
@@ -2190,7 +2289,7 @@ export default function App() {
     }, 1800)
   }, [winnersTransitioning])
 
-  if (!poolAddress) {
+  if (!poolAddress && currentPage !== 'article') {
     return (
       <div className="app-shell">
         <div className="app-container">
@@ -2247,7 +2346,8 @@ export default function App() {
         ) : (
           <>
             <Header account={account} onConnect={connectWallet} currentPage={currentPage} points={pointsProfile} />
-            {pointsBanner ? <div className="points-banner"><span>{pointsBanner}</span><button onClick={() => setPointsBanner(null)}>×</button></div> : null}
+            {currentPage === 'article' ? <FounderLaunchArticle /> : null}
+            {currentPage !== 'article' && pointsBanner ? <div className="points-banner"><span>{pointsBanner}</span><button onClick={() => setPointsBanner(null)}>×</button></div> : null}
         {currentPage === 'stats' ? <StatsPage /> : null}
             {currentPage === 'profile' ? <ProfilePage account={account} points={pointsProfile} history={pointsHistory} /> : null}
             {currentPage === 'leaderboard' ? <LeaderboardPage account={account} /> : null}
@@ -2348,8 +2448,8 @@ export default function App() {
                 const myRoundResultLabel = r.isV2
                   ? (r.state < 2 ? 'Active' : r.state === 2 ? (r.isWinner ? 'Won!' : 'No win') : 'Redeem available')
                   : (r.state < 3 ? 'Locked' : (r.isWinner ? 'Winner' : 'Participant'))
-                const actionLabel = r.isV2 ? (r.isWinner && !r.prizeClaimed ? 'Claim / Redeem' : 'Redeem') : 'Claim'
-                const pendingActionLabel = r.isWinner ? 'Claiming...' : 'Redeeming...'
+                const actionLabel = r.isV2 ? 'Redeem' : 'Claim'
+                const pendingActionLabel = 'Redeeming...'
                 const prizeLabel = r.isWinner
                   ? `${r.prizeClaimed ? 'Claimed' : 'Prize'}: ${Number(ethers.formatEther(r.prizeWei || 0n)).toFixed(2)} MON`
                   : '—'
