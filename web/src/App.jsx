@@ -62,16 +62,23 @@ const ERC20_ABI = [
 ]
 
 const ACTION_LABELS = ['None', 'Skip', 'Commit', 'Draw', 'Settle', 'Recommit']
-const ACTION_LABELS_V2 = ['None', 'Commit', 'Draw', 'Settle', 'Recommit']
+const ACTION_LABELS_V2 = ['None', 'Commit', 'Settle', 'Mark Failed']
 const STATE_LABELS = ['Open', 'Committed', 'Finalizing', 'Settled']
-const STATE_LABELS_V2 = ['Open', 'Committed', 'Drawn', 'Finalizing', 'Settled']
+const STATE_LABELS_V2 = ['Open', 'Committed', 'Settled', 'Skipped', 'Failed']
 const INDEXER_URL = import.meta.env.VITE_INDEXER_URL || 'https://everdraw-indexer.fly.dev'
 
 function isSettledState(state, isV2 = false) {
   const n = Number(state)
-  // Deployed V2 vaults report Settled as 4. Some local compat artifacts use 3,
-  // so accept both for read-only settled/previous-round UI gating.
-  return isV2 ? (n === 3 || n === 4) : n === 3
+  return isV2 ? n === 2 : n === 3
+}
+
+function isTerminalRound(state, isV2 = false) {
+  const n = Number(state)
+  return isV2 ? n >= 2 : n === 3
+}
+
+function isFailedRound(state, isV2 = false) {
+  return isV2 && Number(state) === 4
 }
 
 function roundYieldWei(info, isV2 = false) {
@@ -1167,7 +1174,7 @@ export default function App() {
 
     let sRid = null
     let sInfo = null
-    if (isSettledState(info.state, isV2Pool) && Number(info.totalTickets) > 0) {
+    if (isTerminalRound(info.state, isV2Pool) && (Number(info.totalTickets) > 0 || BigInt(info.totalPrincipalMON ?? 0n) > 0n)) {
       sRid = Number(rid)
       sInfo = info
     } else if (settledRidCacheRef.current && settledRidCacheRef.current !== Number(rid)) {
@@ -1179,7 +1186,7 @@ export default function App() {
       const results = await Promise.all(scanRids.map((r) => getCachedRoundInfo(pool, poolAddress, BigInt(r), signal).catch(() => null)))
       for (let i = 0; i < results.length; i++) {
         const si = results[i]
-        if (si && isSettledState(si.state, isV2Pool) && Number(si.totalTickets) > 0) {
+        if (si && isTerminalRound(si.state, isV2Pool) && (Number(si.totalTickets) > 0 || BigInt(si.totalPrincipalMON ?? 0n) > 0n)) {
           sRid = scanRids[i]
           sInfo = si
           break
@@ -1462,7 +1469,7 @@ export default function App() {
   const shownCommitAfterRemaining = shownRoundInfo && isV2Pool ? Math.max(0, Number(commitAfterTime || 0) - now) : 0
   const shownSalesOpen = shownState === 0 && shownSecondsRemaining > 0
   const shownYieldAccruing = isV2Pool && shownState === 0 && shownSecondsRemaining === 0 && shownCommitAfterRemaining > 0
-  const shownSettled = isSettledState(shownState, isV2Pool)
+  const shownSettled = isTerminalRound(shownState, isV2Pool)
   const salesOpen = shownIsCurrentRound ? shownSalesOpen : isOpenState && secondsRemaining > 0
   const buyFormOpen = shownIsCurrentRound && shownSalesOpen
   const canBuyTx = !!account && buyFormOpen && !loading
@@ -1581,11 +1588,11 @@ export default function App() {
 
       if (shownState === 2) {
         return {
-          heading: 'Winner Revealed',
-          value: shownSettlementSecs > 0 ? formatCountdown(shownSettlementSecs) : 'Finalizing...',
-          sub: shownRoundInfo?.winner ? `Winner: ${shortAddr(shownRoundInfo.winner)}` : 'Round is being finalized',
+          heading: 'Round Complete',
+          value: 'Complete',
+          sub: shownRoundInfo?.winner ? `Winner: ${shortAddr(shownRoundInfo.winner)}` : 'Winner and prize are available',
           metaLabel: 'Vault status',
-          metaValue: 'Finalizing'
+          metaValue: 'Settled'
         }
       }
 
@@ -1610,11 +1617,11 @@ export default function App() {
 
       if (shownState === 4) {
         return {
-          heading: 'Round Complete',
-          value: 'Complete',
-          sub: shownRoundInfo?.winner ? `Winner: ${shortAddr(shownRoundInfo.winner)}` : 'Redeem and claim are now available',
+          heading: 'Round Failed',
+          value: 'Principal Ready',
+          sub: 'Winner draw expired; principal can be redeemed, no prize was created',
           metaLabel: 'Vault status',
-          metaValue: 'Settled'
+          metaValue: 'Failed'
         }
       }
     }
@@ -1753,7 +1760,7 @@ export default function App() {
   const timerIsClock = /^\d+:\d{2}:\d{2}:\d{2}$/.test(timerCard.value)
 
   const isUnstaking = !isV2Pool && shownState === 2 && shownSettlementSecs > 0 && shownSettlementSecs <= 86400
-  const drawFinished = !isDeadRound && (shownSettled || isUnstaking)
+  const drawFinished = !isDeadRound && !isFailedRound(shownState, isV2Pool) && (shownSettled || isUnstaking)
   const activeRoundInfo = shownRoundInfo ?? roundInfo
   const activeRoundId = shownRoundId || roundId
 
@@ -1910,7 +1917,7 @@ export default function App() {
           const principalWithdrawnWei = BigInt(r.principalWithdrawn || '0')
           const remainingPrincipalWei = principalWithdrawnWei >= monPaidWei ? 0n : monPaidWei - principalWithdrawnWei
           const normalizedState = isV2round
-            ? (r.state === 'open' ? 0 : r.state === 'committed' ? 1 : r.state === 'settled' ? 2 : r.state === 'skipped' ? 3 : 0)
+            ? (r.state === 'open' ? 0 : r.state === 'committed' ? 1 : r.state === 'settled' ? 2 : r.state === 'skipped' ? 3 : r.state === 'failed' ? 4 : 0)
             : (r.state === 'settled' || r.state === 'skipped' ? 3 : r.state === 'drawn' || r.state === 'unstaking' ? 2 : r.state === 'committed' ? 1 : 0)
           putRow({
             rid: r.roundId,
@@ -1926,7 +1933,7 @@ export default function App() {
             withdrawableShares: 0n,
             withdrawableMon: null,
             prizeWei: BigInt(r.prizeClaimed || '0'),
-            canWithdraw: ['settled', 'skipped'].includes(r.state) && remainingPrincipalWei > 0n,
+            canWithdraw: ['settled', 'skipped', 'failed'].includes(r.state) && remainingPrincipalWei > 0n,
           })
         }
 
@@ -1953,11 +1960,11 @@ export default function App() {
 
   const myRoundsStats = useMemo(() => {
     const lockedWei = myRounds
-      .filter((r) => !isSettledState(r.state, r.isV2))
+      .filter((r) => !isTerminalRound(r.state, r.isV2))
       .reduce((acc, r) => acc + (r.principalWei || 0n), 0n)
 
     const claimableWei = myRounds
-      .filter((r) => isSettledState(r.state, r.isV2))
+      .filter((r) => isTerminalRound(r.state, r.isV2))
       .reduce((acc, r) => acc + (r.principalWei || 0n), 0n)
 
     const winningsWei = myRounds
@@ -2464,14 +2471,14 @@ export default function App() {
                     : r.state === 1 ? 'Drawing'
                     : r.state === 2 ? 'Settled'
                     : r.state === 3 ? 'Skipped'
-                    : r.state === 4 ? 'Settled'
+                    : r.state === 4 ? 'Failed — Redeem principal'
                     : 'Unknown')
                   : (r.state === 0 ? 'Accepting Deposits'
                     : r.state === 1 ? 'Draw Pending'
                     : r.state === 2 ? 'Finalizing'
                     : 'Settled')
                 const myRoundResultLabel = r.isV2
-                  ? (r.state < 2 ? 'Active' : r.state === 2 ? (r.isWinner ? 'Won!' : 'No win') : 'Redeem available')
+                  ? (r.state < 2 ? 'Active' : r.state === 2 ? (r.isWinner ? 'Won!' : 'No win') : r.state === 4 ? 'No draw' : 'Redeem available')
                   : (r.state < 3 ? 'Locked' : (r.isWinner ? 'Winner' : 'Participant'))
                 const actionLabel = r.isV2 ? 'Redeem' : 'Claim'
                 const pendingActionLabel = 'Redeeming...'
@@ -2522,7 +2529,7 @@ export default function App() {
                             Deposit Now
                           </button>
                         )
-                    ) : isSettledState(r.state, r.isV2) && !r.canWithdraw ? 'Done' : 'Waiting'}
+                    ) : isTerminalRound(r.state, r.isV2) && !r.canWithdraw ? 'Done' : 'Waiting'}
                   </span>
                 </div>
               )})}
@@ -2551,25 +2558,41 @@ export default function App() {
                 <div className="previous-vault-summary">
                   <div className="previous-vault-row">
                     <span>Status</span>
-                    <strong>Complete</strong>
+                    <strong>{isFailedRound(shownState, isV2Pool) ? 'Failed — Principal Redeem Available' : 'Complete'}</strong>
                   </div>
                   <div className="previous-vault-row">
                     <span>Total Tickets</span>
                     <strong>{Number(shownRoundInfo?.totalTickets ?? 0).toLocaleString()}</strong>
                   </div>
-                  <div className="previous-vault-row">
-                    <span>Winner</span>
-                    <strong>{shownRoundInfo?.winner ? shortAddr(shownRoundInfo.winner) : '—'}</strong>
-                  </div>
-                  <div className="previous-vault-row">
-                    <span>Prize Yield</span>
-                    <strong>{Number(ethers.formatEther(roundYieldWei(shownRoundInfo, isV2Pool))).toFixed(4)} MON</strong>
-                  </div>
+                  {isFailedRound(shownState, isV2Pool) ? (
+                    <>
+                      <div className="previous-vault-row">
+                        <span>Winner</span>
+                        <strong>Not drawn</strong>
+                      </div>
+                      <div className="previous-vault-row">
+                        <span>Prize Yield</span>
+                        <strong>0.0000 MON</strong>
+                      </div>
+                      <p className="deposit-caption">The keeper missed the draw blockhash window. Principal is redeemable; no winner or prize was created for this failed round.</p>
+                    </>
+                  ) : (
+                    <>
+                      <div className="previous-vault-row">
+                        <span>Winner</span>
+                        <strong>{shownRoundInfo?.winner ? shortAddr(shownRoundInfo.winner) : '—'}</strong>
+                      </div>
+                      <div className="previous-vault-row">
+                        <span>Prize Yield</span>
+                        <strong>{Number(ethers.formatEther(roundYieldWei(shownRoundInfo, isV2Pool))).toFixed(4)} MON</strong>
+                      </div>
 
-                  <button className="btn deposit-btn" onClick={() => setShowWinnersView(true)}>
-                    View Winners
-                  </button>
-                  <p className="deposit-caption">This round is complete. New deposits are only available in the active vault.</p>
+                      <button className="btn deposit-btn" onClick={() => setShowWinnersView(true)}>
+                        View Winners
+                      </button>
+                      <p className="deposit-caption">This round is complete. New deposits are only available in the active vault.</p>
+                    </>
+                  )}
                 </div>
               </div>
             ) : (
