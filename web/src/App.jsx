@@ -62,10 +62,17 @@ const ERC20_ABI = [
 ]
 
 const ACTION_LABELS = ['None', 'Skip', 'Commit', 'Draw', 'Settle', 'Recommit']
-const ACTION_LABELS_V2 = ['None', 'Commit', 'Settle', 'MarkFailed']
+const ACTION_LABELS_V2 = ['None', 'Commit', 'Draw', 'Settle', 'Recommit']
 const STATE_LABELS = ['Open', 'Committed', 'Finalizing', 'Settled']
-const STATE_LABELS_V2 = ['Open', 'Committed', 'Settled', 'Skipped', 'Failed']
+const STATE_LABELS_V2 = ['Open', 'Committed', 'Drawn', 'Finalizing', 'Settled']
 const INDEXER_URL = import.meta.env.VITE_INDEXER_URL || 'https://everdraw-indexer.fly.dev'
+
+function isSettledState(state, isV2 = false) {
+  const n = Number(state)
+  // Deployed V2 vaults report Settled as 4. Some local compat artifacts use 3,
+  // so accept both for read-only settled/previous-round UI gating.
+  return isV2 ? (n === 3 || n === 4) : n === 3
+}
 
 const SHMON_ABI = [
   'function getInternalEpoch() view returns (uint64)'
@@ -845,7 +852,7 @@ function RoundProgressSteps({ state, settlementSecs, secondsRemaining }) {
   if (state === 0 && secondsRemaining <= 0) activeStep = 1
   if (state === 1) activeStep = 1
   if (state === 2) activeStep = settlementSecs > 0 ? 2 : 3
-  if (state === 3) activeStep = 3
+  if (state >= 3) activeStep = 3
 
   return (
     <section className="round-steps">
@@ -1049,7 +1056,7 @@ export default function App() {
     const score = (v) => {
       if (v.isNowOpen) return 0
       if (v.state === 1 || v.state === 2) return 1
-      if (v.state === 3) return 2
+      if (isSettledState(v.state, poolAddressesV2.some((a) => a.toLowerCase() === String(v.poolAddress).toLowerCase()))) return 2
       return 3
     }
 
@@ -1152,7 +1159,7 @@ export default function App() {
 
     let sRid = null
     let sInfo = null
-    if (Number(info.state) === 3 && Number(info.totalTickets) > 0) {
+    if (isSettledState(info.state, isV2Pool) && Number(info.totalTickets) > 0) {
       sRid = Number(rid)
       sInfo = info
     } else if (settledRidCacheRef.current && settledRidCacheRef.current !== Number(rid)) {
@@ -1164,7 +1171,7 @@ export default function App() {
       const results = await Promise.all(scanRids.map((r) => getCachedRoundInfo(pool, poolAddress, BigInt(r), signal).catch(() => null)))
       for (let i = 0; i < results.length; i++) {
         const si = results[i]
-        if (si && Number(si.state) === 3 && Number(si.totalTickets) > 0) {
+        if (si && isSettledState(si.state, isV2Pool) && Number(si.totalTickets) > 0) {
           sRid = scanRids[i]
           sInfo = si
           break
@@ -1740,7 +1747,7 @@ export default function App() {
   const currentPrizePool = useMemo(() => {
     if (!roundInfo) return { value: '...', sub: 'Loading...' }
 
-    if (Number(roundInfo.state) === 3) {
+    if (isSettledState(roundInfo.state, isV2Pool)) {
       return {
         value: `${Number(ethers.formatEther(roundInfo.yieldMON)).toFixed(4)} MON`,
         sub: 'Final settled yield'
@@ -1773,16 +1780,16 @@ export default function App() {
   const previousSettlementCountdown = useMemo(() => {
     if (!previousRoundInfo) return '—'
     const st = Number(previousRoundInfo.state)
-    if (st === 3) return '00:00:00:00'
+    if (isSettledState(st, isV2Pool)) return '00:00:00:00'
     if (salesOpen && secondsRemaining > 0) return formatCountdown(secondsRemaining)
     return 'Awaiting settlement'
-  }, [previousRoundInfo, salesOpen, secondsRemaining])
+  }, [previousRoundInfo, isV2Pool, salesOpen, secondsRemaining])
 
   const winnersRoundId = winnersSource?.rid || roundId
   const winnersYieldWei = winnersSource?.info?.yieldMON ? BigInt(winnersSource.info.yieldMON) : 0n
   const isWinnerWallet = !!account && !!winnersSource?.info?.winner && account.toLowerCase() === String(winnersSource.info.winner).toLowerCase()
-  const canClaimPrize = isWinnerWallet && winnersYieldWei > 0n && Number(winnersSource?.info?.state ?? -1) === 3
-  const canWithdrawPrincipal = !!account && winnersUserPrincipalWei > 0n && Number(winnersSource?.info?.state ?? -1) === 3
+  const canClaimPrize = isWinnerWallet && winnersYieldWei > 0n && isSettledState(winnersSource?.info?.state ?? -1, isV2Pool)
+  const canWithdrawPrincipal = !!account && winnersUserPrincipalWei > 0n && isSettledState(winnersSource?.info?.state ?? -1, isV2Pool)
 
   const winnerTicketsDisplay = winnerParticipant
     ? winnerParticipant.tickets
@@ -1928,11 +1935,11 @@ export default function App() {
 
   const myRoundsStats = useMemo(() => {
     const lockedWei = myRounds
-      .filter((r) => r.state !== 3)
+      .filter((r) => !isSettledState(r.state, r.isV2))
       .reduce((acc, r) => acc + (r.principalWei || 0n), 0n)
 
     const claimableWei = myRounds
-      .filter((r) => r.state === 3)
+      .filter((r) => isSettledState(r.state, r.isV2))
       .reduce((acc, r) => acc + (r.principalWei || 0n), 0n)
 
     const winningsWei = myRounds
@@ -2326,12 +2333,12 @@ export default function App() {
             settlementLabel={
               isUnstaking
                 ? `Round finalizing — ${formatCountdown(shownSettlementSecs)} remaining`
-                : Number(winnersSource?.info?.state ?? -1) === 3
+                : isSettledState(winnersSource?.info?.state ?? -1, isV2Pool)
                   ? 'Settled — Withdraw Available'
                   : 'Winner Revealed'
             }
             settlementCountdown={
-              Number(winnersSource?.info?.state ?? -1) === 3
+              isSettledState(winnersSource?.info?.state ?? -1, isV2Pool)
                 ? '00:00:00:00'
                 : shownSettlementSecs > 0
                   ? formatCountdown(shownSettlementSecs)
@@ -2497,7 +2504,7 @@ export default function App() {
                             Deposit Now
                           </button>
                         )
-                    ) : r.state === 3 && !r.canWithdraw ? 'Done' : 'Waiting'}
+                    ) : isSettledState(r.state, r.isV2) && !r.canWithdraw ? 'Done' : 'Waiting'}
                   </span>
                 </div>
               )})}
@@ -2700,8 +2707,8 @@ export default function App() {
               />
               <StatCard
                 label="Winner"
-                value={activeRoundInfo && (Number(activeRoundInfo.state) === 3 || isUnstaking) ? shortAddr(activeRoundInfo.winner) : '\u2014'}
-                sub={activeRoundInfo && (Number(activeRoundInfo.state) === 3 || isUnstaking) ? `Winning ticket: ${activeRoundInfo.winningTicket}` : 'Revealed at settlement'}
+                value={activeRoundInfo && (isSettledState(activeRoundInfo.state, isV2Pool) || isUnstaking) ? shortAddr(activeRoundInfo.winner) : '\u2014'}
+                sub={activeRoundInfo && (isSettledState(activeRoundInfo.state, isV2Pool) || isUnstaking) ? `Winning ticket: ${activeRoundInfo.winningTicket}` : 'Revealed at settlement'}
                 icon={(
                   <svg viewBox="0 0 24 24"><path fill="currentColor" d="M6 4h12v3a4 4 0 0 1-4 4h-1v2.08A4 4 0 0 1 16 17v2H8v-2a4 4 0 0 1 3-3.87V11h-1a4 4 0 0 1-4-4V4z"/></svg>
                 )}
@@ -2709,14 +2716,14 @@ export default function App() {
               <StatCard
                 label="Total Prize Pool"
                 value={
-                  activeRoundInfo && Number(activeRoundInfo.state) === 3
+                  activeRoundInfo && isSettledState(activeRoundInfo.state, isV2Pool)
                     ? `${Number(ethers.formatEther(activeRoundInfo.yieldMON)).toFixed(4)} MON`
                     : isUnstaking && activeRoundInfo
                       ? `~${Number(ethers.formatEther(activeRoundInfo.yieldMON || 0n)).toFixed(4)} MON (est.)`
                       : currentPrizePool.value
                 }
                 sub={
-                  activeRoundInfo && Number(activeRoundInfo.state) === 3
+                  activeRoundInfo && isSettledState(activeRoundInfo.state, isV2Pool)
                     ? 'Final settled yield'
                     : isUnstaking
                       ? 'Estimated yield'
