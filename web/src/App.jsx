@@ -74,6 +74,14 @@ function isSettledState(state, isV2 = false) {
   return isV2 ? (n === 3 || n === 4) : n === 3
 }
 
+function roundYieldWei(info, isV2 = false) {
+  if (!info) return 0n
+  // V2 ABI names the yield slot `prizeShares`, but the deployed compat
+  // contract returns MON-denominated yield in that position. Legacy ABI names
+  // the same display value `yieldMON`.
+  return BigInt(info.yieldMON ?? (isV2 ? info.prizeShares : 0n) ?? 0n)
+}
+
 const SHMON_ABI = [
   'function getInternalEpoch() view returns (uint64)'
 ]
@@ -1749,7 +1757,7 @@ export default function App() {
 
     if (isSettledState(roundInfo.state, isV2Pool)) {
       return {
-        value: `${Number(ethers.formatEther(roundInfo.yieldMON)).toFixed(4)} MON`,
+        value: `${Number(ethers.formatEther(roundYieldWei(roundInfo, isV2Pool))).toFixed(4)} MON`,
         sub: 'Final settled yield'
       }
     }
@@ -1764,7 +1772,7 @@ export default function App() {
       value: `~${est.toFixed(4)} MON`,
       sub: `Estimated final yield @ ${estimatedApyPercent}% APY`
     }
-  }, [estimatedApyPercent, roundDuration, roundInfo])
+  }, [estimatedApyPercent, isV2Pool, roundDuration, roundInfo])
 
   const winnersSource = {
     rid: shownRoundId,
@@ -1786,7 +1794,7 @@ export default function App() {
   }, [previousRoundInfo, isV2Pool, salesOpen, secondsRemaining])
 
   const winnersRoundId = winnersSource?.rid || roundId
-  const winnersYieldWei = winnersSource?.info?.yieldMON ? BigInt(winnersSource.info.yieldMON) : 0n
+  const winnersYieldWei = roundYieldWei(winnersSource?.info, isV2Pool)
   const isWinnerWallet = !!account && !!winnersSource?.info?.winner && account.toLowerCase() === String(winnersSource.info.winner).toLowerCase()
   const canClaimPrize = isWinnerWallet && winnersYieldWei > 0n && isSettledState(winnersSource?.info?.state ?? -1, isV2Pool)
   const canWithdrawPrincipal = !!account && winnersUserPrincipalWei > 0n && isSettledState(winnersSource?.info?.state ?? -1, isV2Pool)
@@ -1873,7 +1881,7 @@ export default function App() {
                 principalMon: Number(ethers.formatEther(principal)).toFixed(4),
                 withdrawableShares: 0n,
                 withdrawableMon: principal,
-                prizeWei: BigInt(info.yieldMON || 0n),
+                prizeWei: roundYieldWei(info, false),
                 canWithdraw: Number(info.state) === 3 && principal > 0n,
               })
             }
@@ -2317,9 +2325,9 @@ export default function App() {
             winnerAddress={winnersSource.info ? String(winnersSource.info.winner) : ''}
             prize={
               isUnstaking && winnersSource.info
-                ? `~${Number(ethers.formatEther(winnersSource.info.yieldMON || 0n)).toFixed(4)} MON (estimated)`
+                ? `~${Number(ethers.formatEther(roundYieldWei(winnersSource.info, isV2Pool))).toFixed(4)} MON (estimated)`
                 : winnersSource.info
-                  ? `${Number(ethers.formatEther(winnersSource.info.yieldMON)).toFixed(4)} MON`
+                  ? `${Number(ethers.formatEther(roundYieldWei(winnersSource.info, isV2Pool))).toFixed(4)} MON`
                   : currentPrizePool.value
             }
             participants={winnersSource.participants}
@@ -2717,9 +2725,9 @@ export default function App() {
                 label="Total Prize Pool"
                 value={
                   activeRoundInfo && isSettledState(activeRoundInfo.state, isV2Pool)
-                    ? `${Number(ethers.formatEther(activeRoundInfo.yieldMON)).toFixed(4)} MON`
+                    ? `${Number(ethers.formatEther(roundYieldWei(activeRoundInfo, isV2Pool))).toFixed(4)} MON`
                     : isUnstaking && activeRoundInfo
-                      ? `~${Number(ethers.formatEther(activeRoundInfo.yieldMON || 0n)).toFixed(4)} MON (est.)`
+                      ? `~${Number(ethers.formatEther(roundYieldWei(activeRoundInfo, isV2Pool))).toFixed(4)} MON (est.)`
                       : currentPrizePool.value
                 }
                 sub={
