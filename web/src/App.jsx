@@ -1457,6 +1457,18 @@ export default function App() {
     return Math.min(100, Math.round((elapsed / depositWindowSec) * 100))
   }, [depositWindowSec, secondsRemaining, roundInfo])
 
+  const poolDisplayLabel = useCallback((addr, isV2 = false) => {
+    const lc = String(addr || '').toLowerCase()
+    const v2Index = poolAddressesV2.findIndex((a) => a.toLowerCase() === lc)
+    if (v2Index >= 0) {
+      const letter = labelLetter(v2Index)
+      return isActiveV2PoolIndex(v2Index) ? `Vault ${letter}` : `Retired Vault ${letter}`
+    }
+    const legacyIndex = poolAddresses.findIndex((a) => a.toLowerCase() === lc)
+    if (legacyIndex >= 0) return `Legacy Vault ${labelLetter(legacyIndex)}`
+    return isV2 ? `Vault ${shortAddr(addr)}` : `Legacy ${shortAddr(addr)}`
+  }, [poolAddresses, poolAddressesV2])
+
   const currentState = roundInfo ? Number(roundInfo.state) : null
   const isOpenState = currentState === 0
 
@@ -2014,18 +2026,6 @@ export default function App() {
     loadMyRounds()
     return () => ac.abort()
   }, [account, poolAddresses, poolAddressesV2, roundId])
-
-  const poolDisplayLabel = useCallback((addr, isV2 = false) => {
-    const lc = String(addr || '').toLowerCase()
-    const v2Index = poolAddressesV2.findIndex((a) => a.toLowerCase() === lc)
-    if (v2Index >= 0) {
-      const letter = labelLetter(v2Index)
-      return isActiveV2PoolIndex(v2Index) ? `Vault ${letter}` : `Retired Vault ${letter}`
-    }
-    const legacyIndex = poolAddresses.findIndex((a) => a.toLowerCase() === lc)
-    if (legacyIndex >= 0) return `Legacy Vault ${labelLetter(legacyIndex)}`
-    return isV2 ? `Vault ${shortAddr(addr)}` : `Legacy ${shortAddr(addr)}`
-  }, [poolAddresses, poolAddressesV2])
 
   const myRoundsStats = useMemo(() => {
     const lockedWei = myRounds
