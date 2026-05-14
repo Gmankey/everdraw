@@ -62,9 +62,9 @@ const ERC20_ABI = [
 ]
 
 const ACTION_LABELS = ['None', 'Skip', 'Commit', 'Draw', 'Settle', 'Recommit']
-const ACTION_LABELS_V2 = ['None', 'Commit', 'Settle', 'Mark Failed']
+const ACTION_LABELS_V2 = ['None', 'Commit', 'Settle', 'Mark Skipped']
 const STATE_LABELS = ['Open', 'Committed', 'Finalizing', 'Settled']
-const STATE_LABELS_V2 = ['Open', 'Committed', 'Settled', 'Skipped', 'Failed']
+const STATE_LABELS_V2 = ['Open', 'Committed', 'Settled', 'Skipped', 'Skipped']
 const INDEXER_URL = import.meta.env.VITE_INDEXER_URL || 'https://everdraw-indexer.fly.dev'
 
 function isSettledState(state, isV2 = false) {
@@ -1628,11 +1628,11 @@ export default function App() {
 
       if (shownState === 4) {
         return {
-          heading: 'Round Failed',
-          value: 'Principal Ready',
-          sub: 'Winner draw expired; principal can be redeemed, no prize was created',
+          heading: 'Round Skipped',
+          value: 'Skipped',
+          sub: 'No draw was completed for this round',
           metaLabel: 'Vault status',
-          metaValue: 'Failed'
+          metaValue: 'Skipped'
         }
       }
     }
@@ -2110,13 +2110,6 @@ export default function App() {
     setActionError('')
   }, [actionBusy])
 
-  const clearPreviousVaultState = useCallback(() => {
-    settledRidCacheRef.current = null
-    setSettledRoundId('0')
-    setSettledRoundInfo(null)
-    setSettledParticipants([])
-  }, [])
-
   const openClaimFlow = useCallback((next) => {
     setClaimRedirectWarningOpen(false)
     setActionStatus('')
@@ -2474,13 +2467,12 @@ export default function App() {
               <button
                 className={`vault-label ${!vaultBPending && selectedPoolAddress.toLowerCase() === poolAddressesV2[0]?.toLowerCase() ? 'active' : ''}`}
                 tabIndex={-1}
-                onClick={() => { clearPreviousVaultState(); setVaultBPending(false); setSelectedPoolAddress(poolAddressesV2[0]); setMainView('current') }}
+                onClick={() => { setVaultBPending(false); setSelectedPoolAddress(poolAddressesV2[0]); setMainView('current') }}
               >VAULT A</button>
               <div
                 className="vault-gear-track"
                 onClick={() => {
                   if (poolAddressesV2.length >= 2) {
-                    clearPreviousVaultState()
                     setVaultBPending(false)
                     setSelectedPoolAddress(
                       selectedPoolAddress.toLowerCase() === poolAddressesV2[0]?.toLowerCase()
@@ -2500,7 +2492,6 @@ export default function App() {
                 tabIndex={-1}
                 onClick={() => {
                   if (poolAddressesV2.length >= 2) {
-                    clearPreviousVaultState()
                     setVaultBPending(false)
                     setSelectedPoolAddress(poolAddressesV2[1])
                   } else {
@@ -2556,7 +2547,7 @@ export default function App() {
                     : r.state === 1 ? 'Drawing'
                     : r.state === 2 ? 'Settled'
                     : r.state === 3 ? 'Skipped'
-                    : r.state === 4 ? 'Failed — Redeem principal'
+                    : r.state === 4 ? 'Skipped'
                     : 'Unknown')
                   : (r.state === 0 ? 'Accepting Deposits'
                     : r.state === 1 ? 'Draw Pending'
@@ -2628,69 +2619,6 @@ export default function App() {
                 <div className="card-header"><div className="card-title">VAULT B</div></div>
                 <div style={{ padding: '2.5rem 1rem', textAlign: 'center', color: 'rgba(155,109,255,0.5)', fontSize: '1rem' }}>
                   Opening Soon
-                </div>
-              </div>
-            ) : mainView === 'previous' && !shownSettled ? (
-              <div className="card previous-vault-card">
-                <div className="card-header">
-                  <div className="card-title">Previous Vault</div>
-                </div>
-                <div className="previous-vault-summary">
-                  <div className="previous-vault-row">
-                    <span>Status</span>
-                    <strong>No completed round for this vault yet</strong>
-                  </div>
-                </div>
-              </div>
-            ) : mainView === 'previous' && shownSettled ? (
-              <div className="card previous-vault-card">
-                <div className="card-header">
-                  <div className="card-title">Previous Vault</div>
-                  {shownRoundId && Number(shownRoundId) > 0 ? (
-                    <div style={{ fontSize: '0.82rem', color: 'rgba(155,109,255,0.8)', marginTop: '2px' }}>
-                      {shownVaultLabel} · Round #{shownRoundId}
-                    </div>
-                  ) : null}
-                </div>
-
-                <div className="previous-vault-summary">
-                  <div className="previous-vault-row">
-                    <span>Status</span>
-                    <strong>{isFailedRound(shownState, isV2Pool) ? 'Failed — Principal Redeem Available' : 'Complete'}</strong>
-                  </div>
-                  <div className="previous-vault-row">
-                    <span>Total Tickets</span>
-                    <strong>{Number(shownRoundInfo?.totalTickets ?? 0).toLocaleString()}</strong>
-                  </div>
-                  {isFailedRound(shownState, isV2Pool) ? (
-                    <>
-                      <div className="previous-vault-row">
-                        <span>Winner</span>
-                        <strong>Not drawn</strong>
-                      </div>
-                      <div className="previous-vault-row">
-                        <span>Prize Yield</span>
-                        <strong>0.0000 MON</strong>
-                      </div>
-                      <p className="deposit-caption">The keeper missed the draw blockhash window. Principal is redeemable; no winner or prize was created for this failed round.</p>
-                    </>
-                  ) : (
-                    <>
-                      <div className="previous-vault-row">
-                        <span>Winner</span>
-                        <strong>{shownRoundInfo?.winner ? shortAddr(shownRoundInfo.winner) : '—'}</strong>
-                      </div>
-                      <div className="previous-vault-row">
-                        <span>Prize Yield</span>
-                        <strong>{Number(ethers.formatEther(roundYieldWei(shownRoundInfo, isV2Pool))).toFixed(4)} MON</strong>
-                      </div>
-
-                      <button className="btn deposit-btn" onClick={() => setShowWinnersView(true)}>
-                        View Winners
-                      </button>
-                      <p className="deposit-caption">This round is complete. New deposits are only available in the active vault.</p>
-                    </>
-                  )}
                 </div>
               </div>
             ) : (
@@ -2774,7 +2702,7 @@ export default function App() {
                         : isDeadRound
                           ? 'Vault Cycling — Next Round Soon'
                           : !shownIsCurrentRound
-                            ? 'This Vault is Locked'
+                            ? (mainView === 'previous' ? `Buy with ${isV2Pool && buyWithShmon ? 'shMON' : 'MON'}` : 'This Vault is Locked')
                             : !salesOpen
                               ? 'Deposits closed'
                               : !account
@@ -2796,7 +2724,17 @@ export default function App() {
               </div>
             )}
 
-            {drawFinished ? (
+            {mainView === 'previous' ? (
+              <div className="card filled vault-card" id="vault-card">
+                <VaultDoorBackground progressPct={100} salesOpen={false} />
+                <div className="countdown-center vault-layer vault-center">
+                  <button className="btn deposit-btn" onClick={() => setShowWinnersView(true)} disabled={!shownSettled}>
+                    See Winners
+                  </button>
+                </div>
+                <div className="progress-container vault-layer vault-progress-hidden" />
+              </div>
+            ) : drawFinished ? (
               <VaultAnimationTest onComplete={() => setShowWinnersView(true)} />
             ) : (
               <div className={`card filled vault-card ${winnersTransitioning ? 'to-winners' : ''}`} id="vault-card">
