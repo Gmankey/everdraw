@@ -2110,6 +2110,13 @@ export default function App() {
     setActionError('')
   }, [actionBusy])
 
+  const clearPreviousVaultState = useCallback(() => {
+    settledRidCacheRef.current = null
+    setSettledRoundId('0')
+    setSettledRoundInfo(null)
+    setSettledParticipants([])
+  }, [])
+
   const openClaimFlow = useCallback((next) => {
     setClaimRedirectWarningOpen(false)
     setActionStatus('')
@@ -2467,12 +2474,13 @@ export default function App() {
               <button
                 className={`vault-label ${!vaultBPending && selectedPoolAddress.toLowerCase() === poolAddressesV2[0]?.toLowerCase() ? 'active' : ''}`}
                 tabIndex={-1}
-                onClick={() => { setVaultBPending(false); setSelectedPoolAddress(poolAddressesV2[0]); setMainView('current') }}
+                onClick={() => { clearPreviousVaultState(); setVaultBPending(false); setSelectedPoolAddress(poolAddressesV2[0]); setMainView('current') }}
               >VAULT A</button>
               <div
                 className="vault-gear-track"
                 onClick={() => {
                   if (poolAddressesV2.length >= 2) {
+                    clearPreviousVaultState()
                     setVaultBPending(false)
                     setSelectedPoolAddress(
                       selectedPoolAddress.toLowerCase() === poolAddressesV2[0]?.toLowerCase()
@@ -2492,6 +2500,7 @@ export default function App() {
                 tabIndex={-1}
                 onClick={() => {
                   if (poolAddressesV2.length >= 2) {
+                    clearPreviousVaultState()
                     setVaultBPending(false)
                     setSelectedPoolAddress(poolAddressesV2[1])
                   } else {
@@ -2514,13 +2523,10 @@ export default function App() {
           <button
             className={`vault-aux-btn ${mainView === 'previous' ? 'active' : ''}`}
             onClick={() => {
-              if (isV2Pool && poolAddressesV2[0]) {
-                setVaultBPending(false)
-                setSelectedPoolAddress(poolAddressesV2[0])
-              }
+              setVaultBPending(false)
               setMainView('previous')
             }}
-            disabled={!settledRoundInfo && !(isV2Pool && poolAddressesV2[0])}
+            disabled={!settledRoundInfo}
           >Previous Vault</button>
           <button className={`vault-aux-btn ${mainView === 'myrounds' ? 'active' : ''}`} onClick={() => setMainView('myrounds')}>My Rounds</button>
         </section>
@@ -2622,6 +2628,18 @@ export default function App() {
                 <div className="card-header"><div className="card-title">VAULT B</div></div>
                 <div style={{ padding: '2.5rem 1rem', textAlign: 'center', color: 'rgba(155,109,255,0.5)', fontSize: '1rem' }}>
                   Opening Soon
+                </div>
+              </div>
+            ) : mainView === 'previous' && !shownSettled ? (
+              <div className="card previous-vault-card">
+                <div className="card-header">
+                  <div className="card-title">Previous Vault</div>
+                </div>
+                <div className="previous-vault-summary">
+                  <div className="previous-vault-row">
+                    <span>Status</span>
+                    <strong>No completed round for this vault yet</strong>
+                  </div>
                 </div>
               </div>
             ) : mainView === 'previous' && shownSettled ? (
