@@ -1499,7 +1499,7 @@ export default function App() {
       : mainView === 'vaultB' ? vaultBParticipants
       : mainView === 'previous' ? settledParticipants
       : participants
-  const shownIsCurrentRound = shownRoundId === roundId
+  const shownIsCurrentRound = mainView !== 'previous' && shownRoundId === roundId
   const shownState = shownRoundInfo ? Number(shownRoundInfo.state) : -1
   const shownVaultLabel = mainView === 'previous'
     ? poolDisplayLabel(settledPoolAddress, poolAddressesV2.some((a) => a.toLowerCase() === String(settledPoolAddress).toLowerCase()))
@@ -2539,7 +2539,7 @@ export default function App() {
               setVaultBPending(false)
               setMainView('previous')
             }}
-            disabled={!settledRoundInfo}
+            disabled={false}
           >Previous Vault</button>
           <button className={`vault-aux-btn ${mainView === 'myrounds' ? 'active' : ''}`} onClick={() => setMainView('myrounds')}>My Rounds</button>
         </section>
