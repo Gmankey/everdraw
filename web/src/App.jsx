@@ -2750,7 +2750,7 @@ export default function App() {
               <div className="card filled vault-card" id="vault-card">
                 <VaultDoorBackground progressPct={100} salesOpen={false} />
                 <div className="countdown-center vault-layer vault-center">
-                  <button className="btn deposit-btn" onClick={() => setShowWinnersView(true)} disabled={!shownSettled}>
+                  <button className="btn deposit-btn" onClick={openWinnersWithTransition} disabled={!shownSettled || winnersTransitioning}>
                     See Winners
                   </button>
                 </div>
