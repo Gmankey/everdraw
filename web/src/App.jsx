@@ -1858,8 +1858,9 @@ export default function App() {
   const winnersPoolAbi = winnersIsV2Pool ? POOL_V2_ABI : POOL_ABI
   const winnersYieldWei = roundYieldWei(winnersSource?.info, winnersIsV2Pool)
   const isWinnerWallet = !!account && !!winnersSource?.info?.winner && account.toLowerCase() === String(winnersSource.info.winner).toLowerCase()
-  const canClaimPrize = isWinnerWallet && winnersYieldWei > 0n && isSettledState(winnersSource?.info?.state ?? -1, winnersIsV2Pool)
-  const canWithdrawPrincipal = !!account && winnersUserPrincipalWei > 0n && isSettledState(winnersSource?.info?.state ?? -1, winnersIsV2Pool)
+  const winnersTerminal = isTerminalRound(winnersSource?.info?.state ?? -1, winnersIsV2Pool)
+  const canClaimPrize = isWinnerWallet && winnersYieldWei > 0n && winnersTerminal
+  const canWithdrawPrincipal = !!account && winnersUserPrincipalWei > 0n && winnersTerminal
 
   const winnerTicketsDisplay = winnerParticipant
     ? winnerParticipant.tickets
@@ -2449,12 +2450,12 @@ export default function App() {
             settlementLabel={
               isUnstaking
                 ? `Round finalizing — ${formatCountdown(shownSettlementSecs)} remaining`
-                : isSettledState(winnersSource?.info?.state ?? -1, winnersIsV2Pool)
+                : winnersTerminal
                   ? 'Settled — Withdraw Available'
                   : 'Winner Revealed'
             }
             settlementCountdown={
-              isSettledState(winnersSource?.info?.state ?? -1, winnersIsV2Pool)
+              winnersTerminal
                 ? '00:00:00:00'
                 : shownSettlementSecs > 0
                   ? formatCountdown(shownSettlementSecs)

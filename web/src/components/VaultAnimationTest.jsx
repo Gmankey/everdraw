@@ -105,7 +105,7 @@ export default function VaultAnimationTest({ onComplete }) {
   }
 
   return (
-    <div className="card filled" id="vault-card" ref={cardRef} style={{ justifyContent: 'flex-start' }}>
+    <div className="card filled" id="vault-card" ref={cardRef} style={{ justifyContent: 'center' }}>
       <svg
         id="vault-ring"
         viewBox="0 0 320 320"
@@ -115,8 +115,8 @@ export default function VaultAnimationTest({ onComplete }) {
           top: '50%',
           left: '50%',
           transform: 'translate(-50%, -50%)',
-          width: '85%',
-          height: '85%',
+          width: '92%',
+          height: '92%',
           pointerEvents: 'none',
           zIndex: 2,
         }}
@@ -136,8 +136,8 @@ export default function VaultAnimationTest({ onComplete }) {
           top: '50%',
           left: '50%',
           transform: 'translate(-50%, -50%)',
-          width: '85%',
-          height: '85%',
+          width: '92%',
+          height: '92%',
           zIndex: 3,
         }}
       >
