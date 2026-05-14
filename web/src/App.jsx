@@ -443,7 +443,6 @@ function FounderLaunchArticle() {
           <p>I think that is why prediction markets found so much oxygen. Prediction markets did not beat DeFi on fundamentals. They beat it on feeling. They gave people back that dopamine hit and, more importantly, they gave people a shot at something that could feel meaningful very quickly. In this economy, a lot of people are desperate to get at least one foot out of the meat grinder.</p>
           <p>I do not say that as an attack on prediction markets. Their success is a signal. People have not stopped wanting upside or excitement. What they have lost is the sense that DeFi is still the place that gives them that feeling.</p>
           <p>The irony is that this version of hope often ends the same way... users get wrecked. To gain the upside, users are asked to accept ruin as the price of admission.</p>
-          <p>People still want to dream. But they should not have to sleep on a bed of dynamite to do so.</p>
           <blockquote className="article-pullquote">People still want to dream. But they should not have to sleep on a bed of dynamite to do so.</blockquote>
           <p>That is why I built EverDraw.</p>
         </section>
@@ -457,7 +456,7 @@ function FounderLaunchArticle() {
         </section>
 
         <section>
-          <h2>The Difference Is in the Details</h2>
+          <h2>The Everdraw Edge</h2>
           <p>I also want to be honest about what EverDraw is and is not. Principal-protected prize savings is not a brand-new idea, and I am not interested in pretending otherwise. Versions of this concept have existed before, both in traditional finance and in crypto. The difference is in the specific combination EverDraw is building around: Monad staking yield through shMON, and a long-term vision where draws become engagement infrastructure rather than just a standalone vault. Let’s talk about both.</p>
           <p>First, the yield source. Most prize-savings products have to send user deposits into lending markets to generate yield. That can work, but it also means the prize is tied to lending demand, utilisation, borrow rates, and the risk assumptions of another protocol. EverDraw’s first version works differently because it is built on Monad staking yield through shMON. The deposited MON becomes productive through staking, and that staking yield becomes the prize. This is one of the reasons EverDraw makes sense on Monad specifically: the chain gives us a native yield source that can be turned into a shared prize without depending on a third-party lending market or inflationary incentives that disappear when a campaign ends.</p>
           <p>Second, the vision. A simple prize-savings product is useful, but on its own it is still just a product. EverDraw starts with a simple user-facing vault because that is the cleanest way to prove the loop, but the larger idea is to turn the draw mechanic into an engagement layer for Monad. That means more assets, more draw formats, protocol campaigns, sponsored prize pools, and eventually tools that let other projects use recurring prize mechanics to distribute rewards.</p>
@@ -802,7 +801,7 @@ function WinnersView({ onBack, winner, winnerAddress, prize, participants, parti
 
       <div className="winners-hero">
         <h2>{isUnstaking ? 'Winner Revealed' : 'Draw Complete'}</h2>
-        <p>{settlementLabel}</p>
+        {settlementLabel ? <p>{settlementLabel}</p> : null}
         {roundNumber > 0 && <p className="round-label-hero">Round {roundNumber}</p>}
       </div>
 
@@ -1781,7 +1780,7 @@ export default function App() {
 
     if (shownState === 3) {
       return {
-        heading: 'Claim or Redeem',
+        heading: 'Draw Complete',
         value: 'Ready',
         sub: 'Claim or redeem is now available',
         metaLabel: 'Vault status',
@@ -2451,7 +2450,7 @@ export default function App() {
               isUnstaking
                 ? `Winner revealed — ${formatCountdown(shownSettlementSecs)} remaining`
                 : winnersTerminal
-                  ? 'Claim or Redeem'
+                  ? ''
                   : 'Winner Revealed'
             }
             settlementCountdown={

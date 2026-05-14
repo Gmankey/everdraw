@@ -183,7 +183,7 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
 .participants-row.participants-header { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #5e5478; background: rgba(155,109,255,0.04); }
 .participants-row.winner-row { background: rgba(212, 175, 55, 0.08); border-left: 3px solid #d4af37; font-weight: 600; }
 .win-probability { font-size: 0.85rem; color: #d4af37; margin-bottom: 20px; font-weight: 500; }
-.round-label-hero { font-size: 0.9rem; color: rgba(155,109,255,0.7); margin-top: 4px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; }
+.round-label-hero { font-size: 1rem; color: rgba(155,109,255,0.82); margin-top: 8px; font-weight: 750; text-transform: uppercase; letter-spacing: 0.12em; }
 .winners-actions-grid { width: 100%; max-width: 860px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 8px; }
 .ghost-btn { background: rgba(155,109,255,0.08); border: 1px solid rgba(155,109,255,0.3); color: #ede8ff; }
 .shmon-modal-backdrop.claim-flow-backdrop {
