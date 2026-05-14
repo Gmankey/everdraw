@@ -2220,9 +2220,15 @@ export default function App() {
     }
 
     // Open from the click gesture so wallet/mobile browsers do not block it
-    // after async wallet confirmation. Keep it on EverDraw until redemption is
-    // complete, then move it to shmonad.xyz.
-    const shmonadWindow = window.open(window.location.href, '_blank')
+    // after async wallet confirmation. Use a neutral holding page instead of
+    // cloning EverDraw, then move it to shmonad.xyz once redemption succeeds.
+    const shmonadWindow = window.open('', '_blank')
+    try {
+      if (shmonadWindow) {
+        shmonadWindow.document.write('<!doctype html><title>Opening shmonad.xyz</title><body style="font-family:system-ui;background:#100d1e;color:#fff;display:grid;place-items:center;height:100vh;margin:0"><main style="text-align:center"><h1>Redeeming…</h1><p>shmonad.xyz will open after your wallet confirms.</p></main></body>')
+        shmonadWindow.document.close()
+      }
+    } catch {}
     const openShmonad = () => {
       try {
         if (shmonadWindow && !shmonadWindow.closed) {
