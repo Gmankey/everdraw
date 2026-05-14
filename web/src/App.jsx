@@ -2219,7 +2219,18 @@ export default function App() {
       return
     }
 
+    // Open from the click gesture so wallet/mobile browsers do not block it
+    // after async wallet confirmation. Keep it on EverDraw until redemption is
+    // complete, then move it to shmonad.xyz.
+    const shmonadWindow = window.open(window.location.href, '_blank')
     const openShmonad = () => {
+      try {
+        if (shmonadWindow && !shmonadWindow.closed) {
+          shmonadWindow.location.assign('https://shmonad.xyz')
+          shmonadWindow.focus?.()
+          return
+        }
+      } catch {}
       window.location.assign('https://shmonad.xyz')
     }
 
@@ -2261,7 +2272,7 @@ export default function App() {
       return
     }
 
-    const ok = await handleWithdraw(claimFlow.rid)
+    const ok = await handleWithdraw(claimFlow.rid, claimFlow.poolAddr)
     if (!ok) return
     setClaimRedirectWarningOpen(false)
     setClaimFlow((prev) => ({ ...prev, open: false }))
