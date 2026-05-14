@@ -450,6 +450,9 @@ function FounderLaunchArticle() {
         <section>
           <h2>What EverDraw Is</h2>
           <p>EverDraw is a principal-protected prize layer for Monad. Users deposit MON. The deposit is held as shMON and earns staking yield. All yield accumulated that round is pooled into one prize. At the end of the round, one winner takes the entire pool. But the best part is everyone else gets their entire principal back.</p>
+          <figure className="article-flow-figure">
+            <img src="/everdraw-round-flow.png" alt="EverDraw round flow: deposits open, staked as shMON, vault locked, winner revealed, vault unlocks, redeem shMON, and new vault starts" />
+          </figure>
           <blockquote className="article-pullquote article-pullquote-center">Win the pot, or keep your lot.</blockquote>
           <p>That is the product in its simplest form. No liquidations. No impermanent loss. No active position management. No complicated strategy. You enter the draw, the yield does its work, and either you win the pot or you get back your original deposit.</p>
           <p>EverDraw keeps the thing people still want — a shot at meaningful upside — while removing the part that usually makes that shot destructive.</p>
