@@ -963,6 +963,7 @@ export default function App() {
   const [vaultSummaries, setVaultSummaries] = useState([])
   const [settledRoundId, setSettledRoundId] = useState('0')
   const [settledRoundInfo, setSettledRoundInfo] = useState(null)
+  const [settledPoolAddress, setSettledPoolAddress] = useState('')
   const [settledParticipants, setSettledParticipants] = useState([])
   const participantLoadRef = useRef({ key: '' })
   const settledRidCacheRef = useRef(null)
@@ -1183,34 +1184,50 @@ export default function App() {
       setPreviousParticipants([])
     }
 
-    let sRid = null
-    let sInfo = null
-    if (isTerminalRound(info.state, isV2Pool) && (Number(info.totalTickets) > 0 || BigInt(info.totalPrincipalMON ?? 0n) > 0n)) {
-      sRid = Number(rid)
-      sInfo = info
-    } else if (settledRidCacheRef.current && settledRidCacheRef.current !== Number(rid)) {
-      sRid = settledRidCacheRef.current
-      sInfo = settledRoundInfo
-    } else {
-      const scanRids = []
-      for (let r = Number(rid) - 1; r >= Math.max(1, Number(rid) - 3); r--) scanRids.push(r)
-      const results = await Promise.all(scanRids.map((r) => getCachedRoundInfo(pool, poolAddress, BigInt(r), signal).catch(() => null)))
-      for (let i = 0; i < results.length; i++) {
-        const si = results[i]
-        if (si && isTerminalRound(si.state, isV2Pool) && (Number(si.totalTickets) > 0 || BigInt(si.totalPrincipalMON ?? 0n) > 0n)) {
-          sRid = scanRids[i]
-          sInfo = si
-          break
+    let bestSettled = null
+    const scanPools = allPoolAddresses.length ? allPoolAddresses : [poolAddress]
+    for (const scanAddr of scanPools) {
+      try {
+        if (!ethers.isAddress(scanAddr)) continue
+        const scanIsV2 = poolAddressesV2.some((a) => a.toLowerCase() === scanAddr.toLowerCase())
+        const scanAbi = scanIsV2 ? POOL_V2_ABI : POOL_ABI
+        const scanPool = new ethers.Contract(scanAddr, scanAbi, provider)
+        const scanCurrentRid = Number(await _cached(`currentRound:${scanAddr}`, 10_000, () => scanPool.currentRoundId(), signal))
+        const scanRids = []
+        for (let r = scanCurrentRid; r >= Math.max(1, scanCurrentRid - 5); r--) scanRids.push(r)
+        const results = await Promise.all(scanRids.map((r) => getCachedRoundInfo(scanPool, scanAddr, BigInt(r), signal).catch(() => null)))
+        for (let i = 0; i < results.length; i++) {
+          const si = results[i]
+          if (!si) continue
+          const hasActivity = Number(si.totalTickets ?? 0) > 0 || BigInt(si.totalPrincipalMON ?? 0n) > 0n
+          if (isTerminalRound(si.state, scanIsV2) && hasActivity) {
+            const candidate = {
+              poolAddr: scanAddr,
+              rid: scanRids[i],
+              info: si,
+              sortTime: Number(si.salesEndTime ?? 0),
+            }
+            if (!bestSettled || candidate.sortTime > bestSettled.sortTime) bestSettled = candidate
+            break
+          }
         }
+      } catch (err) {
+        if (isAbortError(err)) throw err
       }
     }
     assertNotAborted(signal)
-    if (sRid) settledRidCacheRef.current = sRid
-    setSettledRoundId(sRid ? String(sRid) : '0')
-    if (sInfo) setSettledRoundInfo(sInfo)
-    else setSettledRoundInfo(null)
-    if (!sRid) setSettledParticipants([])
-  }, [account, poolAddress, activePoolAbi, isV2Pool])
+    if (bestSettled) {
+      settledRidCacheRef.current = bestSettled.rid
+      setSettledRoundId(String(bestSettled.rid))
+      setSettledRoundInfo(bestSettled.info)
+      setSettledPoolAddress(bestSettled.poolAddr)
+    } else {
+      setSettledRoundId('0')
+      setSettledRoundInfo(null)
+      setSettledPoolAddress('')
+      setSettledParticipants([])
+    }
+  }, [account, poolAddress, activePoolAbi, isV2Pool, allPoolAddresses, poolAddressesV2])
 
   useEffect(() => {
     if (!poolAddress) return
@@ -1472,9 +1489,11 @@ export default function App() {
       : participants
   const shownIsCurrentRound = shownRoundId === roundId
   const shownState = shownRoundInfo ? Number(shownRoundInfo.state) : -1
-  const shownVaultLabel = isV2Pool
-    ? (selectedPoolAddress.toLowerCase() === poolAddressesV2[1]?.toLowerCase() || vaultBPending ? 'Vault B' : 'Vault A')
-    : mainView === 'vaultA' ? 'Vault A' : mainView === 'vaultB' ? 'Vault B' : 'Previous Vault'
+  const shownVaultLabel = mainView === 'previous'
+    ? poolDisplayLabel(settledPoolAddress, poolAddressesV2.some((a) => a.toLowerCase() === String(settledPoolAddress).toLowerCase()))
+    : isV2Pool
+      ? (selectedPoolAddress.toLowerCase() === poolAddressesV2[1]?.toLowerCase() || vaultBPending ? 'Vault B' : 'Vault A')
+      : mainView === 'vaultA' ? 'Vault A' : mainView === 'vaultB' ? 'Vault B' : 'Previous Vault'
   const wrongNetwork = expectedChainId && connectedChainId && expectedChainId !== connectedChainId
   const shownSecondsRemaining = shownRoundInfo ? Math.max(0, Number(shownRoundInfo.salesEndTime ?? 0) - now) : 0
   const shownCommitAfterRemaining = shownRoundInfo && isV2Pool ? Math.max(0, Number(commitAfterTime || 0) - now) : 0
@@ -1822,10 +1841,13 @@ export default function App() {
   }, [previousRoundInfo, isV2Pool, salesOpen, secondsRemaining])
 
   const winnersRoundId = winnersSource?.rid || roundId
-  const winnersYieldWei = roundYieldWei(winnersSource?.info, isV2Pool)
+  const winnersPoolAddress = mainView === 'previous' && settledPoolAddress ? settledPoolAddress : poolAddress
+  const winnersIsV2Pool = poolAddressesV2.some((a) => a.toLowerCase() === String(winnersPoolAddress).toLowerCase())
+  const winnersPoolAbi = winnersIsV2Pool ? POOL_V2_ABI : POOL_ABI
+  const winnersYieldWei = roundYieldWei(winnersSource?.info, winnersIsV2Pool)
   const isWinnerWallet = !!account && !!winnersSource?.info?.winner && account.toLowerCase() === String(winnersSource.info.winner).toLowerCase()
-  const canClaimPrize = isWinnerWallet && winnersYieldWei > 0n && isSettledState(winnersSource?.info?.state ?? -1, isV2Pool)
-  const canWithdrawPrincipal = !!account && winnersUserPrincipalWei > 0n && isSettledState(winnersSource?.info?.state ?? -1, isV2Pool)
+  const canClaimPrize = isWinnerWallet && winnersYieldWei > 0n && isSettledState(winnersSource?.info?.state ?? -1, winnersIsV2Pool)
+  const canWithdrawPrincipal = !!account && winnersUserPrincipalWei > 0n && isSettledState(winnersSource?.info?.state ?? -1, winnersIsV2Pool)
 
   const winnerTicketsDisplay = winnerParticipant
     ? winnerParticipant.tickets
@@ -1838,17 +1860,17 @@ export default function App() {
   useEffect(() => {
     const ac = new AbortController()
     const loadPrincipal = async () => {
-      if (!account || !poolAddress || !winnersRoundId) {
+      if (!account || !winnersPoolAddress || !winnersRoundId) {
         setWinnersUserPrincipalWei(0n)
         return
       }
       try {
         const provider = await getReadProvider()
         assertNotAborted(ac.signal)
-        const pool = new ethers.Contract(poolAddress, activePoolAbi, provider)
-        const v = isV2Pool
-          ? (await _cached(`userPosition:${poolAddress}:${winnersRoundId}:${account}`, 5_000, () => pool.getUserPosition(BigInt(winnersRoundId), account), ac.signal))[0]
-          : await _cached(`principal:${poolAddress}:${winnersRoundId}:${account}`, 5_000, () => pool.principalMON(BigInt(winnersRoundId), account), ac.signal)
+        const pool = new ethers.Contract(winnersPoolAddress, winnersPoolAbi, provider)
+        const v = winnersIsV2Pool
+          ? (await _cached(`userPosition:${winnersPoolAddress}:${winnersRoundId}:${account}`, 5_000, () => pool.getUserPosition(BigInt(winnersRoundId), account), ac.signal))[0]
+          : await _cached(`principal:${winnersPoolAddress}:${winnersRoundId}:${account}`, 5_000, () => pool.principalMON(BigInt(winnersRoundId), account), ac.signal)
         assertNotAborted(ac.signal)
         setWinnersUserPrincipalWei(BigInt(v))
       } catch (err) {
@@ -1857,7 +1879,7 @@ export default function App() {
     }
     loadPrincipal()
     return () => ac.abort()
-  }, [account, poolAddress, winnersRoundId, activePoolAbi, isV2Pool])
+  }, [account, winnersPoolAddress, winnersRoundId, winnersPoolAbi, winnersIsV2Pool])
 
   useEffect(() => {
     const ac = new AbortController()
@@ -2427,19 +2449,19 @@ export default function App() {
             settlementLabel={
               isUnstaking
                 ? `Round finalizing — ${formatCountdown(shownSettlementSecs)} remaining`
-                : isSettledState(winnersSource?.info?.state ?? -1, isV2Pool)
+                : isSettledState(winnersSource?.info?.state ?? -1, winnersIsV2Pool)
                   ? 'Settled — Withdraw Available'
                   : 'Winner Revealed'
             }
             settlementCountdown={
-              isSettledState(winnersSource?.info?.state ?? -1, isV2Pool)
+              isSettledState(winnersSource?.info?.state ?? -1, winnersIsV2Pool)
                 ? '00:00:00:00'
                 : shownSettlementSecs > 0
                   ? formatCountdown(shownSettlementSecs)
                   : previousSettlementCountdown
             }
-            onClaimPrize={() => openClaimFlow({ mode: 'winner', rid: winnersRoundId, principalWei: winnersUserPrincipalWei, prizeWei: winnersYieldWei })}
-            onWithdraw={() => openClaimFlow({ mode: 'principal', rid: winnersRoundId, principalWei: winnersUserPrincipalWei, prizeWei: winnersYieldWei })}
+            onClaimPrize={() => openClaimFlow({ mode: 'winner', rid: winnersRoundId, poolAddr: winnersPoolAddress, principalWei: winnersUserPrincipalWei, prizeWei: winnersYieldWei })}
+            onWithdraw={() => openClaimFlow({ mode: 'principal', rid: winnersRoundId, poolAddr: winnersPoolAddress, principalWei: winnersUserPrincipalWei, prizeWei: winnersYieldWei })}
             actionBusy={actionBusy}
             actionStatus={actionStatus}
             actionError={actionError}
