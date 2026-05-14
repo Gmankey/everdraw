@@ -2225,7 +2225,7 @@ export default function App() {
     const shmonadWindow = window.open('', '_blank')
     try {
       if (shmonadWindow) {
-        shmonadWindow.document.write('<!doctype html><title>Opening shmonad.xyz</title><body style="font-family:system-ui;background:#100d1e;color:#fff;display:grid;place-items:center;height:100vh;margin:0"><main style="text-align:center"><h1>Redeeming…</h1><p>shmonad.xyz will open after your wallet confirms.</p></main></body>')
+        shmonadWindow.document.write('<!doctype html><title>Opening shmonad.xyz</title><body style="font-family:system-ui;background:#100d1e;color:#fff;display:grid;place-items:center;height:100vh;margin:0"><main style="text-align:center"><h1>Redeeming…</h1><p>shmonad.xyz will open after your wallet confirms. Then click Unstake.</p></main></body>')
         shmonadWindow.document.close()
       }
     } catch {}
