@@ -1945,6 +1945,15 @@ export default function App() {
               normalizedState = Number(info.state)
               commitAfterTime = Number(commitAt || 0)
               prizeWei = roundYieldWei(info, true)
+              try {
+                const shmonAddr = await _cached(`shmon:${r.poolAddress}`, 86400_000 * 365, () => pool.shmon().catch(() => ethers.ZeroAddress), ac.signal)
+                if (shmonAddr && shmonAddr !== ethers.ZeroAddress && prizeWei > 0n) {
+                  const shmon = new ethers.Contract(shmonAddr, SHMON_READ_ABI, provider)
+                  prizeWei = await _cached(`shmonAssets:${shmonAddr}:${prizeWei.toString()}`, 15_000, () => shmon.convertToAssets(prizeWei), ac.signal)
+                }
+              } catch (err) {
+                if (isAbortError(err)) throw err
+              }
               prizeClaimed = Boolean(info.prizeClaimed)
               if (userPos) {
                 remainingPrincipalWei = BigInt(userPos[0] || 0n)
@@ -2531,14 +2540,12 @@ export default function App() {
                     : r.state === 2 ? 'Finalizing'
                     : 'Settled')
                 const myRoundResultLabel = r.isV2
-                  ? (r.state < 2 ? 'Active' : r.state === 2 ? (r.isWinner ? 'Won' : 'No win') : r.state === 4 ? 'No draw' : 'No draw')
-                  : (r.state < 3 ? 'Locked' : (r.isWinner ? 'Winner' : 'Participant'))
-                const actionLabel = r.isV2
-                  ? (r.isWinner && !r.prizeClaimed ? 'Claim + Redeem' : 'Redeem shMON')
-                  : (r.isWinner && !r.prizeClaimed ? 'Claim + Withdraw' : 'Withdraw')
-                const pendingActionLabel = r.isWinner && !r.prizeClaimed ? 'Claiming...' : 'Redeeming...'
+                  ? (r.state < 2 ? 'Active' : r.state === 2 ? (r.isWinner ? 'Won' : 'No win') : 'No draw')
+                  : (r.state < 3 ? 'Locked' : (r.isWinner ? 'Won' : 'Participant'))
+                const actionLabel = r.canWithdraw ? 'Redeem' : (r.state === 0 ? 'Deposit' : 'Claimed')
+                const pendingActionLabel = actionLabel
                 const prizeLabel = r.isWinner
-                  ? `${r.prizeClaimed ? 'Claimed' : 'Prize'}: ${Number(ethers.formatEther(r.prizeWei || 0n)).toFixed(r.isV2 ? 4 : 2)} ${r.isV2 ? 'shMON' : 'MON'}`
+                  ? `${Number(ethers.formatEther(r.prizeWei || 0n)).toFixed(4)} MON`
                   : '—'
                 const entryLabel = myRounds.length - index
                 return (
@@ -2571,21 +2578,21 @@ export default function App() {
                               className="max-btn"
                               onClick={() => setMainView('current')}
                             >
-                              Deposit Now
+                              Deposit
                             </button>
                           )
                           : now < r.commitAfterTime
-                            ? 'Yield accruing'
-                            : 'Awaiting draw')
+                            ? '—'
+                            : '—')
                         : (
                           <button
                             className="max-btn"
                             onClick={() => setMainView(Number(r.rid) % 2 === 1 ? 'vaultA' : 'vaultB')}
                           >
-                            Deposit Now
+                            Deposit
                           </button>
                         )
-                    ) : isTerminalRound(r.state, r.isV2) && !r.canWithdraw ? 'Done' : 'Waiting'}
+                    ) : isTerminalRound(r.state, r.isV2) && !r.canWithdraw ? 'Claimed' : '—'}
                   </span>
                 </div>
               )})}
