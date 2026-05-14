@@ -139,6 +139,17 @@ function shortAddr(addr) {
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`
 }
 
+function labelLetter(index) {
+  return String.fromCharCode(65 + Math.max(0, Number(index) || 0))
+}
+
+function isActiveV2PoolIndex(index) {
+  // Product UI currently has two public live vaults: Vault A and Vault B.
+  // Older V2 deployments can still contain redeemable user positions, but
+  // should not be presented as a mysterious live "Vault 3".
+  return index >= 0 && index < 2
+}
+
 
 function getIndexerBaseUrl() {
   return String(import.meta.env.VITE_INDEXER_URL || INDEXER_URL || 'https://everdraw-indexer.fly.dev').replace(/\/$/, '')
@@ -1915,25 +1926,49 @@ export default function App() {
           const salesEndSec = r.salesEndTime ? Math.floor(new Date(r.salesEndTime).getTime() / 1000) : 0
           const monPaidWei = BigInt(r.monPaid || '0')
           const principalWithdrawnWei = BigInt(r.principalWithdrawn || '0')
-          const remainingPrincipalWei = principalWithdrawnWei >= monPaidWei ? 0n : monPaidWei - principalWithdrawnWei
-          const normalizedState = isV2round
+          let remainingPrincipalWei = principalWithdrawnWei >= monPaidWei ? 0n : monPaidWei - principalWithdrawnWei
+          let normalizedState = isV2round
             ? (r.state === 'open' ? 0 : r.state === 'committed' ? 1 : r.state === 'settled' ? 2 : r.state === 'skipped' ? 3 : r.state === 'failed' ? 4 : 0)
             : (r.state === 'settled' || r.state === 'skipped' ? 3 : r.state === 'drawn' || r.state === 'unstaking' ? 2 : r.state === 'committed' ? 1 : 0)
+          let commitAfterTime = salesEndSec + (isV2round ? 604800 : 0)
+          let prizeWei = BigInt(r.prizeClaimed || '0')
+          let prizeClaimed = r.prizeClaimed !== '0'
+
+          if (isV2round) {
+            try {
+              const pool = new ethers.Contract(r.poolAddress, POOL_V2_ABI, provider)
+              const [info, commitAt, userPos] = await Promise.all([
+                getCachedRoundInfo(pool, r.poolAddress, BigInt(r.roundId), ac.signal),
+                _cached(`commitAfter:${r.poolAddress}:${r.roundId}`, 5_000, () => pool.getCommitAfterTime(BigInt(r.roundId)).catch(() => 0), ac.signal),
+                _cached(`userPosition:${r.poolAddress}:${r.roundId}:${account}`, 10_000, () => pool.getUserPosition(BigInt(r.roundId), account).catch(() => null), ac.signal),
+              ])
+              normalizedState = Number(info.state)
+              commitAfterTime = Number(commitAt || 0)
+              prizeWei = roundYieldWei(info, true)
+              prizeClaimed = Boolean(info.prizeClaimed)
+              if (userPos) {
+                remainingPrincipalWei = BigInt(userPos[0] || 0n)
+              }
+            } catch (err) {
+              if (isAbortError(err)) throw err
+            }
+          }
+
           putRow({
             rid: r.roundId,
             poolAddr: r.poolAddress,
             isV2: isV2round,
             state: normalizedState,
             salesEndTime: salesEndSec,
-            commitAfterTime: salesEndSec + (isV2round ? 604800 : 0),
+            commitAfterTime,
             isWinner: r.won === 1,
-            prizeClaimed: r.prizeClaimed !== '0',
+            prizeClaimed,
             principalWei: remainingPrincipalWei,
             principalMon: Number(ethers.formatEther(remainingPrincipalWei)).toFixed(4),
             withdrawableShares: 0n,
             withdrawableMon: null,
-            prizeWei: BigInt(r.prizeClaimed || '0'),
-            canWithdraw: ['settled', 'skipped', 'failed'].includes(r.state) && remainingPrincipalWei > 0n,
+            prizeWei,
+            canWithdraw: isTerminalRound(normalizedState, isV2round) && remainingPrincipalWei > 0n,
           })
         }
 
@@ -1952,10 +1987,13 @@ export default function App() {
   const poolDisplayLabel = useCallback((addr, isV2 = false) => {
     const lc = String(addr || '').toLowerCase()
     const v2Index = poolAddressesV2.findIndex((a) => a.toLowerCase() === lc)
-    if (v2Index >= 0) return v2Index === 0 ? 'Vault A' : v2Index === 1 ? 'Vault B' : `Vault ${v2Index + 1}`
+    if (v2Index >= 0) {
+      const letter = labelLetter(v2Index)
+      return isActiveV2PoolIndex(v2Index) ? `Vault ${letter}` : `Retired Vault ${letter}`
+    }
     const legacyIndex = poolAddresses.findIndex((a) => a.toLowerCase() === lc)
-    if (legacyIndex >= 0) return `Legacy ${legacyIndex % 2 === 0 ? 'Vault A' : 'Vault B'}`
-    return isV2 ? 'Vault' : `Legacy ${shortAddr(addr)}`
+    if (legacyIndex >= 0) return `Legacy Vault ${labelLetter(legacyIndex)}`
+    return isV2 ? `Vault ${shortAddr(addr)}` : `Legacy ${shortAddr(addr)}`
   }, [poolAddresses, poolAddressesV2])
 
   const myRoundsStats = useMemo(() => {
@@ -2077,9 +2115,14 @@ export default function App() {
     })
   }, [poolAddress])
 
+  const claimFlowIsV2 = useMemo(() => {
+    const lc = String(claimFlow.poolAddr || '').toLowerCase()
+    return poolAddressesV2.some((a) => a.toLowerCase() === lc)
+  }, [claimFlow.poolAddr, poolAddressesV2])
+
   const handleClaimOnly = useCallback(async () => {
     if (!claimFlow.rid) return
-    if (isV2Pool) {
+    if (claimFlowIsV2) {
       if (claimFlow.mode === 'winner') {
         const claimOk = await handleClaimPrize(claimFlow.rid, claimFlow.poolAddr)
         if (!claimOk) return
@@ -2104,7 +2147,7 @@ export default function App() {
       setActionStatus(`Withdraw principal: submitted ${String(withdrawTxHash).slice(0, 10)}...`)
     }, claimFlow.poolAddr)
     if (ok) setClaimFlow((prev) => ({ ...prev, open: false }))
-  }, [claimFlow.mode, claimFlow.poolAddr, claimFlow.rid, handleClaimPrize, handleWithdraw, runSignedAction, isV2Pool])
+  }, [claimFlow.mode, claimFlow.poolAddr, claimFlow.rid, handleClaimPrize, handleWithdraw, runSignedAction, claimFlowIsV2])
 
   const handleWithdrawOnly = useCallback(async () => {
     const ok = await handleWithdraw(claimFlow.rid, claimFlow.poolAddr)
@@ -2171,7 +2214,7 @@ export default function App() {
       window.location.assign('https://shmonad.xyz')
     }
 
-    if (isV2Pool && claimFlow.mode === 'winner') {
+    if (claimFlowIsV2 && claimFlow.mode === 'winner') {
       const claimOk = await handleClaimPrize(claimFlow.rid, claimFlow.poolAddr)
       if (!claimOk) return
       const withdrawOk = await handleWithdraw(claimFlow.rid, claimFlow.poolAddr)
@@ -2183,7 +2226,7 @@ export default function App() {
       return
     }
 
-    if (isV2Pool) {
+    if (claimFlowIsV2) {
       const ok = await handleWithdraw(claimFlow.rid, claimFlow.poolAddr)
       if (!ok) return
       setClaimRedirectWarningOpen(false)
@@ -2215,7 +2258,7 @@ export default function App() {
     setClaimFlow((prev) => ({ ...prev, open: false }))
     setActionStatus('Principal withdrawn. Continue MON conversion in shmonad.xyz.')
     openShmonad()
-  }, [claimFlow.mode, claimFlow.rid, claimFlow.poolAddr, handleClaimPrize, handleWithdraw, isV2Pool, runSignedAction])
+  }, [claimFlow.mode, claimFlow.rid, claimFlow.poolAddr, handleClaimPrize, handleWithdraw, claimFlowIsV2, runSignedAction])
 
   const buyTicketsShmon = useCallback(async () => {
     try {
@@ -2464,13 +2507,13 @@ export default function App() {
             </div>
             <div className="participants-table my-rounds rounds-table">
               <div className="participants-row participants-header rounds-row">
-                <span>#</span><span>Round / Status</span><span>Result</span><span>Principal</span><span>Prize</span><span>Action</span>
+                <span>Entry</span><span>Vault / Round / Status</span><span>Result</span><span>Principal</span><span>Prize</span><span>Action</span>
               </div>
               {myRounds.length === 0 ? (
                 <div className="participants-row rounds-row">
                   <span>—</span><span>No prior rounds found for this wallet</span><span>—</span><span>0.0000 MON</span><span>—</span><span className="action-cell">—</span>
                 </div>
-              ) : myRounds.map((r) => {
+              ) : myRounds.map((r, index) => {
                 const myRoundStatusLabel = r.isV2
                   ? (r.state === 0
                     ? (now < r.salesEndTime
@@ -2488,16 +2531,19 @@ export default function App() {
                     : r.state === 2 ? 'Finalizing'
                     : 'Settled')
                 const myRoundResultLabel = r.isV2
-                  ? (r.state < 2 ? 'Active' : r.state === 2 ? (r.isWinner ? 'Won!' : 'No win') : r.state === 4 ? 'No draw' : 'Redeem available')
+                  ? (r.state < 2 ? 'Active' : r.state === 2 ? (r.isWinner ? 'Won' : 'No win') : r.state === 4 ? 'No draw' : 'No draw')
                   : (r.state < 3 ? 'Locked' : (r.isWinner ? 'Winner' : 'Participant'))
-                const actionLabel = r.isV2 ? 'Redeem' : 'Claim'
-                const pendingActionLabel = 'Redeeming...'
+                const actionLabel = r.isV2
+                  ? (r.isWinner && !r.prizeClaimed ? 'Claim + Redeem' : 'Redeem shMON')
+                  : (r.isWinner && !r.prizeClaimed ? 'Claim + Withdraw' : 'Withdraw')
+                const pendingActionLabel = r.isWinner && !r.prizeClaimed ? 'Claiming...' : 'Redeeming...'
                 const prizeLabel = r.isWinner
-                  ? `${r.prizeClaimed ? 'Claimed' : 'Prize'}: ${Number(ethers.formatEther(r.prizeWei || 0n)).toFixed(2)} MON`
+                  ? `${r.prizeClaimed ? 'Claimed' : 'Prize'}: ${Number(ethers.formatEther(r.prizeWei || 0n)).toFixed(r.isV2 ? 4 : 2)} ${r.isV2 ? 'shMON' : 'MON'}`
                   : '—'
+                const entryLabel = myRounds.length - index
                 return (
                 <div className="participants-row rounds-row" key={`${r.poolAddr}:${r.rid}`}>
-                  <span>{r.rid}</span>
+                  <span>{entryLabel}</span>
                   <span>{poolDisplayLabel(r.poolAddr, r.isV2)} {'\u00B7'} Round #{r.rid} {'\u00B7'} {myRoundStatusLabel}</span>
                   <span>{myRoundResultLabel}</span>
                   <span>{r.principalMon} MON</span>
