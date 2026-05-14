@@ -115,8 +115,8 @@ export default function VaultAnimationTest({ onComplete }) {
           top: '50%',
           left: '50%',
           transform: 'translate(-50%, -50%)',
-          width: '92%',
-          height: '92%',
+          width: '85%',
+          height: '85%',
           pointerEvents: 'none',
           zIndex: 2,
         }}
@@ -136,8 +136,8 @@ export default function VaultAnimationTest({ onComplete }) {
           top: '50%',
           left: '50%',
           transform: 'translate(-50%, -50%)',
-          width: '92%',
-          height: '92%',
+          width: '85%',
+          height: '85%',
           zIndex: 3,
         }}
       >
@@ -157,7 +157,7 @@ export default function VaultAnimationTest({ onComplete }) {
         <text x="160" y="293" textAnchor="middle" fontSize="14" fontWeight="700" fill="#9B6DFF" fontFamily="Outfit, sans-serif">100%</text>
       </svg>
 
-      <div className="card-header" style={{ width: '100%', position: 'relative', zIndex: 10, paddingTop: 4 }}>
+      <div className="card-header" style={{ width: 'calc(100% - 48px)', position: 'absolute', top: 24, left: 24, zIndex: 10, paddingTop: 4 }}>
         <div className="card-title">Draw Finished</div>
       </div>
 

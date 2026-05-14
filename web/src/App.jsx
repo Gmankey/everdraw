@@ -61,10 +61,10 @@ const ERC20_ABI = [
   'function balanceOf(address owner) view returns (uint256)'
 ]
 
-const ACTION_LABELS = ['None', 'Skip', 'Commit', 'Draw', 'Settle', 'Recommit']
-const ACTION_LABELS_V2 = ['None', 'Commit', 'Settle', 'Mark Skipped']
-const STATE_LABELS = ['Open', 'Committed', 'Finalizing', 'Settled']
-const STATE_LABELS_V2 = ['Open', 'Committed', 'Settled', 'Skipped', 'Skipped']
+const ACTION_LABELS = ['None', 'Skip', 'Commit', 'Draw', 'Claim / Redeem', 'Recommit']
+const ACTION_LABELS_V2 = ['None', 'Commit', 'Claim / Redeem', 'Mark Skipped']
+const STATE_LABELS = ['Deposit Open', 'Yield Accruing', 'Winner Revealed', 'Claim / Redeem']
+const STATE_LABELS_V2 = ['Deposit Open', 'Winner Revealed', 'Claim / Redeem', 'Skipped', 'Skipped']
 const INDEXER_URL = import.meta.env.VITE_INDEXER_URL || 'https://everdraw-indexer.fly.dev'
 
 function isSettledState(state, isV2 = false) {
@@ -820,9 +820,9 @@ function WinnersView({ onBack, winner, winnerAddress, prize, participants, parti
         </div>
         {winProbText && <div className="win-probability">{winProbText}</div>}
         {isUnstaking ? (
-          <button className="btn" disabled>Available after settlement</button>
+          <button className="btn" disabled>Redeem soon</button>
         ) : canClaim ? (
-          <button className="btn" onClick={onClaimPrize} disabled={actionBusy}>Claim</button>
+          <button className="btn" onClick={onClaimPrize} disabled={actionBusy}>Redeem now</button>
         ) : null}
       </div>
 
@@ -857,12 +857,12 @@ function WinnersView({ onBack, winner, winnerAddress, prize, participants, parti
       <div className="winners-actions-grid">
         <button className="btn ghost-btn" onClick={onWithdraw} disabled={actionBusy || !canWithdraw || isUnstaking}>
           {isUnstaking
-            ? 'Available after settlement'
+            ? 'Redeem soon'
             : canWithdraw
-              ? 'Claim Principal'
+              ? 'Redeem now'
               : settlementCountdown === '00:00:00:00'
-                ? 'No principal to claim'
-                : `Claim Principal (${settlementCountdown})`}
+                ? 'Nothing to redeem'
+                : `Redeem in ${settlementCountdown}`}
         </button>
       </div>
 
@@ -1622,7 +1622,7 @@ export default function App() {
         return {
           heading: 'Drawing...',
           value: shownSettlementSecs > 0 ? formatCountdown(shownSettlementSecs) : 'Processing...',
-          sub: 'Waiting for settlement',
+          sub: 'Winner reveal in progress',
           metaLabel: 'Vault status',
           metaValue: 'Drawing'
         }
@@ -1634,7 +1634,7 @@ export default function App() {
           value: 'Complete',
           sub: shownRoundInfo?.winner ? `Winner: ${shortAddr(shownRoundInfo.winner)}` : 'Winner and prize are available',
           metaLabel: 'Vault status',
-          metaValue: 'Settled'
+          metaValue: 'Claim / Redeem'
         }
       }
 
@@ -1653,7 +1653,7 @@ export default function App() {
           value: 'Complete',
           sub: shownRoundInfo?.winner ? `Winner: ${shortAddr(shownRoundInfo.winner)}` : 'Redeem and claim are now available',
           metaLabel: 'Vault status',
-          metaValue: 'Settled'
+          metaValue: 'Claim / Redeem'
         }
       }
 
@@ -1739,7 +1739,7 @@ export default function App() {
         value: 'Finalizing…',
         sub: targetBlock > 0 ? `Waiting for draw at block ${targetBlock.toLocaleString()}` : 'Round is being finalized',
         metaLabel: 'Next action',
-        metaValue: shownIsCurrentRound ? (ACTION_LABELS[nextAction] ?? 'Settle') : 'Settle'
+        metaValue: shownIsCurrentRound ? (ACTION_LABELS[nextAction] ?? 'Claim / Redeem') : 'Claim / Redeem'
       }
     }
 
@@ -1754,7 +1754,7 @@ export default function App() {
           value: formatCountdown(shownSettlementSecs),
           sub: 'Round is wrapping up',
           metaLabel: 'Next action',
-          metaValue: shownIsCurrentRound ? (ACTION_LABELS[nextAction] ?? 'Settle') : 'Settle'
+          metaValue: shownIsCurrentRound ? (ACTION_LABELS[nextAction] ?? 'Claim / Redeem') : 'Claim / Redeem'
         }
       }
 
@@ -1775,15 +1775,15 @@ export default function App() {
         value: 'Finalizing…',
         sub: targetBlock > 0 ? `Target block ${targetBlock.toLocaleString()}` : 'Round is being finalized',
         metaLabel: 'Next action',
-        metaValue: shownIsCurrentRound ? (ACTION_LABELS[nextAction] ?? 'Settle') : 'Settle'
+        metaValue: shownIsCurrentRound ? (ACTION_LABELS[nextAction] ?? 'Claim / Redeem') : 'Claim / Redeem'
       }
     }
 
     if (shownState === 3) {
       return {
-        heading: 'Settled — Withdraw Available',
-        value: 'Settled',
-        sub: 'Winner claim and principal withdraw are now available',
+        heading: 'Claim or Redeem',
+        value: 'Ready',
+        sub: 'Claim or redeem is now available',
         metaLabel: 'Vault status',
         metaValue: 'Complete'
       }
@@ -1817,7 +1817,7 @@ export default function App() {
     if (isSettledState(roundInfo.state, isV2Pool)) {
       return {
         value: `${Number(ethers.formatEther(roundYieldWei(roundInfo, isV2Pool))).toFixed(4)} MON`,
-        sub: 'Final settled yield'
+        sub: 'Final yield'
       }
     }
 
@@ -1849,7 +1849,7 @@ export default function App() {
     const st = Number(previousRoundInfo.state)
     if (isSettledState(st, isV2Pool)) return '00:00:00:00'
     if (salesOpen && secondsRemaining > 0) return formatCountdown(secondsRemaining)
-    return 'Awaiting settlement'
+    return 'Winner revealed'
   }, [previousRoundInfo, isV2Pool, salesOpen, secondsRemaining])
 
   const winnersRoundId = winnersSource?.rid || roundId
@@ -2449,9 +2449,9 @@ export default function App() {
             canWithdraw={canWithdrawPrincipal}
             settlementLabel={
               isUnstaking
-                ? `Round finalizing — ${formatCountdown(shownSettlementSecs)} remaining`
+                ? `Winner revealed — ${formatCountdown(shownSettlementSecs)} remaining`
                 : winnersTerminal
-                  ? 'Settled — Withdraw Available'
+                  ? 'Claim or Redeem'
                   : 'Winner Revealed'
             }
             settlementCountdown={
@@ -2553,29 +2553,13 @@ export default function App() {
             </div>
             <div className="participants-table my-rounds rounds-table">
               <div className="participants-row participants-header rounds-row">
-                <span>Entry</span><span>Vault / Round / Status</span><span>Result</span><span>Principal</span><span>Prize</span><span>Action</span>
+                <span>Entry</span><span>Round</span><span>Result</span><span>Principal</span><span>Prize</span><span>Action</span>
               </div>
               {myRounds.length === 0 ? (
                 <div className="participants-row rounds-row">
                   <span>—</span><span>No prior rounds found for this wallet</span><span>—</span><span>0.0000 MON</span><span>—</span><span className="action-cell">—</span>
                 </div>
               ) : myRounds.map((r, index) => {
-                const myRoundStatusLabel = r.isV2
-                  ? (r.state === 0
-                    ? (now < r.salesEndTime
-                      ? `Deposits close in ${formatCountdown(r.salesEndTime - now)}`
-                      : now < r.commitAfterTime
-                        ? `Yield accruing · Drawing in ${formatCountdown(r.commitAfterTime - now)}`
-                        : 'Awaiting draw')
-                    : r.state === 1 ? 'Drawing'
-                    : r.state === 2 ? 'Settled'
-                    : r.state === 3 ? 'Skipped'
-                    : r.state === 4 ? 'Skipped'
-                    : 'Unknown')
-                  : (r.state === 0 ? 'Accepting Deposits'
-                    : r.state === 1 ? 'Draw Pending'
-                    : r.state === 2 ? 'Finalizing'
-                    : 'Settled')
                 const myRoundResultLabel = r.isV2
                   ? (r.state < 2 ? 'Active' : r.state === 2 ? (r.isWinner ? 'Won' : 'No win') : 'No draw')
                   : (r.state < 3 ? 'Locked' : (r.isWinner ? 'Won' : 'Participant'))
@@ -2588,7 +2572,7 @@ export default function App() {
                 return (
                 <div className="participants-row rounds-row" key={`${r.poolAddr}:${r.rid}`}>
                   <span>{entryLabel}</span>
-                  <span>{poolDisplayLabel(r.poolAddr, r.isV2)} {'\u00B7'} Round #{r.rid} {'\u00B7'} {myRoundStatusLabel}</span>
+                  <span>Round #{r.rid}</span>
                   <span>{myRoundResultLabel}</span>
                   <span>{r.principalMon} MON</span>
                   <span className={r.isWinner ? (r.prizeClaimed ? 'my-rounds-prize claimed' : 'my-rounds-prize won') : 'my-rounds-prize'}>{prizeLabel}</span>
@@ -2784,15 +2768,15 @@ export default function App() {
               <StatCard
                 label="Total Locked (Active Rounds)"
                 value={`${myRoundsStats.lockedMon} MON`}
-                sub="Principal in non-settled rounds"
+                sub="Principal in active rounds"
                 icon={(
                   <svg viewBox="0 0 24 24"><path fill="currentColor" d="M17 9h-1V7a4 4 0 1 0-8 0v2H7a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2zm-7-2a2 2 0 1 1 4 0v2h-4V7z"/></svg>
                 )}
               />
               <StatCard
-                label="Total Principal Claimable"
+                label="Total Redeemable"
                 value={`${myRoundsStats.claimableMon} MON`}
-                sub="Settled rounds ready to withdraw"
+                sub="Rounds ready to redeem"
                 icon={(
                   <svg viewBox="0 0 24 24"><path d="M12 2v10m0 0l-4-4m4 4l4-4M5 14v5h14v-5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
                 )}
@@ -2800,7 +2784,7 @@ export default function App() {
               <StatCard
                 label="Total Winnings To Date"
                 value={`${myRoundsStats.winningsMon} MON`}
-                sub="Yield from settled wins"
+                sub="Yield from wins"
                 icon={(
                   <svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
                 )}
@@ -2835,7 +2819,7 @@ export default function App() {
               <StatCard
                 label="Winner"
                 value={activeRoundInfo && (isSettledState(activeRoundInfo.state, isV2Pool) || isUnstaking) ? shortAddr(activeRoundInfo.winner) : '\u2014'}
-                sub={activeRoundInfo && (isSettledState(activeRoundInfo.state, isV2Pool) || isUnstaking) ? `Winning ticket: ${activeRoundInfo.winningTicket}` : 'Revealed at settlement'}
+                sub={activeRoundInfo && (isSettledState(activeRoundInfo.state, isV2Pool) || isUnstaking) ? `Winning ticket: ${activeRoundInfo.winningTicket}` : 'Revealed after draw'}
                 icon={(
                   <svg viewBox="0 0 24 24"><path fill="currentColor" d="M6 4h12v3a4 4 0 0 1-4 4h-1v2.08A4 4 0 0 1 16 17v2H8v-2a4 4 0 0 1 3-3.87V11h-1a4 4 0 0 1-4-4V4z"/></svg>
                 )}
@@ -2851,7 +2835,7 @@ export default function App() {
                 }
                 sub={
                   activeRoundInfo && isSettledState(activeRoundInfo.state, isV2Pool)
-                    ? 'Final settled yield'
+                    ? 'Final yield'
                     : isUnstaking
                       ? 'Estimated yield'
                       : currentPrizePool.sub
