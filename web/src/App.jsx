@@ -2747,15 +2747,7 @@ export default function App() {
             )}
 
             {mainView === 'previous' ? (
-              <div className="card filled vault-card" id="vault-card">
-                <VaultDoorBackground progressPct={100} salesOpen={false} />
-                <div className="countdown-center vault-layer vault-center">
-                  <button className="btn deposit-btn" onClick={openWinnersWithTransition} disabled={!shownSettled || winnersTransitioning}>
-                    See Winners
-                  </button>
-                </div>
-                <div className="progress-container vault-layer vault-progress-hidden" />
-              </div>
+              <VaultAnimationTest onComplete={() => setShowWinnersView(true)} />
             ) : drawFinished ? (
               <VaultAnimationTest onComplete={() => setShowWinnersView(true)} />
             ) : (
