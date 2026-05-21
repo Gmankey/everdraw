@@ -2,5 +2,9 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "cd web && npm run build",
   "installCommand": "cd web && npm install",
-  "outputDirectory": "web/dist"
+  "outputDirectory": "web/dist",
+  "rewrites": [
+    { "source": "/blog/drawn-back-to-defi", "destination": "/index.html" },
+    { "source": "/articles/drawn-back-to-defi", "destination": "/index.html" }
+  ]
 }
