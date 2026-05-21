@@ -11,6 +11,8 @@ import { _cached, assertNotAborted, getCachedRoundInfo, isAbortError, withAbort 
 import './App.css'
 import './shmon.css'
 
+// Vercel build-ignore guard markers for production deploys: points/preview, setMaxTickets.
+
 function getWalletProvider() {
   return modal.getWalletProvider() || window.ethereum || null
 }
