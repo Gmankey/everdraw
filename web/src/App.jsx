@@ -159,6 +159,14 @@ function tierClass(tier) {
   return `tier-chip tier-${String(tier || 'Bronze').toLowerCase()}`
 }
 
+function bonusLabel(key) {
+  return String(key || '')
+    .replace(/_/g, ' ')
+    .replace(/-/g, ' ')
+    .trim()
+    .toLowerCase()
+}
+
 function PointsHeaderWidget({ account, points }) {
   const [open, setOpen] = useState(false)
   if (!account) return null
@@ -291,14 +299,14 @@ function ProfilePage({ account, points, history }) {
             <div className="points-empty-state">No rounds yet. Buy a ticket to start earning.</div>
           ) : recentRounds.map((h) => {
             const bonusEntries = Object.entries(h.bonuses_breakdown || {}).filter(([, value]) => Number(value) > 0)
-            const bonusPoints = bonusEntries.reduce((sum, [, value]) => sum + Number(value || 0), 0)
-            const bonusDiamonds = '🔷'.repeat(bonusEntries.length)
             return (
               <div className="participants-row points-rounds-row" key={`${h.pool_address}:${h.round_id}`}>
                 <span>#{h.round_id}</span>
-                <span>{h.base_points}{bonusDiamonds ? <span className="round-bonus-diamonds" aria-label={`${bonusEntries.length} bonus${bonusEntries.length === 1 ? '' : 'es'} triggered`}>{bonusDiamonds}</span> : null}</span>
+                <span>{h.base_points}</span>
                 <span>×{(h.multiplier_x100 / 100).toFixed(2)}</span>
-                <span>{bonusPoints > 0 ? `+${bonusPoints}` : ''}</span>
+                <span className="round-bonus-pills">
+                  {bonusEntries.map(([key]) => <span className="round-bonus-pill" key={key}>{bonusLabel(key)}</span>)}
+                </span>
                 <span>+{h.total_points}</span>
               </div>
             )
