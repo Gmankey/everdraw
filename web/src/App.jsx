@@ -205,6 +205,12 @@ function PointsBreakdown({ item }) {
 
 function ProfilePage({ account, points, history }) {
   if (!account) return <section className="participants-card points-page"><h2>Your Points</h2><p>Connect a wallet to view your EverDraw points profile.</p></section>
+  const historyRows = Array.isArray(history) ? history : []
+  const hasHistoryBonus = (targetLabel) => historyRows.some((row) =>
+    Object.entries(row?.bonuses_breakdown || {}).some(([key, value]) =>
+      Number(value) > 0 && bonusLabel(key) === targetLabel
+    )
+  )
   const streakWeeks = Number(points?.current_streak_weeks || 0)
   const multiplierX100 = Number(points?.current_multiplier_x100 || 100)
   const dotCount = 52
@@ -221,7 +227,7 @@ function ProfilePage({ account, points, history }) {
   const highestLossAwarded = Number(points?.highest_loss_streak_bonus_awarded || 0)
   const firstDepositDone = Boolean(Number(points?.has_received_first_deposit_bonus || 0) || points?.first_deposit_completed || points?.has_deposited || Number(points?.deposit_count || 0) > 0)
   const comebackKingDone = Boolean(Number(points?.has_received_comeback_king_bonus || points?.has_received_first_win_bonus || 0) || points?.first_win_completed || points?.has_won || Number(points?.win_count || 0) > 0)
-  const winDone = Boolean(points?.has_won || Number(points?.win_count || 0) > 0)
+  const winDone = Boolean(points?.has_won || Number(points?.win_count || 0) > 0 || hasHistoryBonus('win'))
   const twoVaultsDone = Boolean(Number(points?.has_received_on_the_double_bonus || 0) || points?.two_vaults_completed || Number(points?.vault_count || points?.vaults_entered || 0) >= 2)
   const bonuses = [
     { key: 'first-deposit', label: 'First Deposit', unlocked: firstDepositDone, visible: true, tooltip: 'A first time playing bonus +25' },
@@ -241,7 +247,7 @@ function ProfilePage({ account, points, history }) {
     { key: 'transcended', label: highestLossAwarded >= 52 || noWinWeeks >= 52 ? 'Transcended' : '???', unlocked: highestLossAwarded >= 52 || noWinWeeks >= 52, hidden: highestLossAwarded < 52 && noWinWeeks < 52, tooltip: 'Few have reached this level of transcendence +500' },
   ].sort((a, b) => Number(b.unlocked) - Number(a.unlocked))
   const ensName = points?.ens && !ethers.isAddress(points.ens) && points.ens.toLowerCase() !== account.toLowerCase() ? points.ens : ''
-  const recentRounds = (history || []).slice(0, 12)
+  const recentRounds = historyRows.slice(0, 12)
   return (
     <section className="participants-card points-page">
       <div className="points-page-head">
