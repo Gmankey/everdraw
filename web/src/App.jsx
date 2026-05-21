@@ -221,9 +221,11 @@ function ProfilePage({ account, points, history }) {
   const highestLossAwarded = Number(points?.highest_loss_streak_bonus_awarded || 0)
   const firstDepositDone = Boolean(Number(points?.has_received_first_deposit_bonus || 0) || points?.first_deposit_completed || points?.has_deposited || Number(points?.deposit_count || 0) > 0)
   const comebackKingDone = Boolean(Number(points?.has_received_comeback_king_bonus || points?.has_received_first_win_bonus || 0) || points?.first_win_completed || points?.has_won || Number(points?.win_count || 0) > 0)
+  const winDone = Boolean(points?.has_won || Number(points?.win_count || 0) > 0)
   const twoVaultsDone = Boolean(Number(points?.has_received_on_the_double_bonus || 0) || points?.two_vaults_completed || Number(points?.vault_count || points?.vaults_entered || 0) >= 2)
   const bonuses = [
     { key: 'first-deposit', label: 'First Deposit', unlocked: firstDepositDone, visible: true, tooltip: 'A first time playing bonus +25' },
+    { key: 'win', label: 'Win', unlocked: winDone, hidden: !winDone, tooltip: 'Winning a round +25' },
     ...streakMilestones.map((m) => ({
       key: `streak-${m.weeks}`,
       label: m.claimed || m.visible ? m.label : '???',
