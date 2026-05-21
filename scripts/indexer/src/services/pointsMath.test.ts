@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { calculateRoundPoints, getMultiplierX100, lossStreakThresholdBonus } from './pointsMath.js';
+import { calculateRoundPoints, getMultiplierX100, lossStreakThresholdBonus, nextMilestone, STREAK_MILESTONE_POINTS } from './pointsMath.js';
 
 assert.equal(getMultiplierX100(0), 100);
 assert.equal(getMultiplierX100(1), 100);
@@ -11,6 +11,9 @@ assert.deepEqual(lossStreakThresholdBonus(9, 0), null);
 assert.deepEqual(lossStreakThresholdBonus(10, 0), { threshold: 10, points: 50 });
 assert.deepEqual(lossStreakThresholdBonus(26, 10), { threshold: 26, points: 200 });
 assert.deepEqual(lossStreakThresholdBonus(52, 26), { threshold: 52, points: 500 });
+assert.equal(STREAK_MILESTONE_POINTS.get(2), 10);
+assert.equal(nextMilestone(0), 2);
+assert.equal(nextMilestone(2), 4);
 
 assert.deepEqual(calculateRoundPoints({ tickets: 10, streakWeeks: 1, won: false, onTheDouble: false, firstDeposit: false, comebackKing: false }), {
   basePoints: 10,

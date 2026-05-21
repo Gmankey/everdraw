@@ -63,4 +63,16 @@ const skipped = service.runWeeklyCheckpoint(Date.parse('2026-05-20T13:00:00.000Z
 assert.equal(skipped.skipped, true);
 assert.equal(pointsRepo.getWalletStreak(wallet)!.currentStreakWeeks, 2);
 
+round(4, poolA, 'settled', '2026-05-19T00:00:00.000Z');
+round(5, poolA, 'open', null);
+wr(5, poolA, 1, 0);
+profile = pointsRepo.getProfile(wallet)!;
+pointsRepo.upsertWalletStreak({ ...profile, currentStreakWeeks: 1, longestStreakWeeks: 1, lastCheckpointUnix: 0, consecutiveNonWins: 7, updatedAt: 1 });
+const beforeGerminationPoints = pointsRepo.getProfile(wallet)!.lifetimePoints;
+const germination = service.runWeeklyCheckpoint(Date.parse('2026-05-20T13:00:00.000Z') / 1000);
+assert.equal(germination.skipped, false);
+assert.equal(pointsRepo.getWalletStreak(wallet)!.currentStreakWeeks, 2);
+assert.equal(pointsRepo.getProfile(wallet)!.lifetimePoints, beforeGerminationPoints + 10);
+assert.equal(pointsRepo.getProfile(wallet)!.highestStreakMilestoneAwarded, 2);
+
 console.log('derivePoints.test.ts ok');

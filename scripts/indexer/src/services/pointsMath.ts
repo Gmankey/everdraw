@@ -1,6 +1,7 @@
 export type PointsTier = 'Bronze' | 'Silver' | 'Gold' | 'Platinum' | 'Diamond';
 
 export const STREAK_MILESTONE_POINTS = new Map<number, number>([
+  [2, 10],
   [4, 50],
   [13, 200],
   [26, 500],
@@ -41,7 +42,7 @@ export function nextTierThreshold(streakWeeks: number): number | null {
 }
 
 export function nextMilestone(streakWeeks: number): number | null {
-  return [4, 13, 26, 52].find((milestone) => milestone > streakWeeks) ?? null;
+  return [2, 4, 13, 26, 52].find((milestone) => milestone > streakWeeks) ?? null;
 }
 
 export type BonusBreakdown = Record<string, number>;

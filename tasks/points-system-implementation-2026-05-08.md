@@ -114,9 +114,9 @@ if has_active_position:
   longest_streak_weeks = max(longest_streak_weeks, current_streak_weeks)
 
   # Streak milestone bonuses, one-time
-  for milestone in [4, 13, 26, 52]:
+  for milestone in [2, 4, 13, 26, 52]:
     if current_streak_weeks == milestone and highest_streak_milestone_awarded < milestone:
-      award {50, 200, 500, 1000}[milestone] points
+      award {10, 50, 200, 500, 1000}[milestone] points
       set highest_streak_milestone_awarded = milestone
 else:
   current_streak_weeks = 0
@@ -162,13 +162,13 @@ c. **Settlement card update.** On the previous-vault view, when the user was a p
 d. **`/profile` page.** New route. Sections:
 
 - Header: wallet (shortened, with ENS if available), tier badge, lifetime points big number
-- Streak block: current streak with progress bar to next tier multiplier, longest streak, active multiplier, next milestone
+- Streak block: current streak with visual weekly dots only. Do not put tooltips on weekly dots and do not render the old unlabeled progress bar.
 - Recent rounds: last 12 rounds with points breakdown
-- Bonuses earned: list of one-time bonuses received (first deposit, first win, milestones)
+- Bonuses column: all bonuses, including streak milestones. First Deposit and Germination Streak are visible from the start. Other streak milestones and mystery bonuses are hidden until unlocked. Hidden rows show one masked label and a blank right-side status. Visible locked rows show `Locked`; unlocked rows show `UNLOCKED`.
 
 e. **`/leaderboard` page.** New route. Top 100 by lifetime points. Toggle between "all time" and "this month." Wallet column shows shortened address (`0x1234…abcd`) with ENS override. Tier badge column. Streak column. The current user's row, if outside top 100, shown as a sticky footer with their rank.
 
-f. **Milestone banners.** When the streak crosses 4, 13, 26, or 52 weeks, show a one-shot in-app banner congratulating the user and noting the bonus awarded. When tier upgrades (Bronze → Silver, etc.), show a smaller banner.
+f. **Milestone banners.** When the streak crosses 2, 4, 13, 26, or 52 weeks, show a one-shot in-app banner congratulating the user and noting the bonus awarded. When tier upgrades (Bronze → Silver, etc.), show a smaller banner.
 
 ### 6. Tier display
 
@@ -194,7 +194,7 @@ Diamond   26+ weeks    2.0x
 
 - Email or push notifications. Phase 1 is in-app banners only.
 - Referrals. Deferred per ADR.
-- Backfilling points from rounds before launch. No retro per user instruction.
+- Resetting or wiping live production points. Existing displayed balances must be preserved; production reconstructs from all indexed historical participation via `POINTS_START_UNIX=0`.
 - Token integration, NFT badges, redemption flows.
 
 ## Acceptance criteria

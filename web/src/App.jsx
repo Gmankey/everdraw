@@ -199,18 +199,15 @@ function ProfilePage({ account, points, history }) {
   if (!account) return <section className="participants-card points-page"><h2>Your Points</h2><p>Connect a wallet to view your EverDraw points profile.</p></section>
   const streakWeeks = Number(points?.current_streak_weeks || 0)
   const multiplierX100 = Number(points?.current_multiplier_x100 || 100)
-  const nextTier = points?.next_tier_threshold ?? (streakWeeks < 4 ? 4 : streakWeeks < 8 ? 8 : streakWeeks < 13 ? 13 : streakWeeks < 26 ? 26 : null)
-  const nextMilestone = points?.next_milestone ?? [4, 13, 26, 52].find((m) => m > streakWeeks) ?? null
-  const progressTarget = nextMilestone || nextTier || Math.max(1, streakWeeks)
-  const progress = Math.min(100, (streakWeeks / progressTarget) * 100)
   const dotCount = 52
   const litDots = Math.max(0, Math.min(dotCount, streakWeeks))
   const highestMilestoneAwarded = Number(points?.highest_streak_milestone_awarded || 0)
   const streakMilestones = [
-    { weeks: 4, label: 'Seedling streak' },
-    { weeks: 13, label: 'Sprouters streak' },
-    { weeks: 26, label: 'Flourishers streak' },
-    { weeks: 52, label: 'Evergreen streak' },
+    { weeks: 2, label: 'Germination Streak', points: 10, visible: true },
+    { weeks: 4, label: 'Sprout Streak', points: 50 },
+    { weeks: 13, label: 'Seedling Streak', points: 200 },
+    { weeks: 26, label: 'Flourishing Streak', points: 500 },
+    { weeks: 52, label: 'Evergreen Streak', points: 1000 },
   ].map((m) => ({ ...m, claimed: highestMilestoneAwarded >= m.weeks || streakWeeks >= m.weeks }))
   const noWinWeeks = Number(points?.consecutive_non_wins || points?.current_no_win_streak_weeks || points?.no_win_streak_weeks || 0)
   const highestLossAwarded = Number(points?.highest_loss_streak_bonus_awarded || 0)
@@ -218,12 +215,20 @@ function ProfilePage({ account, points, history }) {
   const comebackKingDone = Boolean(Number(points?.has_received_comeback_king_bonus || points?.has_received_first_win_bonus || 0) || points?.first_win_completed || points?.has_won || Number(points?.win_count || 0) > 0)
   const twoVaultsDone = Boolean(Number(points?.has_received_on_the_double_bonus || 0) || points?.two_vaults_completed || Number(points?.vault_count || points?.vaults_entered || 0) >= 2)
   const bonuses = [
-    { key: 'first-deposit', label: 'First Deposit', unlocked: firstDepositDone, detail: '+25 once' },
-    { key: 'comeback-king', label: comebackKingDone ? 'Comeback King' : '???', unlocked: comebackKingDone, hidden: !comebackKingDone },
-    { key: 'on-the-double', label: 'On the Double', unlocked: twoVaultsDone, detail: '+50 once, 5+ tickets in both vaults' },
-    { key: 'rising', label: highestLossAwarded >= 10 || noWinWeeks >= 10 ? 'Rising' : '???', unlocked: highestLossAwarded >= 10 || noWinWeeks >= 10, hidden: highestLossAwarded < 10 && noWinWeeks < 10 },
-    { key: 'ascended', label: highestLossAwarded >= 26 || noWinWeeks >= 26 ? 'Ascended' : '???', unlocked: highestLossAwarded >= 26 || noWinWeeks >= 26, hidden: highestLossAwarded < 26 && noWinWeeks < 26 },
-    { key: 'transcended', label: highestLossAwarded >= 52 || noWinWeeks >= 52 ? 'Transcended' : '???', unlocked: highestLossAwarded >= 52 || noWinWeeks >= 52, hidden: highestLossAwarded < 52 && noWinWeeks < 52 },
+    { key: 'first-deposit', label: 'First Deposit', unlocked: firstDepositDone, visible: true, tooltip: 'A first time playing bonus +25' },
+    ...streakMilestones.map((m) => ({
+      key: `streak-${m.weeks}`,
+      label: m.claimed || m.visible ? m.label : '???',
+      unlocked: m.claimed,
+      hidden: !m.claimed && !m.visible,
+      visible: Boolean(m.visible),
+      tooltip: `${m.weeks} week streak +${m.points}`,
+    })),
+    { key: 'first-win', label: comebackKingDone ? 'First Win' : '???', unlocked: comebackKingDone, hidden: !comebackKingDone, tooltip: 'Congrats on your first win! +100' },
+    { key: 'one-two-double', label: twoVaultsDone ? 'One Two Double' : '???', unlocked: twoVaultsDone, hidden: !twoVaultsDone, tooltip: 'Active in both vaults +50' },
+    { key: 'rising', label: highestLossAwarded >= 10 || noWinWeeks >= 10 ? 'Rising' : '???', unlocked: highestLossAwarded >= 10 || noWinWeeks >= 10, hidden: highestLossAwarded < 10 && noWinWeeks < 10, tooltip: 'Hang in there +50' },
+    { key: 'ascended', label: highestLossAwarded >= 26 || noWinWeeks >= 26 ? 'Ascended' : '???', unlocked: highestLossAwarded >= 26 || noWinWeeks >= 26, hidden: highestLossAwarded < 26 && noWinWeeks < 26, tooltip: 'Virtuous patience must be rewarded +200' },
+    { key: 'transcended', label: highestLossAwarded >= 52 || noWinWeeks >= 52 ? 'Transcended' : '???', unlocked: highestLossAwarded >= 52 || noWinWeeks >= 52, hidden: highestLossAwarded < 52 && noWinWeeks < 52, tooltip: 'Few have reached this level of transcendence +500' },
   ]
   const ensName = points?.ens && !ethers.isAddress(points.ens) && points.ens.toLowerCase() !== account.toLowerCase() ? points.ens : ''
   const recentRounds = (history || []).slice(0, 12)
@@ -244,22 +249,17 @@ function ProfilePage({ account, points, history }) {
 
           <div className="points-streak-mini rewards-streak-block">
             <div>
-              <span className="points-popover-kicker">Weekly participation</span>
+              <span className="points-popover-kicker">Weekly streak</span>
               <strong>{streakWeeks} Week Streak</strong>
-            </div>
-            <div className="points-rule-strip" aria-label="Weekly points rule">
-              <span><strong>+25</strong> active week</span>
-              <span><strong>1x</strong> per checkpoint</span>
             </div>
             <div className="points-streak-dots points-streak-dots-52" aria-label={`${litDots} of ${dotCount} weeks active`}>
               {Array.from({ length: dotCount }).map((_, i) => {
                 const week = i + 1
                 const milestone = streakMilestones.find((m) => m.weeks === week)
-                return <span key={week} title={milestone ? `${milestone.label} · Week ${week}` : `Week ${week}`} className={`${i < litDots ? 'lit' : ''} ${milestone ? 'milestone-dot' : ''} ${milestone?.claimed ? 'claimed' : ''}`} />
+                return <span key={week} className={`${i < litDots ? 'lit' : ''} ${milestone ? 'milestone-dot' : ''} ${milestone?.claimed ? 'claimed' : ''}`} />
               })}
             </div>
           </div>
-          <div className="points-progress" aria-label={`Progress to ${progressTarget} week target`}><span style={{ width: `${progress}%` }} /></div>
         </div>
 
         <aside className="points-profile-side rewards-side-card">
@@ -267,13 +267,13 @@ function ProfilePage({ account, points, history }) {
             <h3>Bonuses</h3>
             <div className="points-milestone-list rewards-bonus-list">
               {bonuses.map((bonus) => (
-                <div className={`points-milestone-row rewards-bonus-row ${bonus.unlocked ? 'claimed' : 'locked'} ${bonus.hidden ? 'hidden-bonus' : ''}`} key={bonus.key}>
+                <div className={`points-milestone-row rewards-bonus-row ${bonus.unlocked ? 'claimed' : 'locked'} ${bonus.hidden ? 'hidden-bonus' : ''}`} key={bonus.key} title={bonus.tooltip}>
                   <span className="points-milestone-icon" aria-hidden="true">{bonus.unlocked ? '✓' : bonus.hidden ? '?' : ''}</span>
                   <div>
                     <strong>{bonus.label}</strong>
-                    <small>{bonus.detail || (bonus.hidden ? 'Reveal by playing' : bonus.unlocked ? 'Unlocked' : 'Available bonus')}</small>
+                    <small>{bonus.hidden ? '' : bonus.unlocked ? 'Unlocked' : bonus.tooltip}</small>
                   </div>
-                  <span className="points-milestone-status">{bonus.unlocked ? 'Unlocked' : bonus.hidden ? '???' : 'Lock'}</span>
+                  <span className="points-milestone-status">{bonus.unlocked ? 'UNLOCKED' : bonus.hidden ? '' : 'Locked'}</span>
                 </div>
               ))}
             </div>
