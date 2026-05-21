@@ -239,13 +239,15 @@ function ProfilePage({ account, points, history }) {
           <h2>{ensName || 'Your Points'}</h2>
           <span>{shortAddr(account)}</span>
         </div>
-        <div className={tierClass(points?.current_tier)}>{points?.current_tier || 'Bronze'}</div>
       </div>
       <div className="points-profile-layout points-profile-layout-rewards">
         <div className="points-profile-summary points-profile-main-card rewards-main-card">
           <div className="points-popover-kicker rewards-kicker">Total points balance</div>
           <div className="points-profile-total rewards-total">{Number(points?.lifetime_points || 0).toLocaleString()}</div>
-          <div className="points-multiplier-pill rewards-multiplier-pill"><span>Active multiplier</span><strong>{(multiplierX100 / 100).toFixed(2)}x</strong></div>
+          <div className="rewards-pill-row">
+            <div className="points-multiplier-pill rewards-multiplier-pill"><span>Active multiplier</span><strong>{(multiplierX100 / 100).toFixed(2)}x</strong></div>
+            <div className={`${tierClass(points?.current_tier)} rewards-tier-pill`}>{points?.current_tier || 'Bronze'}</div>
+          </div>
 
           <div className="points-streak-mini rewards-streak-block">
             <div>
@@ -284,11 +286,11 @@ function ProfilePage({ account, points, history }) {
       <div className="points-recent-rounds">
         <h3>Recent rounds</h3>
         <div className="participants-table">
-          <div className="participants-row participants-header"><span>Round</span><span>Base</span><span>Multiplier</span><span>Bonuses</span><span>Total</span></div>
+          <div className="participants-row participants-header points-rounds-row"><span>Round</span><span>Base</span><span>Multiplier</span><span>Total</span></div>
           {recentRounds.length === 0 ? (
             <div className="points-empty-state">No rounds yet. Buy a ticket to start earning.</div>
           ) : recentRounds.map((h) => (
-            <div className="participants-row" key={`${h.pool_address}:${h.round_id}`}><span>#{h.round_id}</span><span>{h.base_points}</span><span>×{(h.multiplier_x100 / 100).toFixed(2)}</span><span>{Object.keys(h.bonuses_breakdown || {}).join(', ') || '—'}</span><span>+{h.total_points}</span></div>
+            <div className="participants-row points-rounds-row" key={`${h.pool_address}:${h.round_id}`}><span>#{h.round_id}</span><span>{h.base_points}</span><span>×{(h.multiplier_x100 / 100).toFixed(2)}</span><span>+{h.total_points}</span></div>
           ))}
         </div>
       </div>
