@@ -218,9 +218,9 @@ function ProfilePage({ account, points, history }) {
   const comebackKingDone = Boolean(Number(points?.has_received_comeback_king_bonus || points?.has_received_first_win_bonus || 0) || points?.first_win_completed || points?.has_won || Number(points?.win_count || 0) > 0)
   const twoVaultsDone = Boolean(Number(points?.has_received_on_the_double_bonus || 0) || points?.two_vaults_completed || Number(points?.vault_count || points?.vaults_entered || 0) >= 2)
   const bonuses = [
-    { key: 'first-deposit', label: 'First Deposit', unlocked: firstDepositDone },
+    { key: 'first-deposit', label: 'First Deposit', unlocked: firstDepositDone, detail: '+25 once' },
     { key: 'comeback-king', label: comebackKingDone ? 'Comeback King' : '???', unlocked: comebackKingDone, hidden: !comebackKingDone },
-    { key: 'on-the-double', label: twoVaultsDone ? 'On the Double' : '???', unlocked: twoVaultsDone, hidden: !twoVaultsDone },
+    { key: 'on-the-double', label: 'On the Double', unlocked: twoVaultsDone, detail: '+50 once, 5+ tickets in both vaults' },
     { key: 'rising', label: highestLossAwarded >= 10 || noWinWeeks >= 10 ? 'Rising' : '???', unlocked: highestLossAwarded >= 10 || noWinWeeks >= 10, hidden: highestLossAwarded < 10 && noWinWeeks < 10 },
     { key: 'ascended', label: highestLossAwarded >= 26 || noWinWeeks >= 26 ? 'Ascended' : '???', unlocked: highestLossAwarded >= 26 || noWinWeeks >= 26, hidden: highestLossAwarded < 26 && noWinWeeks < 26 },
     { key: 'transcended', label: highestLossAwarded >= 52 || noWinWeeks >= 52 ? 'Transcended' : '???', unlocked: highestLossAwarded >= 52 || noWinWeeks >= 52, hidden: highestLossAwarded < 52 && noWinWeeks < 52 },
@@ -247,6 +247,10 @@ function ProfilePage({ account, points, history }) {
               <span className="points-popover-kicker">Weekly participation</span>
               <strong>{streakWeeks} Week Streak</strong>
             </div>
+            <div className="points-rule-strip" aria-label="Weekly points rule">
+              <span><strong>+25</strong> active week</span>
+              <span><strong>1x</strong> per checkpoint</span>
+            </div>
             <div className="points-streak-dots points-streak-dots-52" aria-label={`${litDots} of ${dotCount} weeks active`}>
               {Array.from({ length: dotCount }).map((_, i) => {
                 const week = i + 1
@@ -267,7 +271,7 @@ function ProfilePage({ account, points, history }) {
                   <span className="points-milestone-icon" aria-hidden="true">{bonus.unlocked ? '✓' : bonus.hidden ? '?' : ''}</span>
                   <div>
                     <strong>{bonus.label}</strong>
-                    <small>{bonus.hidden ? 'Reveal by playing' : bonus.unlocked ? 'Unlocked' : 'Available bonus'}</small>
+                    <small>{bonus.detail || (bonus.hidden ? 'Reveal by playing' : bonus.unlocked ? 'Unlocked' : 'Available bonus')}</small>
                   </div>
                   <span className="points-milestone-status">{bonus.unlocked ? 'Unlocked' : bonus.hidden ? '???' : 'Lock'}</span>
                 </div>
