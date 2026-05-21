@@ -229,7 +229,7 @@ function ProfilePage({ account, points, history }) {
     { key: 'rising', label: highestLossAwarded >= 10 || noWinWeeks >= 10 ? 'Rising' : '???', unlocked: highestLossAwarded >= 10 || noWinWeeks >= 10, hidden: highestLossAwarded < 10 && noWinWeeks < 10, tooltip: 'Hang in there +50' },
     { key: 'ascended', label: highestLossAwarded >= 26 || noWinWeeks >= 26 ? 'Ascended' : '???', unlocked: highestLossAwarded >= 26 || noWinWeeks >= 26, hidden: highestLossAwarded < 26 && noWinWeeks < 26, tooltip: 'Virtuous patience must be rewarded +200' },
     { key: 'transcended', label: highestLossAwarded >= 52 || noWinWeeks >= 52 ? 'Transcended' : '???', unlocked: highestLossAwarded >= 52 || noWinWeeks >= 52, hidden: highestLossAwarded < 52 && noWinWeeks < 52, tooltip: 'Few have reached this level of transcendence +500' },
-  ]
+  ].sort((a, b) => Number(b.unlocked) - Number(a.unlocked))
   const ensName = points?.ens && !ethers.isAddress(points.ens) && points.ens.toLowerCase() !== account.toLowerCase() ? points.ens : ''
   const recentRounds = (history || []).slice(0, 12)
   return (
@@ -266,7 +266,7 @@ function ProfilePage({ account, points, history }) {
 
         <aside className="points-profile-side rewards-side-card">
           <div className="points-milestones-panel rewards-milestones-panel rewards-bonuses-panel">
-            <h3>Bonuses</h3>
+            <h3>Bonuses🔷</h3>
             <div className="points-milestone-list rewards-bonus-list">
               {bonuses.map((bonus) => (
                 <div className={`points-milestone-row rewards-bonus-row ${bonus.unlocked ? 'claimed' : 'locked'} ${bonus.hidden ? 'hidden-bonus' : ''}`} key={bonus.key} title={bonus.tooltip}>
@@ -286,12 +286,23 @@ function ProfilePage({ account, points, history }) {
       <div className="points-recent-rounds">
         <h3>Recent rounds</h3>
         <div className="participants-table">
-          <div className="participants-row participants-header points-rounds-row"><span>Round</span><span>Base</span><span>Multiplier</span><span>Total</span></div>
+          <div className="participants-row participants-header points-rounds-row"><span>Round</span><span>Tickets Bought</span><span>Multiplier</span><span>Bonus</span><span>Total</span></div>
           {recentRounds.length === 0 ? (
             <div className="points-empty-state">No rounds yet. Buy a ticket to start earning.</div>
-          ) : recentRounds.map((h) => (
-            <div className="participants-row points-rounds-row" key={`${h.pool_address}:${h.round_id}`}><span>#{h.round_id}</span><span>{h.base_points}</span><span>×{(h.multiplier_x100 / 100).toFixed(2)}</span><span>+{h.total_points}</span></div>
-          ))}
+          ) : recentRounds.map((h) => {
+            const bonusEntries = Object.entries(h.bonuses_breakdown || {}).filter(([, value]) => Number(value) > 0)
+            const bonusPoints = bonusEntries.reduce((sum, [, value]) => sum + Number(value || 0), 0)
+            const bonusDiamonds = '🔷'.repeat(bonusEntries.length)
+            return (
+              <div className="participants-row points-rounds-row" key={`${h.pool_address}:${h.round_id}`}>
+                <span>#{h.round_id}</span>
+                <span>{h.base_points}{bonusDiamonds ? <span className="round-bonus-diamonds" aria-label={`${bonusEntries.length} bonus${bonusEntries.length === 1 ? '' : 'es'} triggered`}>{bonusDiamonds}</span> : null}</span>
+                <span>×{(h.multiplier_x100 / 100).toFixed(2)}</span>
+                <span>{bonusPoints > 0 ? `+${bonusPoints}` : ''}</span>
+                <span>+{h.total_points}</span>
+              </div>
+            )
+          })}
         </div>
       </div>
     </section>
