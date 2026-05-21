@@ -1091,11 +1091,16 @@ export default function App() {
         const commitAfter = v2 ? Number(await _cached(`commitAfter:${addr}:${rid}`, 5_000, () => pool.getCommitAfterTime(rid).catch(() => 0), signal)) : 0
         const secs = Math.max(0, salesEndTime - nowSec)
         const yieldSecs = Math.max(0, commitAfter - nowSec)
+        const stateLabel = v2 && state === 0 && secs === 0
+          ? (Number(info.totalTickets ?? 0) > 0
+              ? (yieldSecs > 0 ? 'Yield Accruing' : 'Drawing Queued')
+              : 'Round Skipped')
+          : (v2 ? STATE_LABELS_V2 : STATE_LABELS)[state] ?? 'Unknown'
         return {
           poolAddress: addr,
           roundId: rid.toString(),
           state,
-          stateLabel: (v2 ? STATE_LABELS_V2 : STATE_LABELS)[state] ?? 'Unknown',
+          stateLabel,
           isNowOpen: state === 0 && secs > 0,
           timeRemainingSec: v2 && state === 0 && secs === 0 ? yieldSecs : secs,
           commitAfterTime: commitAfter,
