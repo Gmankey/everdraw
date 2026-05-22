@@ -1,0 +1,11 @@
+{
+  "network": "monad-testnet",
+  "chainId": 10143,
+  "sourceControlRule": "Testnet deployments must be recorded separately from mainnet. Do not update deployments/monad-mainnet.json for testnet-only deploys.",
+  "addresses": {
+    "pythEntropy": "0x825c0390f379c631f3cf11a82a37d20bddf93c07",
+    "pythEntropyProvider": "0x6CC14824Ea2918f5De5C2f75A9Da968ad4BD6344",
+    "shmon": null
+  },
+  "contracts": []
+}

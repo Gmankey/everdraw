@@ -16,9 +16,12 @@ async function main() {
   if (!entropy) throw new Error("Missing ENTROPY env var");
   if (!entropyProvider) throw new Error("Missing ENTROPY_PROVIDER env var");
 
+  const defaultRoundDurationSec = hre.network.name === "monadTestnet" ? 120 : 86400;
+  const defaultYieldPeriodSec = hre.network.name === "monadTestnet" ? 300 : 518100;
+
   const ticketPriceMON = ethers.parseEther(process.env.TICKET_PRICE_MON || "1");
-  const roundDurationSec = Number(process.env.ROUND_DURATION_SEC || 86400);
-  const yieldPeriodSec = Number(process.env.YIELD_PERIOD_SEC || 518100);
+  const roundDurationSec = Number(process.env.ROUND_DURATION_SEC || defaultRoundDurationSec);
+  const yieldPeriodSec = Number(process.env.YIELD_PERIOD_SEC || defaultYieldPeriodSec);
 
   const [deployer] = await ethers.getSigners();
   console.log("Deploying TicketPrizePoolShmonV3 with:", deployer.address);
