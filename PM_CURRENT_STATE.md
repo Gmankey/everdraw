@@ -46,9 +46,10 @@ Important behavior:
 - Status: retiring-monitoring-only
 - Source listed for legacy tracking: `src/TicketPrizePoolShmonShMonad.sol`
 - ABI: `abi/pool.verified.json`
-- Verification status: pending legacy verification
+- Verification status: unverified-retiring
+- Live runtime bytecode hash: `220cafb32f6c2d8ca7587b6fa6cd388434a007875e643a230b6f39db82a7a8c3`
 
-Do not use this contract as source for new designs. Keep it only for in-flight settlement/claims per ADR-0011.
+Do not use this contract as source for new designs. Keep it only for in-flight settlement/claims per ADR-0011. Current committed source/artifacts and available local backups did not match live runtime bytecode, so this contract is explicitly quarantined rather than treated as a source of truth.
 
 ## V3 / VRF Work
 
@@ -98,7 +99,7 @@ That command runs deploy preflight and refuses dirty, unpushed, or non-`staging`
 - Vault B replacement deploy per ADR-0011 remains outstanding.
 - V3 testnet deploy and smoke test remain outstanding.
 - Low-balance VRF reserve monitoring in keeper remains outstanding.
-- Legacy `0xed67...` bytecode verification remains pending and must be completed before any future work relies on its exact behavior.
+- Legacy `0xed67...` is unverified-retiring and quarantined. Do not rely on its exact behavior for future work.
 
 ## Incident Lesson
 

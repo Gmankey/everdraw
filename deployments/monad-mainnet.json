@@ -40,8 +40,10 @@
       "source": "src/TicketPrizePoolShmonShMonad.sol",
       "abi": "abi/pool.verified.json",
       "verification": {
-        "status": "pending-legacy",
-        "note": "Retiring contract kept only for in-flight settlement/claims. Do not use as source for new deployments. Complete bytecode verification before any future design depends on this implementation."
+        "status": "unverified-retiring",
+        "checkedAt": "2026-05-22T11:50:00.000Z",
+        "liveRuntimeBytecodeSha256": "220cafb32f6c2d8ca7587b6fa6cd388434a007875e643a230b6f39db82a7a8c3",
+        "note": "Retiring contract kept only for in-flight settlement/claims. Do not use as source for new deployments. Current committed source/artifacts and available local backups did not match live runtime bytecode. This is intentionally quarantined, not a production source of truth."
       }
     }
   ]
