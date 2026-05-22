@@ -47,9 +47,9 @@ async function main() {
 
   const addr = await pool.getAddress();
   console.log("TicketPrizePoolShmonV3 deployed:", addr);
-  console.log("Seed VRF reserve with at least 0.1 MON:");
+  console.log("Seed VRF reserve with at least 0.5 MON (testnet fee ~0.148 MON/request):");
   console.log(
-    ' cast send ' + addr + ' "depositVRFReserve()" --value 0.1ether --rpc-url $RPC_URL --private-key $PRIVATE_KEY'
+    ' cast send ' + addr + ' "depositVRFReserve()" --value 0.5ether --rpc-url $RPC_URL --private-key $PRIVATE_KEY'
   );
 }
 

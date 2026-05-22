@@ -37,11 +37,11 @@ Use short durations on testnet so the smoke test completes in minutes, not days.
 npm run deploy:testnet:v3
 ~~~
 
-Immediately seed VRF reserve:
+Immediately seed VRF reserve (testnet Pyth fee is ~0.148 MON/request — seed 0.5 MON for headroom):
 
 ~~~bash
 cast send <deployed_addr> "depositVRFReserve()" \
-  --value 0.1ether \
+  --value 0.5ether \
   --rpc-url https://testnet-rpc.monad.xyz \
   --private-key $PRIVATE_KEY
 ~~~
@@ -132,7 +132,7 @@ The manual cast sequence is the required smoke evidence. The repo also includes 
 
 ~~~bash
 export POOL_ADDRESS=<deployed-v3-pool>
-export VRF_RESERVE_MON=0.1
+export VRF_RESERVE_MON=0.5
 export SMOKE_TICKET_COUNT=1
 
 npm run smoke:testnet:v3
