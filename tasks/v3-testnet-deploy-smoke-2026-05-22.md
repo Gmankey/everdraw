@@ -10,10 +10,8 @@ References: ADR-0014, ADR-0015
   - On-chain code was present on `https://testnet-rpc.monad.xyz`.
 - Pyth default entropy provider: `0x6CC14824Ea2918f5De5C2f75A9Da968ad4BD6344`
   - Confirmed by calling `getDefaultProvider()` against the Entropy contract on Monad testnet.
-- shMON testnet: unresolved / blocked.
-  - shMonad frontend bundle includes a Monad testnet config value `0x15111Ed0B8399956b582F28BE1E42D4A5055BF76`.
-  - The same bundle's raw token list also includes `0x3a98250F98Dd388C211206983453837C8365BDc1`.
-  - On `https://testnet-rpc.monad.xyz`, both candidates currently return empty runtime code, so neither can be safely used as the shMON contract for this smoke test.
+- shMON testnet: `0x282BdDFF5e58793AcAb65438b257Dbd15A8745C9`
+  - Confirmed on-chain on `https://testnet-rpc.monad.xyz`: runtime code present, `name() = ShMonad`, `symbol() = shMON`, and `previewDeposit(0.01 MON)` returns nonzero shares.
 
 ## Local .env
 
@@ -21,7 +19,7 @@ Do not commit `.env` or the deployer private key.
 
 ~~~bash
 # V3 testnet deploy
-SHMON=<testnet shMON address>
+SHMON=0x282BdDFF5e58793AcAb65438b257Dbd15A8745C9
 ENTROPY=0x825c0390f379c631f3cf11a82a37d20bddf93c07
 ENTROPY_PROVIDER=0x6CC14824Ea2918f5De5C2f75A9Da968ad4BD6344
 TICKET_PRICE_MON=0.01
@@ -161,7 +159,7 @@ Confirm all values match the intended deploy params.
 ## Close-Out Checklist
 
 - [x] Testnet Pyth Entropy address confirmed and documented
-- [ ] Testnet shMON address confirmed and documented
+- [x] Testnet shMON address confirmed and documented
 - [x] `scripts/deploy-ticket-prize-pool-shmon-v3.js` committed
 - [x] `deploy:testnet:v3` and `deploy:mainnet:v3` in `package.json`
 - [ ] Testnet deploy address recorded in `deployments/monad-testnet.json`
@@ -171,4 +169,4 @@ Confirm all values match the intended deploy params.
 
 ## Current Blocker
 
-The deploy/smoke path is ready, but the actual testnet deployment is blocked until a live shMON testnet contract address is confirmed. The two shMonad-site candidates checked on-chain have no code at the current Monad testnet RPC state.
+The deploy/smoke path is ready. Actual testnet deployment requires local `PRIVATE_KEY` and a funded deployer wallet.

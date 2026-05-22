@@ -64,7 +64,7 @@ cast send $POOL_V3_ADDRESS \
   --private-key $OWNER_KEY
 ```
 
-Effect: round settles with **no winner** and `prizeShares = 0`. The contract marks the round `isEmergencySettled = true`, so `withdrawPrincipal` returns each user's **exact deposited share count** (no yield deduction). No yield is distributed.
+Effect: round settles with **no winner** and `prizeShares = 0`. Because `prizeShares` stays 0, `withdrawPrincipal` returns each user's **exact deposited share count** (no yield deduction). No yield is distributed.
 
 Emit an announcement to users explaining the round was cancelled and their shMON shares are fully recoverable. Users who want MON can go to shmonad.xyz to unstake their recovered shares.
 
