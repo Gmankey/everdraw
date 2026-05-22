@@ -35,6 +35,9 @@ CI must run:
 - `npm run build`
 - `npm run check:abi`
 - `npm run check:deploy-source`
+- `forge test`
+
+Direct deployment commands are not valid release procedure. Do not deploy mainnet with raw `npx hardhat run`, raw `forge script --broadcast`, or `cast send`. Mainnet deployment must use a committed wrapper that runs preflight before broadcasting.
 
 For manual release review, operators should also run:
 

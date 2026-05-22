@@ -7,7 +7,10 @@ on:
       - 'lib/**/*.sol'
       - 'abi/**/*.json'
       - 'deployments/**/*.json'
+      - 'script/**/*.sol'
       - 'scripts/check-*.mjs'
+      - 'scripts/deploy-preflight.mjs'
+      - 'scripts/verify-deployed-bytecode.mjs'
       - 'hardhat.config.js'
       - 'foundry.toml'
       - 'package.json'
@@ -19,7 +22,10 @@ on:
       - 'lib/**/*.sol'
       - 'abi/**/*.json'
       - 'deployments/**/*.json'
+      - 'script/**/*.sol'
       - 'scripts/check-*.mjs'
+      - 'scripts/deploy-preflight.mjs'
+      - 'scripts/verify-deployed-bytecode.mjs'
       - 'hardhat.config.js'
       - 'foundry.toml'
       - 'package.json'
@@ -38,3 +44,7 @@ jobs:
       - run: npm run build
       - run: npm run check:abi
       - run: npm run check:deploy-source
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - run: forge test

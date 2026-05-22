@@ -94,6 +94,14 @@ npm run deploy:mainnet
 
 That command runs deploy preflight and refuses dirty, unpushed, or non-`staging` deploys.
 
+Direct broadcast commands are not valid release procedure:
+
+- Do not use `npx hardhat run ... --network monadMainnet` directly.
+- Do not use `forge script ... --broadcast` directly.
+- Do not use `cast send` for deployments.
+
+For Forge-based mainnet deployment work, use `npm run deploy:forge:mainnet` or another committed wrapper that runs `npm run deploy:preflight` first.
+
 ## Open Items
 
 - Vault B replacement deploy per ADR-0011 remains outstanding.
