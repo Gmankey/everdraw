@@ -1,0 +1,40 @@
+name: contracts
+
+on:
+  pull_request:
+    paths:
+      - 'src/**/*.sol'
+      - 'lib/**/*.sol'
+      - 'abi/**/*.json'
+      - 'deployments/**/*.json'
+      - 'scripts/check-*.mjs'
+      - 'hardhat.config.js'
+      - 'foundry.toml'
+      - 'package.json'
+      - 'package-lock.json'
+  push:
+    branches: [staging]
+    paths:
+      - 'src/**/*.sol'
+      - 'lib/**/*.sol'
+      - 'abi/**/*.json'
+      - 'deployments/**/*.json'
+      - 'scripts/check-*.mjs'
+      - 'hardhat.config.js'
+      - 'foundry.toml'
+      - 'package.json'
+      - 'package-lock.json'
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run check:abi
+      - run: npm run check:deploy-source
