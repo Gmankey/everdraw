@@ -44,10 +44,12 @@ const POOL_V2_ABI = [
   'function getCommitAfterTime(uint256 rid) view returns (uint64)',
   'function getWithdrawableShares(uint256 rid, address user) view returns (uint256)',
   'function shmon() view returns (address)',
+  'function buyTickets(uint32 ticketCount) payable',
   'function buyTicketsMON(uint32 ticketCount) payable',
   'function buyTicketsShmon(uint32 ticketCount)',
   'function claimPrize(uint256 rid)',
   'function withdrawPrincipal(uint256 rid)',
+  'function principalMON(uint256 rid, address user) view returns (uint256)',
   'function getUserPosition(uint256 rid, address user) view returns (uint128 principalMONOut, uint128 principalShmonSharesOut)',
   'event TicketsBought(uint256 indexed roundId, address indexed buyer, uint32 ticketCount, uint256 monPaid)'
 ]
@@ -83,12 +85,19 @@ function isFailedRound(state, isV2 = false) {
   return isV2 && Number(state) === 4
 }
 
-function roundYieldWei(info, isV2 = false) {
+const WAD = 10n ** 18n
+
+function roundYieldWei(info, usesSharePrizeAccounting = false) {
   if (!info) return 0n
-  // V2 ABI names the yield slot `prizeShares`, but the deployed compat
-  // contract returns MON-denominated yield in that position. Legacy ABI names
-  // the same display value `yieldMON`.
-  return BigInt(info.yieldMON ?? (isV2 ? info.prizeShares : 0n) ?? 0n)
+  if (!usesSharePrizeAccounting) return BigInt(info.yieldMON ?? 0n)
+
+  const prizeShares = BigInt(info.prizeShares ?? 0n)
+  const shareRateAtSettle = BigInt(info.shareRateAtSettle ?? 0n)
+  if (prizeShares === 0n) return 0n
+
+  // V2/V3 settle prizes in shMON shares. Display them as MON using the
+  // settlement share rate, with a fallback for old compat data.
+  return shareRateAtSettle > 0n ? (prizeShares * shareRateAtSettle) / WAD : prizeShares
 }
 
 const SHMON_ABI = [
@@ -829,10 +838,9 @@ function VaultDoorBackground({ progressPct, salesOpen }) {
   )
 }
 
-function WinnersView({ onBack, winner, winnerAddress, prize, participants, participantCount, winnerTickets, totalTickets, roundNumber, isUnstaking, canClaim, canWithdraw, settlementLabel, settlementCountdown, onClaimPrize, onWithdraw, actionBusy, actionStatus, actionError }) {
-  const winProbText = typeof winnerTickets === 'number' && totalTickets > 0
-    ? `Won with ${((winnerTickets / totalTickets) * 100).toFixed(1)}% chance (${winnerTickets} of ${totalTickets} tickets)`
-    : null
+function WinnersView({ onBack, winner, winnerAddress, prize, participants, participantCount, winnerTickets, totalTickets, roundNumber, winningTicket, isUnstaking, participantDataStale, canClaim, canWithdraw, settlementLabel, settlementCountdown, onClaimPrize, onWithdraw, actionBusy, actionStatus, actionError }) {
+  const winnerTicketText = typeof winnerTickets === 'number' ? winnerTickets.toLocaleString() : winnerTickets
+  const totalTicketText = Number(totalTickets || 0).toLocaleString()
 
   return (
     <div className="winners-view-page">
@@ -840,25 +848,36 @@ function WinnersView({ onBack, winner, winnerAddress, prize, participants, parti
         <button className="back-link" onClick={onBack}>{'\u2190'} Back to Vault</button>
       </div>
 
-      <div className="winners-hero">
-        <h2>{isUnstaking ? 'Winner Revealed' : 'Draw Complete'}</h2>
+      <div className="winners-hero winners-hero-receipt">
+        <span className="winners-eyebrow">Round {roundNumber || '—'} Result</span>
+        <h2>{isUnstaking ? 'Winner Revealed' : 'Winner Confirmed'}</h2>
         {settlementLabel ? <p>{settlementLabel}</p> : null}
-        {roundNumber > 0 && <p className="round-label-hero">Round {roundNumber}</p>}
       </div>
 
       <div className="winner-spotlight-card">
+        <div className="winner-badge">Winner</div>
         <div className="winner-address">{winner}</div>
-        <div className="winner-stats">
+        <div className="winner-receipt-grid">
           <div>
-            <span>{isUnstaking ? 'Est. Prize' : 'Prize Won'}</span>
+            <span>{isUnstaking ? 'Est. Prize' : 'Prize'}</span>
             <strong>{prize}</strong>
           </div>
           <div>
-            <span>Ticket Count</span>
-            <strong>{typeof winnerTickets === 'number' ? winnerTickets.toLocaleString() : winnerTickets}</strong>
+            <span>Winner Tickets</span>
+            <strong>{winnerTicketText}</strong>
+          </div>
+          <div>
+            <span>Total Tickets</span>
+            <strong>{totalTicketText}</strong>
+          </div>
+          <div>
+            <span>Winning Ticket</span>
+            <strong>#{Number(winningTicket || 0).toLocaleString()}</strong>
           </div>
         </div>
-        {winProbText && <div className="win-probability">{winProbText}</div>}
+        {participantDataStale ? (
+          <div className="winner-data-warning">Participant index is syncing; using on-chain round totals and winner data.</div>
+        ) : null}
         {isUnstaking ? (
           <button className="btn" disabled>Redeem soon</button>
         ) : canClaim ? (
@@ -877,7 +896,7 @@ function WinnersView({ onBack, winner, winnerAddress, prize, participants, parti
           </div>
           {participants.length === 0 ? (
             <div className="participants-row">
-              <span>{'\u2014'}</span><span>No participants indexed yet</span><span>0</span><span>0.00%</span><span>0.0000 MON</span>
+              <span>{'\u2014'}</span><span>{participantDataStale ? 'Participant data syncing' : 'No participants indexed yet'}</span><span>{'\u2014'}</span><span>{'\u2014'}</span><span>{'\u2014'}</span>
             </div>
           ) : participants.map((p, i) => {
             const isWinnerRow = winnerAddress && p.wallet.toLowerCase() === winnerAddress.toLowerCase()
@@ -976,7 +995,11 @@ export default function App() {
   const poolAddress = selectedPoolAddress
   const isV2Pool = useMemo(() => poolAddressesV2.some((a) => a.toLowerCase() === String(poolAddress).toLowerCase()), [poolAddressesV2, poolAddress])
   const isV3Pool = useMemo(() => poolAddressesV3.some((a) => a.toLowerCase() === String(poolAddress).toLowerCase()), [poolAddressesV3, poolAddress])
-  const activePoolAbi = isV2Pool ? POOL_V2_ABI : POOL_ABI
+  const usesSharePrizeAccounting = useCallback((addr) => {
+    const lc = String(addr || '').toLowerCase()
+    return poolAddressesV2.some((a) => a.toLowerCase() === lc) || poolAddressesV3.some((a) => a.toLowerCase() === lc)
+  }, [poolAddressesV2, poolAddressesV3])
+  const activePoolAbi = isV2Pool || isV3Pool ? POOL_V2_ABI : POOL_ABI
 
   const expectedChainId = import.meta.env.VITE_CHAIN_ID ? Number(import.meta.env.VITE_CHAIN_ID) : 143
   const estimatedApyPercent = import.meta.env.VITE_ESTIMATED_APY_PERCENT ? Number(import.meta.env.VITE_ESTIMATED_APY_PERCENT) : 12
@@ -1099,14 +1122,15 @@ export default function App() {
       try {
         assertNotAborted(signal)
         const v2 = poolAddressesV2.some((a) => a.toLowerCase() === addr.toLowerCase())
-        const abi = v2 ? POOL_V2_ABI : POOL_ABI
+        const sharePrize = usesSharePrizeAccounting(addr)
+        const abi = sharePrize ? POOL_V2_ABI : POOL_ABI
         const pool = new ethers.Contract(addr, abi, provider)
         const rid = await _cached(`currentRound:${addr}`, 10_000, () => pool.currentRoundId(), signal)
         const info = await getCachedRoundInfo(pool, addr, rid, signal)
         const state = Number(info.state)
         const salesEndTime = Number(info.salesEndTime)
         const nowSec = Math.floor(Date.now() / 1000)
-        const commitAfter = v2 ? Number(await _cached(`commitAfter:${addr}:${rid}`, 5_000, () => pool.getCommitAfterTime(rid).catch(() => 0), signal)) : 0
+        const commitAfter = sharePrize ? Number(await _cached(`commitAfter:${addr}:${rid}`, 5_000, () => pool.getCommitAfterTime(rid).catch(() => 0), signal)) : 0
         const secs = Math.max(0, salesEndTime - nowSec)
         const yieldSecs = Math.max(0, commitAfter - nowSec)
         const stateLabel = v2 && state === 0 && secs === 0
@@ -1156,7 +1180,7 @@ export default function App() {
 
     assertNotAborted(signal)
     setVaultSummaries(summaries)
-  }, [allPoolAddresses, poolAddressesV2])
+  }, [allPoolAddresses, poolAddressesV2, usesSharePrizeAccounting])
 
   const refresh = useCallback(async ({ signal } = {}) => {
     if (!poolAddress) return
@@ -1181,7 +1205,7 @@ export default function App() {
       _cached(`currentRound:${poolAddress}`, 10_000, () => pool.currentRoundId(), signal),
       _cached(`nextExecutable:${poolAddress}`, 5_000, () => pool.nextExecutable(), signal),
       _cached(`ticketPrice:${poolAddress}`, 86400_000 * 365, () => pool.ticketPriceMON(), signal),
-      _cached(`deposit:${poolAddress}`, 86400_000 * 365, () => isV2Pool ? pool.roundDurationSec() : pool.depositPeriodSec(), signal),
+      _cached(`deposit:${poolAddress}`, 86400_000 * 365, () => isV2Pool || isV3Pool ? pool.roundDurationSec() : pool.depositPeriodSec(), signal),
       _cached(`yieldPeriod:${poolAddress}`, 86400_000 * 365, () => isV2Pool ? pool.yieldPeriodSec().catch(() => 0) : pool.yieldPeriodSec(), signal),
       _cached('provider:blockNumber', 2_000, () => provider.getBlockNumber(), signal),
       _cached('provider:network', 60_000, () => provider.getNetwork(), signal),
@@ -1223,7 +1247,7 @@ export default function App() {
       // Keep fallback timers if epoch endpoint is unavailable.
     }
 
-    if (isV2Pool) {
+    if (isV2Pool || isV3Pool) {
       const commitAt = Number(await _cached(`commitAfter:${poolAddress}:${rid}`, 5_000, () => pool.getCommitAfterTime(rid).catch(() => 0), signal))
       assertNotAborted(signal)
       setCommitAfterTime(commitAt)
@@ -1249,7 +1273,7 @@ export default function App() {
       try {
         if (!ethers.isAddress(scanAddr)) continue
         const scanIsV2 = poolAddressesV2.some((a) => a.toLowerCase() === scanAddr.toLowerCase())
-        const scanAbi = scanIsV2 ? POOL_V2_ABI : POOL_ABI
+        const scanAbi = usesSharePrizeAccounting(scanAddr) ? POOL_V2_ABI : POOL_ABI
         const scanPool = new ethers.Contract(scanAddr, scanAbi, provider)
         const scanCurrentRid = Number(await _cached(`currentRound:${scanAddr}`, 10_000, () => scanPool.currentRoundId(), signal))
         const scanRids = []
@@ -1286,7 +1310,7 @@ export default function App() {
       setSettledPoolAddress('')
       setSettledParticipants([])
     }
-  }, [account, poolAddress, activePoolAbi, isV2Pool, allPoolAddresses, poolAddressesV2])
+  }, [account, poolAddress, activePoolAbi, isV2Pool, isV3Pool, allPoolAddresses, poolAddressesV2, usesSharePrizeAccounting])
 
   useEffect(() => {
     if (!poolAddress) return
@@ -1608,6 +1632,8 @@ export default function App() {
       : participants
   const shownIsCurrentRound = mainView !== 'previous' && shownRoundId === roundId
   const shownState = shownRoundInfo ? Number(shownRoundInfo.state) : -1
+  const shownPoolAddress = mainView === 'previous' && settledPoolAddress ? settledPoolAddress : poolAddress
+  const shownUsesSharePrizeAccounting = usesSharePrizeAccounting(shownPoolAddress)
   const shownVaultLabel = mainView === 'previous'
     ? poolDisplayLabel(settledPoolAddress, poolAddressesV2.some((a) => a.toLowerCase() === String(settledPoolAddress).toLowerCase()))
     : isV2Pool
@@ -1615,7 +1641,7 @@ export default function App() {
       : mainView === 'vaultA' ? 'Vault A' : mainView === 'vaultB' ? 'Vault B' : 'Previous Vault'
   const wrongNetwork = expectedChainId && connectedChainId && expectedChainId !== connectedChainId
   const shownSecondsRemaining = shownRoundInfo ? Math.max(0, Number(shownRoundInfo.salesEndTime ?? 0) - now) : 0
-  const shownCommitAfterRemaining = shownRoundInfo && isV2Pool ? Math.max(0, Number(commitAfterTime || 0) - now) : 0
+  const shownCommitAfterRemaining = shownRoundInfo && (isV2Pool || isV3Pool) ? Math.max(0, Number(commitAfterTime || 0) - now) : 0
   const shownSalesOpen = shownState === 0 && shownSecondsRemaining > 0
   const shownYieldAccruing = isV2Pool && shownState === 0 && shownSecondsRemaining === 0 && shownCommitAfterRemaining > 0
   const shownSettled = isTerminalRound(shownState, isV2Pool)
@@ -1923,7 +1949,7 @@ export default function App() {
 
     if (isSettledState(roundInfo.state, isV2Pool)) {
       return {
-        value: `${Number(ethers.formatEther(roundYieldWei(roundInfo, isV2Pool))).toFixed(4)} MON`,
+        value: `${Number(ethers.formatEther(roundYieldWei(roundInfo, isV2Pool || isV3Pool))).toFixed(4)} MON`,
         sub: 'Final yield'
       }
     }
@@ -1938,7 +1964,7 @@ export default function App() {
       value: `~${est.toFixed(4)} MON`,
       sub: `Estimated final yield @ ${estimatedApyPercent}% APY`
     }
-  }, [estimatedApyPercent, isV2Pool, roundDuration, roundInfo])
+  }, [estimatedApyPercent, isV2Pool, isV3Pool, roundDuration, roundInfo])
 
   const winnersSource = {
     rid: shownRoundId,
@@ -1960,10 +1986,11 @@ export default function App() {
   }, [previousRoundInfo, isV2Pool, salesOpen, secondsRemaining])
 
   const winnersRoundId = winnersSource?.rid || roundId
-  const winnersPoolAddress = mainView === 'previous' && settledPoolAddress ? settledPoolAddress : poolAddress
+  const winnersPoolAddress = shownPoolAddress
   const winnersIsV2Pool = poolAddressesV2.some((a) => a.toLowerCase() === String(winnersPoolAddress).toLowerCase())
-  const winnersPoolAbi = winnersIsV2Pool ? POOL_V2_ABI : POOL_ABI
-  const winnersYieldWei = roundYieldWei(winnersSource?.info, winnersIsV2Pool)
+  const winnersUsesSharePrizeAccounting = usesSharePrizeAccounting(winnersPoolAddress)
+  const winnersPoolAbi = winnersUsesSharePrizeAccounting ? POOL_V2_ABI : POOL_ABI
+  const winnersYieldWei = roundYieldWei(winnersSource?.info, winnersUsesSharePrizeAccounting)
   const isWinnerWallet = !!account && !!winnersSource?.info?.winner && account.toLowerCase() === String(winnersSource.info.winner).toLowerCase()
   const winnersTerminal = isTerminalRound(winnersSource?.info?.state ?? -1, winnersIsV2Pool)
   const canClaimPrize = isWinnerWallet && winnersYieldWei > 0n && winnersTerminal
@@ -1974,6 +2001,9 @@ export default function App() {
     : Number(winnersSource?.info?.totalTickets ?? 0) > 0
       ? '—'
       : 0
+  const winnersTotalTickets = Number(winnersSource?.info?.totalTickets ?? 0)
+  const winnersParticipantTickets = winnersSource.participants.reduce((sum, p) => sum + Number(p.tickets || 0), 0)
+  const participantDataStale = winnersTotalTickets > 0 && winnersParticipantTickets !== winnersTotalTickets
 
   const sfxTestMode = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('sfxtest') === '1'
 
@@ -2087,15 +2117,6 @@ export default function App() {
               normalizedState = Number(info.state)
               commitAfterTime = Number(commitAt || 0)
               prizeWei = roundYieldWei(info, true)
-              try {
-                const shmonAddr = await _cached(`shmon:${r.poolAddress}`, 86400_000 * 365, () => pool.shmon().catch(() => ethers.ZeroAddress), ac.signal)
-                if (shmonAddr && shmonAddr !== ethers.ZeroAddress && prizeWei > 0n) {
-                  const shmon = new ethers.Contract(shmonAddr, SHMON_READ_ABI, provider)
-                  prizeWei = await _cached(`shmonAssets:${shmonAddr}:${prizeWei.toString()}`, 15_000, () => shmon.convertToAssets(prizeWei), ac.signal)
-                }
-              } catch (err) {
-                if (isAbortError(err)) throw err
-              }
               prizeClaimed = Boolean(info.prizeClaimed)
               if (userPos) {
                 remainingPrincipalWei = BigInt(userPos[0] || 0n)
@@ -2541,17 +2562,19 @@ export default function App() {
             winnerAddress={winnersSource.info ? String(winnersSource.info.winner) : ''}
             prize={
               isUnstaking && winnersSource.info
-                ? `~${Number(ethers.formatEther(roundYieldWei(winnersSource.info, isV2Pool))).toFixed(4)} MON (estimated)`
+                ? `~${Number(ethers.formatEther(roundYieldWei(winnersSource.info, winnersUsesSharePrizeAccounting))).toFixed(4)} MON (estimated)`
                 : winnersSource.info
-                  ? `${Number(ethers.formatEther(roundYieldWei(winnersSource.info, isV2Pool))).toFixed(4)} MON`
+                  ? `${Number(ethers.formatEther(roundYieldWei(winnersSource.info, winnersUsesSharePrizeAccounting))).toFixed(4)} MON`
                   : currentPrizePool.value
             }
             participants={winnersSource.participants}
             participantCount={winnersSource.participants.length}
             winnerTickets={winnerTicketsDisplay}
-            totalTickets={winnersSource.info ? Number(winnersSource.info.totalTickets) : 0}
+            totalTickets={winnersTotalTickets}
             roundNumber={Number(winnersSource.rid) || 0}
+            winningTicket={winnersSource.info?.winningTicket}
             isUnstaking={isUnstaking}
+            participantDataStale={participantDataStale}
             canClaim={canClaimPrize}
             canWithdraw={canWithdrawPrincipal}
             settlementLabel={
@@ -2936,9 +2959,9 @@ export default function App() {
                 label="Total Prize Pool"
                 value={
                   activeRoundInfo && isSettledState(activeRoundInfo.state, isV2Pool)
-                    ? `${Number(ethers.formatEther(roundYieldWei(activeRoundInfo, isV2Pool))).toFixed(4)} MON`
+                    ? `${Number(ethers.formatEther(roundYieldWei(activeRoundInfo, shownUsesSharePrizeAccounting))).toFixed(4)} MON`
                     : isUnstaking && activeRoundInfo
-                      ? `~${Number(ethers.formatEther(roundYieldWei(activeRoundInfo, isV2Pool))).toFixed(4)} MON (est.)`
+                      ? `~${Number(ethers.formatEther(roundYieldWei(activeRoundInfo, shownUsesSharePrizeAccounting))).toFixed(4)} MON (est.)`
                       : currentPrizePool.value
                 }
                 sub={
