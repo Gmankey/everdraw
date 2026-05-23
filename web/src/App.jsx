@@ -131,6 +131,10 @@ function parseV2PoolAddresses() {
   return parseAddressEnv(import.meta.env.VITE_POOL_ADDRESSES_V2, import.meta.env.VITE_POOL_ADDRESS_V2)
 }
 
+function parseV3PoolAddresses() {
+  return parseAddressEnv(import.meta.env.VITE_POOL_ADDRESSES_V3, import.meta.env.VITE_POOL_ADDRESS_V3)
+}
+
 function hexChainIdToDec(hexId) {
   if (!hexId) return null
   return Number.parseInt(hexId, 16)
@@ -908,18 +912,30 @@ function WinnersView({ onBack, winner, winnerAddress, prize, participants, parti
   )
 }
 
-function RoundProgressSteps({ state, settlementSecs, secondsRemaining }) {
-  const steps = ['Deposit', 'Yield Accruing', 'Winner Revealed', 'Claim / Withdraw']
+function RoundProgressSteps({ state, settlementSecs, secondsRemaining, isV3 = false }) {
+  const steps = [
+    'Deposit',
+    'Yield Accruing',
+    (isV3 && (state === 1 || state === 2)) ? 'Drawing Winner…' : 'Winner Revealed',
+    'Claim / Withdraw',
+  ]
   let activeStep = 0
-  if (state === 0 && secondsRemaining <= 0) activeStep = 1
-  if (state === 1) activeStep = 1
-  if (state === 2) activeStep = settlementSecs > 0 ? 2 : 3
-  if (state >= 3) activeStep = 3
+
+  if (isV3) {
+    if (state === 0 && secondsRemaining <= 0) activeStep = 1
+    if (state === 1 || state === 2) activeStep = 2
+    if (state >= 3) activeStep = 3
+  } else {
+    if (state === 0 && secondsRemaining <= 0) activeStep = 1
+    if (state === 1) activeStep = 1
+    if (state === 2) activeStep = settlementSecs > 0 ? 2 : 3
+    if (state >= 3) activeStep = 3
+  }
 
   return (
     <section className="round-steps">
       {steps.map((label, i) => (
-        <div key={label} className={`step ${i < activeStep ? 'done' : i === activeStep ? 'active' : ''}`}>
+        <div key={i} className={`step ${i < activeStep ? 'done' : i === activeStep ? 'active' : ''}`}>
           {i < steps.length - 1 && <div className="step-line" />}
           <div className="step-circle">{i < activeStep ? '\u2713' : i + 1}</div>
           <div className="step-label">{label}</div>
@@ -954,10 +970,12 @@ export default function App() {
 
   const poolAddresses = useMemo(() => parsePoolAddresses(), [])
   const poolAddressesV2 = useMemo(() => parseV2PoolAddresses(), [])
-  const allPoolAddresses = useMemo(() => [...poolAddressesV2, ...poolAddresses], [poolAddresses, poolAddressesV2])
+  const poolAddressesV3 = useMemo(() => parseV3PoolAddresses(), [])
+  const allPoolAddresses = useMemo(() => [...poolAddressesV2, ...poolAddressesV3, ...poolAddresses], [poolAddresses, poolAddressesV2, poolAddressesV3])
   const [selectedPoolAddress, setSelectedPoolAddress] = useState(allPoolAddresses[0] || '')
   const poolAddress = selectedPoolAddress
   const isV2Pool = useMemo(() => poolAddressesV2.some((a) => a.toLowerCase() === String(poolAddress).toLowerCase()), [poolAddressesV2, poolAddress])
+  const isV3Pool = useMemo(() => poolAddressesV3.some((a) => a.toLowerCase() === String(poolAddress).toLowerCase()), [poolAddressesV3, poolAddress])
   const activePoolAbi = isV2Pool ? POOL_V2_ABI : POOL_ABI
 
   const expectedChainId = import.meta.env.VITE_CHAIN_ID ? Number(import.meta.env.VITE_CHAIN_ID) : 143
@@ -2800,6 +2818,7 @@ export default function App() {
             state={shownState >= 0 ? shownState : 0}
             settlementSecs={shownSettlementSecs}
             secondsRemaining={shownSecondsRemaining}
+            isV3={isV3Pool}
           />
         ) : null}
 
