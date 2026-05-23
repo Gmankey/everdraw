@@ -56,6 +56,12 @@ const POOL_ADDRESSES_V2 = new Set(
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean),
 )
+const POOL_ADDRESSES_V3 = new Set(
+  (process.env.POOL_ADDRESSES_V3 || '')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean),
+)
 
 const INTERVAL_MS = Number(process.env.KEEPER_INTERVAL_MS || 30_000)
 const GAS_LIMIT = process.env.KEEPER_GAS_LIMIT ? Number(process.env.KEEPER_GAS_LIMIT) : undefined
@@ -67,6 +73,8 @@ const DRY_RUN = String(process.env.KEEPER_DRY_RUN || 'false').toLowerCase() === 
 const RUN_ONCE = String(process.env.KEEPER_ONCE || 'false').toLowerCase() === 'true'
 
 const LOW_BALANCE_MON = Number(process.env.KEEPER_LOW_BALANCE_MON || '0.2')
+const VRF_TIMEOUT_SEC = Number(process.env.VRF_TIMEOUT_SEC || '3600')
+const VRF_LOW_RESERVE_MON = Number(process.env.VRF_LOW_RESERVE_MON || '0.05')
 const ERROR_ALERT_THRESHOLD = Number(process.env.KEEPER_ERROR_ALERT_THRESHOLD || '3')
 const BALANCE_LOG_EVERY_TICKS = Number(process.env.KEEPER_BALANCE_LOG_EVERY_TICKS || '20')
 const HEARTBEAT_LOG_EVERY_TICKS = Number(process.env.KEEPER_HEARTBEAT_LOG_EVERY_TICKS || '10')
@@ -85,6 +93,9 @@ const ABI = [
   'function commit(uint256 rid)',
   'function settle(uint256 rid)',
   'function markFailed(uint256 rid)',
+  'function currentRoundId() view returns (uint256)',
+  'function getRoundState(uint256 rid) view returns (uint8)',
+  'function getRoundTimes(uint256 rid) view returns (uint64 salesEndTime, uint64 vrfRequestTime)',
 ]
 
 const ACTION_NAMES = {
@@ -103,14 +114,31 @@ const ACTION_NAMES_V2 = {
   3: 'Settle',
 }
 
+const ACTION_NAMES_V3 = {
+  0: 'None',
+  1: 'Skip',
+  2: 'Commit',
+  3: 'Finalize',
+}
+
 const provider = new ethers.JsonRpcProvider(RPC_URL)
 const wallet = new ethers.Wallet(PRIVATE_KEY, provider)
 const pools = POOL_ADDRESSES.map((address) => ({
   address,
   contract: new ethers.Contract(address, ABI, wallet),
   isV2: POOL_ADDRESSES_V2.has(address.toLowerCase()),
+  isV3: POOL_ADDRESSES_V3.has(address.toLowerCase()),
   consecutiveErrors: 0,
+  vrfTimeoutAlertedRound: 0,
+  vrfLowReserveAlerted: false,
 }))
+
+for (const pool of pools) {
+  if (pool.isV2 && pool.isV3) {
+    console.error(`[keeper] Pool cannot be both V2 and V3: ${pool.address}`)
+    process.exit(1)
+  }
+}
 
 let running = true
 let inFlight = false
@@ -268,11 +296,62 @@ function txOptions() {
   return txOpts
 }
 
+async function checkVRFTimeout(poolCtx) {
+  const { address, contract } = poolCtx
+  try {
+    const rid = Number(await contract.currentRoundId())
+    const state = Number(await contract.getRoundState(rid))
+    if (state !== 1) return
+
+    const [, vrfRequestTime] = await contract.getRoundTimes(rid)
+    const elapsed = Math.floor(Date.now() / 1000) - Number(vrfRequestTime)
+
+    if (elapsed >= VRF_TIMEOUT_SEC && poolCtx.vrfTimeoutAlertedRound !== rid) {
+      const msg = `⚠️ VRF CALLBACK TIMEOUT: pool ${address} round ${rid} stuck in AwaitingVRF for ${Math.floor(elapsed / 60)}m\nOwner must call emergencyForceSettle(${rid}) if Pyth does not recover.`
+      console.warn(`${ts()} [keeper][pool=${address}] ${msg}`)
+      await sendTelegram(msg)
+      poolCtx.vrfTimeoutAlertedRound = rid
+    }
+  } catch (e) {
+    console.error(`${ts()} [keeper][pool=${address}] VRF timeout check error (non-fatal): ${e?.message || e}`)
+  }
+}
+
+async function checkVRFReserve(poolCtx) {
+  const { address } = poolCtx
+  try {
+    const bal = await provider.getBalance(address)
+    const balMON = Number(ethers.formatEther(bal))
+    if (balMON < VRF_LOW_RESERVE_MON) {
+      const msg = `⚠️ LOW VRF RESERVE: pool ${address} balance ${balMON.toFixed(6)} MON (< ${VRF_LOW_RESERVE_MON})\nTop up with: cast send ${address} "depositVRFReserve()" --value 0.1ether`
+      console.warn(`${ts()} [keeper][pool=${address}] ${msg}`)
+      if (!poolCtx.vrfLowReserveAlerted) {
+        await sendTelegram(msg)
+        poolCtx.vrfLowReserveAlerted = true
+      }
+    } else {
+      poolCtx.vrfLowReserveAlerted = false
+    }
+  } catch (e) {
+    console.error(`${ts()} [keeper][pool=${address}] VRF reserve check error (non-fatal): ${e?.message || e}`)
+  }
+}
+
 async function tickPool(poolCtx) {
-  const { address, contract, isV2 } = poolCtx
+  const { address, contract, isV2, isV3 } = poolCtx
+
+  if (isV3) {
+    await checkVRFTimeout(poolCtx)
+    await checkVRFReserve(poolCtx)
+  }
+
   const [rid, action] = await contract.nextExecutable()
   const actionNum = Number(action)
-  const actionName = (isV2 ? ACTION_NAMES_V2 : ACTION_NAMES)[actionNum] ?? `Unknown(${actionNum})`
+  const actionName = isV3
+    ? (ACTION_NAMES_V3[actionNum] ?? `Unknown(${actionNum})`)
+    : isV2
+      ? (ACTION_NAMES_V2[actionNum] ?? `Unknown(${actionNum})`)
+      : (ACTION_NAMES[actionNum] ?? `Unknown(${actionNum})`)
 
   if (actionNum === 0) {
     console.log(`${ts()} [keeper][pool=${address}] idle rid=${rid} action=${actionName}`)
@@ -283,7 +362,7 @@ async function tickPool(poolCtx) {
 
   console.log(`${ts()} [keeper][pool=${address}] pending rid=${rid} action=${actionName}`)
 
-  if (!isV2 && actionNum === 5) {
+  if (!isV2 && !isV3 && actionNum === 5) {
     const msg = `${ts()} [keeper][pool=${address}][WARN] recommit required rid=${rid} (missed draw window / blockhash expiry)`
     console.warn(msg)
     await sendTelegram(`⚠️ Monad Keeper recommit\n${msg}`)
@@ -299,6 +378,7 @@ async function tickPool(poolCtx) {
   const opts = txOptions()
 
   const execCall = () => {
+    if (isV3) return contract.executeNext(opts)
     if (!isV2) return contract.executeNext(opts)
     if (actionNum === 1) return contract.commit(rid, opts)
     if (actionNum === 2 || actionNum === 3) return contract.settle(rid, opts)
@@ -306,6 +386,7 @@ async function tickPool(poolCtx) {
   }
 
   const preflightCall = () => {
+    if (isV3) return contract.executeNext.staticCall(opts)
     if (!isV2) return contract.executeNext.staticCall(opts)
     if (actionNum === 1) return contract.commit.staticCall(rid, opts)
     if (actionNum === 2 || actionNum === 3) return contract.settle.staticCall(rid, opts)
@@ -317,7 +398,7 @@ async function tickPool(poolCtx) {
       await preflightCall()
     } catch (e) {
       const msg = e?.shortMessage || e?.reason || e?.message || String(e)
-      const isExpectedSettleRetry = (!isV2 && actionNum === 4) || (isV2 && (actionNum === 2 || actionNum === 3))
+      const isExpectedSettleRetry = (!isV2 && !isV3 && actionNum === 4) || (isV2 && (actionNum === 2 || actionNum === 3))
       if (!isExpectedSettleRetry) {
         throw new Error(`precheck blocked rid=${rid} action=${actionName}: ${msg}`)
       }
@@ -371,7 +452,7 @@ async function main() {
   const net = await provider.getNetwork()
   const addr = await wallet.getAddress()
   console.log(
-    `${ts()} [keeper] start pid=${process.pid} chainId=${net.chainId} wallet=${addr} pools=${POOL_ADDRESSES.length} poolAddresses=${POOL_ADDRESSES.join(',')} intervalMs=${INTERVAL_MS} dryRun=${DRY_RUN} once=${RUN_ONCE} preflight=${KEEPER_PREFLIGHT} telegram=${TELEGRAM_ENABLED} telegramTimeoutMs=${TELEGRAM_TIMEOUT_MS} telegramRetries=${TELEGRAM_RETRIES} lowBalanceMon=${LOW_BALANCE_MON} errorAlertThreshold=${ERROR_ALERT_THRESHOLD}`,
+    `${ts()} [keeper] start pid=${process.pid} chainId=${net.chainId} wallet=${addr} pools=${POOL_ADDRESSES.length} poolAddresses=${POOL_ADDRESSES.join(',')} v2Pools=${POOL_ADDRESSES_V2.size} v3Pools=${POOL_ADDRESSES_V3.size} intervalMs=${INTERVAL_MS} dryRun=${DRY_RUN} once=${RUN_ONCE} preflight=${KEEPER_PREFLIGHT} telegram=${TELEGRAM_ENABLED} telegramTimeoutMs=${TELEGRAM_TIMEOUT_MS} telegramRetries=${TELEGRAM_RETRIES} lowBalanceMon=${LOW_BALANCE_MON} vrfTimeoutSec=${VRF_TIMEOUT_SEC} vrfLowReserveMon=${VRF_LOW_RESERVE_MON} errorAlertThreshold=${ERROR_ALERT_THRESHOLD}`,
   )
 
   await checkBalance(true)

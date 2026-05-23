@@ -2,19 +2,7 @@ name: contracts
 
 on:
   pull_request:
-    paths:
-      - 'src/**/*.sol'
-      - 'lib/**/*.sol'
-      - 'abi/**/*.json'
-      - 'deployments/**/*.json'
-      - 'script/**/*.sol'
-      - 'scripts/check-*.mjs'
-      - 'scripts/deploy-preflight.mjs'
-      - 'scripts/verify-deployed-bytecode.mjs'
-      - 'hardhat.config.js'
-      - 'foundry.toml'
-      - 'package.json'
-      - 'package-lock.json'
+    branches: [staging]
   push:
     branches: [staging]
     paths:
@@ -22,10 +10,7 @@ on:
       - 'lib/**/*.sol'
       - 'abi/**/*.json'
       - 'deployments/**/*.json'
-      - 'script/**/*.sol'
       - 'scripts/check-*.mjs'
-      - 'scripts/deploy-preflight.mjs'
-      - 'scripts/verify-deployed-bytecode.mjs'
       - 'hardhat.config.js'
       - 'foundry.toml'
       - 'package.json'
@@ -41,10 +26,10 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run build
-      - run: npm run check:abi
-      - run: npm run check:deploy-source
       - uses: foundry-rs/foundry-toolchain@v1
         with:
           version: stable
+      - run: npm run build
+      - run: npm run check:abi
+      - run: npm run check:deploy-source
       - run: forge test
