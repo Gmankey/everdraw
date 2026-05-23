@@ -838,10 +838,9 @@ function VaultDoorBackground({ progressPct, salesOpen }) {
   )
 }
 
-function WinnersView({ onBack, winner, winnerAddress, prize, participants, participantCount, winnerTickets, totalTickets, roundNumber, isUnstaking, canClaim, canWithdraw, settlementLabel, settlementCountdown, onClaimPrize, onWithdraw, actionBusy, actionStatus, actionError }) {
-  const winProbText = typeof winnerTickets === 'number' && totalTickets > 0
-    ? `Won with ${((winnerTickets / totalTickets) * 100).toFixed(1)}% chance (${winnerTickets} of ${totalTickets} tickets)`
-    : null
+function WinnersView({ onBack, winner, winnerAddress, prize, participants, participantCount, winnerTickets, totalTickets, roundNumber, winningTicket, isUnstaking, participantDataStale, canClaim, canWithdraw, settlementLabel, settlementCountdown, onClaimPrize, onWithdraw, actionBusy, actionStatus, actionError }) {
+  const winnerTicketText = typeof winnerTickets === 'number' ? winnerTickets.toLocaleString() : winnerTickets
+  const totalTicketText = Number(totalTickets || 0).toLocaleString()
 
   return (
     <div className="winners-view-page">
@@ -849,25 +848,36 @@ function WinnersView({ onBack, winner, winnerAddress, prize, participants, parti
         <button className="back-link" onClick={onBack}>{'\u2190'} Back to Vault</button>
       </div>
 
-      <div className="winners-hero">
-        <h2>{isUnstaking ? 'Winner Revealed' : 'Draw Complete'}</h2>
+      <div className="winners-hero winners-hero-receipt">
+        <span className="winners-eyebrow">Round {roundNumber || '—'} Result</span>
+        <h2>{isUnstaking ? 'Winner Revealed' : 'Winner Confirmed'}</h2>
         {settlementLabel ? <p>{settlementLabel}</p> : null}
-        {roundNumber > 0 && <p className="round-label-hero">Round {roundNumber}</p>}
       </div>
 
       <div className="winner-spotlight-card">
+        <div className="winner-badge">Winner</div>
         <div className="winner-address">{winner}</div>
-        <div className="winner-stats">
+        <div className="winner-receipt-grid">
           <div>
-            <span>{isUnstaking ? 'Est. Prize' : 'Prize Won'}</span>
+            <span>{isUnstaking ? 'Est. Prize' : 'Prize'}</span>
             <strong>{prize}</strong>
           </div>
           <div>
-            <span>Ticket Count</span>
-            <strong>{typeof winnerTickets === 'number' ? winnerTickets.toLocaleString() : winnerTickets}</strong>
+            <span>Winner Tickets</span>
+            <strong>{winnerTicketText}</strong>
+          </div>
+          <div>
+            <span>Total Tickets</span>
+            <strong>{totalTicketText}</strong>
+          </div>
+          <div>
+            <span>Winning Ticket</span>
+            <strong>#{Number(winningTicket || 0).toLocaleString()}</strong>
           </div>
         </div>
-        {winProbText && <div className="win-probability">{winProbText}</div>}
+        {participantDataStale ? (
+          <div className="winner-data-warning">Participant index is syncing; using on-chain round totals and winner data.</div>
+        ) : null}
         {isUnstaking ? (
           <button className="btn" disabled>Redeem soon</button>
         ) : canClaim ? (
@@ -886,7 +896,7 @@ function WinnersView({ onBack, winner, winnerAddress, prize, participants, parti
           </div>
           {participants.length === 0 ? (
             <div className="participants-row">
-              <span>{'\u2014'}</span><span>No participants indexed yet</span><span>0</span><span>0.00%</span><span>0.0000 MON</span>
+              <span>{'\u2014'}</span><span>{participantDataStale ? 'Participant data syncing' : 'No participants indexed yet'}</span><span>{'\u2014'}</span><span>{'\u2014'}</span><span>{'\u2014'}</span>
             </div>
           ) : participants.map((p, i) => {
             const isWinnerRow = winnerAddress && p.wallet.toLowerCase() === winnerAddress.toLowerCase()
@@ -1943,6 +1953,9 @@ export default function App() {
     : Number(winnersSource?.info?.totalTickets ?? 0) > 0
       ? '—'
       : 0
+  const winnersTotalTickets = Number(winnersSource?.info?.totalTickets ?? 0)
+  const winnersParticipantTickets = winnersSource.participants.reduce((sum, p) => sum + Number(p.tickets || 0), 0)
+  const participantDataStale = winnersTotalTickets > 0 && winnersParticipantTickets !== winnersTotalTickets
 
   const sfxTestMode = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('sfxtest') === '1'
 
@@ -2509,9 +2522,11 @@ export default function App() {
             participants={winnersSource.participants}
             participantCount={winnersSource.participants.length}
             winnerTickets={winnerTicketsDisplay}
-            totalTickets={winnersSource.info ? Number(winnersSource.info.totalTickets) : 0}
+            totalTickets={winnersTotalTickets}
             roundNumber={Number(winnersSource.rid) || 0}
+            winningTicket={winnersSource.info?.winningTicket}
             isUnstaking={isUnstaking}
+            participantDataStale={participantDataStale}
             canClaim={canClaimPrize}
             canWithdraw={canWithdrawPrincipal}
             settlementLabel={
