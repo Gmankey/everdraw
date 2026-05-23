@@ -15,11 +15,14 @@ const LAST_FINALIZED_BLOCK_KEY = 'last_finalized_block';
 const SUPPORTED_EVENTS: SupportedEventName[] = [
   'RoundStarted',
   'DrawCommitted',
+  'RoundCommitted',
   'WinnerDrawn',
   'UnstakeRequested',
   'RoundSettled',
   'RoundSkipped',
+  'RoundFailed',
   'TicketsBought',
+  'TicketsPurchased',
   'PrizeClaimed',
   'PrincipalWithdrawn',
 ];
@@ -171,11 +174,17 @@ function toRawEventRow(input: {
 
   const amountMon = parsed.args.monPaid != null
     ? String(parsed.args.monPaid)
-    : parsed.args.amount != null
-      ? String(parsed.args.amount)
-      : parsed.args.prizeAmount != null
-        ? String(parsed.args.prizeAmount)
-        : null;
+    : parsed.args.costMON != null
+      ? String(parsed.args.costMON)
+      : parsed.args.amount != null
+        ? String(parsed.args.amount)
+        : parsed.args.prizeShares != null
+          ? String(parsed.args.prizeShares)
+          : parsed.args.sharesReturned != null
+            ? String(parsed.args.sharesReturned)
+            : parsed.args.prizeAmount != null
+              ? String(parsed.args.prizeAmount)
+              : null;
 
   return {
     txHash: log.transactionHash,
@@ -198,16 +207,42 @@ function normalizeArgs(eventName: SupportedEventName, args: any): Record<string,
   switch (eventName) {
     case 'RoundStarted':
       return { roundId: Number(args.roundId), salesEndTime: String(args.salesEndTime) };
+    case 'DrawCommitted':
+      return { roundId: Number(args.roundId), targetBlockNumber: String(args.targetBlockNumber) };
+    case 'RoundCommitted':
+      return { roundId: Number(args.roundId), targetBlockNumber: String(args.targetBlockNumber) };
     case 'WinnerDrawn':
       return { roundId: Number(args.roundId), winner: String(args.winner).toLowerCase(), winningTicket: Number(args.winningTicket) };
     case 'RoundSettled':
+      if (args.winner != null) {
+        return {
+          roundId: Number(args.roundId),
+          winner: String(args.winner).toLowerCase(),
+          winningTicket: Number(args.winningTicket),
+          monReceived: '0',
+          yieldMON: '0',
+          lossRatio: '0',
+          totalPrincipalMON: String(args.totalPrincipalMON),
+          totalShmonShares: String(args.totalShmonShares),
+          principalShares: String(args.principalShares),
+          prizeShares: String(args.prizeShares),
+          shareRateAtSettle: String(args.shareRateAtSettle),
+        };
+      }
       return { roundId: Number(args.roundId), monReceived: String(args.monReceived), yieldMON: String(args.yieldMON), lossRatio: String(args.lossRatio) };
     case 'TicketsBought':
       return { roundId: Number(args.roundId), buyer: String(args.buyer).toLowerCase(), ticketCount: Number(args.ticketCount), monPaid: String(args.monPaid) };
+    case 'TicketsPurchased':
+      return {
+        roundId: Number(args.roundId),
+        buyer: String(args.buyer).toLowerCase(),
+        ticketCount: Number(args.ticketCount),
+        monPaid: String(args.costMON),
+      };
     case 'PrizeClaimed':
-      return { roundId: Number(args.roundId), winner: String(args.winner).toLowerCase(), amount: String(args.amount) };
+      return { roundId: Number(args.roundId), winner: String(args.winner).toLowerCase(), amount: String(args.amount ?? args.prizeShares) };
     case 'PrincipalWithdrawn':
-      return { roundId: Number(args.roundId), user: String(args.user).toLowerCase(), amount: String(args.amount) };
+      return { roundId: Number(args.roundId), user: String(args.user).toLowerCase(), amount: String(args.amount ?? args.sharesReturned) };
     default:
       return { roundId: Number(args.roundId) };
   }

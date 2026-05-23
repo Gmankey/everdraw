@@ -3,12 +3,14 @@ export type RoundState = 'open' | 'committed' | 'drawn' | 'unstaking' | 'settled
 export type SupportedEventName =
   | 'RoundStarted'
   | 'DrawCommitted'
+  | 'RoundCommitted'
   | 'WinnerDrawn'
   | 'UnstakeRequested'
   | 'RoundSettled'
   | 'RoundSkipped'
   | 'RoundFailed'
   | 'TicketsBought'
+  | 'TicketsPurchased'
   | 'PrizeClaimed'
   | 'PrincipalWithdrawn';
 

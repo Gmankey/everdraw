@@ -43,7 +43,8 @@ export function createDeriveWalletRoundsService(
         const acc = getOrCreate(grouped, event.contractAddress, event.wallet, event.roundId);
 
         switch (event.eventName) {
-          case 'TicketsBought': {
+          case 'TicketsBought':
+          case 'TicketsPurchased': {
             const payload = parsePayload<{
               roundId: number;
               buyer: string;
@@ -57,6 +58,7 @@ export function createDeriveWalletRoundsService(
           }
 
           case 'WinnerDrawn':
+          case 'RoundSettled':
             acc.won = 1;
             break;
 

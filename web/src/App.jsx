@@ -1321,16 +1321,24 @@ export default function App() {
     const vaultBRoundIdNum = currentRidNum % 2 === 0 ? currentRidNum : prevRidNum
 
     let targetRoundId = 0
+    let targetPoolAddress = ''
     let setter = null
 
-    if (view === 'vaultA') {
+    if (view === 'current') {
+      targetRoundId = currentRidNum
+      targetPoolAddress = selectedPoolAddress
+      setter = setParticipants
+    } else if (view === 'vaultA') {
       targetRoundId = vaultARoundIdNum
+      targetPoolAddress = poolAddressesV2[0] || selectedPoolAddress
       setter = setParticipants
     } else if (view === 'vaultB') {
       targetRoundId = vaultBRoundIdNum
+      targetPoolAddress = poolAddressesV2[1] || selectedPoolAddress
       setter = setPreviousParticipants
     } else if (view === 'previous') {
       targetRoundId = Number(settledRoundId) || 0
+      targetPoolAddress = settledPoolAddress
       setter = setSettledParticipants
     } else {
       return
@@ -1342,7 +1350,8 @@ export default function App() {
     }
 
     try {
-      const res = await fetch(`https://everdraw-indexer.fly.dev/api/rounds/${targetRoundId}/participants`, { signal })
+      const poolQuery = targetPoolAddress ? `?pool=${encodeURIComponent(targetPoolAddress.toLowerCase())}` : ''
+      const res = await fetch(`${getIndexerBaseUrl()}/api/rounds/${targetRoundId}/participants${poolQuery}`, { signal })
       if (!res.ok) {
         console.warn('[EverDraw] indexer participants fetch failed:', res.status)
         setter([])
@@ -1365,7 +1374,7 @@ export default function App() {
         setter([])
       }
     }
-  }, [roundId, previousRoundId, settledRoundId])
+  }, [roundId, previousRoundId, selectedPoolAddress, poolAddressesV2, settledRoundId, settledPoolAddress])
 
   useEffect(() => {
     if (mainView === 'myrounds') return

@@ -63,6 +63,7 @@ export function createDeriveRoundsService(
           }
 
           case 'DrawCommitted':
+          case 'RoundCommitted':
             acc.state = 'committed';
             acc.committedAt = event.blockTimestamp;
             break;
@@ -85,6 +86,8 @@ export function createDeriveRoundsService(
           case 'RoundSettled': {
             const payload = parsePayload<{
               roundId: number;
+              winner?: string;
+              winningTicket?: number;
               monReceived: string | number;
               yieldMON: string | number;
               lossRatio: string | number;
@@ -95,15 +98,23 @@ export function createDeriveRoundsService(
             acc.monReceived = stringifyNumberish(payload.monReceived ?? '0');
             acc.yieldMon = stringifyNumberish(payload.yieldMON ?? '0');
             acc.lossRatio = stringifyNumberish(payload.lossRatio ?? '0');
+            if (payload.winner) {
+              acc.winner = payload.winner.toLowerCase();
+              acc.winningTicket = Number(payload.winningTicket ?? 0);
+              acc.drawnAt = acc.drawnAt ?? event.blockTimestamp;
+              if (event.wallet) acc.winnerWallets.add(event.wallet);
+            }
             break;
           }
 
           case 'RoundSkipped':
+          case 'RoundFailed':
             acc.state = 'skipped';
             acc.isSkipped = 1;
             break;
 
-          case 'TicketsBought': {
+          case 'TicketsBought':
+          case 'TicketsPurchased': {
             const payload = parsePayload<{
               roundId: number;
               buyer: string;
