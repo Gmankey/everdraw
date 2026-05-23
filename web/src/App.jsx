@@ -1321,41 +1321,89 @@ export default function App() {
     const vaultBRoundIdNum = currentRidNum % 2 === 0 ? currentRidNum : prevRidNum
 
     let targetRoundId = 0
+    let targetRoundInfo = null
+    let targetPoolAddress = poolAddress
     let setter = null
 
     if (view === 'vaultA') {
       targetRoundId = vaultARoundIdNum
+      targetRoundInfo = currentRidNum % 2 === 1 ? roundInfo : previousRoundInfo
       setter = setParticipants
     } else if (view === 'vaultB') {
       targetRoundId = vaultBRoundIdNum
+      targetRoundInfo = currentRidNum % 2 === 0 ? roundInfo : previousRoundInfo
       setter = setPreviousParticipants
     } else if (view === 'previous') {
       targetRoundId = Number(settledRoundId) || 0
+      targetRoundInfo = settledRoundInfo
+      targetPoolAddress = settledPoolAddress || poolAddress
       setter = setSettledParticipants
     } else {
       return
     }
 
-    if (!targetRoundId) {
+    if (!targetRoundId || !ethers.isAddress(targetPoolAddress)) {
       setter?.([])
       return
     }
 
     try {
-      const res = await fetch(`https://everdraw-indexer.fly.dev/api/rounds/${targetRoundId}/participants`, { signal })
+      const url = new URL(`${getIndexerBaseUrl()}/api/rounds/${targetRoundId}/participants`)
+      url.searchParams.set('pool', targetPoolAddress)
+      const res = await fetch(url, { signal })
       if (!res.ok) {
         console.warn('[EverDraw] indexer participants fetch failed:', res.status)
         setter([])
         return
       }
       const data = await res.json()
-      const totalTicketsNum = data.reduce((acc, p) => acc + (Number(p.tickets) || 0), 0)
-      const built = data.map((p) => ({
+      const targetPoolLc = targetPoolAddress.toLowerCase()
+      const rows = Array.isArray(data)
+        ? data.filter((p) => !p.poolAddress || String(p.poolAddress).toLowerCase() === targetPoolLc)
+        : []
+      const poolIsV2 = poolAddressesV2.some((a) => a.toLowerCase() === targetPoolLc)
+      const poolAbi = poolIsV2 ? POOL_V2_ABI : POOL_ABI
+      const provider = await getReadProvider()
+      const pool = new ethers.Contract(targetPoolAddress, poolAbi, provider)
+      const price = ticketPrice > 0n && targetPoolLc === String(poolAddress).toLowerCase()
+        ? ticketPrice
+        : BigInt(await _cached(`ticketPrice:${targetPoolAddress}`, 86400_000 * 365, () => pool.ticketPriceMON(), signal))
+      const byWallet = new Map()
+
+      for (const p of rows) {
+        if (!ethers.isAddress(p.wallet)) continue
+        const wallet = p.wallet
+        const key = wallet.toLowerCase()
+        let paidWei = BigInt(p.monPaid || '0')
+        let tickets = Number(p.tickets) || 0
+
+        if (paidWei === 0n || tickets === 0) {
+          try {
+            const principal = poolIsV2
+              ? (await _cached(`participantPosition:${targetPoolAddress}:${targetRoundId}:${wallet}`, 30_000, () => pool.getUserPosition(BigInt(targetRoundId), wallet), signal))[0]
+              : await _cached(`participantPrincipal:${targetPoolAddress}:${targetRoundId}:${wallet}`, 30_000, () => pool.principalMON(BigInt(targetRoundId), wallet), signal)
+            paidWei = BigInt(principal || 0n)
+            if (price > 0n) tickets = Number(paidWei / price)
+          } catch (err) {
+            if (isAbortError(err)) throw err
+          }
+        }
+
+        const prev = byWallet.get(key) || { wallet, tickets: 0, depositedWei: 0n }
+        prev.tickets += tickets
+        prev.depositedWei += paidWei
+        byWallet.set(key, prev)
+      }
+
+      const contractTotalTickets = Number(targetRoundInfo?.totalTickets ?? 0)
+      const rowTotalTickets = [...byWallet.values()].reduce((acc, p) => acc + p.tickets, 0)
+      const totalTicketsNum = contractTotalTickets > 0 ? contractTotalTickets : rowTotalTickets
+      const built = [...byWallet.values()].map((p) => ({
         wallet: p.wallet,
         walletShort: shortAddr(p.wallet),
-        tickets: Number(p.tickets) || 0,
-        sharePct: totalTicketsNum > 0 ? ((Number(p.tickets) / totalTicketsNum) * 100).toFixed(2) : '0.00',
-        depositedMon: Number(ethers.formatEther(BigInt(p.monPaid || '0'))).toFixed(4),
+        tickets: p.tickets,
+        sharePct: totalTicketsNum > 0 ? ((p.tickets / totalTicketsNum) * 100).toFixed(2) : '0.00',
+        depositedMon: Number(ethers.formatEther(p.depositedWei)).toFixed(4),
       })).sort((a, b) => b.tickets - a.tickets)
       assertNotAborted(signal)
       setter(built)
@@ -1365,7 +1413,7 @@ export default function App() {
         setter([])
       }
     }
-  }, [roundId, previousRoundId, settledRoundId])
+  }, [roundId, previousRoundId, roundInfo, previousRoundInfo, settledRoundId, settledRoundInfo, settledPoolAddress, poolAddress, poolAddressesV2, ticketPrice])
 
   useEffect(() => {
     if (mainView === 'myrounds') return
