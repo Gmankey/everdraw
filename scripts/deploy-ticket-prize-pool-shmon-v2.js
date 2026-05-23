@@ -27,8 +27,17 @@ async function main() {
 
   const addr = await pool.getAddress();
   console.log("TicketPrizePoolShmonV2 deployed:", addr);
-  console.log("Next: register keeper from owner key:");
-  console.log(` cast send ${addr} "setKeeper(address,bool)" <keeper_addr> true --rpc-url $RPC_URL --private-key $OWNER_KEY`);
+
+  const keeperAddress = process.env.KEEPER_ADDRESS;
+  if (keeperAddress) {
+    console.log(`Calling setKeeper(${keeperAddress}, true)...`);
+    const tx = await pool.setKeeper(keeperAddress, true);
+    await tx.wait();
+    console.log("setKeeper confirmed.");
+  } else {
+    console.log("KEEPER_ADDRESS not set — skipping setKeeper. Run manually:");
+    console.log(` cast send ${addr} "setKeeper(address,bool)" <keeper_addr> true --rpc-url $RPC_URL --private-key $OWNER_KEY`);
+  }
 }
 
 main().catch((e) => {
