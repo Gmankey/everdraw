@@ -40,14 +40,16 @@ These layer on top of the base × multiplier. Below are only some of the bonuses
 Awarded once per wallet.
 
 - **First deposit:** +25 points the first time you ever buy a ticket.
-- **First win:** +100 points the first time you win a round.
+- **Comeback King:** +100 points the first time you win after having made a prior deposit. If your first-ever deposit wins immediately, it does not trigger this bonus.
+- **On the Double:** +50 points the first time you have active positions in two vaults.
+- **Loss-streak thresholds:** one-time bonuses at 10, 26, and 52 consecutive non-winning settled rounds. Skipped rounds do not count and do not reset the counter.
 - **Streak milestones:** +50 at 4 weeks, and a few more at certain milestones (which you can find out by maintaining your streak). Each one fires the first time you reach that streak length.
 
 ### Recurring bonuses
 
 - **Win bonus:** +25 points every round you win.
-- **Both vaults:** +10% on the round's points if you have an active deposit in both Vault A and Vault B at the same checkpoint week.
-- **Loss streak consolation:** after 10 consecutive non winning rounds, you earn +20% on round points until you next win. Resets when you do.
+
+There is no recurring both-vault or loss-streak multiplier. That keeps the system harder to farm with tiny side deposits or permanent consolation boosts. Boring but useful, which is annoyingly often the right answer.
 
 ---
 

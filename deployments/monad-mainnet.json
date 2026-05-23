@@ -1,0 +1,50 @@
+{
+  "network": "monad-mainnet",
+  "chainId": 143,
+  "sourceControlRule": "Production contracts must have committed source, ABI/artifact, constructor args, deployment address, compiler settings, and bytecode verification before they are treated as source of truth.",
+  "contracts": [
+    {
+      "role": "Vault A",
+      "status": "active",
+      "address": "0x2208a2Fe2d08061B2a5ee69A2a3b906B58C17888",
+      "contractName": "TicketPrizePoolShmonV2",
+      "source": "src/TicketPrizePoolShmonV2.sol",
+      "abi": "abi/TicketPrizePoolShmonV2.json",
+      "compiler": {
+        "version": "0.8.33+commit.64118f21",
+        "optimizer": true,
+        "optimizerRuns": 200,
+        "viaIR": true,
+        "evmVersion": "paris"
+      },
+      "constructorArgs": {
+        "shmon": "0x1B68626dCa36c7fE922fD2d55E4f631d962dE19c",
+        "ticketPriceMON": "1000000000000000000",
+        "roundDurationSec": 86400,
+        "yieldPeriodSec": 518100,
+        "owner": "0x84875804608467B3577605c0976dC645739091eD"
+      },
+      "runtimeBytecodeSha256": "a8a7e930e3fde441e95f68966e94b3e7d533e92facfc5ab3aa6ef4d61a23bfd3",
+      "verification": {
+        "status": "verified",
+        "verifiedAt": "2026-05-22T07:42:00.000Z",
+        "method": "Compiled recovered source with solc 0.8.33, optimizer 200, viaIR, evmVersion paris; compared live runtime bytecode after filling constructor immutables.",
+        "evidence": "decisions/0016-production-v2-source-recovery.md"
+      }
+    },
+    {
+      "role": "Legacy Vault B",
+      "status": "retiring-monitoring-only",
+      "address": "0xed67ad46C694a5e963119a1Ca5F88eEBbb6e5a8a",
+      "contractName": "TicketPrizePoolShmonShMonad",
+      "source": "src/TicketPrizePoolShmonShMonad.sol",
+      "abi": "abi/pool.verified.json",
+      "verification": {
+        "status": "unverified-retiring",
+        "checkedAt": "2026-05-22T11:50:00.000Z",
+        "liveRuntimeBytecodeSha256": "220cafb32f6c2d8ca7587b6fa6cd388434a007875e643a230b6f39db82a7a8c3",
+        "note": "Retiring contract kept only for in-flight settlement/claims. Do not use as source for new deployments. Current committed source/artifacts and available local backups did not match live runtime bytecode. This is intentionally quarantined, not a production source of truth."
+      }
+    }
+  ]
+}

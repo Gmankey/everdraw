@@ -20,6 +20,9 @@ CREATE TABLE IF NOT EXISTS wallet_points (
   lifetime_points INTEGER NOT NULL DEFAULT 0,
   has_received_first_deposit_bonus INTEGER NOT NULL DEFAULT 0,
   has_received_first_win_bonus INTEGER NOT NULL DEFAULT 0,
+  has_received_on_the_double_bonus INTEGER NOT NULL DEFAULT 0,
+  has_received_comeback_king_bonus INTEGER NOT NULL DEFAULT 0,
+  highest_loss_streak_bonus_awarded INTEGER NOT NULL DEFAULT 0,
   highest_streak_milestone_awarded INTEGER NOT NULL DEFAULT 0,
   updated_at INTEGER NOT NULL
 );
@@ -39,7 +42,7 @@ CREATE TABLE IF NOT EXISTS wallet_round_points (
   round_id INTEGER NOT NULL,
   base_points INTEGER NOT NULL,
   multiplier_x100 INTEGER NOT NULL,         -- 100 = 1.0x, 200 = 2.0x
-  bonuses_breakdown TEXT NOT NULL,          -- JSON: {"both_vaults": 10, "loss_streak": 20, "win": 25}
+  bonuses_breakdown TEXT NOT NULL,          -- JSON: {"on_the_double": 50, "loss_streak": 50, "comeback_king": 100, "win": 25}
   total_points INTEGER NOT NULL,
   awarded_at_unix INTEGER NOT NULL,
   PRIMARY KEY (wallet, pool_address, round_id)
@@ -63,20 +66,23 @@ bonuses            = {}
 if round was won by this wallet:
   bonuses.win = 25
 
-if user_holds_position_in_other_vault_at_this_checkpoint:
-  bonuses.both_vaults = round((base_points * multiplier_x100 / 100) * 0.10)
+if not has_received_on_the_double_bonus and user_holds_position_in_other_vault_at_this_checkpoint:
+  bonuses.on_the_double = 50
+  set has_received_on_the_double_bonus = true
 
-if consecutive_non_wins >= 10 and not winning this round:
-  bonuses.loss_streak = round((base_points * multiplier_x100 / 100) * 0.20)
+next_non_win_streak = winning ? 0 : consecutive_non_wins + 1
+if not winning this round and next_non_win_streak crosses 10 / 26 / 52:
+  bonuses.loss_streak = {50, 200, 500}[threshold]
+  set highest_loss_streak_bonus_awarded = threshold
 
 # One-time bonuses
 if not has_received_first_deposit_bonus and this is wallet's first ever deposit:
   bonuses.first_deposit = 25
   set has_received_first_deposit_bonus = true
 
-if not has_received_first_win_bonus and round won by this wallet:
-  bonuses.first_win = 100
-  set has_received_first_win_bonus = true
+if not has_received_comeback_king_bonus and round won by this wallet and wallet had a prior deposit before this round:
+  bonuses.comeback_king = 100
+  set has_received_comeback_king_bonus = true
 
 total = round(base_points * multiplier_x100 / 100) + sum(bonuses)
 
@@ -108,9 +114,9 @@ if has_active_position:
   longest_streak_weeks = max(longest_streak_weeks, current_streak_weeks)
 
   # Streak milestone bonuses, one-time
-  for milestone in [4, 13, 26, 52]:
+  for milestone in [2, 4, 13, 26, 52]:
     if current_streak_weeks == milestone and highest_streak_milestone_awarded < milestone:
-      award {50, 200, 500, 1000}[milestone] points
+      award {10, 50, 200, 500, 1000}[milestone] points
       set highest_streak_milestone_awarded = milestone
 else:
   current_streak_weeks = 0
@@ -156,13 +162,13 @@ c. **Settlement card update.** On the previous-vault view, when the user was a p
 d. **`/profile` page.** New route. Sections:
 
 - Header: wallet (shortened, with ENS if available), tier badge, lifetime points big number
-- Streak block: current streak with progress bar to next tier multiplier, longest streak, active multiplier, next milestone
+- Streak block: current streak with visual weekly dots only. Do not put tooltips on weekly dots and do not render the old unlabeled progress bar.
 - Recent rounds: last 12 rounds with points breakdown
-- Bonuses earned: list of one-time bonuses received (first deposit, first win, milestones)
+- Bonuses column: all bonuses, including streak milestones. First Deposit and Germination Streak are visible from the start. Other streak milestones and mystery bonuses are hidden until unlocked. Hidden rows show one masked label and a blank right-side status. Visible locked rows show `Locked`; unlocked rows show `UNLOCKED`.
 
 e. **`/leaderboard` page.** New route. Top 100 by lifetime points. Toggle between "all time" and "this month." Wallet column shows shortened address (`0x1234…abcd`) with ENS override. Tier badge column. Streak column. The current user's row, if outside top 100, shown as a sticky footer with their rank.
 
-f. **Milestone banners.** When the streak crosses 4, 13, 26, or 52 weeks, show a one-shot in-app banner congratulating the user and noting the bonus awarded. When tier upgrades (Bronze → Silver, etc.), show a smaller banner.
+f. **Milestone banners.** When the streak crosses 2, 4, 13, 26, or 52 weeks, show a one-shot in-app banner congratulating the user and noting the bonus awarded. When tier upgrades (Bronze → Silver, etc.), show a smaller banner.
 
 ### 6. Tier display
 
@@ -188,7 +194,7 @@ Diamond   26+ weeks    2.0x
 
 - Email or push notifications. Phase 1 is in-app banners only.
 - Referrals. Deferred per ADR.
-- Backfilling points from rounds before launch. No retro per user instruction.
+- Resetting or wiping live production points. Existing displayed balances must be preserved; production reconstructs from all indexed historical participation via `POINTS_START_UNIX=0`.
 - Token integration, NFT badges, redemption flows.
 
 ## Acceptance criteria

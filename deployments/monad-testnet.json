@@ -1,0 +1,35 @@
+{
+  "network": "monad-testnet",
+  "chainId": 10143,
+  "sourceControlRule": "Testnet deployments must be recorded separately from mainnet. Do not update deployments/monad-mainnet.json for testnet-only deploys.",
+  "addresses": {
+    "pythEntropy": "0x825c0390f379c631f3cf11a82a37d20bddf93c07",
+    "pythEntropyProvider": "0x6CC14824Ea2918f5De5C2f75A9Da968ad4BD6344",
+    "shmon": "0x282BdDFF5e58793AcAb65438b257Dbd15A8745C9"
+  },
+  "contracts": [
+    {
+      "role": "V3 VRF smoke test",
+      "status": "testnet-smoke-verified",
+      "address": "0x11c3F083A319aA35a6A5C43AdA2b243db0c06FfB",
+      "contractName": "TicketPrizePoolShmonV3",
+      "source": "src/TicketPrizePoolShmonV3.sol",
+      "abi": "abi/TicketPrizePoolShmonV3.json",
+      "deployedBy": "0x47331C3949662C23A7F8B2FF6F643CdAfaAda90a",
+      "deployTx": "0x283aeaf4d76e834fb7c8ce5443a76dc5394dd1ae2b5d1247cae6e38ee7707686",
+      "constructorArgs": {
+        "ticketPriceMON": "10000000000000000",
+        "roundDurationSec": 120,
+        "yieldPeriodSec": 300,
+        "shmon": "0x282BdDFF5e58793AcAb65438b257Dbd15A8745C9",
+        "entropy": "0x825c0390f379c631f3cf11a82a37d20bddf93c07",
+        "entropyProvider": "0x6CC14824Ea2918f5De5C2f75A9Da968ad4BD6344"
+      },
+      "smokeTest": {
+        "status": "passed",
+        "completedAt": "2026-05-23T00:12:00.000Z",
+        "notes": "Full round verified on Monad testnet: RoundSkipped, TicketsBought/shMON deposit, VRFRequested sequence 3150, Pyth callback to Drawn, WinnerDrawn/RoundSettled with prizeShares > 0, claimPrize, and withdrawPrincipal."
+      }
+    }
+  ]
+}

@@ -15,7 +15,7 @@ Run **two independent vaults (A and B)** on a fixed weekly schedule, offset by ~
 ### Schedule
 
 - **Vault A**: deployed Wed 2026-05-06 12:59:54 UTC. Permanent anchor: **Wed 13:00 UTC weekly**. Address: `0x2208a2Fe2d08061B2a5ee69A2a3b906B58C17888`.
-- **Vault B**: deploy target Sun 2026-05-10 01:00 UTC (= Vault A anchor + 3.5 days = 84 hours). Permanent anchor: **Sun 01:00 UTC weekly**.
+- **Vault B**: deployed Sun 2026-05-10 13:42:19 UTC after PM-approved late launch. Permanent anchor: **Sun 13:42 UTC weekly**. Address: `0x1B20BAa2D3992834E1E75cf75e3cD7b6AAA38096`.
 - Each cycle is exactly 7 days. Schedule is calendar-anchored (no drift) per ADR-0004.
 - Worst-case deposit wait under this stagger: **2.5 days** (the 3.5-day open-to-open offset minus the 24h Open window). Better than the 3.5-day target.
 
@@ -44,7 +44,7 @@ User arrives 1 minute after Vault A locks (Sun 00:01 UTC) → next deposit windo
 
 ### Contract / deployment
 - Vault A: `0xed67ad46C694a5e963119a1Ca5F88eEBbb6e5a8a` (existing).
-- Vault B: **not deployed**. Requires fresh contract deployment with same bytecode as Vault A. See ADR-0003 for migration plan.
+- Vault B: `0x1B20BAa2D3992834E1E75cf75e3cD7b6AAA38096`. Deployed with same bytecode/config cadence as fresh Vault A, except its late-approved anchor is Sun 13:42 UTC.
 - No contract logic change needed for the fixed-day schedule — round opening is keeper-triggered, so the keeper enforces the calendar.
 
 ### Keeper

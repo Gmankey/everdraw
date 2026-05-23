@@ -1,8 +1,13 @@
 import "dotenv/config";
+import { execFileSync } from "node:child_process";
 import hre from "hardhat";
 const { ethers } = hre;
 
 async function main() {
+  if (hre.network.name === "monadMainnet") {
+    execFileSync("node", ["scripts/deploy-preflight.mjs"], { stdio: "inherit" });
+  }
+
   const shmon = process.env.SHMON;
   if (!shmon) throw new Error("Missing SHMON env var");
 

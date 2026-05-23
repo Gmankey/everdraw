@@ -7,29 +7,11 @@ import { StatsPage } from './Stats.jsx'
 import { modal } from './walletModal.ts'
 import monIcon from './assets/MON.png'
 import shmonIcon from './assets/shmon.png'
+import { _cached, assertNotAborted, getCachedRoundInfo, isAbortError, withAbort } from './rpcCache.js'
 import './App.css'
 import './shmon.css'
 
-// In-memory RPC cache
-const _rpcCache = new Map()
-function _cached(key, ttlMs, fetcher) {
-  const hit = _rpcCache.get(key)
-  if (hit && Date.now() - hit.ts < ttlMs) return Promise.resolve(hit.value)
-  const p = fetcher().then(v => { _rpcCache.set(key, { value: v, ts: Date.now() }); return v })
-  _rpcCache.set(key, { value: p, ts: Date.now() })
-  return p
-}
-async function getCachedRoundInfo(pool, poolAddress, rid) {
-  const key = `roundInfo:${poolAddress}:${rid}`
-  const hit = _rpcCache.get(key)
-  if (hit && hit.value && !hit.value.then) {
-    const isSettled = Number(hit.value.state) === 3
-    if (isSettled || (Date.now() - hit.ts < 8_000)) return hit.value
-  }
-  const info = await pool.getRoundInfo(rid)
-  _rpcCache.set(key, { value: info, ts: Date.now() })
-  return info
-}
+// Vercel build-ignore guard markers for production deploys: points/preview, setMaxTickets.
 
 function getWalletProvider() {
   return modal.getWalletProvider() || window.ethereum || null
@@ -81,11 +63,33 @@ const ERC20_ABI = [
   'function balanceOf(address owner) view returns (uint256)'
 ]
 
-const ACTION_LABELS = ['None', 'Skip', 'Commit', 'Draw', 'Settle', 'Recommit']
-const ACTION_LABELS_V2 = ['None', 'Commit', 'Settle', 'MarkFailed']
-const STATE_LABELS = ['Open', 'Committed', 'Finalizing', 'Settled']
-const STATE_LABELS_V2 = ['Open', 'Committed', 'Settled', 'Skipped', 'Failed']
+const ACTION_LABELS = ['None', 'Skip', 'Commit', 'Draw', 'Claim / Redeem', 'Recommit']
+const ACTION_LABELS_V2 = ['None', 'Commit', 'Claim / Redeem', 'Mark Skipped']
+const STATE_LABELS = ['Deposit Open', 'Yield Accruing', 'Winner Revealed', 'Claim / Redeem']
+const STATE_LABELS_V2 = ['Deposit Open', 'Winner Revealed', 'Claim / Redeem', 'Skipped', 'Skipped']
 const INDEXER_URL = import.meta.env.VITE_INDEXER_URL || 'https://everdraw-indexer.fly.dev'
+
+function isSettledState(state, isV2 = false) {
+  const n = Number(state)
+  return isV2 ? n === 2 : n === 3
+}
+
+function isTerminalRound(state, isV2 = false) {
+  const n = Number(state)
+  return isV2 ? n >= 2 : n === 3
+}
+
+function isFailedRound(state, isV2 = false) {
+  return isV2 && Number(state) === 4
+}
+
+function roundYieldWei(info, isV2 = false) {
+  if (!info) return 0n
+  // V2 ABI names the yield slot `prizeShares`, but the deployed compat
+  // contract returns MON-denominated yield in that position. Legacy ABI names
+  // the same display value `yieldMON`.
+  return BigInt(info.yieldMON ?? (isV2 ? info.prizeShares : 0n) ?? 0n)
+}
 
 const SHMON_ABI = [
   'function getInternalEpoch() view returns (uint64)'
@@ -127,6 +131,10 @@ function parseV2PoolAddresses() {
   return parseAddressEnv(import.meta.env.VITE_POOL_ADDRESSES_V2, import.meta.env.VITE_POOL_ADDRESS_V2)
 }
 
+function parseV3PoolAddresses() {
+  return parseAddressEnv(import.meta.env.VITE_POOL_ADDRESSES_V3, import.meta.env.VITE_POOL_ADDRESS_V3)
+}
+
 function hexChainIdToDec(hexId) {
   if (!hexId) return null
   return Number.parseInt(hexId, 16)
@@ -135,6 +143,17 @@ function hexChainIdToDec(hexId) {
 function shortAddr(addr) {
   if (!addr || addr === ethers.ZeroAddress) return '—'
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`
+}
+
+function labelLetter(index) {
+  return String.fromCharCode(65 + Math.max(0, Number(index) || 0))
+}
+
+function isActiveV2PoolIndex(index) {
+  // Product UI currently has two public live vaults: Vault A and Vault B.
+  // Older V2 deployments can still contain redeemable user positions, but
+  // should not be presented as a mysterious live "Vault 3".
+  return index >= 0 && index < 2
 }
 
 
@@ -146,22 +165,32 @@ function tierClass(tier) {
   return `tier-chip tier-${String(tier || 'Bronze').toLowerCase()}`
 }
 
+function bonusLabel(key) {
+  return String(key || '')
+    .replace(/_/g, ' ')
+    .replace(/-/g, ' ')
+    .trim()
+    .toLowerCase()
+}
+
 function PointsHeaderWidget({ account, points }) {
   const [open, setOpen] = useState(false)
   if (!account) return null
   const p = points || {}
+  const lifetimePoints = Number(p.lifetime_points || 0)
+  const streakWeeks = Number(p.current_streak_weeks || 0)
+
   return (
     <div className="points-header">
-      <button className="points-pill" type="button" onClick={() => setOpen((v) => !v)}>
-        <span>{Number(p.lifetime_points || 0).toLocaleString()} pts</span>
-        <span>🔥 {p.current_streak_weeks || 0}w</span>
+      <button className="points-pill" type="button" onClick={() => setOpen((v) => !v)} aria-label={`${lifetimePoints.toLocaleString()} points, ${streakWeeks} week streak`}>
+        <span className="points-pill-stat points-pill-points" title="Points"><span aria-hidden="true">✦</span>{lifetimePoints.toLocaleString()}</span>
+        <span className="points-pill-stat points-pill-streak" title="Weekly streak"><span aria-hidden="true">🔥</span>{streakWeeks}</span>
       </button>
       {open ? (
-        <div className="points-popover">
-          <div className={tierClass(p.current_tier)}>{p.current_tier || 'Bronze'}</div>
-          <strong>{Number(p.lifetime_points || 0).toLocaleString()} lifetime points</strong>
-          <span>×{(Number(p.current_multiplier_x100 || 100) / 100).toFixed(2)} active multiplier</span>
-          <a href="#profile">View profile →</a>
+        <div className="points-popover points-popover-simple">
+          <div className="points-popover-kicker">Total points balance</div>
+          <div className="points-popover-total">{lifetimePoints.toLocaleString()}</div>
+          <a href="#profile" className="points-profile-link">Show profile →</a>
         </div>
       ) : null}
     </div>
@@ -182,21 +211,49 @@ function PointsBreakdown({ item }) {
 
 function ProfilePage({ account, points, history }) {
   if (!account) return <section className="participants-card points-page"><h2>Your Points</h2><p>Connect a wallet to view your EverDraw points profile.</p></section>
+  const historyRows = Array.isArray(history) ? history : []
+  const hasHistoryBonus = (targetLabel) => historyRows.some((row) =>
+    Object.entries(row?.bonuses_breakdown || {}).some(([key, value]) =>
+      Number(value) > 0 && bonusLabel(key) === targetLabel
+    )
+  )
   const streakWeeks = Number(points?.current_streak_weeks || 0)
   const multiplierX100 = Number(points?.current_multiplier_x100 || 100)
-  const nextTier = points?.next_tier_threshold ?? (streakWeeks < 4 ? 4 : streakWeeks < 8 ? 8 : streakWeeks < 13 ? 13 : streakWeeks < 26 ? 26 : null)
-  const milestoneBonus = { 4: 50, 13: 200, 26: 500, 52: 1000 }
-  const nextMilestone = points?.next_milestone ?? [4, 13, 26, 52].find((m) => m > streakWeeks) ?? null
-  const nextMilestoneReward = nextMilestone ? milestoneBonus[nextMilestone] : null
-  const progressTarget = nextMilestone || nextTier || Math.max(1, streakWeeks)
-  const progress = Math.min(100, (streakWeeks / progressTarget) * 100)
+  const dotCount = 52
+  const litDots = Math.max(0, Math.min(dotCount, streakWeeks))
+  const highestMilestoneAwarded = Number(points?.highest_streak_milestone_awarded || 0)
+  const streakMilestones = [
+    { weeks: 2, label: 'Germination Streak', points: 10, visible: true },
+    { weeks: 4, label: 'Sprout Streak', points: 50 },
+    { weeks: 13, label: 'Seedling Streak', points: 200 },
+    { weeks: 26, label: 'Flourishing Streak', points: 500 },
+    { weeks: 52, label: 'Evergreen Streak', points: 1000 },
+  ].map((m) => ({ ...m, claimed: highestMilestoneAwarded >= m.weeks || streakWeeks >= m.weeks }))
+  const noWinWeeks = Number(points?.consecutive_non_wins || points?.current_no_win_streak_weeks || points?.no_win_streak_weeks || 0)
+  const highestLossAwarded = Number(points?.highest_loss_streak_bonus_awarded || 0)
+  const firstDepositDone = Boolean(Number(points?.has_received_first_deposit_bonus || 0) || points?.first_deposit_completed || points?.has_deposited || Number(points?.deposit_count || 0) > 0)
+  const comebackKingDone = Boolean(Number(points?.has_received_comeback_king_bonus || points?.has_received_first_win_bonus || 0) || points?.first_win_completed || points?.has_won || Number(points?.win_count || 0) > 0)
+  const winDone = Boolean(points?.has_won || Number(points?.win_count || 0) > 0 || hasHistoryBonus('win'))
+  const twoVaultsDone = Boolean(Number(points?.has_received_on_the_double_bonus || 0) || points?.two_vaults_completed || Number(points?.vault_count || points?.vaults_entered || 0) >= 2)
+  const bonuses = [
+    { key: 'first-deposit', label: 'First Deposit', unlocked: firstDepositDone, visible: true, tooltip: 'A first time playing bonus +25' },
+    { key: 'win', label: 'Win', unlocked: winDone, hidden: !winDone, tooltip: 'Winning a round +25' },
+    ...streakMilestones.map((m) => ({
+      key: `streak-${m.weeks}`,
+      label: m.claimed || m.visible ? m.label : '???',
+      unlocked: m.claimed,
+      hidden: !m.claimed && !m.visible,
+      visible: Boolean(m.visible),
+      tooltip: `${m.weeks} week streak +${m.points}`,
+    })),
+    { key: 'first-win', label: comebackKingDone ? 'First Win' : '???', unlocked: comebackKingDone, hidden: !comebackKingDone, tooltip: 'Congrats on your first win! +100' },
+    { key: 'one-two-double', label: twoVaultsDone ? 'One Two Double' : '???', unlocked: twoVaultsDone, hidden: !twoVaultsDone, tooltip: 'Active in both vaults +50' },
+    { key: 'rising', label: highestLossAwarded >= 10 || noWinWeeks >= 10 ? 'Rising' : '???', unlocked: highestLossAwarded >= 10 || noWinWeeks >= 10, hidden: highestLossAwarded < 10 && noWinWeeks < 10, tooltip: 'Hang in there +50' },
+    { key: 'ascended', label: highestLossAwarded >= 26 || noWinWeeks >= 26 ? 'Ascended' : '???', unlocked: highestLossAwarded >= 26 || noWinWeeks >= 26, hidden: highestLossAwarded < 26 && noWinWeeks < 26, tooltip: 'Virtuous patience must be rewarded +200' },
+    { key: 'transcended', label: highestLossAwarded >= 52 || noWinWeeks >= 52 ? 'Transcended' : '???', unlocked: highestLossAwarded >= 52 || noWinWeeks >= 52, hidden: highestLossAwarded < 52 && noWinWeeks < 52, tooltip: 'Few have reached this level of transcendence +500' },
+  ].sort((a, b) => Number(b.unlocked) - Number(a.unlocked))
   const ensName = points?.ens && !ethers.isAddress(points.ens) && points.ens.toLowerCase() !== account.toLowerCase() ? points.ens : ''
-  const recentRounds = (history || []).slice(0, 12)
-  const bonusChips = [
-    { label: 'First Deposit', unlocked: !!points?.has_received_first_deposit_bonus },
-    { label: 'First Win', unlocked: !!points?.has_received_first_win_bonus },
-    { label: 'Streak Milestone', unlocked: Number(points?.highest_streak_milestone_awarded || 0) > 0, detail: Number(points?.highest_streak_milestone_awarded || 0) > 0 ? `${points.highest_streak_milestone_awarded}w` : null },
-  ]
+  const recentRounds = historyRows.slice(0, 12)
   return (
     <section className="participants-card points-page">
       <div className="points-page-head">
@@ -204,42 +261,71 @@ function ProfilePage({ account, points, history }) {
           <h2>{ensName || 'Your Points'}</h2>
           <span>{shortAddr(account)}</span>
         </div>
-        <div className={tierClass(points?.current_tier)}>{points?.current_tier || 'Bronze'}</div>
       </div>
-      <div className="points-big">{Number(points?.lifetime_points || 0).toLocaleString()} <span>points</span></div>
-      <div className="points-streak-card">
-        <div className="points-streak-title">🔥 {streakWeeks} week streak</div>
-        <div className="points-progress"><span style={{ width: `${progress}%` }} /></div>
-        <div className="points-highlight-grid">
-          <div className="points-highlight-card">
-            <span>Active multiplier</span>
-            <strong>×{(multiplierX100 / 100).toFixed(2)}</strong>
-            <small>{points?.current_tier || 'Bronze'} tier</small>
+      <div className="points-profile-layout points-profile-layout-rewards">
+        <div className="points-profile-summary points-profile-main-card rewards-main-card">
+          <div className="points-popover-kicker rewards-kicker">Total points balance</div>
+          <div className="points-profile-total rewards-total">{Number(points?.lifetime_points || 0).toLocaleString()}</div>
+          <div className="rewards-pill-row">
+            <div className="points-multiplier-pill rewards-multiplier-pill"><span>Active multiplier</span><strong>{(multiplierX100 / 100).toFixed(2)}x</strong></div>
+            <div className={`${tierClass(points?.current_tier)} rewards-tier-pill`}>{points?.current_tier || 'Bronze'}</div>
           </div>
-          <div className="points-highlight-card">
-            <span>Next milestone</span>
-            <strong>{nextMilestone ? `${nextMilestone} weeks` : 'Complete'}</strong>
-            <small>{nextMilestoneReward ? `+${nextMilestoneReward} point bonus` : 'All streak milestones cleared'}</small>
+
+          <div className="points-streak-mini rewards-streak-block">
+            <div>
+              <span className="points-popover-kicker">Weekly streak</span>
+              <strong>{streakWeeks} Week Streak</strong>
+            </div>
+            <div className="points-streak-dots points-streak-dots-52" aria-label={`${litDots} of ${dotCount} weeks active`}>
+              {Array.from({ length: dotCount }).map((_, i) => {
+                const week = i + 1
+                const milestone = streakMilestones.find((m) => m.weeks === week)
+                return <span key={week} className={`${i < litDots ? 'lit' : ''} ${milestone ? 'milestone-dot' : ''} ${milestone?.claimed ? 'claimed' : ''}`} />
+              })}
+            </div>
           </div>
         </div>
+
+        <aside className="points-profile-side rewards-side-card">
+          <div className="points-milestones-panel rewards-milestones-panel rewards-bonuses-panel">
+            <h3>Bonuses🔷</h3>
+            <div className="points-milestone-list rewards-bonus-list">
+              {bonuses.map((bonus) => (
+                <div className={`points-milestone-row rewards-bonus-row ${bonus.unlocked ? 'claimed' : 'locked'} ${bonus.hidden ? 'hidden-bonus' : ''}`} key={bonus.key} title={bonus.tooltip}>
+                  <span className="points-milestone-icon" aria-hidden="true">{bonus.unlocked ? '✓' : bonus.hidden ? '?' : ''}</span>
+                  <div>
+                    <strong>{bonus.label}</strong>
+                    <small>{bonus.hidden ? '' : bonus.unlocked ? 'Unlocked' : bonus.tooltip}</small>
+                  </div>
+                  <span className="points-milestone-status">{bonus.unlocked ? 'UNLOCKED' : bonus.hidden ? '' : 'Locked'}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </aside>
       </div>
-      <h3>Recent rounds</h3>
-      <div className="participants-table">
-        <div className="participants-row participants-header"><span>Round</span><span>Base</span><span>Multiplier</span><span>Bonuses</span><span>Total</span></div>
-        {recentRounds.length === 0 ? (
-          <div className="points-empty-state">No rounds yet. Buy a ticket to start earning.</div>
-        ) : recentRounds.map((h) => (
-          <div className="participants-row" key={`${h.pool_address}:${h.round_id}`}><span>#{h.round_id}</span><span>{h.base_points}</span><span>×{(h.multiplier_x100 / 100).toFixed(2)}</span><span>{Object.keys(h.bonuses_breakdown || {}).join(', ') || '—'}</span><span>+{h.total_points}</span></div>
-        ))}
-      </div>
-      <h3>Bonuses</h3>
-      <div className="points-bonus-chips">
-        {bonusChips.map((chip) => (
-          <span className={`points-bonus-chip ${chip.unlocked ? 'unlocked' : 'locked'}`} key={chip.label}>
-            {chip.label}{chip.detail ? ` · ${chip.detail}` : ''}
-            <small>{chip.unlocked ? 'Unlocked' : 'To unlock'}</small>
-          </span>
-        ))}
+
+      <div className="points-recent-rounds">
+        <h3>Recent rounds</h3>
+        <div className="participants-table">
+          <div className="participants-row participants-header points-rounds-row"><span>Round</span><span>Tickets Bought</span><span>Multiplier</span><span>Bonus</span><span>Total</span></div>
+          {recentRounds.length === 0 ? (
+            <div className="points-empty-state">No rounds yet. Buy a ticket to start earning.</div>
+          ) : recentRounds.map((h) => {
+            const bonusEntries = Object.entries(h.bonuses_breakdown || {}).filter(([, value]) => Number(value) > 0)
+            return (
+              <div className="participants-row points-rounds-row" key={`${h.pool_address}:${h.round_id}`}>
+                <span>#{h.round_id}</span>
+                <span>{h.base_points}</span>
+                <span>×{(h.multiplier_x100 / 100).toFixed(2)}</span>
+                <span className="round-bonus-pills">
+                  {bonusEntries.map(([key]) => <span className="round-bonus-pill" key={key}>{bonusLabel(key)}</span>)}
+                </span>
+                <span>+{h.total_points}</span>
+              </div>
+            )
+          })}
+        </div>
       </div>
     </section>
   )
@@ -249,10 +335,12 @@ function LeaderboardPage({ account }) {
   const [period, setPeriod] = useState('all')
   const [rows, setRows] = useState([])
   useEffect(() => {
-    fetch(`${getIndexerBaseUrl()}/api/leaderboard?limit=100&period=${period}`)
+    const ac = new AbortController()
+    fetch(`${getIndexerBaseUrl()}/api/leaderboard?limit=100&period=${period}`, { signal: ac.signal })
       .then((r) => r.ok ? r.json() : [])
-      .then((data) => setRows(Array.isArray(data) ? data : []))
-      .catch(() => setRows([]))
+      .then((data) => { assertNotAborted(ac.signal); setRows(Array.isArray(data) ? data : []) })
+      .catch((err) => { if (!isAbortError(err)) setRows([]) })
+    return () => ac.abort()
   }, [period])
   const currentRow = account ? rows.find((r) => r.wallet?.toLowerCase() === account.toLowerCase()) : null
   return (
@@ -365,6 +453,94 @@ async function ensureCorrectNetwork(provider, expectedChainId) {
   }
 }
 
+
+function FounderLaunchArticle() {
+  return (
+    <main className="article-page">
+      <a href="/" className="back-link article-back">← Back to EverDraw</a>
+      <article className="founder-article">
+        <header className="article-hero">
+          <div className="article-hero-glow" aria-hidden="true" />
+          <div className="article-kicker">Founder Note</div>
+          <h1>Drawn Back to DeFi: Why I Built EverDraw</h1>
+          <div className="article-meta">By Gman · May 13, 2026</div>
+          <div className="article-hero-tags" aria-label="EverDraw themes">
+            <span>Principal protected</span>
+            <span>Monad native</span>
+            <span>Yield-funded prizes</span>
+          </div>
+        </header>
+
+        <section>
+          <h2>When DeFi Felt Alive</h2>
+          <p>I came into DeFi through the same door as most. The yield farming, LP positions, ridiculous APYs, new communities, that was where crypto first felt alive to me. Back then, it almost felt like you could close your eyes, throw a dart at a new chain, and somehow still find a net profit. Ethereum, Polygon, Fantom, Avalanche; each ecosystem felt like another frontier, and if you were early enough, curious enough, and stubborn enough to learn, there was real opportunity waiting somewhere. Who still remembers the era of the “rebasing” token? Those were the days.</p>
+          <p>Now there are more protocols than ever, but the rewards often feel smaller, more fragmented, and less worth the effort required to chase them. Users are not only spreading their liquidity across too many places; they are spreading their time and attention too.</p>
+        </section>
+
+        <section>
+          <h2>The Feeling Prediction Markets Found</h2>
+          <p>I think that is why prediction markets found so much oxygen. Prediction markets did not beat DeFi on fundamentals. They beat it on feeling. They gave people back that dopamine hit and, more importantly, they gave people a shot at something that could feel meaningful very quickly. In this economy, a lot of people are desperate to get at least one foot out of the meat grinder.</p>
+          <p>I do not say that as an attack on prediction markets. Their success is a signal. People have not stopped wanting upside or excitement. What they have lost is the sense that DeFi is still the place that gives them that feeling.</p>
+          <p>The irony is that this version of hope often ends the same way... users get wrecked. To gain the upside, users are asked to accept ruin as the price of admission.</p>
+          <blockquote className="article-pullquote">People still want to dream. But they should not have to sleep on a bed of dynamite to do so.</blockquote>
+          <p>That is why I built EverDraw.</p>
+        </section>
+
+        <section>
+          <h2>What EverDraw Is</h2>
+          <p>EverDraw is a principal-protected prize layer for Monad. Users deposit MON. The deposit is held as shMON and earns staking yield. All yield accumulated that round is pooled into one prize. At the end of the round, one winner takes the entire pool. But the best part is everyone else gets their entire principal back.</p>
+          <figure className="article-flow-figure">
+            <img src="/everdraw-round-flow.png" alt="EverDraw round flow: deposits open, staked as shMON, vault locked, winner revealed, vault unlocks, redeem shMON, and new vault starts" />
+          </figure>
+          <p>That is the product in its simplest form. No liquidations. No impermanent loss. No active position management. No complicated strategy. You enter the draw, the yield does its work, and either you win the pot or you get back your original deposit.</p>
+          <p>EverDraw keeps the thing people still want — a shot at meaningful upside — while removing the part that usually makes that shot destructive.</p>
+        </section>
+
+        <section>
+          <h2>The Everdraw Edge</h2>
+          <p>I also want to be honest about what EverDraw is and is not. Principal-protected prize savings is not a brand-new idea, and I am not interested in pretending otherwise. Versions of this concept have existed before, both in traditional finance and in crypto. The difference is in the specific combination EverDraw is building around: Monad staking yield through shMON, and a long-term vision where draws become engagement infrastructure rather than just a standalone vault. Let’s talk about both.</p>
+          <p>First, the yield source. Most prize-savings products have to send user deposits into lending markets to generate yield. That can work, but it also means the prize is tied to lending demand, utilisation, borrow rates, and the risk assumptions of another protocol. EverDraw’s first version works differently because it is built on Monad staking yield through shMON. The deposited MON becomes productive through staking, and that staking yield becomes the prize. This is one of the reasons EverDraw makes sense on Monad specifically: the chain gives us a native yield source that can be turned into a shared prize without depending on a third-party lending market or inflationary incentives that disappear when a campaign ends.</p>
+          <p>Second, the vision. A simple prize-savings product is useful, but on its own it is still just a product. EverDraw starts with a simple user-facing vault because that is the cleanest way to prove the loop, but the larger idea is to turn the draw mechanic into an engagement layer for Monad. That means more assets, more draw formats, protocol campaigns, sponsored prize pools, and eventually tools that let other projects use recurring prize mechanics to distribute rewards.</p>
+        </section>
+
+        <section>
+          <h2>From Vault to Engagement Layer</h2>
+          <p>This matters because DeFi does not just have a liquidity problem. It has a retention problem. Airdrops create a single burst of attention. Liquidity mining often attracts mercenary capital that leaves as soon as rewards dry up. Protocols keep paying users to show up once, then struggle to make them stay.</p>
+          <p>EverDraw provides an alternative model: recurring participation built around anticipation rather than obligation. If a protocol has yield, it can turn that yield into a reason for users to return. If a community wants a shared weekly moment, it can create one. If an ecosystem wants activity that feels less extractive and more fun, prize savings can become a useful primitive.</p>
+          <p>That is the part that excites me most. EverDraw starts as a simple user product, but the long-term vision is an engagement layer where yield becomes something people can feel, not just something displayed as a small percentage on a dashboard.</p>
+        </section>
+
+        <section>
+          <h2>Why Monad</h2>
+          <p>Monad is the right home for that vision. I have been in Monad since the early days, creating, participating, learning, and believing alongside the ecosystem before EverDraw existed. I was not looking for a hot chain to attach a product to. I wanted to build something that made sense for the community I was already part of.</p>
+          <p>The alignment is also practical. EverDraw deposits become shMON exposure. The prize comes from Monad staking yield. Instead of being another app that fragments attention and pulls capital away from the ecosystem, EverDraw is designed to draw capital back into Monad and make that capital productive inside the network.</p>
+        </section>
+
+        <section>
+          <h2>For Everyone Still Drawn to the Dream</h2>
+          <p>EverDraw is designed to make anticipation feel sustainable. You can care about the outcome without needing to put your whole stack at risk. You can miss the prize and still remain intact. You can return for the next draw not because you were trapped, liquidated, or diluted into staying, but because the product gives you a clean reason to try again.</p>
+          <p>The first EverDraw vault is coming very soon. Follow <a href="https://x.com/everdrawing" target="_blank" rel="noopener noreferrer">@everdrawing</a> and stay tuned for the launch.</p>
+          <p>With EverDraw I am not promising guaranteed riches, I am promising a chance to say WAGMI again.</p>
+          <p>For everyone still drawn to the dream.</p>
+        </section>
+
+        <footer className="article-cta article-cta-feature">
+          <div className="article-cta-copy">
+            <span>The first vault is coming soon</span>
+            <strong>Follow EverDraw for launch updates.</strong>
+            <p>Win the pot. Or keep your lot.</p>
+          </div>
+          <div className="article-cta-links">
+            <a href="/">Open app</a>
+            <a href="https://docs.everdraw.xyz" target="_blank" rel="noopener noreferrer">Docs</a>
+            <a href="https://x.com/everdrawing" target="_blank" rel="noopener noreferrer">Follow @everdrawing</a>
+          </div>
+        </footer>
+      </article>
+    </main>
+  )
+}
+
 function Header({ account, onConnect, currentPage, points }) {
   return (
     <header>
@@ -373,11 +549,11 @@ function Header({ account, onConnect, currentPage, points }) {
         EverDraw
       </div>
       <nav className="nav-links">
-        <a href="#vault" className={`nav-link ${currentPage === 'vault' ? 'active' : ''}`}>Vault</a>
-        <a href="#shmon" className={`nav-link ${currentPage === 'shmon' ? 'active' : ''}`}>shMON</a>
-        <a href="#stats" className={`nav-link ${currentPage === 'stats' ? 'active' : ''}`}>Stats</a>
-        <a href="#profile" className={`nav-link ${currentPage === 'profile' ? 'active' : ''}`}>Profile</a>
-        <a href="#leaderboard" className={`nav-link ${currentPage === 'leaderboard' ? 'active' : ''}`}>Leaderboard</a>
+        <a href="/#vault" className={`nav-link ${currentPage === 'vault' ? 'active' : ''}`}>Vault</a>
+        <a href="/#stats" className={`nav-link ${currentPage === 'stats' ? 'active' : ''}`}>Stats</a>
+        <a href="/#profile" className={`nav-link ${currentPage === 'profile' ? 'active' : ''}`}>Profile</a>
+        <a href="/#leaderboard" className={`nav-link ${currentPage === 'leaderboard' ? 'active' : ''}`}>Leaderboard</a>
+        <a href="/articles/drawn-back-to-defi" className={`nav-link ${currentPage === 'article' ? 'active' : ''}`}>Articles</a>
         <a href="https://docs.everdraw.xyz" target="_blank" rel="noopener noreferrer" className="nav-link">Docs</a>
         <a href="https://x.com/everdrawing" target="_blank" rel="noopener noreferrer" className="nav-link nav-link-x" aria-label="X / Twitter">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
@@ -413,29 +589,22 @@ function ClaimFlowModal({ open, mode, busy, status, error, onClose, onClaimOnly,
 
   const isWinner = mode === 'winner'
   const heroEyebrow = ''
-  const heroTitle = isV2 ? 'Choose your redemption action' : 'How do you want to claim this round?'
+  const heroTitle = 'How do you want to claim this round?'
   const heroBody = ''
 
   const options = isV2
     ? (isWinner
       ? [
           {
-            kicker: busy ? 'Working...' : 'CLAIM PRIZE',
-            title: 'Claim prize',
+            kicker: busy ? 'Working...' : 'SIMPLE CLAIM',
+            title: 'Withdraw Shmon directly to wallet ',
             body: '',
             onClick: onClaimOnly,
             tone: 'primary',
           },
           {
-            kicker: busy ? 'Working...' : 'REDEEM',
-            title: 'Redeem tickets to shMON wallet balance',
-            body: '',
-            onClick: onWithdrawOnly,
-            tone: 'default',
-          },
-          {
-            kicker: busy ? 'Working...' : 'REDEEM AS MON',
-            title: 'Redeem, then open shmonad.xyz',
+            kicker: busy ? 'Working...' : 'REDEEM AND CONVERT',
+            title: 'Redeem shMON and convert to MON',
             body: '',
             onClick: onWithdrawAndConvert,
             tone: 'default',
@@ -443,15 +612,15 @@ function ClaimFlowModal({ open, mode, busy, status, error, onClose, onClaimOnly,
         ]
       : [
           {
-            kicker: busy ? 'Working...' : 'REDEEM',
-            title: 'Redeem tickets to shMON wallet balance',
+            kicker: busy ? 'Working...' : 'WITHDRAW PRINCIPAL',
+            title: 'Withdraw principal directly to wallet',
             body: '',
             onClick: onWithdrawOnly,
             tone: 'primary',
           },
           {
-            kicker: busy ? 'Working...' : 'REDEEM AS MON',
-            title: 'Redeem, then open shmonad.xyz',
+            kicker: busy ? 'Working...' : 'WITHDRAW AND CONVERT',
+            title: 'Withdraw principal and convert to MON',
             body: '',
             onClick: onWithdrawAndConvert,
             tone: 'default',
@@ -474,8 +643,8 @@ function ClaimFlowModal({ open, mode, busy, status, error, onClose, onClaimOnly,
           tone: 'primary',
         },
         {
-          kicker: busy ? 'Working...' : 'CLAIM AND CONVERT',
-          title: 'Claim Shmon and convert to MON',
+          kicker: busy ? 'Working...' : 'REDEEM AND CONVERT',
+          title: 'Redeem shMON and convert to MON',
           body: '',
           onClick: onWithdrawAndConvert,
           tone: 'default',
@@ -537,7 +706,7 @@ function ClaimFlowModal({ open, mode, busy, status, error, onClose, onClaimOnly,
             </div>
           </div>
         ) : (
-          <div className="claim-flow-grid">
+          <div className={`claim-flow-grid ${options.length === 2 ? 'two-options' : ''}`}>
             {options.map((option) => (
               <button
                 key={option.title}
@@ -673,7 +842,7 @@ function WinnersView({ onBack, winner, winnerAddress, prize, participants, parti
 
       <div className="winners-hero">
         <h2>{isUnstaking ? 'Winner Revealed' : 'Draw Complete'}</h2>
-        <p>{settlementLabel}</p>
+        {settlementLabel ? <p>{settlementLabel}</p> : null}
         {roundNumber > 0 && <p className="round-label-hero">Round {roundNumber}</p>}
       </div>
 
@@ -691,9 +860,9 @@ function WinnersView({ onBack, winner, winnerAddress, prize, participants, parti
         </div>
         {winProbText && <div className="win-probability">{winProbText}</div>}
         {isUnstaking ? (
-          <button className="btn" disabled>Available after settlement</button>
+          <button className="btn" disabled>Redeem soon</button>
         ) : canClaim ? (
-          <button className="btn" onClick={onClaimPrize} disabled={actionBusy}>Claim</button>
+          <button className="btn" onClick={onClaimPrize} disabled={actionBusy}>Redeem now</button>
         ) : null}
       </div>
 
@@ -728,12 +897,12 @@ function WinnersView({ onBack, winner, winnerAddress, prize, participants, parti
       <div className="winners-actions-grid">
         <button className="btn ghost-btn" onClick={onWithdraw} disabled={actionBusy || !canWithdraw || isUnstaking}>
           {isUnstaking
-            ? 'Available after settlement'
+            ? 'Redeem soon'
             : canWithdraw
-              ? 'Claim Principal'
+              ? 'Redeem now'
               : settlementCountdown === '00:00:00:00'
-                ? 'No principal to claim'
-                : `Claim Principal (${settlementCountdown})`}
+                ? 'Nothing to redeem'
+                : `Redeem in ${settlementCountdown}`}
         </button>
       </div>
 
@@ -743,18 +912,30 @@ function WinnersView({ onBack, winner, winnerAddress, prize, participants, parti
   )
 }
 
-function RoundProgressSteps({ state, settlementSecs, secondsRemaining }) {
-  const steps = ['Deposit', 'Yield Accruing', 'Winner Revealed', 'Claim / Withdraw']
+function RoundProgressSteps({ state, settlementSecs, secondsRemaining, isV3 = false }) {
+  const steps = [
+    'Deposit',
+    'Yield Accruing',
+    (isV3 && (state === 1 || state === 2)) ? 'Drawing Winner…' : 'Winner Revealed',
+    'Claim / Withdraw',
+  ]
   let activeStep = 0
-  if (state === 0 && secondsRemaining <= 0) activeStep = 1
-  if (state === 1) activeStep = 1
-  if (state === 2) activeStep = settlementSecs > 0 ? 2 : 3
-  if (state === 3) activeStep = 3
+
+  if (isV3) {
+    if (state === 0 && secondsRemaining <= 0) activeStep = 1
+    if (state === 1 || state === 2) activeStep = 2
+    if (state >= 3) activeStep = 3
+  } else {
+    if (state === 0 && secondsRemaining <= 0) activeStep = 1
+    if (state === 1) activeStep = 1
+    if (state === 2) activeStep = settlementSecs > 0 ? 2 : 3
+    if (state >= 3) activeStep = 3
+  }
 
   return (
     <section className="round-steps">
       {steps.map((label, i) => (
-        <div key={label} className={`step ${i < activeStep ? 'done' : i === activeStep ? 'active' : ''}`}>
+        <div key={i} className={`step ${i < activeStep ? 'done' : i === activeStep ? 'active' : ''}`}>
           {i < steps.length - 1 && <div className="step-line" />}
           <div className="step-circle">{i < activeStep ? '\u2713' : i + 1}</div>
           <div className="step-label">{label}</div>
@@ -767,6 +948,7 @@ function RoundProgressSteps({ state, settlementSecs, secondsRemaining }) {
 export default function App() {
   // Hash-based page routing
   const [currentPage, setCurrentPage] = useState(() => {
+    if (window.location.pathname === '/blog/drawn-back-to-defi' || window.location.pathname === '/articles/drawn-back-to-defi') return 'article'
     if (window.location.hash === '#stats') return 'stats'
     if (window.location.hash === '#shmon') return 'shmon'
     if (window.location.hash === '#profile') return 'profile'
@@ -775,7 +957,8 @@ export default function App() {
   })
   useEffect(() => {
     function onHashChange() {
-      if (window.location.hash === '#stats') setCurrentPage('stats')
+      if (window.location.pathname === '/blog/drawn-back-to-defi' || window.location.pathname === '/articles/drawn-back-to-defi') setCurrentPage('article')
+      else if (window.location.hash === '#stats') setCurrentPage('stats')
       else if (window.location.hash === '#shmon') setCurrentPage('shmon')
       else if (window.location.hash === '#profile') setCurrentPage('profile')
       else if (window.location.hash === '#leaderboard') setCurrentPage('leaderboard')
@@ -787,10 +970,12 @@ export default function App() {
 
   const poolAddresses = useMemo(() => parsePoolAddresses(), [])
   const poolAddressesV2 = useMemo(() => parseV2PoolAddresses(), [])
-  const allPoolAddresses = useMemo(() => [...poolAddressesV2, ...poolAddresses], [poolAddresses, poolAddressesV2])
+  const poolAddressesV3 = useMemo(() => parseV3PoolAddresses(), [])
+  const allPoolAddresses = useMemo(() => [...poolAddressesV2, ...poolAddressesV3, ...poolAddresses], [poolAddresses, poolAddressesV2, poolAddressesV3])
   const [selectedPoolAddress, setSelectedPoolAddress] = useState(allPoolAddresses[0] || '')
   const poolAddress = selectedPoolAddress
   const isV2Pool = useMemo(() => poolAddressesV2.some((a) => a.toLowerCase() === String(poolAddress).toLowerCase()), [poolAddressesV2, poolAddress])
+  const isV3Pool = useMemo(() => poolAddressesV3.some((a) => a.toLowerCase() === String(poolAddress).toLowerCase()), [poolAddressesV3, poolAddress])
   const activePoolAbi = isV2Pool ? POOL_V2_ABI : POOL_ABI
 
   const expectedChainId = import.meta.env.VITE_CHAIN_ID ? Number(import.meta.env.VITE_CHAIN_ID) : 143
@@ -832,6 +1017,7 @@ export default function App() {
   const [vaultSummaries, setVaultSummaries] = useState([])
   const [settledRoundId, setSettledRoundId] = useState('0')
   const [settledRoundInfo, setSettledRoundInfo] = useState(null)
+  const [settledPoolAddress, setSettledPoolAddress] = useState('')
   const [settledParticipants, setSettledParticipants] = useState([])
   const participantLoadRef = useRef({ key: '' })
   const settledRidCacheRef = useRef(null)
@@ -846,7 +1032,6 @@ export default function App() {
   const [tokenDropdownOpen, setTokenDropdownOpen] = useState(false)
   const [pointsProfile, setPointsProfile] = useState(null)
   const [pointsHistory, setPointsHistory] = useState([])
-  const [pointsPreview, setPointsPreview] = useState(null)
   const [pointsBanner, setPointsBanner] = useState(null)
 
   useEffect(() => {
@@ -882,47 +1067,29 @@ export default function App() {
 
 
   useEffect(() => {
-    let cancelled = false
+    const ac = new AbortController()
     if (!account) {
       setPointsProfile(null)
       setPointsHistory([])
-      return () => { cancelled = true }
+      return () => ac.abort()
     }
     Promise.all([
-      fetch(`${getIndexerBaseUrl()}/api/points/${account}`).then((r) => r.ok ? r.json() : null),
-      fetch(`${getIndexerBaseUrl()}/api/points/${account}/history?limit=12`).then((r) => r.ok ? r.json() : []),
+      fetch(`${getIndexerBaseUrl()}/api/points/${account}`, { signal: ac.signal }).then((r) => r.ok ? r.json() : null),
+      fetch(`${getIndexerBaseUrl()}/api/points/${account}/history?limit=12`, { signal: ac.signal }).then((r) => r.ok ? r.json() : []),
     ]).then(([profile, history]) => {
-      if (cancelled) return
+      assertNotAborted(ac.signal)
       setPointsProfile(profile)
       setPointsHistory(Array.isArray(history) ? history : [])
-    }).catch(() => {
-      if (!cancelled) {
+    }).catch((err) => {
+      if (!isAbortError(err)) {
         setPointsProfile(null)
         setPointsHistory([])
       }
     })
-    return () => { cancelled = true }
+    return () => ac.abort()
   }, [account])
 
-  useEffect(() => {
-    let cancelled = false
-    if (!account || !poolAddress || !ticketCountInput) {
-      setPointsPreview(null)
-      return () => { cancelled = true }
-    }
-    const timer = setTimeout(() => {
-      const tickets = Math.max(0, Math.floor(Number(ticketCountInput || 0)))
-      if (!tickets) { setPointsPreview(null); return }
-      const url = new URL(`${getIndexerBaseUrl()}/api/points/preview`)
-      url.searchParams.set('wallet', account)
-      url.searchParams.set('pool', poolAddress)
-      url.searchParams.set('tickets', String(tickets))
-      fetch(url).then((r) => r.ok ? r.json() : null).then((data) => { if (!cancelled) setPointsPreview(data) }).catch(() => { if (!cancelled) setPointsPreview(null) })
-    }, 250)
-    return () => { cancelled = true; clearTimeout(timer) }
-  }, [account, poolAddress, ticketCountInput])
-
-  const refreshVaultSummaries = useCallback(async () => {
+  const refreshVaultSummaries = useCallback(async ({ signal } = {}) => {
     if (!allPoolAddresses.length) {
       setVaultSummaries([])
       return
@@ -930,22 +1097,28 @@ export default function App() {
     const provider = await getReadProvider()
     const summaries = await Promise.all(allPoolAddresses.map(async (addr) => {
       try {
+        assertNotAborted(signal)
         const v2 = poolAddressesV2.some((a) => a.toLowerCase() === addr.toLowerCase())
         const abi = v2 ? POOL_V2_ABI : POOL_ABI
         const pool = new ethers.Contract(addr, abi, provider)
-        const rid = await _cached(`currentRound:${addr}`, 10_000, () => pool.currentRoundId())
-        const info = await getCachedRoundInfo(pool, addr, rid)
+        const rid = await _cached(`currentRound:${addr}`, 10_000, () => pool.currentRoundId(), signal)
+        const info = await getCachedRoundInfo(pool, addr, rid, signal)
         const state = Number(info.state)
         const salesEndTime = Number(info.salesEndTime)
         const nowSec = Math.floor(Date.now() / 1000)
-        const commitAfter = v2 ? Number(await pool.getCommitAfterTime(rid).catch(() => 0)) : 0
+        const commitAfter = v2 ? Number(await _cached(`commitAfter:${addr}:${rid}`, 5_000, () => pool.getCommitAfterTime(rid).catch(() => 0), signal)) : 0
         const secs = Math.max(0, salesEndTime - nowSec)
         const yieldSecs = Math.max(0, commitAfter - nowSec)
+        const stateLabel = v2 && state === 0 && secs === 0
+          ? (Number(info.totalTickets ?? 0) > 0
+              ? (yieldSecs > 0 ? 'Yield Accruing' : 'Drawing Queued')
+              : 'Round Skipped')
+          : (v2 ? STATE_LABELS_V2 : STATE_LABELS)[state] ?? 'Unknown'
         return {
           poolAddress: addr,
           roundId: rid.toString(),
           state,
-          stateLabel: (v2 ? STATE_LABELS_V2 : STATE_LABELS)[state] ?? 'Unknown',
+          stateLabel,
           isNowOpen: state === 0 && secs > 0,
           timeRemainingSec: v2 && state === 0 && secs === 0 ? yieldSecs : secs,
           commitAfterTime: commitAfter,
@@ -969,7 +1142,7 @@ export default function App() {
     const score = (v) => {
       if (v.isNowOpen) return 0
       if (v.state === 1 || v.state === 2) return 1
-      if (v.state === 3) return 2
+      if (isSettledState(v.state, poolAddressesV2.some((a) => a.toLowerCase() === String(v.poolAddress).toLowerCase()))) return 2
       return 3
     }
 
@@ -981,15 +1154,17 @@ export default function App() {
       return a.poolAddress.localeCompare(b.poolAddress)
     })
 
+    assertNotAborted(signal)
     setVaultSummaries(summaries)
   }, [allPoolAddresses, poolAddressesV2])
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async ({ signal } = {}) => {
     if (!poolAddress) return
     if (!ethers.isAddress(poolAddress)) {
       throw new Error('Invalid VITE_POOL_ADDRESS. Use a 0x... contract address.')
     }
     const provider = await getReadProvider()
+    assertNotAborted(signal)
     const pool = new ethers.Contract(poolAddress, activePoolAbi, provider)
 
     const [
@@ -1003,19 +1178,20 @@ export default function App() {
       shmonAddr,
       accountBalance,
     ] = await Promise.all([
-      _cached(`currentRound:${poolAddress}`, 10_000, () => pool.currentRoundId()),
-      pool.nextExecutable(),
-      _cached(`ticketPrice:${poolAddress}`, 86400_000 * 365, () => pool.ticketPriceMON()),
-      _cached(`deposit:${poolAddress}`, 86400_000 * 365, () => isV2Pool ? pool.roundDurationSec() : pool.depositPeriodSec()),
-      isV2Pool ? pool.yieldPeriodSec().catch(() => 0) : pool.yieldPeriodSec(),
-      provider.getBlockNumber(),
-      provider.getNetwork(),
-      pool.shmon().catch(() => ethers.ZeroAddress),
-      account ? provider.getBalance(account).catch(() => null) : Promise.resolve(null),
+      _cached(`currentRound:${poolAddress}`, 10_000, () => pool.currentRoundId(), signal),
+      _cached(`nextExecutable:${poolAddress}`, 5_000, () => pool.nextExecutable(), signal),
+      _cached(`ticketPrice:${poolAddress}`, 86400_000 * 365, () => pool.ticketPriceMON(), signal),
+      _cached(`deposit:${poolAddress}`, 86400_000 * 365, () => isV2Pool ? pool.roundDurationSec() : pool.depositPeriodSec(), signal),
+      _cached(`yieldPeriod:${poolAddress}`, 86400_000 * 365, () => isV2Pool ? pool.yieldPeriodSec().catch(() => 0) : pool.yieldPeriodSec(), signal),
+      _cached('provider:blockNumber', 2_000, () => provider.getBlockNumber(), signal),
+      _cached('provider:network', 60_000, () => provider.getNetwork(), signal),
+      _cached(`shmon:${poolAddress}`, 86400_000 * 365, () => pool.shmon().catch(() => ethers.ZeroAddress), signal),
+      account ? _cached(`balance:${account}`, 5_000, () => provider.getBalance(account).catch(() => null), signal) : Promise.resolve(null),
     ])
 
-    const info = await getCachedRoundInfo(pool, poolAddress, rid)
+    const info = await getCachedRoundInfo(pool, poolAddress, rid, signal)
 
+    assertNotAborted(signal)
     setRoundId(rid.toString())
     setRoundInfo(info)
     setNextAction(Number(nextExecutable?.[1] ?? 0))
@@ -1033,12 +1209,13 @@ export default function App() {
       if (ethers.isAddress(shmonAddr) && shmonAddr !== ethers.ZeroAddress) {
         const shmon = new ethers.Contract(shmonAddr, SHMON_READ_ABI, provider)
         const [ep, shmonBal] = await Promise.all([
-          shmon.getInternalEpoch(),
-          account ? shmon.balanceOf(account).catch(() => 0n) : Promise.resolve(0n),
+          _cached(`shmonEpoch:${shmonAddr}`, 5_000, () => shmon.getInternalEpoch(), signal),
+          account ? _cached(`shmonBalance:${account}:${shmonAddr}`, 5_000, () => shmon.balanceOf(account).catch(() => 0n), signal) : Promise.resolve(0n),
         ])
+        assertNotAborted(signal)
         setCurrentInternalEpoch(Number(ep))
         if (account) {
-          const monBal = shmonBal > 0n ? await _cached(`shmonMonBal:${account}:${shmonAddr}`, 15_000, () => shmon.convertToAssets(shmonBal)) : 0n
+          const monBal = shmonBal > 0n ? await _cached(`shmonMonBal:${account}:${shmonAddr}`, 15_000, () => shmon.convertToAssets(shmonBal), signal) : 0n
           setShmonMonBalance(monBal)
         }
       }
@@ -1047,7 +1224,8 @@ export default function App() {
     }
 
     if (isV2Pool) {
-      const commitAt = Number(await pool.getCommitAfterTime(rid).catch(() => 0))
+      const commitAt = Number(await _cached(`commitAfter:${poolAddress}:${rid}`, 5_000, () => pool.getCommitAfterTime(rid).catch(() => 0), signal))
+      assertNotAborted(signal)
       setCommitAfterTime(commitAt)
     } else {
       setCommitAfterTime(0)
@@ -1055,7 +1233,8 @@ export default function App() {
 
     if (Number(rid) > 0) {
       const prevRid = Number(rid) - 1
-      const prevInfo = await getCachedRoundInfo(pool, poolAddress, BigInt(prevRid))
+      const prevInfo = await getCachedRoundInfo(pool, poolAddress, BigInt(prevRid), signal)
+      assertNotAborted(signal)
       setPreviousRoundId(String(prevRid))
       setPreviousRoundInfo(prevInfo)
     } else {
@@ -1064,111 +1243,183 @@ export default function App() {
       setPreviousParticipants([])
     }
 
-    let sRid = null
-    let sInfo = null
-    if (Number(info.state) === 3 && Number(info.totalTickets) > 0) {
-      sRid = Number(rid)
-      sInfo = info
-    } else if (settledRidCacheRef.current && settledRidCacheRef.current !== Number(rid)) {
-      sRid = settledRidCacheRef.current
-      sInfo = settledRoundInfo
-    } else {
-      const scanRids = []
-      for (let r = Number(rid) - 1; r >= Math.max(1, Number(rid) - 3); r--) scanRids.push(r)
-      const results = await Promise.all(scanRids.map((r) => getCachedRoundInfo(pool, poolAddress, BigInt(r)).catch(() => null)))
-      for (let i = 0; i < results.length; i++) {
-        const si = results[i]
-        if (si && Number(si.state) === 3 && Number(si.totalTickets) > 0) {
-          sRid = scanRids[i]
-          sInfo = si
-          break
+    let bestSettled = null
+    const scanPools = allPoolAddresses.length ? allPoolAddresses : [poolAddress]
+    for (const scanAddr of scanPools) {
+      try {
+        if (!ethers.isAddress(scanAddr)) continue
+        const scanIsV2 = poolAddressesV2.some((a) => a.toLowerCase() === scanAddr.toLowerCase())
+        const scanAbi = scanIsV2 ? POOL_V2_ABI : POOL_ABI
+        const scanPool = new ethers.Contract(scanAddr, scanAbi, provider)
+        const scanCurrentRid = Number(await _cached(`currentRound:${scanAddr}`, 10_000, () => scanPool.currentRoundId(), signal))
+        const scanRids = []
+        for (let r = scanCurrentRid; r >= Math.max(1, scanCurrentRid - 5); r--) scanRids.push(r)
+        const results = await Promise.all(scanRids.map((r) => getCachedRoundInfo(scanPool, scanAddr, BigInt(r), signal).catch(() => null)))
+        for (let i = 0; i < results.length; i++) {
+          const si = results[i]
+          if (!si) continue
+          const hasActivity = Number(si.totalTickets ?? 0) > 0 || BigInt(si.totalPrincipalMON ?? 0n) > 0n
+          if (isTerminalRound(si.state, scanIsV2) && hasActivity) {
+            const candidate = {
+              poolAddr: scanAddr,
+              rid: scanRids[i],
+              info: si,
+              sortTime: Number(si.salesEndTime ?? 0),
+            }
+            if (!bestSettled || candidate.sortTime > bestSettled.sortTime) bestSettled = candidate
+            break
+          }
         }
+      } catch (err) {
+        if (isAbortError(err)) throw err
       }
     }
-    if (sRid) settledRidCacheRef.current = sRid
-    setSettledRoundId(sRid ? String(sRid) : '0')
-    if (sInfo) setSettledRoundInfo(sInfo)
-    else setSettledRoundInfo(null)
-    if (!sRid) setSettledParticipants([])
-  }, [account, poolAddress, activePoolAbi, isV2Pool])
+    assertNotAborted(signal)
+    if (bestSettled) {
+      settledRidCacheRef.current = bestSettled.rid
+      setSettledRoundId(String(bestSettled.rid))
+      setSettledRoundInfo(bestSettled.info)
+      setSettledPoolAddress(bestSettled.poolAddr)
+    } else {
+      setSettledRoundId('0')
+      setSettledRoundInfo(null)
+      setSettledPoolAddress('')
+      setSettledParticipants([])
+    }
+  }, [account, poolAddress, activePoolAbi, isV2Pool, allPoolAddresses, poolAddressesV2])
 
   useEffect(() => {
     if (!poolAddress) return
-    refresh().catch((e) => setError(normalizeError(e) || 'Failed to load round data'))
-    refreshVaultSummaries().catch(() => {})
+    const ac = new AbortController()
+    refresh({ signal: ac.signal }).catch((e) => { if (!isAbortError(e)) setError(normalizeError(e) || 'Failed to load round data') })
+    refreshVaultSummaries({ signal: ac.signal }).catch(() => {})
 
     const clockTick = setInterval(() => {
       setNow(Math.floor(Date.now() / 1000))
     }, 1000)
 
     const dataRefresh = setInterval(() => {
-      refresh().catch(() => {})
+      refresh({ signal: ac.signal }).catch(() => {})
     }, 60000)
 
     const vaultRefresh = setInterval(() => {
-      refreshVaultSummaries().catch(() => {})
+      refreshVaultSummaries({ signal: ac.signal }).catch(() => {})
     }, 120000)
 
     return () => {
+      ac.abort()
       clearInterval(clockTick)
       clearInterval(dataRefresh)
       clearInterval(vaultRefresh)
     }
   }, [poolAddress, refresh, refreshVaultSummaries])
 
-  const loadParticipantsForView = useCallback(async (view) => {
+  const loadParticipantsForView = useCallback(async (view, { signal } = {}) => {
     const currentRidNum = Number(roundId) || 0
     const prevRidNum = Number(previousRoundId) || 0
     const vaultARoundIdNum = currentRidNum % 2 === 1 ? currentRidNum : prevRidNum
     const vaultBRoundIdNum = currentRidNum % 2 === 0 ? currentRidNum : prevRidNum
 
     let targetRoundId = 0
+    let targetRoundInfo = null
+    let targetPoolAddress = poolAddress
     let setter = null
 
     if (view === 'vaultA') {
       targetRoundId = vaultARoundIdNum
+      targetRoundInfo = currentRidNum % 2 === 1 ? roundInfo : previousRoundInfo
       setter = setParticipants
     } else if (view === 'vaultB') {
       targetRoundId = vaultBRoundIdNum
+      targetRoundInfo = currentRidNum % 2 === 0 ? roundInfo : previousRoundInfo
       setter = setPreviousParticipants
     } else if (view === 'previous') {
       targetRoundId = Number(settledRoundId) || 0
+      targetRoundInfo = settledRoundInfo
+      targetPoolAddress = settledPoolAddress || poolAddress
       setter = setSettledParticipants
     } else {
       return
     }
 
-    if (!targetRoundId) {
+    if (!targetRoundId || !ethers.isAddress(targetPoolAddress)) {
       setter?.([])
       return
     }
 
     try {
-      const res = await fetch(`https://everdraw-indexer.fly.dev/api/rounds/${targetRoundId}/participants`)
+      const url = new URL(`${getIndexerBaseUrl()}/api/rounds/${targetRoundId}/participants`)
+      url.searchParams.set('pool', targetPoolAddress)
+      const res = await fetch(url, { signal })
       if (!res.ok) {
         console.warn('[EverDraw] indexer participants fetch failed:', res.status)
         setter([])
         return
       }
       const data = await res.json()
-      const totalTicketsNum = data.reduce((acc, p) => acc + (Number(p.tickets) || 0), 0)
-      const built = data.map((p) => ({
+      const targetPoolLc = targetPoolAddress.toLowerCase()
+      const rows = Array.isArray(data)
+        ? data.filter((p) => !p.poolAddress || String(p.poolAddress).toLowerCase() === targetPoolLc)
+        : []
+      const poolIsV2 = poolAddressesV2.some((a) => a.toLowerCase() === targetPoolLc)
+      const poolAbi = poolIsV2 ? POOL_V2_ABI : POOL_ABI
+      const provider = await getReadProvider()
+      const pool = new ethers.Contract(targetPoolAddress, poolAbi, provider)
+      const price = ticketPrice > 0n && targetPoolLc === String(poolAddress).toLowerCase()
+        ? ticketPrice
+        : BigInt(await _cached(`ticketPrice:${targetPoolAddress}`, 86400_000 * 365, () => pool.ticketPriceMON(), signal))
+      const byWallet = new Map()
+
+      for (const p of rows) {
+        if (!ethers.isAddress(p.wallet)) continue
+        const wallet = p.wallet
+        const key = wallet.toLowerCase()
+        let paidWei = BigInt(p.monPaid || '0')
+        let tickets = Number(p.tickets) || 0
+
+        if (paidWei === 0n || tickets === 0) {
+          try {
+            const principal = poolIsV2
+              ? (await _cached(`participantPosition:${targetPoolAddress}:${targetRoundId}:${wallet}`, 30_000, () => pool.getUserPosition(BigInt(targetRoundId), wallet), signal))[0]
+              : await _cached(`participantPrincipal:${targetPoolAddress}:${targetRoundId}:${wallet}`, 30_000, () => pool.principalMON(BigInt(targetRoundId), wallet), signal)
+            paidWei = BigInt(principal || 0n)
+            if (price > 0n) tickets = Number(paidWei / price)
+          } catch (err) {
+            if (isAbortError(err)) throw err
+          }
+        }
+
+        const prev = byWallet.get(key) || { wallet, tickets: 0, depositedWei: 0n }
+        prev.tickets += tickets
+        prev.depositedWei += paidWei
+        byWallet.set(key, prev)
+      }
+
+      const contractTotalTickets = Number(targetRoundInfo?.totalTickets ?? 0)
+      const rowTotalTickets = [...byWallet.values()].reduce((acc, p) => acc + p.tickets, 0)
+      const totalTicketsNum = contractTotalTickets > 0 ? contractTotalTickets : rowTotalTickets
+      const built = [...byWallet.values()].map((p) => ({
         wallet: p.wallet,
         walletShort: shortAddr(p.wallet),
-        tickets: Number(p.tickets) || 0,
-        sharePct: totalTicketsNum > 0 ? ((Number(p.tickets) / totalTicketsNum) * 100).toFixed(2) : '0.00',
-        depositedMon: Number(ethers.formatEther(BigInt(p.monPaid || '0'))).toFixed(4),
+        tickets: p.tickets,
+        sharePct: totalTicketsNum > 0 ? ((p.tickets / totalTicketsNum) * 100).toFixed(2) : '0.00',
+        depositedMon: Number(ethers.formatEther(p.depositedWei)).toFixed(4),
       })).sort((a, b) => b.tickets - a.tickets)
+      assertNotAborted(signal)
       setter(built)
     } catch (e) {
-      console.warn('[EverDraw] indexer participants fetch error:', e)
-      setter([])
+      if (!isAbortError(e)) {
+        console.warn('[EverDraw] indexer participants fetch error:', e)
+        setter([])
+      }
     }
-  }, [roundId, previousRoundId, settledRoundId])
+  }, [roundId, previousRoundId, roundInfo, previousRoundInfo, settledRoundId, settledRoundInfo, settledPoolAddress, poolAddress, poolAddressesV2, ticketPrice])
 
   useEffect(() => {
     if (mainView === 'myrounds') return
-    loadParticipantsForView(mainView).catch(() => {})
+    const ac = new AbortController()
+    loadParticipantsForView(mainView, { signal: ac.signal }).catch((err) => { if (!isAbortError(err)) console.warn('[EverDraw] participants load failed:', err) })
+    return () => ac.abort()
   }, [mainView, loadParticipantsForView])
 
   const connectWallet = useCallback(async () => {
@@ -1245,6 +1496,9 @@ export default function App() {
       await ensureCorrectNetwork(provider, expectedChainId)
       if (!account) throw new Error('No wallet connected')
 
+      const currentSalesOpen = roundInfo && Number(roundInfo.state) === 0 && Math.max(0, Number(roundInfo.salesEndTime ?? 0) - Math.floor(Date.now() / 1000)) > 0
+      if (!currentSalesOpen) throw new Error('Deposits are closed for this round')
+
       const value = ticketPrice * BigInt(n)
       if (value === 0n) throw new Error('Ticket price not loaded yet — please wait a moment and try again')
 
@@ -1291,7 +1545,7 @@ export default function App() {
     } finally {
       setLoading(false)
     }
-  }, [account, expectedChainId, poolAddress, refresh, ticketCountInput, ticketPrice, activePoolAbi, isV2Pool])
+  }, [account, expectedChainId, poolAddress, refresh, ticketCountInput, ticketPrice, activePoolAbi, isV2Pool, roundInfo])
 
   const secondsRemaining = useMemo(() => {
     if (!roundInfo) return 0
@@ -1309,6 +1563,18 @@ export default function App() {
     const elapsed = Math.max(0, depositWindowSec - secondsRemaining)
     return Math.min(100, Math.round((elapsed / depositWindowSec) * 100))
   }, [depositWindowSec, secondsRemaining, roundInfo])
+
+  const poolDisplayLabel = useCallback((addr, isV2 = false) => {
+    const lc = String(addr || '').toLowerCase()
+    const v2Index = poolAddressesV2.findIndex((a) => a.toLowerCase() === lc)
+    if (v2Index >= 0) {
+      const letter = labelLetter(v2Index)
+      return isActiveV2PoolIndex(v2Index) ? `Vault ${letter}` : `Retired Vault ${letter}`
+    }
+    const legacyIndex = poolAddresses.findIndex((a) => a.toLowerCase() === lc)
+    if (legacyIndex >= 0) return `Legacy Vault ${labelLetter(legacyIndex)}`
+    return isV2 ? `Vault ${shortAddr(addr)}` : `Legacy ${shortAddr(addr)}`
+  }, [poolAddresses, poolAddressesV2])
 
   const currentState = roundInfo ? Number(roundInfo.state) : null
   const isOpenState = currentState === 0
@@ -1340,18 +1606,22 @@ export default function App() {
       : mainView === 'vaultB' ? vaultBParticipants
       : mainView === 'previous' ? settledParticipants
       : participants
-  const shownIsCurrentRound = shownRoundId === roundId
+  const shownIsCurrentRound = mainView !== 'previous' && shownRoundId === roundId
   const shownState = shownRoundInfo ? Number(shownRoundInfo.state) : -1
-  const shownVaultLabel = isV2Pool
-    ? (selectedPoolAddress.toLowerCase() === poolAddressesV2[1]?.toLowerCase() || vaultBPending ? 'Vault B' : 'Vault A')
-    : mainView === 'vaultA' ? 'Vault A' : mainView === 'vaultB' ? 'Vault B' : 'Previous Vault'
+  const shownVaultLabel = mainView === 'previous'
+    ? poolDisplayLabel(settledPoolAddress, poolAddressesV2.some((a) => a.toLowerCase() === String(settledPoolAddress).toLowerCase()))
+    : isV2Pool
+      ? (selectedPoolAddress.toLowerCase() === poolAddressesV2[1]?.toLowerCase() || vaultBPending ? 'Vault B' : 'Vault A')
+      : mainView === 'vaultA' ? 'Vault A' : mainView === 'vaultB' ? 'Vault B' : 'Previous Vault'
   const wrongNetwork = expectedChainId && connectedChainId && expectedChainId !== connectedChainId
   const shownSecondsRemaining = shownRoundInfo ? Math.max(0, Number(shownRoundInfo.salesEndTime ?? 0) - now) : 0
   const shownCommitAfterRemaining = shownRoundInfo && isV2Pool ? Math.max(0, Number(commitAfterTime || 0) - now) : 0
   const shownSalesOpen = shownState === 0 && shownSecondsRemaining > 0
   const shownYieldAccruing = isV2Pool && shownState === 0 && shownSecondsRemaining === 0 && shownCommitAfterRemaining > 0
+  const shownSettled = isTerminalRound(shownState, isV2Pool)
   const salesOpen = shownIsCurrentRound ? shownSalesOpen : isOpenState && secondsRemaining > 0
-  const canBuyTx = !!account && shownIsCurrentRound && shownSalesOpen && !loading
+  const buyFormOpen = shownIsCurrentRound && shownSalesOpen
+  const canBuyTx = !!account && buyFormOpen && !loading
 
   const buyDisabledReason = useMemo(() => {
     if (loading) return 'Transaction in progress'
@@ -1365,6 +1635,10 @@ export default function App() {
     if (wrongNetwork) return 'Wrong network — click Buy to switch automatically'
     return ''
   }, [loading, shownIsCurrentRound, shownSalesOpen, shownYieldAccruing, shownState, account, wrongNetwork])
+
+  useEffect(() => {
+    if (!buyFormOpen && /missing revert data|SalesEnded|sales ended/i.test(error || '')) setError('')
+  }, [buyFormOpen, error])
 
   const settlementSecondsRemaining = useMemo(() => {
     if (!roundInfo) return 0
@@ -1455,7 +1729,7 @@ export default function App() {
         return {
           heading: 'Drawing...',
           value: shownSettlementSecs > 0 ? formatCountdown(shownSettlementSecs) : 'Processing...',
-          sub: 'Waiting for settlement',
+          sub: 'Winner reveal in progress',
           metaLabel: 'Vault status',
           metaValue: 'Drawing'
         }
@@ -1465,29 +1739,38 @@ export default function App() {
         return {
           heading: 'Round Complete',
           value: 'Complete',
-          sub: shownRoundInfo?.winner ? `Winner: ${shortAddr(shownRoundInfo.winner)}` : 'Redeem and claim are now available',
+          sub: shownRoundInfo?.winner ? `Winner: ${shortAddr(shownRoundInfo.winner)}` : 'Winner and prize are available',
           metaLabel: 'Vault status',
-          metaValue: 'Settled'
+          metaValue: 'Claim / Redeem'
         }
       }
 
       if (shownState === 3) {
+        if (Number(shownRoundInfo?.totalTickets ?? 0) === 0) {
+          return {
+            heading: 'Round Skipped',
+            value: 'Skipped',
+            sub: 'No entries in this round',
+            metaLabel: 'Vault status',
+            metaValue: 'Skipped'
+          }
+        }
         return {
-          heading: 'Round Skipped',
-          value: 'Skipped',
-          sub: 'No entries in this round',
+          heading: 'Round Complete',
+          value: 'Complete',
+          sub: shownRoundInfo?.winner ? `Winner: ${shortAddr(shownRoundInfo.winner)}` : 'Redeem and claim are now available',
           metaLabel: 'Vault status',
-          metaValue: 'Skipped'
+          metaValue: 'Claim / Redeem'
         }
       }
 
       if (shownState === 4) {
         return {
-          heading: 'Round Cancelled',
-          value: 'Cancelled',
-          sub: 'Redeem is available',
+          heading: 'Round Skipped',
+          value: 'Skipped',
+          sub: 'No draw was completed for this round',
           metaLabel: 'Vault status',
-          metaValue: 'Failed'
+          metaValue: 'Skipped'
         }
       }
     }
@@ -1563,7 +1846,7 @@ export default function App() {
         value: 'Finalizing…',
         sub: targetBlock > 0 ? `Waiting for draw at block ${targetBlock.toLocaleString()}` : 'Round is being finalized',
         metaLabel: 'Next action',
-        metaValue: shownIsCurrentRound ? (ACTION_LABELS[nextAction] ?? 'Settle') : 'Settle'
+        metaValue: shownIsCurrentRound ? (ACTION_LABELS[nextAction] ?? 'Claim / Redeem') : 'Claim / Redeem'
       }
     }
 
@@ -1578,7 +1861,7 @@ export default function App() {
           value: formatCountdown(shownSettlementSecs),
           sub: 'Round is wrapping up',
           metaLabel: 'Next action',
-          metaValue: shownIsCurrentRound ? (ACTION_LABELS[nextAction] ?? 'Settle') : 'Settle'
+          metaValue: shownIsCurrentRound ? (ACTION_LABELS[nextAction] ?? 'Claim / Redeem') : 'Claim / Redeem'
         }
       }
 
@@ -1599,15 +1882,15 @@ export default function App() {
         value: 'Finalizing…',
         sub: targetBlock > 0 ? `Target block ${targetBlock.toLocaleString()}` : 'Round is being finalized',
         metaLabel: 'Next action',
-        metaValue: shownIsCurrentRound ? (ACTION_LABELS[nextAction] ?? 'Settle') : 'Settle'
+        metaValue: shownIsCurrentRound ? (ACTION_LABELS[nextAction] ?? 'Claim / Redeem') : 'Claim / Redeem'
       }
     }
 
     if (shownState === 3) {
       return {
-        heading: 'Settled — Withdraw Available',
-        value: 'Settled',
-        sub: 'Winner claim and principal withdraw are now available',
+        heading: 'Draw Complete',
+        value: 'Ready',
+        sub: 'Claim or redeem is now available',
         metaLabel: 'Vault status',
         metaValue: 'Complete'
       }
@@ -1622,11 +1905,11 @@ export default function App() {
     }
   }, [isV2Pool, isDeadRound, shownState, shownSecondsRemaining, shownCommitAfterRemaining, shownYieldAccruing, shownProgressPct, shownRoundInfo, shownSettlementSecs, shownIsCurrentRound, nextAction, currentInternalEpoch, yieldPeriod, now])
 
-  const timerProgressPct = shownState === 0 ? shownProgressPct : shownState === 3 ? 100 : 50
+  const timerProgressPct = shownState === 0 ? shownProgressPct : shownSettled ? 100 : 50
   const timerIsClock = /^\d+:\d{2}:\d{2}:\d{2}$/.test(timerCard.value)
 
   const isUnstaking = !isV2Pool && shownState === 2 && shownSettlementSecs > 0 && shownSettlementSecs <= 86400
-  const drawFinished = !isDeadRound && (shownState === 3 || isUnstaking)
+  const drawFinished = !isDeadRound && !isFailedRound(shownState, isV2Pool) && (shownSettled || isUnstaking)
   const activeRoundInfo = shownRoundInfo ?? roundInfo
   const activeRoundId = shownRoundId || roundId
 
@@ -1638,10 +1921,10 @@ export default function App() {
   const currentPrizePool = useMemo(() => {
     if (!roundInfo) return { value: '...', sub: 'Loading...' }
 
-    if (Number(roundInfo.state) === 3) {
+    if (isSettledState(roundInfo.state, isV2Pool)) {
       return {
-        value: `${Number(ethers.formatEther(roundInfo.yieldMON)).toFixed(4)} MON`,
-        sub: 'Final settled yield'
+        value: `${Number(ethers.formatEther(roundYieldWei(roundInfo, isV2Pool))).toFixed(4)} MON`,
+        sub: 'Final yield'
       }
     }
 
@@ -1655,7 +1938,7 @@ export default function App() {
       value: `~${est.toFixed(4)} MON`,
       sub: `Estimated final yield @ ${estimatedApyPercent}% APY`
     }
-  }, [estimatedApyPercent, roundDuration, roundInfo])
+  }, [estimatedApyPercent, isV2Pool, roundDuration, roundInfo])
 
   const winnersSource = {
     rid: shownRoundId,
@@ -1671,16 +1954,20 @@ export default function App() {
   const previousSettlementCountdown = useMemo(() => {
     if (!previousRoundInfo) return '—'
     const st = Number(previousRoundInfo.state)
-    if (st === 3) return '00:00:00:00'
+    if (isSettledState(st, isV2Pool)) return '00:00:00:00'
     if (salesOpen && secondsRemaining > 0) return formatCountdown(secondsRemaining)
-    return 'Awaiting settlement'
-  }, [previousRoundInfo, salesOpen, secondsRemaining])
+    return 'Winner revealed'
+  }, [previousRoundInfo, isV2Pool, salesOpen, secondsRemaining])
 
   const winnersRoundId = winnersSource?.rid || roundId
-  const winnersYieldWei = winnersSource?.info?.yieldMON ? BigInt(winnersSource.info.yieldMON) : 0n
+  const winnersPoolAddress = mainView === 'previous' && settledPoolAddress ? settledPoolAddress : poolAddress
+  const winnersIsV2Pool = poolAddressesV2.some((a) => a.toLowerCase() === String(winnersPoolAddress).toLowerCase())
+  const winnersPoolAbi = winnersIsV2Pool ? POOL_V2_ABI : POOL_ABI
+  const winnersYieldWei = roundYieldWei(winnersSource?.info, winnersIsV2Pool)
   const isWinnerWallet = !!account && !!winnersSource?.info?.winner && account.toLowerCase() === String(winnersSource.info.winner).toLowerCase()
-  const canClaimPrize = isWinnerWallet && winnersYieldWei > 0n && Number(winnersSource?.info?.state ?? -1) === 3
-  const canWithdrawPrincipal = !!account && winnersUserPrincipalWei > 0n && Number(winnersSource?.info?.state ?? -1) === 3
+  const winnersTerminal = isTerminalRound(winnersSource?.info?.state ?? -1, winnersIsV2Pool)
+  const canClaimPrize = isWinnerWallet && winnersYieldWei > 0n && winnersTerminal
+  const canWithdrawPrincipal = !!account && winnersUserPrincipalWei > 0n && winnersTerminal
 
   const winnerTicketsDisplay = winnerParticipant
     ? winnerParticipant.tickets
@@ -1691,37 +1978,40 @@ export default function App() {
   const sfxTestMode = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('sfxtest') === '1'
 
   useEffect(() => {
-    let cancelled = false
+    const ac = new AbortController()
     const loadPrincipal = async () => {
-      if (!account || !poolAddress || !winnersRoundId) {
-        if (!cancelled) setWinnersUserPrincipalWei(0n)
+      if (!account || !winnersPoolAddress || !winnersRoundId) {
+        setWinnersUserPrincipalWei(0n)
         return
       }
       try {
         const provider = await getReadProvider()
-        const pool = new ethers.Contract(poolAddress, activePoolAbi, provider)
-        const v = isV2Pool
-          ? (await pool.getUserPosition(BigInt(winnersRoundId), account))[0]
-          : await pool.principalMON(BigInt(winnersRoundId), account)
-        if (!cancelled) setWinnersUserPrincipalWei(BigInt(v))
-      } catch {
-        if (!cancelled) setWinnersUserPrincipalWei(0n)
+        assertNotAborted(ac.signal)
+        const pool = new ethers.Contract(winnersPoolAddress, winnersPoolAbi, provider)
+        const v = winnersIsV2Pool
+          ? (await _cached(`userPosition:${winnersPoolAddress}:${winnersRoundId}:${account}`, 5_000, () => pool.getUserPosition(BigInt(winnersRoundId), account), ac.signal))[0]
+          : await _cached(`principal:${winnersPoolAddress}:${winnersRoundId}:${account}`, 5_000, () => pool.principalMON(BigInt(winnersRoundId), account), ac.signal)
+        assertNotAborted(ac.signal)
+        setWinnersUserPrincipalWei(BigInt(v))
+      } catch (err) {
+        if (!isAbortError(err)) setWinnersUserPrincipalWei(0n)
       }
     }
     loadPrincipal()
-    return () => { cancelled = true }
-  }, [account, poolAddress, winnersRoundId, activePoolAbi, isV2Pool])
+    return () => ac.abort()
+  }, [account, winnersPoolAddress, winnersRoundId, winnersPoolAbi, winnersIsV2Pool])
 
   useEffect(() => {
-    let cancelled = false
+    const ac = new AbortController()
     const loadMyRounds = async () => {
       if (!account || !poolAddresses.length) {
-        if (!cancelled) setMyRounds([])
+        setMyRounds([])
         return
       }
       try {
         const provider = await getReadProvider()
-        const rows = []
+        const rowsByKey = new Map()
+        const putRow = (row) => rowsByKey.set(`${String(row.poolAddr).toLowerCase()}:${row.rid}`, row)
 
         for (const addr of poolAddresses) {
           if (!ethers.isAddress(addr)) continue
@@ -1729,17 +2019,17 @@ export default function App() {
 
           let cur = 0
           try {
-            cur = Number(await _cached(`currentRound:${addr}`, 10_000, () => pool.currentRoundId()))
-          } catch { continue }
+            cur = Number(await _cached(`currentRound:${addr}`, 10_000, () => pool.currentRoundId(), ac.signal))
+          } catch (err) { if (isAbortError(err)) throw err; continue }
 
           const rids = []
           for (let rid = 1; rid <= cur; rid++) rids.push(rid)
 
           const [infos, principals] = await Promise.all([
             Promise.all(rids.map(rid =>
-              getCachedRoundInfo(pool, addr, BigInt(rid)).catch(() => null)
+              getCachedRoundInfo(pool, addr, BigInt(rid), ac.signal).catch(() => null)
             )),
-            Promise.all(rids.map(rid => pool.principalMON(BigInt(rid), account).catch(() => 0n)))
+            Promise.all(rids.map(rid => _cached(`principal:${addr}:${rid}:${account}`, 10_000, () => pool.principalMON(BigInt(rid), account).catch(() => 0n), ac.signal)))
           ])
 
           rids.forEach((rid, i) => {
@@ -1748,7 +2038,7 @@ export default function App() {
             if (!info) return
             const isWinner = account.toLowerCase() === String(info.winner || '').toLowerCase()
             if (principal > 0n || isWinner) {
-              rows.push({
+              putRow({
                 rid,
                 poolAddr: addr,
                 isV2: false,
@@ -1761,56 +2051,97 @@ export default function App() {
                 principalMon: Number(ethers.formatEther(principal)).toFixed(4),
                 withdrawableShares: 0n,
                 withdrawableMon: principal,
-                prizeWei: BigInt(info.yieldMON || 0n),
+                prizeWei: roundYieldWei(info, false),
                 canWithdraw: Number(info.state) === 3 && principal > 0n,
               })
             }
           })
         }
 
-        const indexerRows = await fetch(`${INDEXER_URL}/api/wallets/${account}/rounds`)
+        const indexerRows = await fetch(`${INDEXER_URL}/api/wallets/${account}/rounds`, { signal: ac.signal })
           .then((r) => r.json())
-          .catch(() => [])
+          .catch((err) => { if (isAbortError(err)) throw err; return [] })
 
         for (const r of indexerRows) {
           if (!ethers.isAddress(r.poolAddress)) continue
           const isV2round = poolAddressesV2.some((a) => a.toLowerCase() === r.poolAddress.toLowerCase())
           const salesEndSec = r.salesEndTime ? Math.floor(new Date(r.salesEndTime).getTime() / 1000) : 0
-          rows.push({
+          const monPaidWei = BigInt(r.monPaid || '0')
+          const principalWithdrawnWei = BigInt(r.principalWithdrawn || '0')
+          let remainingPrincipalWei = principalWithdrawnWei >= monPaidWei ? 0n : monPaidWei - principalWithdrawnWei
+          let normalizedState = isV2round
+            ? (r.state === 'open' ? 0 : r.state === 'committed' ? 1 : r.state === 'settled' ? 2 : r.state === 'skipped' ? 3 : r.state === 'failed' ? 4 : 0)
+            : (r.state === 'settled' || r.state === 'skipped' ? 3 : r.state === 'drawn' || r.state === 'unstaking' ? 2 : r.state === 'committed' ? 1 : 0)
+          let commitAfterTime = salesEndSec + (isV2round ? 604800 : 0)
+          let prizeWei = BigInt(r.prizeClaimed || '0')
+          let prizeClaimed = r.prizeClaimed !== '0'
+
+          if (isV2round) {
+            try {
+              const pool = new ethers.Contract(r.poolAddress, POOL_V2_ABI, provider)
+              const [info, commitAt, userPos] = await Promise.all([
+                getCachedRoundInfo(pool, r.poolAddress, BigInt(r.roundId), ac.signal),
+                _cached(`commitAfter:${r.poolAddress}:${r.roundId}`, 5_000, () => pool.getCommitAfterTime(BigInt(r.roundId)).catch(() => 0), ac.signal),
+                _cached(`userPosition:${r.poolAddress}:${r.roundId}:${account}`, 10_000, () => pool.getUserPosition(BigInt(r.roundId), account).catch(() => null), ac.signal),
+              ])
+              normalizedState = Number(info.state)
+              commitAfterTime = Number(commitAt || 0)
+              prizeWei = roundYieldWei(info, true)
+              try {
+                const shmonAddr = await _cached(`shmon:${r.poolAddress}`, 86400_000 * 365, () => pool.shmon().catch(() => ethers.ZeroAddress), ac.signal)
+                if (shmonAddr && shmonAddr !== ethers.ZeroAddress && prizeWei > 0n) {
+                  const shmon = new ethers.Contract(shmonAddr, SHMON_READ_ABI, provider)
+                  prizeWei = await _cached(`shmonAssets:${shmonAddr}:${prizeWei.toString()}`, 15_000, () => shmon.convertToAssets(prizeWei), ac.signal)
+                }
+              } catch (err) {
+                if (isAbortError(err)) throw err
+              }
+              prizeClaimed = Boolean(info.prizeClaimed)
+              if (userPos) {
+                remainingPrincipalWei = BigInt(userPos[0] || 0n)
+              }
+            } catch (err) {
+              if (isAbortError(err)) throw err
+            }
+          }
+
+          putRow({
             rid: r.roundId,
             poolAddr: r.poolAddress,
             isV2: isV2round,
-            state: r.state === 'open' ? 0 : r.state === 'committed' ? 1 : r.state === 'settled' ? 2 : r.state === 'skipped' ? 3 : 0,
+            state: normalizedState,
             salesEndTime: salesEndSec,
-            commitAfterTime: salesEndSec + (isV2round ? 604800 : 0),
+            commitAfterTime,
             isWinner: r.won === 1,
-            prizeClaimed: r.prizeClaimed !== '0',
-            principalWei: BigInt(r.monPaid || '0'),
-            principalMon: Number(ethers.formatEther(BigInt(r.monPaid || '0'))).toFixed(4),
+            prizeClaimed,
+            principalWei: remainingPrincipalWei,
+            principalMon: Number(ethers.formatEther(remainingPrincipalWei)).toFixed(4),
             withdrawableShares: 0n,
             withdrawableMon: null,
-            prizeWei: BigInt(r.prizeClaimed || '0'),
-            canWithdraw: ['settled', 'skipped'].includes(r.state) && BigInt(r.monPaid || '0') > 0n && r.principalWithdrawn === '0',
+            prizeWei,
+            canWithdraw: isTerminalRound(normalizedState, isV2round) && remainingPrincipalWei > 0n,
           })
         }
 
+        const rows = Array.from(rowsByKey.values())
         rows.sort((a, b) => b.rid !== a.rid ? b.rid - a.rid : a.poolAddr.localeCompare(b.poolAddr))
-        if (!cancelled) setMyRounds(rows)
-      } catch {
-        if (!cancelled) setMyRounds([])
+        assertNotAborted(ac.signal)
+        setMyRounds(rows)
+      } catch (err) {
+        if (!isAbortError(err)) setMyRounds([])
       }
     }
     loadMyRounds()
-    return () => { cancelled = true }
+    return () => ac.abort()
   }, [account, poolAddresses, poolAddressesV2, roundId])
 
   const myRoundsStats = useMemo(() => {
     const lockedWei = myRounds
-      .filter((r) => r.state !== 3)
+      .filter((r) => !isTerminalRound(r.state, r.isV2))
       .reduce((acc, r) => acc + (r.principalWei || 0n), 0n)
 
     const claimableWei = myRounds
-      .filter((r) => r.state === 3)
+      .filter((r) => isTerminalRound(r.state, r.isV2))
       .reduce((acc, r) => acc + (r.principalWei || 0n), 0n)
 
     const winningsWei = myRounds
@@ -1923,10 +2254,22 @@ export default function App() {
     })
   }, [poolAddress])
 
+  const claimFlowIsV2 = useMemo(() => {
+    const lc = String(claimFlow.poolAddr || '').toLowerCase()
+    return poolAddressesV2.some((a) => a.toLowerCase() === lc)
+  }, [claimFlow.poolAddr, poolAddressesV2])
+
   const handleClaimOnly = useCallback(async () => {
     if (!claimFlow.rid) return
-    if (isV2Pool) {
-      const ok = await handleClaimPrize(claimFlow.rid, claimFlow.poolAddr)
+    if (claimFlowIsV2) {
+      if (claimFlow.mode === 'winner') {
+        const claimOk = await handleClaimPrize(claimFlow.rid, claimFlow.poolAddr)
+        if (!claimOk) return
+        const withdrawOk = await handleWithdraw(claimFlow.rid, claimFlow.poolAddr)
+        if (withdrawOk) setClaimFlow((prev) => ({ ...prev, open: false }))
+        return
+      }
+      const ok = await handleWithdraw(claimFlow.rid, claimFlow.poolAddr)
       if (ok) setClaimFlow((prev) => ({ ...prev, open: false }))
       return
     }
@@ -1943,7 +2286,7 @@ export default function App() {
       setActionStatus(`Withdraw principal: submitted ${String(withdrawTxHash).slice(0, 10)}...`)
     }, claimFlow.poolAddr)
     if (ok) setClaimFlow((prev) => ({ ...prev, open: false }))
-  }, [claimFlow.mode, claimFlow.poolAddr, claimFlow.rid, handleClaimPrize, runSignedAction, isV2Pool])
+  }, [claimFlow.mode, claimFlow.poolAddr, claimFlow.rid, handleClaimPrize, handleWithdraw, runSignedAction, claimFlowIsV2])
 
   const handleWithdrawOnly = useCallback(async () => {
     const ok = await handleWithdraw(claimFlow.rid, claimFlow.poolAddr)
@@ -2006,29 +2349,46 @@ export default function App() {
       return
     }
 
-    // Open a blank window synchronously while still in user-gesture context.
-    // Browsers block window.open() called after await — opening now and navigating later bypasses that.
-    const newWin = window.open('about:blank', '_blank', 'noreferrer')
+    // Open from the click gesture so wallet/mobile browsers do not block it
+    // after async wallet confirmation. Use a neutral holding page instead of
+    // cloning EverDraw, then move it to shmonad.xyz once redemption succeeds.
+    const shmonadWindow = window.open('', '_blank')
+    try {
+      if (shmonadWindow) {
+        shmonadWindow.document.write('<!doctype html><title>Opening shmonad.xyz</title><body style="font-family:system-ui;background:#100d1e;color:#fff;display:grid;place-items:center;height:100vh;margin:0"><main style="text-align:center"><h1>Redeeming…</h1><p>shmonad.xyz will open after your wallet confirms. Then click Unstake.</p></main></body>')
+        shmonadWindow.document.close()
+      }
+    } catch {}
+    const openShmonad = () => {
+      try {
+        if (shmonadWindow && !shmonadWindow.closed) {
+          shmonadWindow.location.assign('https://shmonad.xyz')
+          shmonadWindow.focus?.()
+          return
+        }
+      } catch {}
+      window.location.assign('https://shmonad.xyz')
+    }
 
-    if (isV2Pool && claimFlow.mode === 'winner') {
+    if (claimFlowIsV2 && claimFlow.mode === 'winner') {
       const claimOk = await handleClaimPrize(claimFlow.rid, claimFlow.poolAddr)
-      if (!claimOk) { newWin?.close(); return }
+      if (!claimOk) return
       const withdrawOk = await handleWithdraw(claimFlow.rid, claimFlow.poolAddr)
-      if (!withdrawOk) { newWin?.close(); return }
-      if (newWin) newWin.location.href = 'https://shmonad.xyz'
+      if (!withdrawOk) return
       setClaimRedirectWarningOpen(false)
       setClaimFlow((prev) => ({ ...prev, open: false }))
       setActionStatus('Tickets redeemed. Opening shmonad.xyz to convert to MON...')
+      openShmonad()
       return
     }
 
-    if (isV2Pool) {
+    if (claimFlowIsV2) {
       const ok = await handleWithdraw(claimFlow.rid, claimFlow.poolAddr)
-      if (!ok) { newWin?.close(); return }
-      if (newWin) newWin.location.href = 'https://shmonad.xyz'
+      if (!ok) return
       setClaimRedirectWarningOpen(false)
       setClaimFlow((prev) => ({ ...prev, open: false }))
       setActionStatus('Tickets redeemed. Opening shmonad.xyz to convert to MON...')
+      openShmonad()
       return
     }
 
@@ -2040,21 +2400,21 @@ export default function App() {
         const withdrawTxHash = await sendTx('withdrawPrincipal', [BigInt(claimFlow.rid)], 500000n, { nonceOffset: 1 })
         setActionStatus(`Withdraw principal: submitted ${String(withdrawTxHash).slice(0, 10)}...`)
       }, claimFlow.poolAddr)
-      if (!ok) { newWin?.close(); return }
-      if (newWin) newWin.location.href = 'https://shmonad.xyz'
+      if (!ok) return
       setClaimRedirectWarningOpen(false)
       setClaimFlow((prev) => ({ ...prev, open: false }))
       setActionStatus('Prize and principal withdrawn. Continue MON conversion in shmonad.xyz.')
+      openShmonad()
       return
     }
 
-    const ok = await handleWithdraw(claimFlow.rid)
-    if (!ok) { newWin?.close(); return }
-    if (newWin) newWin.location.href = 'https://shmonad.xyz'
+    const ok = await handleWithdraw(claimFlow.rid, claimFlow.poolAddr)
+    if (!ok) return
     setClaimRedirectWarningOpen(false)
     setClaimFlow((prev) => ({ ...prev, open: false }))
     setActionStatus('Principal withdrawn. Continue MON conversion in shmonad.xyz.')
-  }, [claimFlow.mode, claimFlow.rid, claimFlow.poolAddr, handleClaimPrize, handleWithdraw, isV2Pool, runSignedAction])
+    openShmonad()
+  }, [claimFlow.mode, claimFlow.rid, claimFlow.poolAddr, handleClaimPrize, handleWithdraw, claimFlowIsV2, runSignedAction])
 
   const buyTicketsShmon = useCallback(async () => {
     try {
@@ -2064,6 +2424,8 @@ export default function App() {
 
       if (!poolAddress) throw new Error('Missing V2 pool address')
       if (!isV2Pool) throw new Error('Selected pool is not V2')
+      const currentSalesOpen = roundInfo && Number(roundInfo.state) === 0 && Math.max(0, Number(roundInfo.salesEndTime ?? 0) - Math.floor(Date.now() / 1000)) > 0
+      if (!currentSalesOpen) throw new Error('Deposits are closed for this round')
       const walletProvider = getWalletProvider()
       if (!walletProvider) throw new Error('Wallet required')
 
@@ -2077,8 +2439,9 @@ export default function App() {
 
       const readProvider = await getReadProvider()
       const pool = new ethers.Contract(poolAddress, POOL_V2_ABI, readProvider)
-      const shmonAddress = await pool.shmon()
-      const sharesOwed = BigInt(await pool.getFunction('ticketPriceMON').staticCall()) * BigInt(n)
+      const shmonAddress = await _cached(`shmon:${poolAddress}`, 86400_000 * 365, () => pool.shmon())
+      const ticketPriceForShares = await _cached(`ticketPrice:${poolAddress}`, 86400_000 * 365, () => pool.getFunction('ticketPriceMON').staticCall())
+      const sharesOwed = BigInt(ticketPriceForShares) * BigInt(n)
       const nonce = await fetchNonceWithRetry(account)
       const feeData = await readProvider.getFeeData()
       const gasPrice = feeData.gasPrice ?? feeData.maxFeePerGas
@@ -2119,7 +2482,7 @@ export default function App() {
     } finally {
       setLoading(false)
     }
-  }, [account, expectedChainId, isV2Pool, poolAddress, refresh, ticketCountInput])
+  }, [account, expectedChainId, isV2Pool, poolAddress, refresh, ticketCountInput, roundInfo])
 
 
   const setMaxTickets = useCallback(() => {
@@ -2157,7 +2520,7 @@ export default function App() {
     }, 1800)
   }, [winnersTransitioning])
 
-  if (!poolAddress) {
+  if (!poolAddress && currentPage !== 'article') {
     return (
       <div className="app-shell">
         <div className="app-container">
@@ -2178,9 +2541,9 @@ export default function App() {
             winnerAddress={winnersSource.info ? String(winnersSource.info.winner) : ''}
             prize={
               isUnstaking && winnersSource.info
-                ? `~${Number(ethers.formatEther(winnersSource.info.yieldMON || 0n)).toFixed(4)} MON (estimated)`
+                ? `~${Number(ethers.formatEther(roundYieldWei(winnersSource.info, isV2Pool))).toFixed(4)} MON (estimated)`
                 : winnersSource.info
-                  ? `${Number(ethers.formatEther(winnersSource.info.yieldMON)).toFixed(4)} MON`
+                  ? `${Number(ethers.formatEther(roundYieldWei(winnersSource.info, isV2Pool))).toFixed(4)} MON`
                   : currentPrizePool.value
             }
             participants={winnersSource.participants}
@@ -2193,20 +2556,20 @@ export default function App() {
             canWithdraw={canWithdrawPrincipal}
             settlementLabel={
               isUnstaking
-                ? `Round finalizing — ${formatCountdown(shownSettlementSecs)} remaining`
-                : Number(winnersSource?.info?.state ?? -1) === 3
-                  ? 'Settled — Withdraw Available'
+                ? `Winner revealed — ${formatCountdown(shownSettlementSecs)} remaining`
+                : winnersTerminal
+                  ? ''
                   : 'Winner Revealed'
             }
             settlementCountdown={
-              Number(winnersSource?.info?.state ?? -1) === 3
+              winnersTerminal
                 ? '00:00:00:00'
                 : shownSettlementSecs > 0
                   ? formatCountdown(shownSettlementSecs)
                   : previousSettlementCountdown
             }
-            onClaimPrize={() => openClaimFlow({ mode: 'winner', rid: winnersRoundId, principalWei: winnersUserPrincipalWei, prizeWei: winnersYieldWei })}
-            onWithdraw={() => openClaimFlow({ mode: 'principal', rid: winnersRoundId, principalWei: winnersUserPrincipalWei, prizeWei: winnersYieldWei })}
+            onClaimPrize={() => openClaimFlow({ mode: 'winner', rid: winnersRoundId, poolAddr: winnersPoolAddress, principalWei: winnersUserPrincipalWei, prizeWei: winnersYieldWei })}
+            onWithdraw={() => openClaimFlow({ mode: 'principal', rid: winnersRoundId, poolAddr: winnersPoolAddress, principalWei: winnersUserPrincipalWei, prizeWei: winnersYieldWei })}
             actionBusy={actionBusy}
             actionStatus={actionStatus}
             actionError={actionError}
@@ -2214,7 +2577,8 @@ export default function App() {
         ) : (
           <>
             <Header account={account} onConnect={connectWallet} currentPage={currentPage} points={pointsProfile} />
-            {pointsBanner ? <div className="points-banner"><span>{pointsBanner}</span><button onClick={() => setPointsBanner(null)}>×</button></div> : null}
+            {currentPage === 'article' ? <FounderLaunchArticle /> : null}
+            {currentPage !== 'article' && pointsBanner ? <div className="points-banner"><span>{pointsBanner}</span><button onClick={() => setPointsBanner(null)}>×</button></div> : null}
         {currentPage === 'stats' ? <StatsPage /> : null}
             {currentPage === 'profile' ? <ProfilePage account={account} points={pointsProfile} history={pointsHistory} /> : null}
             {currentPage === 'leaderboard' ? <LeaderboardPage account={account} /> : null}
@@ -2277,7 +2641,14 @@ export default function App() {
             </>
           )}
           <div className="vault-bar-divider"></div>
-          <button className={`vault-aux-btn ${mainView === 'previous' ? 'active' : ''}`} onClick={() => setMainView('previous')} disabled={!settledRoundInfo}>Previous Vault</button>
+          <button
+            className={`vault-aux-btn ${mainView === 'previous' ? 'active' : ''}`}
+            onClick={() => {
+              setVaultBPending(false)
+              setMainView('previous')
+            }}
+            disabled={false}
+          >Previous Vault</button>
           <button className={`vault-aux-btn ${mainView === 'myrounds' ? 'active' : ''}`} onClick={() => setMainView('myrounds')}>My Rounds</button>
         </section>
 
@@ -2287,47 +2658,32 @@ export default function App() {
               <span>My Rounds</span>
               <span>{myRounds.length} Records</span>
             </div>
-            <div className="participants-table">
-              <div className="participants-row participants-header">
-                <span>#</span><span>Round / Status</span><span>Result</span><span>Principal</span><span>Prize</span><span>Action</span>
+            <div className="participants-table my-rounds rounds-table">
+              <div className="participants-row participants-header rounds-row">
+                <span>Entry</span><span>Round</span><span>Result</span><span>Principal</span><span>Prize</span><span>Action</span>
               </div>
               {myRounds.length === 0 ? (
-                <div className="participants-row">
-                  <span>—</span><span>No prior rounds found for this wallet</span><span>—</span><span>0.0000 MON</span><span>—</span><span>—</span>
+                <div className="participants-row rounds-row">
+                  <span>—</span><span>No prior rounds found for this wallet</span><span>—</span><span>0.0000 MON</span><span>—</span><span className="action-cell">—</span>
                 </div>
-              ) : myRounds.map((r) => {
-                const myRoundStatusLabel = r.isV2
-                  ? (r.state === 0
-                    ? (now < r.salesEndTime
-                      ? `Deposits close in ${formatCountdown(r.salesEndTime - now)}`
-                      : now < r.commitAfterTime
-                        ? `Yield accruing · Drawing in ${formatCountdown(r.commitAfterTime - now)}`
-                        : 'Awaiting draw')
-                    : r.state === 1 ? 'Drawing'
-                    : r.state === 2 ? 'Settled'
-                    : r.state === 3 ? 'Skipped'
-                    : r.state === 4 ? 'Cancelled'
-                    : 'Unknown')
-                  : (r.state === 0 ? 'Accepting Deposits'
-                    : r.state === 1 ? 'Draw Pending'
-                    : r.state === 2 ? 'Finalizing'
-                    : 'Settled')
+              ) : myRounds.map((r, index) => {
                 const myRoundResultLabel = r.isV2
-                  ? (r.state < 2 ? 'Active' : r.state === 2 ? (r.isWinner ? 'Won!' : 'No win') : 'Redeem available')
-                  : (r.state < 3 ? 'Locked' : (r.isWinner ? 'Winner' : 'Participant'))
-                const actionLabel = r.isV2 ? (r.isWinner && !r.prizeClaimed ? 'Claim / Redeem' : 'Redeem') : 'Claim'
-                const pendingActionLabel = r.isWinner ? 'Claiming...' : 'Redeeming...'
+                  ? (r.state < 2 ? 'Active' : r.state === 2 ? (r.isWinner ? 'Won' : 'No win') : 'No draw')
+                  : (r.state < 3 ? 'Locked' : (r.isWinner ? 'Won' : 'Participant'))
+                const actionLabel = r.canWithdraw ? 'Redeem' : (r.state === 0 ? 'Deposit' : 'Claimed')
+                const pendingActionLabel = actionLabel
                 const prizeLabel = r.isWinner
-                  ? `${r.prizeClaimed ? 'Claimed' : 'Prize'}: ${Number(ethers.formatEther(r.prizeWei || 0n)).toFixed(2)} MON`
+                  ? `${Number(ethers.formatEther(r.prizeWei || 0n)).toFixed(4)} MON`
                   : '—'
+                const entryLabel = myRounds.length - index
                 return (
-                <div className="participants-row" key={`${r.poolAddr}:${r.rid}`}>
-                  <span>{r.rid}</span>
-                  <span>Round #{r.rid} {'\u00B7'} {myRoundStatusLabel}</span>
+                <div className="participants-row rounds-row" key={`${r.poolAddr}:${r.rid}`}>
+                  <span>{entryLabel}</span>
+                  <span>Round #{r.rid}</span>
                   <span>{myRoundResultLabel}</span>
                   <span>{r.principalMon} MON</span>
                   <span className={r.isWinner ? (r.prizeClaimed ? 'my-rounds-prize claimed' : 'my-rounds-prize won') : 'my-rounds-prize'}>{prizeLabel}</span>
-                  <span>
+                  <span className="action-cell">
                     {r.canWithdraw ? (
                       <button
                         className="max-btn"
@@ -2350,21 +2706,21 @@ export default function App() {
                               className="max-btn"
                               onClick={() => setMainView('current')}
                             >
-                              Deposit Now
+                              Deposit
                             </button>
                           )
                           : now < r.commitAfterTime
-                            ? 'Yield accruing'
-                            : 'Awaiting draw')
+                            ? '—'
+                            : '—')
                         : (
                           <button
                             className="max-btn"
                             onClick={() => setMainView(Number(r.rid) % 2 === 1 ? 'vaultA' : 'vaultB')}
                           >
-                            Deposit Now
+                            Deposit
                           </button>
                         )
-                    ) : r.state === 3 && !r.canWithdraw ? 'Done' : 'Waiting'}
+                    ) : isTerminalRound(r.state, r.isV2) && !r.canWithdraw ? 'Claimed' : '—'}
                   </span>
                 </div>
               )})}
@@ -2457,24 +2813,23 @@ export default function App() {
                     >
                       {loading
                         ? 'Submitting...'
-                        : !account
-                          ? 'Connect Wallet to Buy'
-                          : isV2Pool
-                            ? `Buy with ${buyWithShmon ? 'shMON' : 'MON'}`
-                            : isDeadRound
-                              ? 'Vault Cycling — Next Round Soon'
-                              : !shownIsCurrentRound
-                                ? 'This Vault is Locked'
-                                : !salesOpen
-                                  ? 'Buy Unavailable'
-                                  : wrongNetwork
-                                    ? 'Wrong network — click Buy to switch automatically'
+                        : isDeadRound
+                          ? 'Vault Cycling — Next Round Soon'
+                          : !shownIsCurrentRound
+                            ? (mainView === 'previous' ? `Buy with ${isV2Pool && buyWithShmon ? 'shMON' : 'MON'}` : 'This Vault is Locked')
+                            : !salesOpen
+                              ? 'Deposits closed'
+                              : !account
+                                ? 'Connect Wallet to Buy'
+                                : wrongNetwork
+                                  ? 'Wrong network — click Buy to switch automatically'
+                                  : isV2Pool
+                                    ? `Buy with ${buyWithShmon ? 'shMON' : 'MON'}`
                                     : canBuyTx
                                       ? 'Buy Tickets'
                                       : 'Buy Unavailable'}
                     </button>
                     {(loading || wrongNetwork || !salesOpen || !account || !shownIsCurrentRound) && buyDisabledReason ? <p className="deposit-caption">{buyDisabledReason}</p> : null}
-                    {pointsPreview ? <p className="deposit-caption points-preview">You'll earn approximately {pointsPreview.estimated_total ?? 0} points this round.</p> : null}
                   </div>
 
                   {status ? <p className="deposit-caption">{status}</p> : null}
@@ -2483,7 +2838,9 @@ export default function App() {
               </div>
             )}
 
-            {drawFinished ? (
+            {mainView === 'previous' ? (
+              <VaultAnimationTest onComplete={() => setShowWinnersView(true)} />
+            ) : drawFinished ? (
               <VaultAnimationTest onComplete={() => setShowWinnersView(true)} />
             ) : (
               <div className={`card filled vault-card ${winnersTransitioning ? 'to-winners' : ''}`} id="vault-card">
@@ -2509,6 +2866,7 @@ export default function App() {
             state={shownState >= 0 ? shownState : 0}
             settlementSecs={shownSettlementSecs}
             secondsRemaining={shownSecondsRemaining}
+            isV3={isV3Pool}
           />
         ) : null}
 
@@ -2518,15 +2876,15 @@ export default function App() {
               <StatCard
                 label="Total Locked (Active Rounds)"
                 value={`${myRoundsStats.lockedMon} MON`}
-                sub="Principal in non-settled rounds"
+                sub="Principal in active rounds"
                 icon={(
                   <svg viewBox="0 0 24 24"><path fill="currentColor" d="M17 9h-1V7a4 4 0 1 0-8 0v2H7a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2zm-7-2a2 2 0 1 1 4 0v2h-4V7z"/></svg>
                 )}
               />
               <StatCard
-                label="Total Principal Claimable"
+                label="Total Redeemable"
                 value={`${myRoundsStats.claimableMon} MON`}
-                sub="Settled rounds ready to withdraw"
+                sub="Rounds ready to redeem"
                 icon={(
                   <svg viewBox="0 0 24 24"><path d="M12 2v10m0 0l-4-4m4 4l4-4M5 14v5h14v-5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
                 )}
@@ -2534,7 +2892,7 @@ export default function App() {
               <StatCard
                 label="Total Winnings To Date"
                 value={`${myRoundsStats.winningsMon} MON`}
-                sub="Yield from settled wins"
+                sub="Yield from wins"
                 icon={(
                   <svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
                 )}
@@ -2568,8 +2926,8 @@ export default function App() {
               />
               <StatCard
                 label="Winner"
-                value={activeRoundInfo && (Number(activeRoundInfo.state) === 3 || isUnstaking) ? shortAddr(activeRoundInfo.winner) : '\u2014'}
-                sub={activeRoundInfo && (Number(activeRoundInfo.state) === 3 || isUnstaking) ? `Winning ticket: ${activeRoundInfo.winningTicket}` : 'Revealed at settlement'}
+                value={activeRoundInfo && (isSettledState(activeRoundInfo.state, isV2Pool) || isUnstaking) ? shortAddr(activeRoundInfo.winner) : '\u2014'}
+                sub={activeRoundInfo && (isSettledState(activeRoundInfo.state, isV2Pool) || isUnstaking) ? `Winning ticket: ${activeRoundInfo.winningTicket}` : 'Revealed after draw'}
                 icon={(
                   <svg viewBox="0 0 24 24"><path fill="currentColor" d="M6 4h12v3a4 4 0 0 1-4 4h-1v2.08A4 4 0 0 1 16 17v2H8v-2a4 4 0 0 1 3-3.87V11h-1a4 4 0 0 1-4-4V4z"/></svg>
                 )}
@@ -2577,15 +2935,15 @@ export default function App() {
               <StatCard
                 label="Total Prize Pool"
                 value={
-                  activeRoundInfo && Number(activeRoundInfo.state) === 3
-                    ? `${Number(ethers.formatEther(activeRoundInfo.yieldMON)).toFixed(4)} MON`
+                  activeRoundInfo && isSettledState(activeRoundInfo.state, isV2Pool)
+                    ? `${Number(ethers.formatEther(roundYieldWei(activeRoundInfo, isV2Pool))).toFixed(4)} MON`
                     : isUnstaking && activeRoundInfo
-                      ? `~${Number(ethers.formatEther(activeRoundInfo.yieldMON || 0n)).toFixed(4)} MON (est.)`
+                      ? `~${Number(ethers.formatEther(roundYieldWei(activeRoundInfo, isV2Pool))).toFixed(4)} MON (est.)`
                       : currentPrizePool.value
                 }
                 sub={
-                  activeRoundInfo && Number(activeRoundInfo.state) === 3
-                    ? 'Final settled yield'
+                  activeRoundInfo && isSettledState(activeRoundInfo.state, isV2Pool)
+                    ? 'Final yield'
                     : isUnstaking
                       ? 'Estimated yield'
                       : currentPrizePool.sub

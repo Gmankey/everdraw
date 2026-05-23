@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+remote_name="${1:-origin}"
+remote_url="${2:-}"
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$remote_ref" in
+    refs/heads/staging)
+      echo "[pre-push] Checking staging source-control guards for $remote_name $remote_url"
+      npm run build
+      npm run check:abi
+      npm run check:deploy-source
+      if command -v forge >/dev/null 2>&1; then
+        forge test
+      elif [ -x "$HOME/.foundry/bin/forge" ]; then
+        "$HOME/.foundry/bin/forge" test
+      else
+        echo "[pre-push] forge not found; install Foundry before pushing contract changes to staging." >&2
+        exit 1
+      fi
+      ;;
+  esac
+done

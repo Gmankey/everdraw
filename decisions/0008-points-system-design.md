@@ -52,14 +52,21 @@ Layered on top of base × multiplier. Additive in points.
 **One-time per wallet:**
 
 - First deposit: +25 points.
-- First win: +100 points.
-- First time hitting 4-week, 13-week, 26-week, 52-week streak: +50, +200, +500, +1000 points respectively.
+- Comeback King: +100 points, awarded on the first win only if the wallet had a prior deposit before that winning round. A same-round first deposit + win does not trigger it.
+- On the Double: +50 points, awarded once when the wallet has active positions in two vaults at the award checkpoint.
+- Loss-streak threshold bonuses: +50 at 10, +200 at 26, and +500 at 52 consecutive non-winning settled rounds. Each threshold fires once.
+- First time hitting named streak milestones:
+  - 2-week Germination Streak: +10 points.
+  - 4-week Sprout Streak: +50 points.
+  - 13-week Seedling Streak: +200 points.
+  - 26-week Flourishing Streak: +500 points.
+  - 52-week Evergreen Streak: +1000 points.
 
 **Recurring:**
 
 - Win bonus: +25 points per round won.
-- Both-vaults bonus: +10% on the round's points if the user has an active deposit in both Vault A and Vault B at the same weekly checkpoint.
-- Loss-streak consolation: after 10 consecutive non-winning rounds, +20% on round points until the user wins. Resets on first win.
+
+The previous recurring both-vault +10% and recurring loss-streak +20% mechanics are intentionally removed. On the Double rewards trying both vaults without making dust deposits in a second vault a perpetual farming strategy. Loss-streak thresholds reward unlucky participation without creating a permanent multiplier that runs until the next win. Skipped/failed rounds do not count toward the loss streak and do not break it.
 
 ### What's not in Phase 1
 
@@ -71,9 +78,9 @@ Layered on top of base × multiplier. Additive in points.
 
 ### Retroactive points
 
-**No backfill.** Points start fresh at launch. Existing depositors do not get retroactive round points or first-deposit bonuses. Everyone starts at zero on day one. Streak counters start at zero on day one.
+Production points are an append-only recognition ledger once shown publicly. Mechanics changes must preserve existing wallet balances unless the user explicitly approves a reset plan.
 
-This keeps the launch honest and removes any kingmaker dynamic where early users wake up with a permanent points advantage that wasn't earned under the live system.
+The production indexer uses `POINTS_START_UNIX=0` so live balances can be reconstructed from all indexed participation. Do not reintroduce a later points-start gate, run `reset:points`, or delete `wallet_points` / `wallet_round_points` in production without explicit approval.
 
 ### How users see their points
 
@@ -82,9 +89,10 @@ This keeps the launch honest and removes any kingmaker dynamic where early users
 - **Settlement card.** When a round settles, the previous-vault view shows points earned alongside prize and withdraw actions.
 - **Profile page** at `/profile`:
   - Lifetime points.
-  - Current streak with progress bar to next tier.
+  - Current streak with visual weekly dots only; weekly dots do not have tooltips.
   - Active multiplier and tier badge.
   - Round-by-round history, last 12 rounds.
+  - Bonuses column for all bonuses, including streak milestones. First Deposit and Germination Streak are visible from the start. Other streak milestones and mystery bonuses stay hidden until unlocked. Hidden rows show one masked label and a blank status column. Visible locked rows show `Locked`; unlocked rows show `UNLOCKED`.
 - **Leaderboard.** Top 100 by lifetime points, public, filterable by all-time or current month. Wallet addresses shown shortened (e.g. `0x1234…abcd`), with ENS resolution overriding when available.
 
 ### Notifications
@@ -106,7 +114,7 @@ Enough to motivate without legal exposure. Do not promise monetary value, token 
 - **2x multiplier cap** rewards loyalty meaningfully but does not price out new users. A new whale with a 10x deposit beats a half-year veteran on points easily.
 - **Strict streak (no insurance)** is simpler and more honest. Insurance mechanics often turn into engagement-debt features.
 - **Settlement-time award** future-proofs against TWAB.
-- **No retroactive backfill** is the cleanest start.
+- **Append-only live ledger** preserves already displayed production balances across mechanics changes.
 - **Generic tier names** match generic financial product expectations and avoid forced thematic branding that could feel try-hard.
 
 ## Alternatives considered
@@ -115,7 +123,7 @@ Enough to motivate without legal exposure. Do not promise monetary value, token 
 - **Aggressive multipliers (5x+).** Rejected. Locks out late joiners.
 - **Vault-loyalty streak (must always deposit in same vault).** Rejected. Forces artificial constraint when the two-vault design is supposed to give users flexibility.
 - **Streak based on per-round participation rather than per-week checkpoint.** Rejected. Would require depositing in both A and B every week to maintain streak. Too punishing.
-- **Backfilling round points retroactively for existing depositors.** Rejected per user instruction. Cleaner launch, no kingmaker.
+- **Resetting displayed production points.** Rejected unless the user explicitly approves a reset plan. Once points are public, balances must be preserved.
 
 ## Consequences
 

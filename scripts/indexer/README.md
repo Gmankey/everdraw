@@ -24,11 +24,8 @@ This directory contains the initial Everdraw indexer/backend scaffold discussed 
 - The runner ingests finalized blocks only by waiting for configurable confirmations.
 - Configure `RPC_URL_FALLBACK` with a distinct RPC endpoint to enable `ethers.FallbackProvider` failover.
 - Configure two-vault V2 indexing with `POOL_ADDRESSES_V2=<vaultA>,<vaultB>`.
-- Configure the no-backfill points launch gate with `POINTS_START_UNIX=<unix-seconds>`.
-  Production pre-launch reset gate: `1778217646` (`2026-05-08T05:20:46Z`).
-  Rounds settled before this timestamp remain indexed for round/participation history but do not award points.
-- One-time pre-public-launch points reset: after deploying the gate, run `npm run reset:points` on the live indexer.
-  This truncates only `wallet_points`, `wallet_streaks`, and `wallet_round_points`.
+- Production uses `POINTS_START_UNIX=0` so the live points ledger can be reconstructed from all indexed historical participation.
+- Do not run `npm run reset:points` on the live indexer unless the user explicitly approves a production points reset. Once points have been shown publicly, existing wallet balances must be preserved across mechanics changes.
 - Participant lists are pool scoped with `/api/rounds/:roundId/participants?pool=<address>`; the unscoped form remains as a backwards-compatible shim and may merge colliding round IDs.
 - `replaceForRound(roundId, rows)` explicitly deletes the round first, then inserts replacements so a reorg to zero rows does not leave stale `wallet_rounds` state.
 - The runner currently polls RPC and rebuilds derived tables after each finalized sync window.

@@ -7,6 +7,7 @@
 | Vault | Network | Address | Anchor |
 |---|---|---|---|
 | Vault A | Monad Mainnet | `0x2208a2Fe2d08061B2a5ee69A2a3b906B58C17888` | Wed 13:00 UTC |
+| Vault B | Monad Mainnet | `0x1B20BAa2D3992834E1E75cf75e3cD7b6AAA38096` | Sun 13:42 UTC |
 | Vault B | Monad Mainnet | (deployed Sun 2026-05-10, address to be added post-deploy) | Sun 01:00 UTC |
 
 Both verified on [MonadVision](https://monadexplorer.com). Source, ABI, and constructor arguments are public.
