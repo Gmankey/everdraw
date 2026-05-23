@@ -156,17 +156,42 @@ cast call $ADDR "owner()(address)" --rpc-url $RPC_URL
 
 Confirm all values match the intended deploy params.
 
+Attached output for testnet deployment `0x11c3F083A319aA35a6A5C43AdA2b243db0c06FfB`:
+
+~~~text
+ticketPriceMON()(uint96): 10000000000000000
+roundDurationSec()(uint32): 120
+yieldPeriodSec()(uint32): 300
+shmon()(address): 0x282BdDFF5e58793AcAb65438b257Dbd15A8745C9
+entropy()(address): 0x825c0390f379C631f3Cf11A82a37D20BddF93c07
+entropyProvider()(address): 0x6CC14824Ea2918f5De5C2f75A9Da968ad4BD6344
+owner()(address): 0x47331C3949662C23A7F8B2FF6F643CdAfaAda90a
+~~~
+
+Smoke result from 2026-05-23 00:12 UTC:
+
+~~~text
+Deploy Contract at 0x11c3F083A319aA35a6A5C43AdA2b243db0c06FfB
+Skip round 1: RoundSkipped
+Buy ticket: TicketsBought, shMON deposit
+commitDraw: VRFRequested, sequence 3150
+Pyth callback: state -> Drawn
+finalizeDraw: WinnerDrawn, RoundSettled, prizeShares > 0
+claimPrize: shMON transfer 407,374,180,428 shares
+withdrawPrincipal: shMON transfer 961,527,953,695,836 shares
+~~~
+
 ## Close-Out Checklist
 
 - [x] Testnet Pyth Entropy address confirmed and documented
 - [x] Testnet shMON address confirmed and documented
 - [x] `scripts/deploy-ticket-prize-pool-shmon-v3.js` committed
 - [x] `deploy:testnet:v3` and `deploy:mainnet:v3` in `package.json`
-- [ ] Testnet deploy address recorded in `deployments/monad-testnet.json`
-- [ ] Full smoke test steps 1-6 completed with no errors
-- [ ] `cast call` post-deploy verification output attached to ticket
+- [x] Testnet deploy address recorded in `deployments/monad-testnet.json`
+- [x] Full smoke test steps 1-6 completed with no errors
+- [x] `cast call` post-deploy verification output attached to ticket
 - [x] `deployments/monad-mainnet.json` not updated for testnet
 
-## Current Blocker
+## Status
 
-The deploy/smoke path is ready. Actual testnet deployment requires local `PRIVATE_KEY` and a funded deployer wallet.
+Testnet deployment and full smoke test are complete. The branch is ready for PR review.
