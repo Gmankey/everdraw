@@ -33,6 +33,35 @@
       }
     },
     {
+      "role": "Vault B",
+      "status": "active",
+      "address": "0xd4F4286CE1E72562fdAfcD9F491974D0F245Ea9d",
+      "contractName": "TicketPrizePoolShmonV2",
+      "source": "src/TicketPrizePoolShmonV2.sol",
+      "abi": "abi/TicketPrizePoolShmonV2.json",
+      "deployedAt": "2026-05-24T00:36:00.000Z",
+      "anchor": "Sun 01:00 UTC",
+      "compiler": {
+        "version": "0.8.33+commit.64118f21",
+        "optimizer": true,
+        "optimizerRuns": 200,
+        "viaIR": true,
+        "evmVersion": "paris"
+      },
+      "constructorArgs": {
+        "shmon": "0x1B68626dCa36c7fE922fD2d55E4f631d962dE19c",
+        "ticketPriceMON": "1000000000000000000",
+        "roundDurationSec": 86400,
+        "yieldPeriodSec": 518100,
+        "owner": "0x84875804608467B3577605c0976dC645739091eD"
+      },
+      "postDeployVerification": {
+        "verifiedAt": "2026-05-24T00:39:00.000Z",
+        "method": "Side-by-side cast call of roundDurationSec, yieldPeriodSec, ticketPriceMON, shmon, owner vs Vault A — all 5 params matched ADR-0010.",
+        "adrs": ["ADR-0010", "ADR-0011"]
+      }
+    },
+    {
       "role": "Legacy Vault B",
       "status": "retiring-monitoring-only",
       "address": "0xed67ad46C694a5e963119a1Ca5F88eEBbb6e5a8a",
