@@ -63,3 +63,4 @@ Anything still unconfirmed.
 - [ADR-0016 — Production V2 source recovery](0016-production-v2-source-recovery.md)
 - [ADR-0017 — Production source-control invariant](0017-production-source-control-invariant.md)
 - [ADR-0018 — Legacy Vault B quarantine](0018-legacy-vault-b-quarantine.md)
+- [ADR-0019 — V3 mainnet migration: replace both V2 vaults with VRF contracts](0019-v3-mainnet-migration.md)
