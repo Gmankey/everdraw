@@ -43,7 +43,9 @@ export function createDeriveWalletRoundsService(
         const acc = getOrCreate(grouped, event.contractAddress, event.wallet, event.roundId);
 
         switch (event.eventName) {
-          case 'TicketsBought': {
+          case 'TicketsBought':
+          case 'TicketsPurchased': {
+            // Both legacy and V2 payloads are normalized to { roundId, buyer, ticketCount, monPaid }
             const payload = parsePayload<{
               roundId: number;
               buyer: string;
@@ -59,6 +61,15 @@ export function createDeriveWalletRoundsService(
           case 'WinnerDrawn':
             acc.won = 1;
             break;
+
+          case 'RoundSettled': {
+            // V2: winner is embedded in RoundSettled payload; mark won for the winning wallet
+            const payload = parsePayload<{ winner?: string }>(event.payload);
+            if (payload.winner && event.wallet && event.wallet === payload.winner) {
+              acc.won = 1;
+            }
+            break;
+          }
 
           case 'PrincipalWithdrawn': {
             const payload = parsePayload<{

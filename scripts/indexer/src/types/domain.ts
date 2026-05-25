@@ -1,16 +1,25 @@
 export type RoundState = 'open' | 'committed' | 'drawn' | 'unstaking' | 'settled' | 'skipped';
 
 export type SupportedEventName =
+  // Shared
   | 'RoundStarted'
-  | 'DrawCommitted'
-  | 'WinnerDrawn'
-  | 'UnstakeRequested'
   | 'RoundSettled'
   | 'RoundSkipped'
   | 'RoundFailed'
-  | 'TicketsBought'
   | 'PrizeClaimed'
-  | 'PrincipalWithdrawn';
+  | 'PrincipalWithdrawn'
+  // Legacy V2Compat-only
+  | 'DrawCommitted'
+  | 'WinnerDrawn'
+  | 'UnstakeRequested'
+  | 'TicketsBought'
+  // V2-only
+  | 'TicketsPurchased'
+  | 'RoundCommitted'
+  // V3-only
+  | 'VRFRequested'
+  | 'VRFFulfilled'
+  | 'EmergencyForceSettled';
 
 export interface RawEventRow {
   txHash: string;

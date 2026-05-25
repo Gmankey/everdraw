@@ -976,7 +976,7 @@ export default function App() {
   const poolAddress = selectedPoolAddress
   const isV2Pool = useMemo(() => poolAddressesV2.some((a) => a.toLowerCase() === String(poolAddress).toLowerCase()), [poolAddressesV2, poolAddress])
   const isV3Pool = useMemo(() => poolAddressesV3.some((a) => a.toLowerCase() === String(poolAddress).toLowerCase()), [poolAddressesV3, poolAddress])
-  const activePoolAbi = isV2Pool ? POOL_V2_ABI : POOL_ABI
+  const activePoolAbi = (isV2Pool || isV3Pool) ? POOL_V2_ABI : POOL_ABI
 
   const expectedChainId = import.meta.env.VITE_CHAIN_ID ? Number(import.meta.env.VITE_CHAIN_ID) : 143
   const estimatedApyPercent = import.meta.env.VITE_ESTIMATED_APY_PERCENT ? Number(import.meta.env.VITE_ESTIMATED_APY_PERCENT) : 12
@@ -1142,7 +1142,7 @@ export default function App() {
     const score = (v) => {
       if (v.isNowOpen) return 0
       if (v.state === 1 || v.state === 2) return 1
-      if (isSettledState(v.state, poolAddressesV2.some((a) => a.toLowerCase() === String(v.poolAddress).toLowerCase()))) return 2
+      if (isSettledState(v.state, poolAddressesV2.some((a) => a.toLowerCase() === String(v.poolAddress).toLowerCase()) && !poolAddressesV3.some((a) => a.toLowerCase() === String(v.poolAddress).toLowerCase()))) return 2
       return 3
     }
 
@@ -1456,7 +1456,7 @@ export default function App() {
 
       const readProvider = await getReadProvider()
       const callData = new ethers.Interface(activePoolAbi).encodeFunctionData(
-        isV2Pool ? 'buyTicketsMON' : 'buyTickets',
+        (isV2Pool || isV3Pool) ? 'buyTicketsMON' : 'buyTickets',
         [n]
       )
 
@@ -1875,7 +1875,7 @@ export default function App() {
 
     if (isSettledState(roundInfo.state, isV2Pool)) {
       return {
-        value: `${Number(ethers.formatEther(roundYieldWei(roundInfo, isV2Pool))).toFixed(4)} MON`,
+        value: `${Number(ethers.formatEther(roundYieldWei(roundInfo, isV2Pool || isV3Pool))).toFixed(4)} MON`,
         sub: 'Final yield'
       }
     }
@@ -1914,8 +1914,9 @@ export default function App() {
   const winnersRoundId = winnersSource?.rid || roundId
   const winnersPoolAddress = mainView === 'previous' && settledPoolAddress ? settledPoolAddress : poolAddress
   const winnersIsV2Pool = poolAddressesV2.some((a) => a.toLowerCase() === String(winnersPoolAddress).toLowerCase())
-  const winnersPoolAbi = winnersIsV2Pool ? POOL_V2_ABI : POOL_ABI
-  const winnersYieldWei = roundYieldWei(winnersSource?.info, winnersIsV2Pool)
+  const winnersIsV3Pool = poolAddressesV3.some((a) => a.toLowerCase() === String(winnersPoolAddress).toLowerCase())
+  const winnersPoolAbi = (winnersIsV2Pool || winnersIsV3Pool) ? POOL_V2_ABI : POOL_ABI
+  const winnersYieldWei = roundYieldWei(winnersSource?.info, winnersIsV2Pool || winnersIsV3Pool)
   const isWinnerWallet = !!account && !!winnersSource?.info?.winner && account.toLowerCase() === String(winnersSource.info.winner).toLowerCase()
   const winnersTerminal = isTerminalRound(winnersSource?.info?.state ?? -1, winnersIsV2Pool)
   const canClaimPrize = isWinnerWallet && winnersYieldWei > 0n && winnersTerminal
@@ -2493,9 +2494,9 @@ export default function App() {
             winnerAddress={winnersSource.info ? String(winnersSource.info.winner) : ''}
             prize={
               isUnstaking && winnersSource.info
-                ? `~${Number(ethers.formatEther(roundYieldWei(winnersSource.info, isV2Pool))).toFixed(4)} MON (estimated)`
+                ? `~${Number(ethers.formatEther(roundYieldWei(winnersSource.info, isV2Pool || isV3Pool))).toFixed(4)} MON (estimated)`
                 : winnersSource.info
-                  ? `${Number(ethers.formatEther(roundYieldWei(winnersSource.info, isV2Pool))).toFixed(4)} MON`
+                  ? `${Number(ethers.formatEther(roundYieldWei(winnersSource.info, isV2Pool || isV3Pool))).toFixed(4)} MON`
                   : currentPrizePool.value
             }
             participants={winnersSource.participants}
@@ -2887,14 +2888,14 @@ export default function App() {
               <StatCard
                 label="Total Prize Pool"
                 value={
-                  activeRoundInfo && isSettledState(activeRoundInfo.state, isV2Pool)
-                    ? `${Number(ethers.formatEther(roundYieldWei(activeRoundInfo, isV2Pool))).toFixed(4)} MON`
+                  activeRoundInfo && isSettledState(activeRoundInfo.state, isV2Pool || isV3Pool)
+                    ? `${Number(ethers.formatEther(roundYieldWei(activeRoundInfo, isV2Pool || isV3Pool))).toFixed(4)} MON`
                     : isUnstaking && activeRoundInfo
-                      ? `~${Number(ethers.formatEther(roundYieldWei(activeRoundInfo, isV2Pool))).toFixed(4)} MON (est.)`
+                      ? `~${Number(ethers.formatEther(roundYieldWei(activeRoundInfo, isV2Pool || isV3Pool))).toFixed(4)} MON (est.)`
                       : currentPrizePool.value
                 }
                 sub={
-                  activeRoundInfo && isSettledState(activeRoundInfo.state, isV2Pool)
+                  activeRoundInfo && isSettledState(activeRoundInfo.state, isV2Pool || isV3Pool)
                     ? 'Final yield'
                     : isUnstaking
                       ? 'Estimated yield'
