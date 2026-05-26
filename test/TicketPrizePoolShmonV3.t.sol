@@ -2,6 +2,7 @@
 pragma solidity ^0.8.33;
 
 import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {TicketPrizePoolShmonV3} from "../src/TicketPrizePoolShmonV3.sol";
 
 // ============================================================
@@ -719,7 +720,263 @@ contract V3_Accounting_Test is V3Base {
 }
 
 // ============================================================
-// 7. State machine invariant tests
+// 7. Protocol fee tests
+// ============================================================
+
+contract V3_ProtocolFee_Test is V3Base {
+    address treasury = makeAddr("treasury");
+    address treasury2 = makeAddr("treasury2");
+
+    event ProtocolFeeAccrued(uint256 indexed roundId, uint256 feeShares, address indexed feeRecipient);
+
+    function _skipToNextRound() internal returns (uint256) {
+        uint256 rid = pool.currentRoundId();
+        _warpPastSales(rid);
+        pool.executeNext();
+        return pool.currentRoundId();
+    }
+
+    function _openRoundWithFee(uint16 bps, address recipient) internal returns (uint256) {
+        pool.setFee(bps, recipient);
+        return _skipToNextRound();
+    }
+
+    function _settleRoundWithYield(uint256 rid, address buyer, uint32 tickets, uint256 newRate)
+        internal
+        returns (address winner, uint256 grossPrizeShares, uint256 principalAtSettle)
+    {
+        _buyTickets(buyer, tickets);
+        uint64 seq = _commit(rid);
+        _fulfill(seq, keccak256(abi.encodePacked("fee-round", rid)));
+        shmon.simulateYield(newRate);
+        pool.finalizeDraw(rid);
+
+        uint256 depositedMON = uint256(tickets) * uint256(PRICE);
+        uint256 depositedShares = (depositedMON * 1e18) / 1e18;
+        principalAtSettle = (depositedMON * 1e18) / newRate;
+        grossPrizeShares = depositedShares - principalAtSettle;
+
+        (,,,,,,,,,winner,,) = pool.getRoundInfo(rid);
+    }
+
+    function _countProtocolFeeEvents(Vm.Log[] memory logs) internal pure returns (uint256 count) {
+        bytes32 sig = keccak256("ProtocolFeeAccrued(uint256,uint256,address)");
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics.length > 0 && logs[i].topics[0] == sig) count++;
+        }
+    }
+
+    function test_fee_zero_behaves_identically() public {
+        uint256 rid = 1;
+        uint32 tickets = 10;
+        uint256 depositedShares = uint256(tickets) * uint256(PRICE);
+
+        _buyTickets(alice, tickets);
+        uint64 seq = _commit(rid);
+        _fulfill(seq, keccak256("rnd"));
+        shmon.simulateYield(2e18);
+
+        vm.recordLogs();
+        pool.finalizeDraw(rid);
+        assertEq(_countProtocolFeeEvents(vm.getRecordedLogs()), 0, "no fee event");
+
+        (,,,,,,,uint256 prize,,,,) = pool.getRoundInfo(rid);
+        assertEq(prize, depositedShares / 2, "winner gets full gross yield");
+        assertEq(shmon.balanceOf(treasury), 0, "no treasury transfer");
+    }
+
+    function test_fee_500bps_split_correct() public {
+        uint256 rid = _openRoundWithFee(500, treasury);
+        (, uint256 grossPrizeShares,) = _settleRoundWithYield(rid, alice, 10, 2e18);
+        uint256 expectedFee = (grossPrizeShares * 500) / 10_000;
+
+        (,,,,,,,uint256 netPrizeShares,,,,) = pool.getRoundInfo(rid);
+        assertEq(shmon.balanceOf(treasury), expectedFee, "treasury receives 5% of yield");
+        assertEq(netPrizeShares, grossPrizeShares - expectedFee, "winner prize is net of fee");
+    }
+
+    function test_fee_2000bps_max() public {
+        uint256 rid = _openRoundWithFee(2000, treasury);
+        (, uint256 grossPrizeShares,) = _settleRoundWithYield(rid, alice, 10, 2e18);
+        uint256 expectedFee = (grossPrizeShares * 2000) / 10_000;
+
+        (,,,,,,,uint256 netPrizeShares,,,,) = pool.getRoundInfo(rid);
+        assertEq(shmon.balanceOf(treasury), expectedFee, "treasury receives 20% of yield");
+        assertEq(netPrizeShares, grossPrizeShares - expectedFee, "winner receives 80% of yield");
+    }
+
+    function test_setFee_above_max_reverts() public {
+        vm.expectRevert(TicketPrizePoolShmonV3.FeeTooHigh.selector);
+        pool.setFee(2001, treasury);
+    }
+
+    function test_setFee_zero_recipient_reverts() public {
+        vm.expectRevert(TicketPrizePoolShmonV3.ZeroAddress.selector);
+        pool.setFee(100, address(0));
+    }
+
+    function test_setFee_only_owner() public {
+        vm.prank(alice);
+        vm.expectRevert("not owner");
+        pool.setFee(100, treasury);
+    }
+
+    function test_fee_snapshotted_at_round_open() public {
+        uint256 rid = _openRoundWithFee(100, treasury);
+        _buyTickets(alice, 10);
+
+        pool.setFee(2000, treasury2);
+
+        uint64 seq = _commit(rid);
+        _fulfill(seq, keccak256("rnd"));
+        shmon.simulateYield(2e18);
+        pool.finalizeDraw(rid);
+
+        uint256 grossPrizeShares = 5 * uint256(PRICE);
+        assertEq(shmon.balanceOf(treasury), (grossPrizeShares * 100) / 10_000, "old bps used");
+        assertEq(shmon.balanceOf(treasury2), 0, "new recipient not used for open round");
+    }
+
+    function test_fee_applies_to_next_round() public {
+        uint256 rid = _openRoundWithFee(100, treasury);
+        _buyTickets(alice, 10);
+        pool.setFee(2000, treasury2);
+
+        uint64 seq = _commit(rid);
+        _fulfill(seq, keccak256("rnd1"));
+        shmon.simulateYield(2e18);
+        pool.finalizeDraw(rid);
+
+        uint256 nextRid = pool.currentRoundId();
+        assertEq(nextRid, rid + 1, "commit opens next round");
+        _buyTickets(bob, 4);
+        uint64 seq2 = _commit(nextRid);
+        _fulfill(seq2, keccak256("rnd2"));
+        shmon.simulateYield(4e18);
+        pool.finalizeDraw(nextRid);
+
+        uint256 bobDepositedShares = (4 * uint256(PRICE) * 1e18) / 2e18;
+        uint256 bobPrincipalAtSettle = (4 * uint256(PRICE) * 1e18) / 4e18;
+        uint256 grossPrizeShares = bobDepositedShares - bobPrincipalAtSettle;
+
+        assertEq(shmon.balanceOf(treasury2), (grossPrizeShares * 2000) / 10_000, "next round uses new bps");
+    }
+
+    function test_fee_zero_yield_no_fee() public {
+        uint256 rid = _openRoundWithFee(1000, treasury);
+        _buyTickets(alice, 10);
+        uint64 seq = _commit(rid);
+        _fulfill(seq, keccak256("rnd"));
+
+        vm.recordLogs();
+        pool.finalizeDraw(rid);
+        assertEq(_countProtocolFeeEvents(vm.getRecordedLogs()), 0, "no fee event");
+        assertEq(shmon.balanceOf(treasury), 0, "no fee on zero yield");
+    }
+
+    function test_fee_skipped_round_no_fee() public {
+        pool.setFee(1000, treasury);
+
+        vm.recordLogs();
+        _skipToNextRound();
+
+        assertEq(_countProtocolFeeEvents(vm.getRecordedLogs()), 0, "skip emits no fee");
+        assertEq(shmon.balanceOf(treasury), 0, "skip transfers no fee");
+    }
+
+    function test_fee_emergency_force_settle_no_fee() public {
+        uint256 rid = _openRoundWithFee(1000, treasury);
+        _buyTickets(alice, 10);
+        _commit(rid);
+
+        vm.warp(block.timestamp + uint256(pool.VRF_CALLBACK_TIMEOUT()) + 1);
+        vm.recordLogs();
+        pool.emergencyForceSettle(rid);
+
+        assertEq(_countProtocolFeeEvents(vm.getRecordedLogs()), 0, "emergency emits no fee");
+        assertEq(shmon.balanceOf(treasury), 0, "emergency transfers no fee");
+    }
+
+    function test_fee_recipient_change_takes_effect_next_round() public {
+        uint256 rid = _openRoundWithFee(1000, treasury);
+        _buyTickets(alice, 10);
+        pool.setFee(1000, treasury2);
+
+        uint64 seq = _commit(rid);
+        _fulfill(seq, keccak256("rnd1"));
+        shmon.simulateYield(2e18);
+        pool.finalizeDraw(rid);
+
+        assertGt(shmon.balanceOf(treasury), 0, "old recipient receives current round fee");
+        assertEq(shmon.balanceOf(treasury2), 0, "new recipient waits until next round");
+
+        uint256 nextRid = pool.currentRoundId();
+        _buyTickets(bob, 4);
+        uint64 seq2 = _commit(nextRid);
+        _fulfill(seq2, keccak256("rnd2"));
+        shmon.simulateYield(4e18);
+        pool.finalizeDraw(nextRid);
+
+        assertGt(shmon.balanceOf(treasury2), 0, "new recipient receives next round fee");
+    }
+
+    function test_fee_event_emitted_with_correct_args() public {
+        uint256 rid = _openRoundWithFee(500, treasury);
+        _buyTickets(alice, 10);
+        uint64 seq = _commit(rid);
+        _fulfill(seq, keccak256("rnd"));
+        shmon.simulateYield(2e18);
+
+        uint256 grossPrizeShares = 5 * uint256(PRICE);
+        uint256 expectedFee = (grossPrizeShares * 500) / 10_000;
+
+        vm.expectEmit(true, false, true, true);
+        emit ProtocolFeeAccrued(rid, expectedFee, treasury);
+        pool.finalizeDraw(rid);
+    }
+
+    function test_totalUnclaimedShares_decrements_correctly_with_fee() public {
+        uint256 rid = _openRoundWithFee(500, treasury);
+        _buyTickets(alice, 10);
+        uint256 totalDeposited = 10 * uint256(PRICE);
+
+        uint64 seq = _commit(rid);
+        _fulfill(seq, keccak256("rnd"));
+        shmon.simulateYield(2e18);
+        pool.finalizeDraw(rid);
+
+        uint256 principalAtSettle = 5 * uint256(PRICE);
+        uint256 grossPrizeShares = 5 * uint256(PRICE);
+        uint256 netPrizeShares = grossPrizeShares - ((grossPrizeShares * 500) / 10_000);
+
+        assertEq(pool.totalUnclaimedShares(), totalDeposited - ((grossPrizeShares * 500) / 10_000), "fee removed");
+        assertEq(pool.totalUnclaimedShares(), principalAtSettle + netPrizeShares, "principal plus net prize owed");
+    }
+
+    function test_winner_claim_uses_net_prize() public {
+        uint256 rid = _openRoundWithFee(500, treasury);
+        (address winner, uint256 grossPrizeShares,) = _settleRoundWithYield(rid, alice, 10, 2e18);
+        uint256 expectedNetPrize = grossPrizeShares - ((grossPrizeShares * 500) / 10_000);
+
+        uint256 beforeBal = shmon.balanceOf(winner);
+        vm.prank(winner);
+        pool.claimPrize(rid);
+        assertEq(shmon.balanceOf(winner) - beforeBal, expectedNetPrize, "claim transfers net prize");
+    }
+
+    function test_principal_unaffected_by_fee() public {
+        uint256 rid = _openRoundWithFee(2000, treasury);
+        (, , uint256 principalAtSettle) = _settleRoundWithYield(rid, alice, 10, 2e18);
+
+        uint256 beforeBal = shmon.balanceOf(alice);
+        vm.prank(alice);
+        pool.withdrawPrincipal(rid);
+        assertEq(shmon.balanceOf(alice) - beforeBal, principalAtSettle, "principal return ignores fee");
+    }
+}
+
+// ============================================================
+// 8. State machine invariant tests
 // ============================================================
 
 contract V3_StateMachine_Test is V3Base {

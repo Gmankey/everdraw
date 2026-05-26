@@ -44,7 +44,8 @@ When `startRound()` is called, the contract snapshots the current `feeBps` and `
 2. `feeShares = prizeShares * roundFeeBps / 10000`
 3. `feeShares` transferred to `roundFeeRecipient`.
 4. Winner's claimable prize = `prizeShares - feeShares`.
-5. `RoundSettled` event includes `feeShares` and `feeRecipient` for transparency.
+5. `RoundSettled` keeps its existing signature and reports the net prize shares.
+6. `ProtocolFeeAccrued` is emitted separately when `feeShares > 0`.
 
 If yield is zero (no interest earned), fee is also zero — no fee on a zero-prize round.
 
@@ -63,13 +64,12 @@ function feeRecipient() external view returns (address);
 
 ```solidity
 event FeeUpdated(uint16 feeBps, address feeRecipient);
+event ProtocolFeeAccrued(uint256 indexed roundId, uint256 feeShares, address indexed feeRecipient);
 ```
 
-`RoundSettled` extended with:
-```solidity
-uint256 feeShares,
-address feeRecipient
-```
+`RoundSettled` must not be extended. The indexer is already deployed against the
+current event topic hash, so changing the event signature would silently break
+settlement indexing. Fee data is exposed through `ProtocolFeeAccrued` instead.
 
 ---
 
@@ -86,7 +86,9 @@ address feeRecipient
 - Players can inspect `feeBps()` on-chain before buying tickets.
 - Owner can turn the fee on/off or change recipient at any time, but it never affects an already-open round.
 - Auditors must review: fee cannot exceed 20%, fee cannot be applied retroactively, principal is never touched.
-- Keeper and indexer require no changes — fee is handled entirely inside the contract.
+- Keeper requires no changes. Indexer/frontend exposure of fee data is a follow-up
+  that should listen for `ProtocolFeeAccrued`; the existing `RoundSettled` handler
+  continues to work unchanged.
 - Frontend should display the active round's snapshotted fee rate so players see it clearly.
 
 ---
