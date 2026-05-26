@@ -54,6 +54,11 @@ const POOL_V2_ABI = [
   'event TicketsBought(uint256 indexed roundId, address indexed buyer, uint32 ticketCount, uint256 monPaid)'
 ]
 
+const POOL_V3_ABI = [
+  'function getRoundInfo(uint256 rid) view returns (uint8 state,uint64 salesEndTime,uint64 vrfSequenceNumber,uint32 totalTickets,uint256 totalPrincipalMON,uint256 totalShmonShares,uint256 principalSharesAtSettle,uint256 prizeShares,uint256 shareRateAtSettle,address winner,uint32 winningTicket,bool prizeClaimed)',
+  'function getUserPosition(uint256 rid, address user) view returns (uint128 principalMONOut, uint128 principalShmonSharesOut)',
+]
+
 const SHMON_READ_ABI = [
   'function getInternalEpoch() view returns (uint64)',
   'function balanceOf(address) view returns (uint256)',
@@ -101,8 +106,10 @@ function roundYieldWei(info, usesSharePrizeAccounting = false) {
 }
 
 const SHMON_ABI = [
-  'function getInternalEpoch() view returns (uint64)'
+  'function getInternalEpoch() view returns (uint64)',
+  'function previewRedeem(uint256 shares) view returns (uint256 assets)',
 ]
+const SHMON_ADDRESS = import.meta.env.VITE_SHMON_ADDRESS || '0x1B68626dCa36c7fE922fD2d55E4f631d962dE19c'
 
 function formatMon(value, digits = 4) {
   try {
@@ -2029,6 +2036,8 @@ export default function App() {
         for (const r of indexerRows) {
           if (!ethers.isAddress(r.poolAddress)) continue
           const isV2round = poolAddressesV2.some((a) => a.toLowerCase() === r.poolAddress.toLowerCase())
+          const isV3round = !isV2round && poolAddressesV3.some((a) => a.toLowerCase() === r.poolAddress.toLowerCase())
+          const isLegacyRound = !isV2round && !isV3round
           const salesEndSec = r.salesEndTime ? Math.floor(new Date(r.salesEndTime).getTime() / 1000) : 0
           const monPaidWei = BigInt(r.monPaid || '0')
           const principalWithdrawnWei = BigInt(r.principalWithdrawn || '0')
@@ -2054,6 +2063,54 @@ export default function App() {
               prizeClaimed = Boolean(info.prizeClaimed)
               if (userPos) {
                 remainingPrincipalWei = BigInt(userPos[0] || 0n)
+              }
+            } catch (err) {
+              if (isAbortError(err)) throw err
+            }
+          }
+
+          if (isV3round) {
+            try {
+              const pool = new ethers.Contract(r.poolAddress, POOL_V3_ABI, provider)
+              const [info, userPos] = await Promise.all([
+                getCachedRoundInfo(pool, r.poolAddress, BigInt(r.roundId), ac.signal),
+                _cached(`userPositionV3:${r.poolAddress}:${r.roundId}:${account}`, 10_000, () => pool.getUserPosition(BigInt(r.roundId), account).catch(() => null), ac.signal),
+              ])
+              normalizedState = Number(info.state)
+              prizeClaimed = Boolean(info.prizeClaimed)
+
+              const prizeShares = BigInt(info.prizeShares || 0n)
+              if (prizeShares > 0n) {
+                const shmon = new ethers.Contract(SHMON_ADDRESS, SHMON_ABI, provider)
+                prizeWei = await _cached(
+                  `shmonPreviewRedeem:${SHMON_ADDRESS}:${prizeShares.toString()}`,
+                  15_000,
+                  () => shmon.previewRedeem(prizeShares).catch(() => 0n),
+                  ac.signal,
+                )
+              } else {
+                prizeWei = 0n
+              }
+
+              if (userPos) {
+                remainingPrincipalWei = BigInt(userPos[0] || 0n)
+              }
+            } catch (err) {
+              if (isAbortError(err)) throw err
+            }
+          }
+
+          if (isLegacyRound) {
+            try {
+              const pool = new ethers.Contract(r.poolAddress, POOL_ABI, provider)
+              const onchainPrincipal = await _cached(
+                `legacyPrincipal:${r.poolAddress}:${r.roundId}:${account}`,
+                10_000,
+                () => pool.principalMON(BigInt(r.roundId), account).catch(() => null),
+                ac.signal,
+              )
+              if (onchainPrincipal !== null) {
+                remainingPrincipalWei = BigInt(onchainPrincipal)
               }
             } catch (err) {
               if (isAbortError(err)) throw err
@@ -2089,7 +2146,7 @@ export default function App() {
     }
     loadMyRounds()
     return () => ac.abort()
-  }, [account, poolAddresses, poolAddressesV2, roundId])
+  }, [account, poolAddresses, poolAddressesV2, poolAddressesV3, roundId])
 
   const myRoundsStats = useMemo(() => {
     const lockedWei = myRounds
