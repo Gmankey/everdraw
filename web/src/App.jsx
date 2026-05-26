@@ -593,7 +593,7 @@ function StatCard({ label, value, sub, icon }) {
   )
 }
 
-function ClaimFlowModal({ open, mode, busy, status, error, onClose, onClaimOnly, onWithdrawOnly, onRedeposit, onWithdrawAndConvert, onBackFromRedirectWarning, confirmRedirectOpen, onConfirmRedirect, isV2 = false }) {
+function ClaimFlowModal({ open, mode, busy, status, error, onClose, onRedeemToWallet, onRedeposit, onRedeemAndConvert, onBackFromRedirectWarning, confirmRedirectOpen, onConfirmRedirect, isV2 = false }) {
   if (!open) return null
 
   const isWinner = mode === 'winner'
@@ -605,43 +605,43 @@ function ClaimFlowModal({ open, mode, busy, status, error, onClose, onClaimOnly,
     ? (isWinner
       ? [
           {
-            kicker: busy ? 'Working...' : 'SIMPLE CLAIM',
-            title: 'Withdraw Shmon directly to wallet ',
+            kicker: busy ? 'Working...' : 'REDEEM',
+            title: 'Redeem to wallet',
             body: '',
-            onClick: onClaimOnly,
+            onClick: onRedeemToWallet,
             tone: 'primary',
           },
           {
             kicker: busy ? 'Working...' : 'REDEEM AND CONVERT',
             title: 'Redeem shMON and convert to MON',
             body: '',
-            onClick: onWithdrawAndConvert,
+            onClick: onRedeemAndConvert,
             tone: 'default',
           },
         ]
       : [
           {
-            kicker: busy ? 'Working...' : 'WITHDRAW PRINCIPAL',
-            title: 'Withdraw principal directly to wallet',
+            kicker: busy ? 'Working...' : 'REDEEM',
+            title: 'Redeem to wallet',
             body: '',
-            onClick: onWithdrawOnly,
+            onClick: onRedeemToWallet,
             tone: 'primary',
           },
           {
-            kicker: busy ? 'Working...' : 'WITHDRAW AND CONVERT',
-            title: 'Withdraw principal and convert to MON',
+            kicker: busy ? 'Working...' : 'REDEEM AND CONVERT',
+            title: 'Redeem and convert to MON',
             body: '',
-            onClick: onWithdrawAndConvert,
+            onClick: onRedeemAndConvert,
             tone: 'default',
           },
         ])
     : isWinner
     ? [
         {
-          kicker: busy ? 'Working...' : 'SIMPLE CLAIM',
-          title: 'Withdraw Shmon directly to wallet ',
+          kicker: busy ? 'Working...' : 'REDEEM',
+          title: 'Redeem to wallet',
           body: '',
-          onClick: onClaimOnly,
+          onClick: onRedeemToWallet,
           tone: 'default',
         },
         {
@@ -655,30 +655,23 @@ function ClaimFlowModal({ open, mode, busy, status, error, onClose, onClaimOnly,
           kicker: busy ? 'Working...' : 'REDEEM AND CONVERT',
           title: 'Redeem shMON and convert to MON',
           body: '',
-          onClick: onWithdrawAndConvert,
+          onClick: onRedeemAndConvert,
           tone: 'default',
         },
       ]
     : [
         {
-          kicker: busy ? 'Working...' : 'WITHDRAW PRINCIPAL',
-          title: 'Withdraw principal directly to wallet',
+          kicker: busy ? 'Working...' : 'REDEEM',
+          title: 'Redeem to wallet',
           body: '',
-          onClick: onWithdrawOnly,
+          onClick: onRedeemToWallet,
           tone: 'default',
         },
         {
-          kicker: busy ? 'Working...' : 'KEEP PLAYING',
-          title: 'Leave principal in the next active round',
+          kicker: busy ? 'Working...' : 'REDEEM AND CONVERT',
+          title: 'Redeem and convert to MON',
           body: '',
-          onClick: onClaimOnly,
-          tone: 'primary',
-        },
-        {
-          kicker: busy ? 'Working...' : 'WITHDRAW AND CONVERT',
-          title: 'Withdraw principal and convert to MON',
-          body: '',
-          onClick: onWithdrawAndConvert,
+          onClick: onRedeemAndConvert,
           tone: 'default',
         },
       ]
@@ -838,7 +831,7 @@ function VaultDoorBackground({ progressPct, salesOpen }) {
   )
 }
 
-function WinnersView({ onBack, winner, winnerAddress, prize, participants, participantCount, winnerTickets, totalTickets, roundNumber, isUnstaking, canClaim, canWithdraw, settlementLabel, settlementCountdown, onClaimPrize, onWithdraw, actionBusy, actionStatus, actionError }) {
+function WinnersView({ onBack, winner, winnerAddress, prize, participants, participantCount, winnerTickets, totalTickets, roundNumber, isUnstaking, canRedeem, settlementLabel, settlementCountdown, onRedeem, actionBusy, actionStatus, actionError }) {
   const winProbText = typeof winnerTickets === 'number' && totalTickets > 0
     ? `Won with ${((winnerTickets / totalTickets) * 100).toFixed(1)}% chance (${winnerTickets} of ${totalTickets} tickets)`
     : null
@@ -870,8 +863,8 @@ function WinnersView({ onBack, winner, winnerAddress, prize, participants, parti
         {winProbText && <div className="win-probability">{winProbText}</div>}
         {isUnstaking ? (
           <button className="btn" disabled>Redeem soon</button>
-        ) : canClaim ? (
-          <button className="btn" onClick={onClaimPrize} disabled={actionBusy}>Redeem now</button>
+        ) : canRedeem ? (
+          <button className="btn" onClick={onRedeem} disabled={actionBusy}>Redeem now</button>
         ) : null}
       </div>
 
@@ -904,10 +897,10 @@ function WinnersView({ onBack, winner, winnerAddress, prize, participants, parti
       </div>
 
       <div className="winners-actions-grid">
-        <button className="btn ghost-btn" onClick={onWithdraw} disabled={actionBusy || !canWithdraw || isUnstaking}>
+        <button className="btn ghost-btn" onClick={onRedeem} disabled={actionBusy || !canRedeem || isUnstaking}>
           {isUnstaking
             ? 'Redeem soon'
-            : canWithdraw
+            : canRedeem
               ? 'Redeem now'
               : settlementCountdown === '00:00:00:00'
                 ? 'Nothing to redeem'
@@ -1020,7 +1013,7 @@ export default function App() {
   const [previousParticipants, setPreviousParticipants] = useState([])
   const participantsCacheRef = useRef(new Map())
   const [winnersUserPrincipalWei, setWinnersUserPrincipalWei] = useState(0n)
-  const [claimFlow, setClaimFlow] = useState({ open: false, mode: 'winner', rid: null, poolAddr: '', principalWei: 0n, prizeWei: 0n })
+  const [claimFlow, setClaimFlow] = useState({ open: false, mode: 'winner', rid: null, poolAddr: '', principalWei: 0n, prizeWei: 0n, claimPrize: false, withdrawPrincipal: false })
   const [claimRedirectWarningOpen, setClaimRedirectWarningOpen] = useState(false)
   const [actionBusy, setActionBusy] = useState(false)
   const [withdrawingRid, setWithdrawingRid] = useState(null)
@@ -1935,8 +1928,9 @@ export default function App() {
   const winnersYieldWei = roundYieldWei(winnersSource?.info, winnersUsesSharePrizeAccounting)
   const isWinnerWallet = !!account && !!winnersSource?.info?.winner && account.toLowerCase() === String(winnersSource.info.winner).toLowerCase()
   const winnersTerminal = isTerminalRound(winnersSource?.info?.state ?? -1, winnersIsV2Pool)
-  const canClaimPrize = isWinnerWallet && winnersYieldWei > 0n && winnersTerminal
+  const canClaimPrize = isWinnerWallet && winnersYieldWei > 0n && winnersTerminal && !Boolean(winnersSource?.info?.prizeClaimed)
   const canWithdrawPrincipal = !!account && winnersUserPrincipalWei > 0n && winnersTerminal
+  const canRedeemWinnersRound = canClaimPrize || canWithdrawPrincipal
 
   const winnerTicketsDisplay = winnerParticipant
     ? winnerParticipant.tickets
@@ -2021,6 +2015,7 @@ export default function App() {
                 withdrawableShares: 0n,
                 withdrawableMon: principal,
                 prizeWei: roundYieldWei(info, false),
+                canClaimPrize: isWinner && roundYieldWei(info, false) > 0n && !Boolean(info.prizeClaimed) && Number(info.state) === 3,
                 canWithdraw: Number(info.state) === 3 && principal > 0n,
               })
             }
@@ -2079,6 +2074,7 @@ export default function App() {
             withdrawableShares: 0n,
             withdrawableMon: null,
             prizeWei,
+            canClaimPrize: r.won === 1 && prizeWei > 0n && !prizeClaimed && isTerminalRound(normalizedState, isV2round),
             canWithdraw: isTerminalRound(normalizedState, isV2round) && remainingPrincipalWei > 0n,
           })
         }
@@ -2164,32 +2160,20 @@ export default function App() {
     }
   }, [account, expectedChainId, poolAddress, refresh, activePoolAbi])
 
-  const handleClaimPrize = useCallback(async (rid = winnersRoundId, targetPoolAddress = poolAddress) => {
-    if (!rid) return false
-    return await runSignedAction('Claim prize', async (sendTx) => {
-      const txHash = await sendTx('claimPrize', [BigInt(rid)], 500000n)
-      setActionStatus(`Claim prize: submitted ${String(txHash).slice(0, 10)}...`)
-    }, targetPoolAddress)
-  }, [poolAddress, winnersRoundId, runSignedAction])
-
-  const handleWithdraw = useCallback(async (rid = winnersRoundId, targetPoolAddress = poolAddress) => {
-    if (!rid) return false
-    return await runSignedAction('Withdraw', async (sendTx) => {
-      const txHash = await sendTx('withdrawPrincipal', [BigInt(rid)], 500000n)
-      setActionStatus(`Withdraw: submitted ${String(txHash).slice(0, 10)}... Then visit the /shmon tab to convert shMON to MON.`)
-    }, targetPoolAddress)
-  }, [poolAddress, winnersRoundId, runSignedAction])
-
-  const handleWithdrawForRound = useCallback(async (rid, targetPoolAddress = poolAddress) => {
-    setWithdrawingRid(`${targetPoolAddress}:${rid}`)
-    try {
-      await runSignedAction(`Withdraw (Round #${rid})`, async (sendTx) => {
-        const txHash = await sendTx('withdrawPrincipal', [BigInt(rid)], 500000n)
-        setActionStatus(`Withdraw (Round #${rid}): submitted ${String(txHash).slice(0, 10)}...`)
-      }, targetPoolAddress)
-    } finally {
-      setWithdrawingRid(null)
-    }
+  const handleRedeemRound = useCallback(async ({ rid, poolAddr = poolAddress, claimPrize = false, withdrawPrincipal = false, label = `Redeem (Round #${rid})` }) => {
+    if (!rid || (!claimPrize && !withdrawPrincipal)) return false
+    return await runSignedAction(label, async (sendTx) => {
+      let nonceOffset = 0
+      if (claimPrize) {
+        const claimTxHash = await sendTx('claimPrize', [BigInt(rid)], 500000n, { nonceOffset })
+        nonceOffset += 1
+        setActionStatus(`${label}: prize submitted ${String(claimTxHash).slice(0, 10)}...`)
+      }
+      if (withdrawPrincipal) {
+        const withdrawTxHash = await sendTx('withdrawPrincipal', [BigInt(rid)], 500000n, { nonceOffset })
+        setActionStatus(`${label}: principal submitted ${String(withdrawTxHash).slice(0, 10)}...`)
+      }
+    }, poolAddr)
   }, [poolAddress, runSignedAction])
 
   const closeClaimFlow = useCallback(() => {
@@ -2211,6 +2195,8 @@ export default function App() {
       poolAddr: next.poolAddr ?? poolAddress,
       principalWei: next.principalWei ?? 0n,
       prizeWei: next.prizeWei ?? 0n,
+      claimPrize: Boolean(next.claimPrize),
+      withdrawPrincipal: Boolean(next.withdrawPrincipal),
     })
   }, [poolAddress])
 
@@ -2219,41 +2205,17 @@ export default function App() {
     return poolAddressesV2.some((a) => a.toLowerCase() === lc)
   }, [claimFlow.poolAddr, poolAddressesV2])
 
-  const handleClaimOnly = useCallback(async () => {
+  const handleRedeemToWallet = useCallback(async () => {
     if (!claimFlow.rid) return
-    if (claimFlowIsV2) {
-      if (claimFlow.mode === 'winner') {
-        const claimOk = await handleClaimPrize(claimFlow.rid, claimFlow.poolAddr)
-        if (!claimOk) return
-        const withdrawOk = await handleWithdraw(claimFlow.rid, claimFlow.poolAddr)
-        if (withdrawOk) setClaimFlow((prev) => ({ ...prev, open: false }))
-        return
-      }
-      const ok = await handleWithdraw(claimFlow.rid, claimFlow.poolAddr)
-      if (ok) setClaimFlow((prev) => ({ ...prev, open: false }))
-      return
-    }
-    if (claimFlow.mode !== 'winner') {
-      const ok = await handleClaimPrize(claimFlow.rid, claimFlow.poolAddr)
-      if (ok) setClaimFlow((prev) => ({ ...prev, open: false }))
-      return
-    }
-    const ok = await runSignedAction('Claim and withdraw', async (sendTx) => {
-      const claimTxHash = await sendTx('claimPrize', [BigInt(claimFlow.rid)], 500000n)
-      setActionStatus(`Claim prize: submitted ${String(claimTxHash).slice(0, 10)}...`)
-      setActionStatus('Prize claimed, withdrawing principal...')
-      const withdrawTxHash = await sendTx('withdrawPrincipal', [BigInt(claimFlow.rid)], 500000n, { nonceOffset: 1 })
-      setActionStatus(`Withdraw principal: submitted ${String(withdrawTxHash).slice(0, 10)}...`)
-    }, claimFlow.poolAddr)
+    const ok = await handleRedeemRound({
+      rid: claimFlow.rid,
+      poolAddr: claimFlow.poolAddr,
+      claimPrize: claimFlow.claimPrize,
+      withdrawPrincipal: claimFlow.withdrawPrincipal,
+      label: `Redeem (Round #${claimFlow.rid})`,
+    })
     if (ok) setClaimFlow((prev) => ({ ...prev, open: false }))
-  }, [claimFlow.mode, claimFlow.poolAddr, claimFlow.rid, handleClaimPrize, handleWithdraw, runSignedAction, claimFlowIsV2])
-
-  const handleWithdrawOnly = useCallback(async () => {
-    const ok = await handleWithdraw(claimFlow.rid, claimFlow.poolAddr)
-    if (ok) {
-      setClaimFlow((prev) => ({ ...prev, open: false }))
-    }
-  }, [claimFlow.poolAddr, claimFlow.rid, handleWithdraw])
+  }, [claimFlow.claimPrize, claimFlow.poolAddr, claimFlow.rid, claimFlow.withdrawPrincipal, handleRedeemRound])
 
   const handleRedeposit = useCallback(async () => {
     if (!poolAddress) {
@@ -2282,14 +2244,20 @@ export default function App() {
         throw new Error('Prize is too large to convert into a safe ticket count')
       }
 
-      const claimTxHash = await sendTx('claimPrize', [BigInt(claimFlow.rid)], 500000n)
-      setActionStatus(`Claim prize: submitted ${String(claimTxHash).slice(0, 10)}...`)
-
-      const withdrawTxHash = await sendTx('withdrawPrincipal', [BigInt(claimFlow.rid)], 500000n, { nonceOffset: 1 })
-      setActionStatus(`Withdraw principal: submitted ${String(withdrawTxHash).slice(0, 10)}...`)
+      let nonceOffset = 0
+      if (claimFlow.claimPrize) {
+        const claimTxHash = await sendTx('claimPrize', [BigInt(claimFlow.rid)], 500000n, { nonceOffset })
+        nonceOffset += 1
+        setActionStatus(`Redeem (Round #${claimFlow.rid}): prize submitted ${String(claimTxHash).slice(0, 10)}...`)
+      }
+      if (claimFlow.withdrawPrincipal) {
+        const withdrawTxHash = await sendTx('withdrawPrincipal', [BigInt(claimFlow.rid)], 500000n, { nonceOffset })
+        nonceOffset += 1
+        setActionStatus(`Redeem (Round #${claimFlow.rid}): principal submitted ${String(withdrawTxHash).slice(0, 10)}...`)
+      }
 
       setActionStatus(`Re-deposit: buying ${redepositTickets.toString()} ticket${redepositTickets === 1n ? '' : 's'} in Round #${roundId}...`)
-      const buyTxHash = await sendTx('buyTickets', [Number(redepositTickets)], 700000n, { nonceOffset: 2, value: redepositValue })
+      const buyTxHash = await sendTx('buyTickets', [Number(redepositTickets)], 700000n, { nonceOffset, value: redepositValue })
       setActionStatus(`Re-deposit: submitted ${String(buyTxHash).slice(0, 10)}...`)
 
       setMainView(Number(roundId) % 2 === 1 ? 'vaultA' : 'vaultB')
@@ -2297,13 +2265,13 @@ export default function App() {
       setClaimFlow((prev) => ({ ...prev, open: false }))
       setActionStatus(`Prize claimed and re-deposited into Round #${roundId}.`)
     })
-  }, [poolAddress, claimFlow.rid, claimFlow.prizeWei, ticketPrice, runSignedAction, salesOpen, roundId])
+  }, [poolAddress, claimFlow.claimPrize, claimFlow.rid, claimFlow.prizeWei, claimFlow.withdrawPrincipal, ticketPrice, runSignedAction, salesOpen, roundId])
 
-  const handleWithdrawAndConvert = useCallback(() => {
+  const handleRedeemAndConvert = useCallback(() => {
     setClaimRedirectWarningOpen(true)
   }, [])
 
-  const handleConfirmWithdrawAndConvert = useCallback(async () => {
+  const handleConfirmRedeemAndConvert = useCallback(async () => {
     if (!claimFlow.rid) {
       setActionError('Missing round to withdraw')
       return
@@ -2330,51 +2298,19 @@ export default function App() {
       window.location.assign('https://shmonad.xyz')
     }
 
-    if (claimFlowIsV2 && claimFlow.mode === 'winner') {
-      const claimOk = await handleClaimPrize(claimFlow.rid, claimFlow.poolAddr)
-      if (!claimOk) return
-      const withdrawOk = await handleWithdraw(claimFlow.rid, claimFlow.poolAddr)
-      if (!withdrawOk) return
-      setClaimRedirectWarningOpen(false)
-      setClaimFlow((prev) => ({ ...prev, open: false }))
-      setActionStatus('Tickets redeemed. Opening shmonad.xyz to convert to MON...')
-      openShmonad()
-      return
-    }
-
-    if (claimFlowIsV2) {
-      const ok = await handleWithdraw(claimFlow.rid, claimFlow.poolAddr)
-      if (!ok) return
-      setClaimRedirectWarningOpen(false)
-      setClaimFlow((prev) => ({ ...prev, open: false }))
-      setActionStatus('Tickets redeemed. Opening shmonad.xyz to convert to MON...')
-      openShmonad()
-      return
-    }
-
-    if (claimFlow.mode === 'winner') {
-      const ok = await runSignedAction('Claim, withdraw, and convert', async (sendTx) => {
-        const claimTxHash = await sendTx('claimPrize', [BigInt(claimFlow.rid)], 500000n)
-        setActionStatus(`Claim prize: submitted ${String(claimTxHash).slice(0, 10)}...`)
-        setActionStatus('Prize claimed, withdrawing principal...')
-        const withdrawTxHash = await sendTx('withdrawPrincipal', [BigInt(claimFlow.rid)], 500000n, { nonceOffset: 1 })
-        setActionStatus(`Withdraw principal: submitted ${String(withdrawTxHash).slice(0, 10)}...`)
-      }, claimFlow.poolAddr)
-      if (!ok) return
-      setClaimRedirectWarningOpen(false)
-      setClaimFlow((prev) => ({ ...prev, open: false }))
-      setActionStatus('Prize and principal withdrawn. Continue MON conversion in shmonad.xyz.')
-      openShmonad()
-      return
-    }
-
-    const ok = await handleWithdraw(claimFlow.rid, claimFlow.poolAddr)
+    const ok = await handleRedeemRound({
+      rid: claimFlow.rid,
+      poolAddr: claimFlow.poolAddr,
+      claimPrize: claimFlow.claimPrize,
+      withdrawPrincipal: claimFlow.withdrawPrincipal,
+      label: `Redeem (Round #${claimFlow.rid})`,
+    })
     if (!ok) return
     setClaimRedirectWarningOpen(false)
     setClaimFlow((prev) => ({ ...prev, open: false }))
-    setActionStatus('Principal withdrawn. Continue MON conversion in shmonad.xyz.')
+    setActionStatus('Redeemed. Continue MON conversion in shmonad.xyz.')
     openShmonad()
-  }, [claimFlow.mode, claimFlow.rid, claimFlow.poolAddr, handleClaimPrize, handleWithdraw, claimFlowIsV2, runSignedAction])
+  }, [claimFlow.claimPrize, claimFlow.rid, claimFlow.poolAddr, claimFlow.withdrawPrincipal, handleRedeemRound])
 
   const buyTicketsShmon = useCallback(async () => {
     try {
@@ -2512,8 +2448,7 @@ export default function App() {
             totalTickets={winnersSource.info ? Number(winnersSource.info.totalTickets) : 0}
             roundNumber={Number(winnersSource.rid) || 0}
             isUnstaking={isUnstaking}
-            canClaim={canClaimPrize}
-            canWithdraw={canWithdrawPrincipal}
+            canRedeem={canRedeemWinnersRound}
             settlementLabel={
               isUnstaking
                 ? `Winner revealed — ${formatCountdown(shownSettlementSecs)} remaining`
@@ -2528,8 +2463,7 @@ export default function App() {
                   ? formatCountdown(shownSettlementSecs)
                   : previousSettlementCountdown
             }
-            onClaimPrize={() => openClaimFlow({ mode: 'winner', rid: winnersRoundId, poolAddr: winnersPoolAddress, principalWei: winnersUserPrincipalWei, prizeWei: winnersYieldWei })}
-            onWithdraw={() => openClaimFlow({ mode: 'principal', rid: winnersRoundId, poolAddr: winnersPoolAddress, principalWei: winnersUserPrincipalWei, prizeWei: winnersYieldWei })}
+            onRedeem={() => openClaimFlow({ mode: canClaimPrize ? 'winner' : 'principal', rid: winnersRoundId, poolAddr: winnersPoolAddress, principalWei: winnersUserPrincipalWei, prizeWei: winnersYieldWei, claimPrize: canClaimPrize, withdrawPrincipal: canWithdrawPrincipal })}
             actionBusy={actionBusy}
             actionStatus={actionStatus}
             actionError={actionError}
@@ -2630,7 +2564,8 @@ export default function App() {
                 const myRoundResultLabel = r.isV2
                   ? (r.state < 2 ? 'Active' : r.state === 2 ? (r.isWinner ? 'Won' : 'No win') : 'No draw')
                   : (r.state < 3 ? 'Locked' : (r.isWinner ? 'Won' : 'Participant'))
-                const actionLabel = r.canWithdraw ? 'Redeem' : (r.state === 0 ? 'Deposit' : 'Claimed')
+                const canRedeemRound = Boolean(r.canClaimPrize || r.canWithdraw)
+                const actionLabel = canRedeemRound ? 'Redeem' : (r.state === 0 ? 'Deposit' : 'Claimed')
                 const pendingActionLabel = actionLabel
                 const prizeLabel = r.isWinner
                   ? `${Number(ethers.formatEther(r.prizeWei || 0n)).toFixed(4)} MON`
@@ -2644,15 +2579,17 @@ export default function App() {
                   <span>{r.principalMon} MON</span>
                   <span className={r.isWinner ? (r.prizeClaimed ? 'my-rounds-prize claimed' : 'my-rounds-prize won') : 'my-rounds-prize'}>{prizeLabel}</span>
                   <span className="action-cell">
-                    {r.canWithdraw ? (
+                    {canRedeemRound ? (
                       <button
                         className="max-btn"
                         onClick={() => openClaimFlow({
-                          mode: (r.isWinner && !r.prizeClaimed) ? 'winner' : 'principal',
+                          mode: r.canClaimPrize ? 'winner' : 'principal',
                           rid: r.rid,
                           poolAddr: r.poolAddr,
                           principalWei: r.principalWei || 0n,
                           prizeWei: r.prizeWei || 0n,
+                          claimPrize: r.canClaimPrize,
+                          withdrawPrincipal: r.canWithdraw,
                         })}
                         disabled={withdrawingRid === `${r.poolAddr}:${r.rid}`}
                       >
@@ -2680,7 +2617,7 @@ export default function App() {
                             Deposit
                           </button>
                         )
-                    ) : isTerminalRound(r.state, r.isV2) && !r.canWithdraw ? 'Claimed' : '—'}
+                    ) : isTerminalRound(r.state, r.isV2) && !canRedeemRound ? 'Claimed' : '—'}
                   </span>
                 </div>
               )})}
@@ -2927,14 +2864,13 @@ export default function App() {
           status={actionStatus}
           error={actionError}
           onClose={closeClaimFlow}
-          onClaimOnly={handleClaimOnly}
-          onWithdrawOnly={handleWithdrawOnly}
+          onRedeemToWallet={handleRedeemToWallet}
           onRedeposit={handleRedeposit}
-          onWithdrawAndConvert={handleWithdrawAndConvert}
+          onRedeemAndConvert={handleRedeemAndConvert}
           onBackFromRedirectWarning={() => setClaimRedirectWarningOpen(false)}
           confirmRedirectOpen={claimRedirectWarningOpen}
-          onConfirmRedirect={handleConfirmWithdrawAndConvert}
-          isV2={isV2Pool}
+          onConfirmRedirect={handleConfirmRedeemAndConvert}
+          isV2={claimFlowIsV2}
         />
       </div>
     </div>
