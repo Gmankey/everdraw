@@ -1935,7 +1935,7 @@ export default function App() {
   const winnersYieldWei = roundYieldWei(winnersSource?.info, winnersUsesSharePrizeAccounting)
   const isWinnerWallet = !!account && !!winnersSource?.info?.winner && account.toLowerCase() === String(winnersSource.info.winner).toLowerCase()
   const winnersTerminal = isTerminalRound(winnersSource?.info?.state ?? -1, winnersIsV2Pool)
-  const canClaimPrize = isWinnerWallet && winnersYieldWei > 0n && winnersTerminal
+  const canClaimPrize = isWinnerWallet && winnersYieldWei > 0n && winnersTerminal && !Boolean(winnersSource?.info?.prizeClaimed)
   const canWithdrawPrincipal = !!account && winnersUserPrincipalWei > 0n && winnersTerminal
 
   const winnerTicketsDisplay = winnerParticipant
