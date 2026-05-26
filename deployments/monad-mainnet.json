@@ -33,6 +33,37 @@
       }
     },
     {
+      "role": "Vault B",
+      "status": "active",
+      "address": "0xd4F4286CE1E72562fdAfcD9F491974D0F245Ea9d",
+      "contractName": "TicketPrizePoolShmonV2",
+      "source": "src/TicketPrizePoolShmonV2.sol",
+      "abi": "abi/TicketPrizePoolShmonV2.json",
+      "deployedAt": "2026-05-24T00:36:00.000Z",
+      "anchor": "Sun 01:00 UTC",
+      "compiler": {
+        "version": "0.8.33+commit.64118f21",
+        "optimizer": true,
+        "optimizerRuns": 200,
+        "viaIR": true,
+        "evmVersion": "paris"
+      },
+      "constructorArgs": {
+        "shmon": "0x1B68626dCa36c7fE922fD2d55E4f631d962dE19c",
+        "ticketPriceMON": "1000000000000000000",
+        "roundDurationSec": 86400,
+        "yieldPeriodSec": 518100,
+        "owner": "0x84875804608467B3577605c0976dC645739091eD"
+      },
+      "runtimeBytecodeSha256": "a8a7e930e3fde441e95f68966e94b3e7d533e92facfc5ab3aa6ef4d61a23bfd3",
+      "verification": {
+        "status": "verified",
+        "verifiedAt": "2026-05-24T00:39:00.000Z",
+        "method": "Runtime bytecode fetched via eth_getCode and SHA256-hashed; matches Vault A hash exactly (TicketPrizePoolShmonV2 uses storage not immutables, so all deployments of the same compiled artifact are bytecode-identical). Constructor args verified side-by-side with Vault A via cast call — all 5 params matched ADR-0010.",
+        "evidence": "decisions/0016-production-v2-source-recovery.md"
+      }
+    },
+    {
       "role": "Legacy Vault B",
       "status": "retiring-monitoring-only",
       "address": "0xed67ad46C694a5e963119a1Ca5F88eEBbb6e5a8a",
