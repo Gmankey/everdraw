@@ -55,10 +55,12 @@
         "yieldPeriodSec": 518100,
         "owner": "0x84875804608467B3577605c0976dC645739091eD"
       },
-      "postDeployVerification": {
+      "runtimeBytecodeSha256": "a8a7e930e3fde441e95f68966e94b3e7d533e92facfc5ab3aa6ef4d61a23bfd3",
+      "verification": {
+        "status": "verified",
         "verifiedAt": "2026-05-24T00:39:00.000Z",
-        "method": "Side-by-side cast call of roundDurationSec, yieldPeriodSec, ticketPriceMON, shmon, owner vs Vault A — all 5 params matched ADR-0010.",
-        "adrs": ["ADR-0010", "ADR-0011"]
+        "method": "Runtime bytecode fetched via eth_getCode and SHA256-hashed; matches Vault A hash exactly (TicketPrizePoolShmonV2 uses storage not immutables, so all deployments of the same compiled artifact are bytecode-identical). Constructor args verified side-by-side with Vault A via cast call — all 5 params matched ADR-0010.",
+        "evidence": "decisions/0016-production-v2-source-recovery.md"
       }
     },
     {
