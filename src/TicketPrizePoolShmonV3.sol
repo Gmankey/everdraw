@@ -130,6 +130,9 @@ contract TicketPrizePoolShmonV3 is IEntropyConsumer {
     /// @notice Max time to wait for Pyth callback before the emergency escape hatch opens.
     uint64 public constant VRF_CALLBACK_TIMEOUT = 1 hours;
 
+    /// @notice Maximum protocol fee on prize yield, in basis points.
+    uint16 public constant MAX_FEE_BPS = 2000;
+
     // -------------------------
     // Types
     // -------------------------
@@ -178,6 +181,10 @@ contract TicketPrizePoolShmonV3 is IEntropyConsumer {
         uint256 principalSharesAtSettle;
         uint256 prizeShares;        // = totalPrincipalShmonShares − principalSharesAtSettle (0 if no yield)
 
+        // protocol fee snapshot (set when round opens)
+        uint16 roundFeeBps;
+        address roundFeeRecipient;
+
         // winner
         address winner;
         uint32 winningTicket;
@@ -203,6 +210,8 @@ contract TicketPrizePoolShmonV3 is IEntropyConsumer {
     error ZeroSharesMinted();
     error InsufficientVRFFee();
     error WrongProvider();
+    error FeeTooHigh();
+    error ZeroAddress();
 
     // -------------------------
     // Immutable config
@@ -241,6 +250,10 @@ contract TicketPrizePoolShmonV3 is IEntropyConsumer {
     /// @notice Maps a Pyth sequence number back to the round that requested it.
     mapping(uint64 => uint256) public vrfSequenceToRound;
 
+    /// @notice Live protocol fee config, snapshotted into each newly-opened round.
+    uint16 public feeBps;
+    address public feeRecipient;
+
     // -------------------------
     // Events
     // -------------------------
@@ -273,6 +286,10 @@ contract TicketPrizePoolShmonV3 is IEntropyConsumer {
     event VRFReserveDeposited(uint256 amount);
     event VRFReserveWithdrawn(uint256 amount);
 
+    event FeeUpdated(uint16 feeBps, address feeRecipient);
+    /// @notice Emitted at settlement when a protocol fee is taken from prize yield.
+    event ProtocolFeeAccrued(uint256 indexed roundId, uint256 feeShares, address indexed feeRecipient);
+
     // -------------------------
     // Constructor
     // -------------------------
@@ -297,6 +314,7 @@ contract TicketPrizePoolShmonV3 is IEntropyConsumer {
 
         owner = msg.sender;
         isKeeper[msg.sender] = true;
+        feeRecipient = msg.sender;
 
         ticketPriceMON = _ticketPriceMON;
         roundDurationSec = _roundDurationSec;
@@ -311,6 +329,8 @@ contract TicketPrizePoolShmonV3 is IEntropyConsumer {
         RoundData storage r = rounds[1];
         r.state = RoundState.Open;
         r.salesEndTime = uint64(block.timestamp + _roundDurationSec);
+        r.roundFeeBps = feeBps;
+        r.roundFeeRecipient = feeRecipient;
 
         emit RoundStarted(1, r.salesEndTime);
     }
@@ -322,6 +342,16 @@ contract TicketPrizePoolShmonV3 is IEntropyConsumer {
     function setKeeper(address keeper, bool allowed) external onlyOwner {
         isKeeper[keeper] = allowed;
         emit KeeperSet(keeper, allowed);
+    }
+
+    function setFee(uint16 newFeeBps, address newFeeRecipient) external onlyOwner {
+        if (newFeeBps > MAX_FEE_BPS) revert FeeTooHigh();
+        if (newFeeRecipient == address(0)) revert ZeroAddress();
+
+        feeBps = newFeeBps;
+        feeRecipient = newFeeRecipient;
+
+        emit FeeUpdated(newFeeBps, newFeeRecipient);
     }
 
     // -------------------------
@@ -590,25 +620,35 @@ contract TicketPrizePoolShmonV3 is IEntropyConsumer {
         // If rate did not change (e.g. no yield):  previewDeposit(M) == S  →  prizeShares = 0.
         //
         // totalUnclaimedShares is NOT incremented here.  The prize shares are already counted
-        // within the deposit-time increment; they are a redistribution, not new shares.
+        // within the deposit-time increment; they are a redistribution, not new shares. If a
+        // protocol fee is due, it is transferred out and removed from totalUnclaimedShares.
         // Accounting per round:
         //   +deposit:           totalUnclaimedShares += depositedShares
-        //   +finalize:          (no change)
+        //   +finalize:          totalUnclaimedShares -= feeShares
         //   −withdrawPrincipal: totalUnclaimedShares -= principalSharesAtSettle × userProportion
-        //   −claimPrize:        totalUnclaimedShares -= prizeShares
+        //   −claimPrize:        totalUnclaimedShares -= netPrizeShares
         //   net:                0
 
         uint256 principalSharesAtSettle = shmon.previewDeposit(r.totalPrincipalMON);
-        uint256 prizeShares = r.totalPrincipalShmonShares > principalSharesAtSettle
+        uint256 grossPrizeShares = r.totalPrincipalShmonShares > principalSharesAtSettle
             ? r.totalPrincipalShmonShares - principalSharesAtSettle
             : 0;
+        uint256 feeShares = (grossPrizeShares * uint256(r.roundFeeBps)) / 10_000;
+        uint256 netPrizeShares = grossPrizeShares - feeShares;
+
+        if (feeShares > 0) {
+            totalUnclaimedShares -= feeShares;
+            bool ok = shmon.transfer(r.roundFeeRecipient, feeShares);
+            require(ok, "fee transfer failed");
+            emit ProtocolFeeAccrued(rid, feeShares, r.roundFeeRecipient);
+        }
 
         r.principalSharesAtSettle = principalSharesAtSettle;
-        r.prizeShares = prizeShares;
+        r.prizeShares = netPrizeShares;
 
         r.state = RoundState.Settled;
 
-        emit RoundSettled(rid, principalSharesAtSettle, prizeShares);
+        emit RoundSettled(rid, principalSharesAtSettle, netPrizeShares);
 
         _bumpCursor();
     }
@@ -646,6 +686,8 @@ contract TicketPrizePoolShmonV3 is IEntropyConsumer {
         RoundData storage r = rounds[currentRoundId];
         r.state = RoundState.Open;
         r.salesEndTime = uint64(block.timestamp + roundDurationSec);
+        r.roundFeeBps = feeBps;
+        r.roundFeeRecipient = feeRecipient;
         emit RoundStarted(currentRoundId, r.salesEndTime);
     }
 
@@ -834,6 +876,11 @@ contract TicketPrizePoolShmonV3 is IEntropyConsumer {
 
     function rangesLength(uint256 rid) external view returns (uint256) {
         return rounds[rid].ranges.length;
+    }
+
+    function getRoundFee(uint256 rid) external view returns (uint16 bps, address recipient) {
+        RoundData storage r = rounds[rid];
+        return (r.roundFeeBps, r.roundFeeRecipient);
     }
 
     function ownerOfTicket(uint256 rid, uint32 ticketId) external view returns (address) {
