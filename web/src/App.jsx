@@ -533,7 +533,7 @@ function VaultDoorBackground({ progressPct, salesOpen }) {
   )
 }
 
-function WinnersView({ onBack, winner, winnerAddress, prize, participants, participantCount, winnerTickets, totalTickets, roundNumber, winningTicket, participantDataStale, canClaim, canWithdraw, settlementLabel, settlementCountdown, onClaimPrize, onWithdraw, actionBusy, actionStatus, actionError }) {
+function WinnersView({ onBack, winner, winnerAddress, prize, participants, participantCount, winnerTickets, totalTickets, roundNumber, winningTicket, participantDataStale, canRedeem, settlementLabel, settlementCountdown, onRedeem, actionBusy, actionStatus, actionError }) {
   const winnerTicketText = typeof winnerTickets === 'number' ? winnerTickets.toLocaleString() : winnerTickets
   const totalTicketText = Number(totalTickets || 0).toLocaleString()
 
@@ -573,7 +573,6 @@ function WinnersView({ onBack, winner, winnerAddress, prize, participants, parti
         {participantDataStale ? (
           <div className="winner-data-warning">Participant index is syncing; using on-chain round totals and winner data.</div>
         ) : null}
-        {canClaim ? <button className="btn" onClick={onClaimPrize} disabled={actionBusy}>Claim Prize</button> : null}
       </div>
 
       <div className="participants-card">
@@ -601,8 +600,8 @@ function WinnersView({ onBack, winner, winnerAddress, prize, participants, parti
       </div>
 
       <div className="winners-actions-grid">
-        <button className="btn ghost-btn" onClick={onWithdraw} disabled={actionBusy || !canWithdraw}>
-          {canWithdraw ? 'Withdraw Tokens' : `Withdraw Tokens (${settlementCountdown})`}
+        <button className="btn ghost-btn" onClick={onRedeem} disabled={actionBusy || !canRedeem}>
+          {canRedeem ? 'Redeem' : `Redeem (${settlementCountdown})`}
         </button>
       </div>
 
@@ -1447,8 +1446,9 @@ export default function App() {
   const winnersYieldWei = winnersSource?.info?.yieldMON || winnersSource?.info?.prizeShares ? BigInt(winnersSource.info.yieldMON ?? winnersSource.info.prizeShares) : 0n
   const isWinnerWallet = !!account && !!winnersSource?.info?.winner && account.toLowerCase() === String(winnersSource.info.winner).toLowerCase()
   const winnersSettled = isV2Pool ? Number(winnersSource?.info?.state ?? -1) === 2 : Number(winnersSource?.info?.state ?? -1) === 3
-  const canClaimPrize = isWinnerWallet && winnersYieldWei > 0n && winnersSettled
+  const canClaimPrize = isWinnerWallet && winnersYieldWei > 0n && winnersSettled && !Boolean(winnersSource?.info?.prizeClaimed)
   const canWithdrawPrincipal = !!account && winnersUserPrincipalWei > 0n && winnersSettled
+  const canRedeemWinnersRound = canClaimPrize || canWithdrawPrincipal
 
   const winnerTicketsDisplay = winnerParticipant
     ? winnerParticipant.tickets
@@ -1544,6 +1544,7 @@ export default function App() {
                 isV2: addrIsV2,
                 isV3: addrIsV3,
                 yieldWei: BigInt(info.yieldMON ?? info.prizeShares ?? 0n),
+                canClaimPrize: isWinner && BigInt(info.yieldMON ?? info.prizeShares ?? 0n) > 0n && !Boolean(info.prizeClaimed) && (addrIsV2 ? state === 2 : state === 3),
                 canWithdraw: (addrIsV2 ? state === 2 : state === 3) && principal > 0n,
               })
             }
@@ -1613,36 +1614,45 @@ export default function App() {
     }
   }, [allowlistEnabled, walletAllowlist, expectedChainId, poolAddress, refresh, getPoolAbi])
 
-  const handleClaimPrize = useCallback(async () => {
-    if (!winnersRoundId) return
-    await runSignedAction('Claim prize', async (pool) => {
-      const tx = await pool.claimPrize(BigInt(winnersRoundId))
-      setActionStatus(`Claim prize: submitted ${tx.hash.slice(0, 10)}...`)
-      await tx.wait()
-    })
-  }, [winnersRoundId, runSignedAction])
+  const handleRedeemRound = useCallback(async ({ rid, poolAddr = poolAddress, claimPrize = false, withdrawPrincipal = false, label = `Redeem (Round #${rid})` }) => {
+    if (!rid || (!claimPrize && !withdrawPrincipal)) return
+    await runSignedAction(label, async (pool) => {
+      if (claimPrize) {
+        const claimTx = await pool.claimPrize(BigInt(rid))
+        setActionStatus(`${label}: prize submitted ${claimTx.hash.slice(0, 10)}...`)
+        await claimTx.wait()
+      }
+      if (withdrawPrincipal) {
+        const withdrawTx = await pool.withdrawPrincipal(BigInt(rid))
+        setActionStatus(`${label}: principal submitted ${withdrawTx.hash.slice(0, 10)}...`)
+        await withdrawTx.wait()
+      }
+    }, poolAddr)
+  }, [poolAddress, runSignedAction])
 
-  const handleWithdraw = useCallback(async () => {
-    if (!winnersRoundId) return
-    await runSignedAction('Withdraw', async (pool) => {
-      const tx = await pool.withdrawPrincipal(BigInt(winnersRoundId))
-      setActionStatus(`Withdraw: submitted ${tx.hash.slice(0, 10)}...`)
-      await tx.wait()
+  const handleWinnersRedeem = useCallback(async () => {
+    await handleRedeemRound({
+      rid: winnersRoundId,
+      claimPrize: canClaimPrize,
+      withdrawPrincipal: canWithdrawPrincipal,
+      label: `Redeem (Round #${winnersRoundId})`,
     })
-  }, [winnersRoundId, runSignedAction])
+  }, [winnersRoundId, canClaimPrize, canWithdrawPrincipal, handleRedeemRound])
 
   const handleMyRoundsWithdraw = useCallback(async (r) => {
     setBusyRids(prev => new Set(prev).add(r.rid))
     try {
-      await runSignedAction(`Withdraw (Round #${r.rid})`, async (pool) => {
-        const tx = await pool.withdrawPrincipal(BigInt(r.rid))
-        setActionStatus(`Withdraw (Round #${r.rid}): submitted ${tx.hash.slice(0, 10)}...`)
-        await tx.wait()
-      }, r.poolAddr)
+      await handleRedeemRound({
+        rid: r.rid,
+        poolAddr: r.poolAddr,
+        claimPrize: r.canClaimPrize,
+        withdrawPrincipal: r.canWithdraw,
+        label: `Redeem (Round #${r.rid})`,
+      })
     } finally {
       setBusyRids(prev => { const s = new Set(prev); s.delete(r.rid); return s })
     }
-  }, [runSignedAction])
+  }, [handleRedeemRound])
 
   const openWinnersWithTransition = useCallback(() => {
     if (winnersTransitioning) return
@@ -1695,12 +1705,10 @@ export default function App() {
             roundNumber={Number(winnersRoundId || 0)}
             winningTicket={winnersSource.info?.winningTicket}
             participantDataStale={participantDataStale}
-            canClaim={canClaimPrize}
-            canWithdraw={canWithdrawPrincipal}
+            canRedeem={canRedeemWinnersRound}
             settlementLabel={winnersSettled ? 'Settled — Withdraw Available' : 'Winner Drawn - Vault Awaiting Settlement'}
             settlementCountdown={previousSettlementCountdown}
-            onClaimPrize={handleClaimPrize}
-            onWithdraw={handleWithdraw}
+            onRedeem={handleWinnersRedeem}
             actionBusy={actionBusy}
             actionStatus={actionStatus}
             actionError={actionError}
@@ -1800,7 +1808,7 @@ export default function App() {
                           onClick={() => handleMyRoundsWithdraw(r)}
                           disabled={busyRids.has(r.rid)}
                         >
-                          {busyRids.has(r.rid) ? 'Withdrawing...' : 'WITHDRAW'}
+                          {busyRids.has(r.rid) ? 'Redeeming...' : 'Redeem'}
                         </button>
                       ) : r.state === 3 && r.principalWei === 0n
                         ? <span style={{color:'#6ee7b7'}}>✓ Done</span>
