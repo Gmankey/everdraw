@@ -13,15 +13,25 @@ import { POOL_EVENT_ABI } from './abi.js';
 
 const LAST_FINALIZED_BLOCK_KEY = 'last_finalized_block';
 const SUPPORTED_EVENTS: SupportedEventName[] = [
+  // Shared
   'RoundStarted',
+  'RoundSettled',
+  'RoundSkipped',
+  'RoundFailed',
+  'PrizeClaimed',
+  'PrincipalWithdrawn',
+  // Legacy V2Compat-only
   'DrawCommitted',
   'WinnerDrawn',
   'UnstakeRequested',
-  'RoundSettled',
-  'RoundSkipped',
   'TicketsBought',
-  'PrizeClaimed',
-  'PrincipalWithdrawn',
+  // V2-only
+  'TicketsPurchased',
+  'RoundCommitted',
+  // V3-only
+  'VRFRequested',
+  'VRFFulfilled',
+  'EmergencyForceSettled',
 ];
 
 export interface IndexerRunner {
@@ -171,11 +181,13 @@ function toRawEventRow(input: {
 
   const amountMon = parsed.args.monPaid != null
     ? String(parsed.args.monPaid)
-    : parsed.args.amount != null
-      ? String(parsed.args.amount)
-      : parsed.args.prizeAmount != null
-        ? String(parsed.args.prizeAmount)
-        : null;
+    : parsed.args.costMON != null
+      ? String(parsed.args.costMON)
+      : parsed.args.amount != null
+        ? String(parsed.args.amount)
+        : parsed.args.prizeAmount != null
+          ? String(parsed.args.prizeAmount)
+          : null;
 
   return {
     txHash: log.transactionHash,
@@ -196,18 +208,101 @@ function toRawEventRow(input: {
 
 function normalizeArgs(eventName: SupportedEventName, args: any): Record<string, unknown> {
   switch (eventName) {
+    // ── Shared ─────────────────────────────────────────────────────────────
     case 'RoundStarted':
       return { roundId: Number(args.roundId), salesEndTime: String(args.salesEndTime) };
+
+    case 'RoundSkipped':
+    case 'RoundFailed':
+      return { roundId: Number(args.roundId) };
+
+    case 'RoundSettled': {
+      // V2 shape: has 'winner' indexed + 'totalPrincipalMON'
+      if (args.winner != null) {
+        return {
+          roundId: Number(args.roundId),
+          winner: String(args.winner).toLowerCase(),
+          winningTicket: Number(args.winningTicket),
+          monReceived: String(args.totalPrincipalMON ?? 0n),
+          yieldMON: '0',
+          lossRatio: '0',
+        };
+      }
+      // V3 shape: principalShares + prizeShares; no winner (winner is in separate WinnerDrawn)
+      if (args.principalShares != null) {
+        return {
+          roundId: Number(args.roundId),
+          principalShares: String(args.principalShares),
+          prizeShares: String(args.prizeShares),
+          monReceived: '0',
+          yieldMON: '0',
+          lossRatio: '0',
+        };
+      }
+      // Legacy shape: monReceived + yieldMON + lossRatio
+      return {
+        roundId: Number(args.roundId),
+        monReceived: String(args.monReceived),
+        yieldMON: String(args.yieldMON),
+        lossRatio: String(args.lossRatio),
+      };
+    }
+
+    case 'PrizeClaimed': {
+      // V2 shape: prizeShares + shareRateAtClaim; compute approximate MON value
+      if (args.prizeShares != null) {
+        const prizeShares = BigInt(args.prizeShares);
+        const shareRate = BigInt(args.shareRateAtClaim);
+        const amount = (prizeShares * shareRate) / (10n ** 18n);
+        return { roundId: Number(args.roundId), winner: String(args.winner).toLowerCase(), amount: String(amount) };
+      }
+      // Legacy shape: amount in MON directly
+      return { roundId: Number(args.roundId), winner: String(args.winner).toLowerCase(), amount: String(args.amount) };
+    }
+
+    case 'PrincipalWithdrawn': {
+      // V2 shape: sharesReturned + shareRateAtWithdraw; compute approximate MON value
+      if (args.sharesReturned != null) {
+        const sharesReturned = BigInt(args.sharesReturned);
+        const shareRate = BigInt(args.shareRateAtWithdraw);
+        const amount = (sharesReturned * shareRate) / (10n ** 18n);
+        return { roundId: Number(args.roundId), user: String(args.user).toLowerCase(), amount: String(amount) };
+      }
+      // Legacy shape: amount in MON directly
+      return { roundId: Number(args.roundId), user: String(args.user).toLowerCase(), amount: String(args.amount) };
+    }
+
+    // ── Legacy V2Compat-only ────────────────────────────────────────────────
+    case 'DrawCommitted':
+      return { roundId: Number(args.roundId), targetBlockNumber: String(args.targetBlockNumber) };
+
     case 'WinnerDrawn':
       return { roundId: Number(args.roundId), winner: String(args.winner).toLowerCase(), winningTicket: Number(args.winningTicket) };
-    case 'RoundSettled':
-      return { roundId: Number(args.roundId), monReceived: String(args.monReceived), yieldMON: String(args.yieldMON), lossRatio: String(args.lossRatio) };
+
+    case 'UnstakeRequested':
+      return { roundId: Number(args.roundId), completionEpoch: String(args.completionEpoch), shmonShares: String(args.shmonShares) };
+
     case 'TicketsBought':
       return { roundId: Number(args.roundId), buyer: String(args.buyer).toLowerCase(), ticketCount: Number(args.ticketCount), monPaid: String(args.monPaid) };
-    case 'PrizeClaimed':
-      return { roundId: Number(args.roundId), winner: String(args.winner).toLowerCase(), amount: String(args.amount) };
-    case 'PrincipalWithdrawn':
-      return { roundId: Number(args.roundId), user: String(args.user).toLowerCase(), amount: String(args.amount) };
+
+    // ── V2-only ────────────────────────────────────────────────────────────
+    case 'TicketsPurchased':
+      // Normalize to same payload shape as TicketsBought so derive services need no V2-specific branching
+      return { roundId: Number(args.roundId), buyer: String(args.buyer).toLowerCase(), ticketCount: Number(args.ticketCount), monPaid: String(args.costMON) };
+
+    case 'RoundCommitted':
+      return { roundId: Number(args.roundId), targetBlockNumber: String(args.targetBlockNumber) };
+
+    // ── V3-only ────────────────────────────────────────────────────────────
+    case 'VRFRequested':
+      return { roundId: Number(args.roundId), sequence: String(args.sequence), fee: String(args.fee) };
+
+    case 'VRFFulfilled':
+      return { roundId: Number(args.roundId), sequence: String(args.sequence) };
+
+    case 'EmergencyForceSettled':
+      return { roundId: Number(args.roundId) };
+
     default:
       return { roundId: Number(args.roundId) };
   }

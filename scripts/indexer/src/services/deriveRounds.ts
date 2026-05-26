@@ -63,6 +63,7 @@ export function createDeriveRoundsService(
           }
 
           case 'DrawCommitted':
+          case 'RoundCommitted':
             acc.state = 'committed';
             acc.committedAt = event.blockTimestamp;
             break;
@@ -85,6 +86,9 @@ export function createDeriveRoundsService(
           case 'RoundSettled': {
             const payload = parsePayload<{
               roundId: number;
+              // V2 only: winner embedded in RoundSettled
+              winner?: string;
+              winningTicket?: number;
               monReceived: string | number;
               yieldMON: string | number;
               lossRatio: string | number;
@@ -95,15 +99,37 @@ export function createDeriveRoundsService(
             acc.monReceived = stringifyNumberish(payload.monReceived ?? '0');
             acc.yieldMon = stringifyNumberish(payload.yieldMON ?? '0');
             acc.lossRatio = stringifyNumberish(payload.lossRatio ?? '0');
+
+            // V2: winner is embedded in RoundSettled (no separate WinnerDrawn event)
+            if (payload.winner) {
+              acc.winner = payload.winner;
+              acc.winningTicket = Number(payload.winningTicket ?? 0);
+              if (event.wallet) acc.winnerWallets.add(event.wallet);
+            }
             break;
           }
 
           case 'RoundSkipped':
+          case 'RoundFailed':
+          case 'EmergencyForceSettled':
             acc.state = 'skipped';
             acc.isSkipped = 1;
             break;
 
-          case 'TicketsBought': {
+          case 'VRFRequested':
+            // V3: VRF request submitted — treat as committed (sales closed, draw in progress)
+            acc.state = 'committed';
+            acc.committedAt = event.blockTimestamp;
+            break;
+
+          case 'VRFFulfilled':
+            // V3: VRF callback received — WinnerDrawn follows immediately via finalizeDraw
+            // State will be updated to 'drawn' by the subsequent WinnerDrawn event
+            break;
+
+          case 'TicketsBought':
+          case 'TicketsPurchased': {
+            // Both legacy and V2 payloads are normalized to { roundId, buyer, ticketCount, monPaid }
             const payload = parsePayload<{
               roundId: number;
               buyer: string;
