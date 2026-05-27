@@ -2628,8 +2628,8 @@ export default function App() {
                 </div>
               ) : myRounds.map((r, index) => {
                 const myRoundResultLabel = r.isV2
-                  ? (r.state < 2 ? 'Active' : r.state === 2 ? (r.isWinner ? 'Won' : 'No win') : 'No draw')
-                  : (r.state < 3 ? 'Locked' : (r.isWinner ? 'Won' : 'Participant'))
+                  ? (r.state === 0 ? 'Open' : r.state < 2 ? 'Active' : r.state === 2 ? (r.isWinner ? 'Won' : 'No win') : 'No draw')
+                  : (r.state === 0 ? 'Open' : r.state < 3 ? 'Locked' : (r.isWinner ? 'Won' : 'Participant'))
                 const canRedeemRound = Boolean(r.canClaimPrize || r.canWithdraw)
                 const actionLabel = canRedeemRound ? 'Redeem' : (r.state === 0 ? 'Deposit' : 'Claimed')
                 const pendingActionLabel = actionLabel
