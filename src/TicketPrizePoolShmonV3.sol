@@ -118,9 +118,10 @@ contract TicketPrizePoolShmonV3 is IEntropyConsumer {
 
     function acceptOwnership() external {
         require(msg.sender == pendingOwner, "not pending owner");
+        address previousOwner = owner;
         owner = pendingOwner;
         pendingOwner = address(0);
-        emit OwnershipTransferred(owner);
+        emit OwnershipTransferred(previousOwner, owner);
     }
 
     // -------------------------
@@ -132,6 +133,12 @@ contract TicketPrizePoolShmonV3 is IEntropyConsumer {
 
     /// @notice Maximum protocol fee on prize yield, in basis points.
     uint16 public constant MAX_FEE_BPS = 2000;
+
+    /// @notice Contract version. Bumped on any future migration.
+    string public constant VERSION = "3.0.0";
+
+    /// @notice Minimum delay between queuing and committing an entropy/provider change.
+    uint64 public constant ENTROPY_CHANGE_DELAY = 24 hours;
 
     // -------------------------
     // Types
@@ -185,6 +192,10 @@ contract TicketPrizePoolShmonV3 is IEntropyConsumer {
         uint16 roundFeeBps;
         address roundFeeRecipient;
 
+        // Round metadata snapshot (ADR-0021). Defaults to (address(0), 0x0) for plain rounds.
+        address roundCampaign;
+        bytes32 roundMetadata;
+
         // winner
         address winner;
         uint32 winningTicket;
@@ -212,6 +223,8 @@ contract TicketPrizePoolShmonV3 is IEntropyConsumer {
     error WrongProvider();
     error FeeTooHigh();
     error ZeroAddress();
+    error NoPendingEntropyChange();
+    error TimelockNotElapsed();
 
     // -------------------------
     // Immutable config
@@ -221,8 +234,8 @@ contract TicketPrizePoolShmonV3 is IEntropyConsumer {
     uint32 public immutable roundDurationSec;
     uint32 public immutable yieldPeriodSec;
     IShMonad public immutable shmon;
-    IEntropy public immutable entropy;
-    address public immutable entropyProvider;
+    IEntropy public entropy;
+    address public entropyProvider;
 
     // -------------------------
     // Storage
@@ -254,6 +267,21 @@ contract TicketPrizePoolShmonV3 is IEntropyConsumer {
     uint16 public feeBps;
     address public feeRecipient;
 
+    /// @notice Pending entropy contract address; 0 means no change queued.
+    address public pendingEntropy;
+
+    /// @notice Pending entropy provider address.
+    address public pendingEntropyProvider;
+
+    /// @notice Unix timestamp after which a queued entropy change can be committed.
+    uint64 public pendingEntropyEffectiveAt;
+
+    /// @notice Campaign/sponsor address applied to the next opened round. 0 = no campaign.
+    address public nextRoundCampaign;
+
+    /// @notice Opaque metadata payload applied to the next opened round.
+    bytes32 public nextRoundMetadata;
+
     // -------------------------
     // Events
     // -------------------------
@@ -262,8 +290,8 @@ contract TicketPrizePoolShmonV3 is IEntropyConsumer {
     event TicketsBought(uint256 indexed roundId, address indexed buyer, uint32 ticketCount, uint256 monPaid);
 
     event RoundSkipped(uint256 indexed roundId);
-    event VRFRequested(uint256 indexed roundId, uint64 sequence, uint128 fee);
-    event VRFFulfilled(uint256 indexed roundId, uint64 sequence, bytes32 randomNumber);
+    event VRFRequested(uint256 indexed roundId, uint64 indexed sequence, uint128 fee);
+    event VRFFulfilled(uint256 indexed roundId, uint64 indexed sequence, bytes32 randomNumber);
     event WinnerDrawn(uint256 indexed roundId, address indexed winner, uint32 winningTicket);
     /// @notice Emitted when a round settles. `principalShares` = total deposited shares.
     ///         `prizeShares` = yield shares for winner (0 if shMON did not rebase or no yield).
@@ -281,14 +309,18 @@ contract TicketPrizePoolShmonV3 is IEntropyConsumer {
 
     event Paused(address indexed by);
     event Unpaused(address indexed by);
-    event OwnershipTransferred(address indexed newOwner);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
-    event VRFReserveDeposited(uint256 amount);
-    event VRFReserveWithdrawn(uint256 amount);
+    event VRFReserveDeposited(address indexed by, uint256 amount);
+    event VRFReserveWithdrawn(address indexed to, uint256 amount);
 
     event FeeUpdated(uint16 feeBps, address feeRecipient);
     /// @notice Emitted at settlement when a protocol fee is taken from prize yield.
     event ProtocolFeeAccrued(uint256 indexed roundId, uint256 feeShares, address indexed feeRecipient);
+    event EntropyChangeQueued(address newEntropy, address newProvider, uint64 effectiveAt);
+    event EntropyChanged(address entropy, address entropyProvider);
+    event EntropyChangeCancelled();
+    event NextRoundMetadataSet(address campaign, bytes32 metadata);
 
     // -------------------------
     // Constructor
@@ -331,6 +363,8 @@ contract TicketPrizePoolShmonV3 is IEntropyConsumer {
         r.salesEndTime = uint64(block.timestamp + _roundDurationSec);
         r.roundFeeBps = feeBps;
         r.roundFeeRecipient = feeRecipient;
+        r.roundCampaign = nextRoundCampaign;
+        r.roundMetadata = nextRoundMetadata;
 
         emit RoundStarted(1, r.salesEndTime);
     }
@@ -354,20 +388,61 @@ contract TicketPrizePoolShmonV3 is IEntropyConsumer {
         emit FeeUpdated(newFeeBps, newFeeRecipient);
     }
 
+    function queueEntropyChange(address newEntropy, address newProvider) external onlyOwner {
+        if (newEntropy == address(0) || newProvider == address(0)) revert ZeroAddress();
+
+        pendingEntropy = newEntropy;
+        pendingEntropyProvider = newProvider;
+        pendingEntropyEffectiveAt = uint64(block.timestamp) + ENTROPY_CHANGE_DELAY;
+
+        emit EntropyChangeQueued(newEntropy, newProvider, pendingEntropyEffectiveAt);
+    }
+
+    function commitEntropyChange() external onlyOwner {
+        if (pendingEntropyEffectiveAt == 0) revert NoPendingEntropyChange();
+        if (block.timestamp < pendingEntropyEffectiveAt) revert TimelockNotElapsed();
+
+        entropy = IEntropy(pendingEntropy);
+        entropyProvider = pendingEntropyProvider;
+
+        pendingEntropy = address(0);
+        pendingEntropyProvider = address(0);
+        pendingEntropyEffectiveAt = 0;
+
+        emit EntropyChanged(address(entropy), entropyProvider);
+    }
+
+    function cancelEntropyChange() external onlyOwner {
+        if (pendingEntropyEffectiveAt == 0) revert NoPendingEntropyChange();
+
+        pendingEntropy = address(0);
+        pendingEntropyProvider = address(0);
+        pendingEntropyEffectiveAt = 0;
+
+        emit EntropyChangeCancelled();
+    }
+
+    function setNextRoundMetadata(address campaign, bytes32 metadata) external onlyOwner {
+        nextRoundCampaign = campaign;
+        nextRoundMetadata = metadata;
+
+        emit NextRoundMetadataSet(campaign, metadata);
+    }
+
     // -------------------------
     // VRF reserve management
     // -------------------------
 
     /// @notice Fund the VRF fee reserve (native MON). Plain transfers also work.
     function depositVRFReserve() external payable onlyOwner {
-        emit VRFReserveDeposited(msg.value);
+        emit VRFReserveDeposited(msg.sender, msg.value);
     }
 
     /// @notice Withdraw MON from the contract balance (VRF reserve). Owner-only.
     function withdrawVRFReserve(uint256 amount) external onlyOwner nonReentrant {
         (bool ok,) = msg.sender.call{value: amount}("");
         require(ok, "transfer failed");
-        emit VRFReserveWithdrawn(amount);
+        emit VRFReserveWithdrawn(msg.sender, amount);
     }
 
     // -------------------------
@@ -688,6 +763,8 @@ contract TicketPrizePoolShmonV3 is IEntropyConsumer {
         r.salesEndTime = uint64(block.timestamp + roundDurationSec);
         r.roundFeeBps = feeBps;
         r.roundFeeRecipient = feeRecipient;
+        r.roundCampaign = nextRoundCampaign;
+        r.roundMetadata = nextRoundMetadata;
         emit RoundStarted(currentRoundId, r.salesEndTime);
     }
 
@@ -881,6 +958,11 @@ contract TicketPrizePoolShmonV3 is IEntropyConsumer {
     function getRoundFee(uint256 rid) external view returns (uint16 bps, address recipient) {
         RoundData storage r = rounds[rid];
         return (r.roundFeeBps, r.roundFeeRecipient);
+    }
+
+    function getRoundMetadata(uint256 rid) external view returns (address campaign, bytes32 metadata) {
+        RoundData storage r = rounds[rid];
+        return (r.roundCampaign, r.roundMetadata);
     }
 
     function ownerOfTicket(uint256 rid, uint32 ticketId) external view returns (address) {

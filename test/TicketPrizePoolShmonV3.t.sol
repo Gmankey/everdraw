@@ -437,6 +437,8 @@ contract V3_VRFCallback_Test is V3Base {
 // ============================================================
 
 contract V3_FeeHandling_Test is V3Base {
+    event VRFReserveDeposited(address indexed by, uint256 amount);
+    event VRFReserveWithdrawn(address indexed to, uint256 amount);
 
     function test_commit_insufficient_vrf_fee_reverts() public {
         entropy.setFee(10 ether);
@@ -451,12 +453,16 @@ contract V3_FeeHandling_Test is V3Base {
 
     function test_depositVRFReserve_increases_balance() public {
         uint256 balBefore = address(pool).balance;
+        vm.expectEmit(true, false, false, true);
+        emit VRFReserveDeposited(address(this), 1 ether);
         pool.depositVRFReserve{value: 1 ether}();
         assertEq(address(pool).balance - balBefore, 1 ether);
     }
 
     function test_withdrawVRFReserve_decreases_balance() public {
         uint256 balBefore = address(pool).balance;
+        vm.expectEmit(true, false, false, true);
+        emit VRFReserveWithdrawn(address(this), 0.5 ether);
         pool.withdrawVRFReserve(0.5 ether);
         assertEq(balBefore - address(pool).balance, 0.5 ether);
     }
@@ -976,7 +982,246 @@ contract V3_ProtocolFee_Test is V3Base {
 }
 
 // ============================================================
-// 8. State machine invariant tests
+// 8. Entropy timelock hardening (ADR-0021)
+// ============================================================
+
+contract V3_EntropyTimelock_Test is V3Base {
+    event EntropyChangeQueued(address newEntropy, address newProvider, uint64 effectiveAt);
+    event EntropyChanged(address entropy, address entropyProvider);
+    event EntropyChangeCancelled();
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+
+    function test_queueEntropyChange_emits_event_with_effectiveAt() public {
+        MockEntropy nextEntropy = new MockEntropy();
+        address nextProvider = address(0xBEEF);
+        uint64 effectiveAt = uint64(block.timestamp) + pool.ENTROPY_CHANGE_DELAY();
+
+        vm.expectEmit(false, false, false, true);
+        emit EntropyChangeQueued(address(nextEntropy), nextProvider, effectiveAt);
+        pool.queueEntropyChange(address(nextEntropy), nextProvider);
+
+        assertEq(pool.pendingEntropy(), address(nextEntropy));
+        assertEq(pool.pendingEntropyProvider(), nextProvider);
+        assertEq(pool.pendingEntropyEffectiveAt(), effectiveAt);
+    }
+
+    function test_queueEntropyChange_zero_entropy_reverts() public {
+        vm.expectRevert(TicketPrizePoolShmonV3.ZeroAddress.selector);
+        pool.queueEntropyChange(address(0), address(0xBEEF));
+    }
+
+    function test_queueEntropyChange_zero_provider_reverts() public {
+        MockEntropy nextEntropy = new MockEntropy();
+        vm.expectRevert(TicketPrizePoolShmonV3.ZeroAddress.selector);
+        pool.queueEntropyChange(address(nextEntropy), address(0));
+    }
+
+    function test_queueEntropyChange_only_owner() public {
+        MockEntropy nextEntropy = new MockEntropy();
+        vm.prank(alice);
+        vm.expectRevert("not owner");
+        pool.queueEntropyChange(address(nextEntropy), address(0xBEEF));
+    }
+
+    function test_commitEntropyChange_before_delay_reverts() public {
+        MockEntropy nextEntropy = new MockEntropy();
+        pool.queueEntropyChange(address(nextEntropy), address(0xBEEF));
+        vm.warp(uint256(pool.pendingEntropyEffectiveAt()) - 1);
+
+        vm.expectRevert(TicketPrizePoolShmonV3.TimelockNotElapsed.selector);
+        pool.commitEntropyChange();
+    }
+
+    function test_commitEntropyChange_at_exactly_delay_succeeds() public {
+        MockEntropy nextEntropy = new MockEntropy();
+        address nextProvider = address(0xBEEF);
+        pool.queueEntropyChange(address(nextEntropy), nextProvider);
+        vm.warp(pool.pendingEntropyEffectiveAt());
+
+        vm.expectEmit(false, false, false, true);
+        emit EntropyChanged(address(nextEntropy), nextProvider);
+        pool.commitEntropyChange();
+
+        assertEq(address(pool.entropy()), address(nextEntropy));
+        assertEq(pool.entropyProvider(), nextProvider);
+        assertEq(pool.pendingEntropy(), address(0));
+        assertEq(pool.pendingEntropyProvider(), address(0));
+        assertEq(pool.pendingEntropyEffectiveAt(), 0);
+    }
+
+    function test_commitEntropyChange_no_pending_reverts() public {
+        vm.expectRevert(TicketPrizePoolShmonV3.NoPendingEntropyChange.selector);
+        pool.commitEntropyChange();
+    }
+
+    function test_cancelEntropyChange_clears_pending() public {
+        MockEntropy nextEntropy = new MockEntropy();
+        pool.queueEntropyChange(address(nextEntropy), address(0xBEEF));
+
+        vm.expectEmit(false, false, false, true);
+        emit EntropyChangeCancelled();
+        pool.cancelEntropyChange();
+
+        assertEq(pool.pendingEntropy(), address(0));
+        assertEq(pool.pendingEntropyProvider(), address(0));
+        assertEq(pool.pendingEntropyEffectiveAt(), 0);
+    }
+
+    function test_queue_then_requeue_resets_timer() public {
+        MockEntropy firstEntropy = new MockEntropy();
+        MockEntropy secondEntropy = new MockEntropy();
+        address firstProvider = address(0xBEEF);
+        address secondProvider = address(0xCAFE);
+
+        pool.queueEntropyChange(address(firstEntropy), firstProvider);
+        uint64 firstEffectiveAt = pool.pendingEntropyEffectiveAt();
+        vm.warp(block.timestamp + 6 hours);
+
+        pool.queueEntropyChange(address(secondEntropy), secondProvider);
+
+        assertEq(pool.pendingEntropy(), address(secondEntropy));
+        assertEq(pool.pendingEntropyProvider(), secondProvider);
+        assertEq(pool.pendingEntropyEffectiveAt(), uint64(block.timestamp) + pool.ENTROPY_CHANGE_DELAY());
+        assertGt(pool.pendingEntropyEffectiveAt(), firstEffectiveAt);
+    }
+
+    function test_commitEntropyChange_actually_routes_next_request_to_new_address() public {
+        MockEntropy nextEntropy = new MockEntropy();
+        address nextProvider = address(0xBEEF);
+        _buyTickets(alice, 1);
+
+        pool.queueEntropyChange(address(nextEntropy), nextProvider);
+        vm.warp(pool.pendingEntropyEffectiveAt());
+        pool.commitEntropyChange();
+
+        _warpPastYield(1);
+        pool.commitDraw(1);
+
+        (,, uint64 seq,,,,,,,,,) = pool.getRoundInfo(1);
+        (address consumer, address provider) = nextEntropy.requests(seq);
+        assertEq(consumer, address(pool));
+        assertEq(provider, nextProvider);
+    }
+
+    function test_acceptOwnership_emits_previous_and_new_owner() public {
+        address nextOwner = makeAddr("nextOwner");
+        pool.transferOwnership(nextOwner);
+
+        vm.expectEmit(true, true, false, true);
+        emit OwnershipTransferred(address(this), nextOwner);
+        vm.prank(nextOwner);
+        pool.acceptOwnership();
+    }
+}
+
+// ============================================================
+// 9. Round metadata snapshots (ADR-0021)
+// ============================================================
+
+contract V3_RoundMetadata_Test is V3Base {
+    event NextRoundMetadataSet(address campaign, bytes32 metadata);
+
+    address campaign = makeAddr("campaign");
+    address campaign2 = makeAddr("campaign2");
+    bytes32 metadata = keccak256("campaign-round");
+    bytes32 metadata2 = keccak256("follow-up-round");
+
+    function _skipToNextRound() internal returns (uint256) {
+        uint256 rid = pool.currentRoundId();
+        _warpPastSales(rid);
+        pool.executeNext();
+        return pool.currentRoundId();
+    }
+
+    function test_default_round_has_zero_metadata() public {
+        (address roundCampaign, bytes32 roundMetadata) = pool.getRoundMetadata(1);
+        assertEq(roundCampaign, address(0));
+        assertEq(roundMetadata, bytes32(0));
+    }
+
+    function test_setNextRoundMetadata_updates_storage_and_emits() public {
+        vm.expectEmit(false, false, false, true);
+        emit NextRoundMetadataSet(campaign, metadata);
+        pool.setNextRoundMetadata(campaign, metadata);
+
+        assertEq(pool.nextRoundCampaign(), campaign);
+        assertEq(pool.nextRoundMetadata(), metadata);
+    }
+
+    function test_setNextRoundMetadata_only_owner() public {
+        vm.prank(alice);
+        vm.expectRevert("not owner");
+        pool.setNextRoundMetadata(campaign, metadata);
+    }
+
+    function test_metadata_snapshotted_at_round_open() public {
+        pool.setNextRoundMetadata(campaign, metadata);
+        uint256 rid = _skipToNextRound();
+
+        pool.setNextRoundMetadata(campaign2, metadata2);
+        _buyTickets(alice, 1);
+        uint64 seq = _commit(rid);
+        _fulfill(seq, keccak256("metadata-snapshot"));
+        pool.finalizeDraw(rid);
+
+        (address roundCampaign, bytes32 roundMetadata) = pool.getRoundMetadata(rid);
+        assertEq(roundCampaign, campaign);
+        assertEq(roundMetadata, metadata);
+    }
+
+    function test_metadata_applies_to_next_round() public {
+        pool.setNextRoundMetadata(campaign, metadata);
+        (address currentCampaign, bytes32 currentMetadata) = pool.getRoundMetadata(1);
+        assertEq(currentCampaign, address(0));
+        assertEq(currentMetadata, bytes32(0));
+
+        uint256 rid = _skipToNextRound();
+
+        (address roundCampaign, bytes32 roundMetadata) = pool.getRoundMetadata(rid);
+        assertEq(roundCampaign, campaign);
+        assertEq(roundMetadata, metadata);
+    }
+
+    function test_setNextRoundMetadata_zero_clears_campaign() public {
+        pool.setNextRoundMetadata(campaign, metadata);
+        pool.setNextRoundMetadata(address(0), bytes32(0));
+
+        assertEq(pool.nextRoundCampaign(), address(0));
+        assertEq(pool.nextRoundMetadata(), bytes32(0));
+    }
+
+    function test_getRoundMetadata_returns_snapshot() public {
+        pool.setNextRoundMetadata(campaign, metadata);
+        uint256 rid = _skipToNextRound();
+
+        (address roundCampaign, bytes32 roundMetadata) = pool.getRoundMetadata(rid);
+        assertEq(roundCampaign, campaign);
+        assertEq(roundMetadata, metadata);
+    }
+
+    function test_metadata_change_does_not_affect_in_flight_round() public {
+        pool.setNextRoundMetadata(campaign, metadata);
+        uint256 rid = _skipToNextRound();
+
+        _buyTickets(alice, 1);
+        pool.setNextRoundMetadata(campaign2, metadata2);
+
+        (address inFlightCampaign, bytes32 inFlightMetadata) = pool.getRoundMetadata(rid);
+        assertEq(inFlightCampaign, campaign);
+        assertEq(inFlightMetadata, metadata);
+
+        uint64 seq = _commit(rid);
+        _fulfill(seq, keccak256("in-flight"));
+        pool.finalizeDraw(rid);
+
+        (address settledCampaign, bytes32 settledMetadata) = pool.getRoundMetadata(rid);
+        assertEq(settledCampaign, campaign);
+        assertEq(settledMetadata, metadata);
+    }
+}
+
+// ============================================================
+// 10. State machine invariant tests
 // ============================================================
 
 contract V3_StateMachine_Test is V3Base {
@@ -1088,7 +1333,7 @@ contract V3_StateMachine_Test is V3Base {
 }
 
 // ============================================================
-// 8. Gas budget on _entropyCallback
+// 11. Gas budget on _entropyCallback
 // ============================================================
 
 contract V3_GasCallback_Test is V3Base {
@@ -1107,7 +1352,7 @@ contract V3_GasCallback_Test is V3Base {
 }
 
 // ============================================================
-// 9. getUserPosition tests
+// 12. getUserPosition tests
 // ============================================================
 
 contract V3_UserPosition_Test is V3Base {
@@ -1138,7 +1383,7 @@ contract V3_UserPosition_Test is V3Base {
 }
 
 // ============================================================
-// 10. Multi-round accounting (unclaimed shares don't bleed yield)
+// 13. Multi-round accounting (unclaimed shares don't bleed yield)
 // ============================================================
 
 contract V3_MultiRound_Test is V3Base {
