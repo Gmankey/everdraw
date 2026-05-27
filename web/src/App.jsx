@@ -2543,44 +2543,53 @@ export default function App() {
         </h1>
 
         <section className="vault-bar">
-          {isV2Pool ? (
+          {(isV2Pool || isV3Pool) ? (
             <>
-              <button
-                className={`vault-label ${!vaultBPending && selectedPoolAddress.toLowerCase() === poolAddressesV2[0]?.toLowerCase() ? 'active' : ''}`}
-                tabIndex={-1}
-                onClick={() => { setVaultBPending(false); setSelectedPoolAddress(poolAddressesV2[0]); setMainView('current') }}
-              >VAULT A</button>
-              <div
-                className="vault-gear-track"
-                onClick={() => {
-                  if (poolAddressesV2.length >= 2) {
-                    setVaultBPending(false)
-                    setSelectedPoolAddress(
-                      selectedPoolAddress.toLowerCase() === poolAddressesV2[0]?.toLowerCase()
-                        ? poolAddressesV2[1]
-                        : poolAddressesV2[0]
-                    )
-                  } else {
-                    setVaultBPending((p) => !p)
-                  }
-                  setMainView('current')
-                }}
-              >
-                <div className={`vault-gear-knob ${vaultBPending || selectedPoolAddress.toLowerCase() === poolAddressesV2[1]?.toLowerCase() ? 'right' : ''}`}>⚙</div>
-              </div>
-              <button
-                className={`vault-label ${vaultBPending || selectedPoolAddress.toLowerCase() === poolAddressesV2[1]?.toLowerCase() ? 'active' : ''}`}
-                tabIndex={-1}
-                onClick={() => {
-                  if (poolAddressesV2.length >= 2) {
-                    setVaultBPending(false)
-                    setSelectedPoolAddress(poolAddressesV2[1])
-                  } else {
-                    setVaultBPending(true)
-                  }
-                  setMainView('current')
-                }}
-              >VAULT B</button>
+              {/* V3 takes the Vault A slot when present; V2 Vault A is reachable via My Rounds for in-flight finalization */}
+              {(() => {
+                const vaultASlot = poolAddressesV3[0] || poolAddressesV2[0]
+                const vaultBSlot = poolAddressesV3[1] || poolAddressesV2[1]
+                const hasTwoSlots = Boolean(vaultASlot && vaultBSlot)
+                const selLc = selectedPoolAddress.toLowerCase()
+                const isOnA = selLc === vaultASlot?.toLowerCase()
+                const isOnB = selLc === vaultBSlot?.toLowerCase()
+                return (
+                  <>
+                    <button
+                      className={`vault-label ${!vaultBPending && isOnA ? 'active' : ''}`}
+                      tabIndex={-1}
+                      onClick={() => { setVaultBPending(false); setSelectedPoolAddress(vaultASlot); setMainView('current') }}
+                    >VAULT A</button>
+                    <div
+                      className="vault-gear-track"
+                      onClick={() => {
+                        if (hasTwoSlots) {
+                          setVaultBPending(false)
+                          setSelectedPoolAddress(isOnA ? vaultBSlot : vaultASlot)
+                        } else {
+                          setVaultBPending((p) => !p)
+                        }
+                        setMainView('current')
+                      }}
+                    >
+                      <div className={`vault-gear-knob ${vaultBPending || isOnB ? 'right' : ''}`}>⚙</div>
+                    </div>
+                    <button
+                      className={`vault-label ${vaultBPending || isOnB ? 'active' : ''}`}
+                      tabIndex={-1}
+                      onClick={() => {
+                        if (hasTwoSlots) {
+                          setVaultBPending(false)
+                          setSelectedPoolAddress(vaultBSlot)
+                        } else {
+                          setVaultBPending(true)
+                        }
+                        setMainView('current')
+                      }}
+                    >VAULT B</button>
+                  </>
+                )
+              })()}
             </>
           ) : (
             <>
