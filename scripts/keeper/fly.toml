@@ -1,0 +1,29 @@
+app = "everdraw-keeper"
+primary_region = "sjc"
+
+[build]
+  # flyctl resolves this relative to scripts/keeper/fly.toml.
+  # Deploy from the repo root so package manifests, scripts/, and abi/ are in context.
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  KEEPER_INTERVAL_MS = "30000"
+  KEEPER_DRY_RUN = "false"
+  KEEPER_LOW_BALANCE_MON = "0.2"
+  KEEPER_ERROR_ALERT_THRESHOLD = "3"
+  KEEPER_BALANCE_LOG_EVERY_TICKS = "5"
+  KEEPER_HEARTBEAT_LOG_EVERY_TICKS = "10"
+  KEEPER_PREFLIGHT = "true"
+  TELEGRAM_TIMEOUT_MS = "8000"
+  TELEGRAM_RETRIES = "2"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+
+[deploy]
+  strategy = "immediate"
+
+# No service block: the keeper is a pure background worker.
+# No volumes: keeper state comes from chain state and Fly secrets.

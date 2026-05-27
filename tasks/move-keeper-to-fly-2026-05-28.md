@@ -1,8 +1,8 @@
 # Builder Ticket: Move Mainnet Keeper to Fly.io
 
-**Target:** New Fly app `everdraw-keeper`  
-**Files touched:** `scripts/keeper/Dockerfile`, `scripts/keeper/fly.toml`, optional `.dockerignore`  
-**Deploys to:** Fly.io (paid plan, same account as `everdraw-indexer`)  
+**Target:** New Fly app `everdraw-keeper`
+**Files touched:** `scripts/keeper/Dockerfile`, `scripts/keeper/fly.toml`, optional `.dockerignore`
+**Deploys to:** Fly.io (paid plan, same account as `everdraw-indexer`)
 **Deadline:** None hard, but ideally before any extended period away from the operator's machine. V3 Vault A's first real round opens Wed 2026-06-03 13:00 UTC — keeper must be up by then.
 
 ---
