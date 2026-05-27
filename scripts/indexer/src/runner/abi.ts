@@ -27,8 +27,8 @@ export const POOL_EVENT_ABI = [
   // ── V3 (TicketPrizePoolShmonV3) events ───────────────────────────────────
   // TicketsBought, WinnerDrawn, PrizeClaimed(amount), PrincipalWithdrawn(amount),
   // RoundStarted, RoundSkipped share topic hashes with legacy — no new entries needed.
-  'event VRFRequested(uint256 indexed roundId, uint64 sequence, uint128 fee)',
-  'event VRFFulfilled(uint256 indexed roundId, uint64 sequence, bytes32 randomNumber)',
+  'event VRFRequested(uint256 indexed roundId, uint64 indexed sequence, uint128 fee)',
+  'event VRFFulfilled(uint256 indexed roundId, uint64 indexed sequence, bytes32 randomNumber)',
   // V3 RoundSettled — principalShares + prizeShares, no winner (different topic hash from legacy and V2)
   'event RoundSettled(uint256 indexed roundId, uint256 principalShares, uint256 prizeShares)',
   'event EmergencyForceSettled(uint256 indexed roundId)',
