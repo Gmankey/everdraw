@@ -982,11 +982,11 @@ export default function App() {
   const poolAddressesV3 = useMemo(() => parseV3PoolAddresses(), [])
   const activeVaultAddresses = useMemo(() => {
     const slots = [
-      poolAddressesV3[0] || poolAddressesV2[0] || poolAddresses[0],
-      poolAddressesV3[1] || poolAddressesV2[1] || poolAddresses[1],
+      poolAddressesV3[0],
+      poolAddressesV3[1],
     ].filter(Boolean)
     return [...new Set(slots.map((addr) => addr))]
-  }, [poolAddresses, poolAddressesV2, poolAddressesV3])
+  }, [poolAddressesV3])
   const allPoolAddresses = useMemo(() => {
     const seen = new Set()
     return [...activeVaultAddresses, ...poolAddressesV3, ...poolAddressesV2, ...poolAddresses].filter((addr) => {
@@ -996,7 +996,7 @@ export default function App() {
       return true
     })
   }, [activeVaultAddresses, poolAddresses, poolAddressesV2, poolAddressesV3])
-  const [selectedPoolAddress, setSelectedPoolAddress] = useState(activeVaultAddresses[0] || allPoolAddresses[0] || '')
+  const [selectedPoolAddress, setSelectedPoolAddress] = useState(activeVaultAddresses[0] || '')
   const poolAddress = selectedPoolAddress
   const isV2Pool = useMemo(() => poolAddressesV2.some((a) => a.toLowerCase() === String(poolAddress).toLowerCase()), [poolAddressesV2, poolAddress])
   const isV3Pool = useMemo(() => poolAddressesV3.some((a) => a.toLowerCase() === String(poolAddress).toLowerCase()), [poolAddressesV3, poolAddress])
@@ -1063,14 +1063,14 @@ export default function App() {
   const [pointsBanner, setPointsBanner] = useState(null)
 
   useEffect(() => {
-    if (!allPoolAddresses.length) {
+    if (!activeVaultAddresses.length) {
       setSelectedPoolAddress('')
       return
     }
-    if (!selectedPoolAddress || !allPoolAddresses.some((a) => a.toLowerCase() === selectedPoolAddress.toLowerCase())) {
-      setSelectedPoolAddress(activeVaultAddresses[0] || allPoolAddresses[0])
+    if (!selectedPoolAddress || !activeVaultAddresses.some((a) => a.toLowerCase() === selectedPoolAddress.toLowerCase())) {
+      setSelectedPoolAddress(activeVaultAddresses[0])
     }
-  }, [activeVaultAddresses, allPoolAddresses, selectedPoolAddress])
+  }, [activeVaultAddresses, selectedPoolAddress])
 
   useEffect(() => {
     // Load user-provided vault SFX from public/sfx
@@ -2574,7 +2574,7 @@ export default function App() {
         <section className="vault-bar">
           {(isV2Pool || isV3Pool) ? (
             <>
-              {/* V3 takes the Vault A slot when present; V2 Vault A is reachable via My Rounds for in-flight finalization */}
+              {/* Public active vaults are V3-only; V2 remains reachable only through historical redemption paths. */}
               {(() => {
                 const vaultASlot = activeVaultAddresses[0]
                 const vaultBSlot = activeVaultAddresses[1]
@@ -2660,7 +2660,8 @@ export default function App() {
                   ? (r.state === 0 ? 'Open' : r.state < 2 ? 'Active' : r.state === 2 ? (r.isWinner ? 'Won' : 'No win') : 'No draw')
                   : (r.state === 0 ? 'Open' : r.state < 3 ? 'Locked' : (r.isWinner ? 'Won' : 'Participant'))
                 const canRedeemRound = Boolean(r.canClaimPrize || r.canWithdraw)
-                const canDepositRound = r.state === 0 && Number(r.salesEndTime || 0) > now
+                const isActiveDepositPool = activeVaultAddresses.some((addr) => addr.toLowerCase() === String(r.poolAddr).toLowerCase())
+                const canDepositRound = !r.isV2 && isActiveDepositPool && r.state === 0 && Number(r.salesEndTime || 0) > now
                 const actionLabel = canRedeemRound
                   ? 'Redeem'
                   : canDepositRound
@@ -2716,7 +2717,7 @@ export default function App() {
           </section>
         ) : (
           <section className="main-grid">
-            {isV2Pool && vaultBPending ? (
+            {vaultBPending && !activeVaultAddresses[1] ? (
               <div className="card">
                 <div className="card-header"><div className="card-title">VAULT B</div></div>
                 <div style={{ padding: '2.5rem 1rem', textAlign: 'center', color: 'rgba(155,109,255,0.5)', fontSize: '1rem' }}>
