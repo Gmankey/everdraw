@@ -12,6 +12,7 @@ RUN npm ci --omit=dev --ignore-scripts
 # Copy keeper sources and runtime assets. Build context must be the repo root,
 # not scripts/keeper, because the keeper imports sibling scripts and ABIs.
 COPY scripts/keeper-watchdog.js ./scripts/
+COPY scripts/keeper-alert-watcher.js ./scripts/
 COPY scripts/keeper-execute-next.js ./scripts/
 COPY scripts/keeper-health.sh ./scripts/
 COPY scripts/keeper-env-check.sh ./scripts/

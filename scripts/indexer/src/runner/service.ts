@@ -1,5 +1,5 @@
-import { JsonRpcProvider, Interface, ethers } from 'ethers';
-import type { Block } from 'ethers';
+import { FallbackProvider, JsonRpcProvider, Interface, ethers } from 'ethers';
+import type { Block, AbstractProvider } from 'ethers';
 import { nowIso } from '../utils/time.js';
 import type { SupportedEventName, RawEventRow } from '../types/domain.js';
 import type { RawEventsRepo } from '../repositories/rawEventsRepo.js';
@@ -50,7 +50,7 @@ export function createIndexerRunner(input: {
   derivePointsService?: DerivePointsService;
 }): IndexerRunner {
   const { config, rawEventsRepo, indexerStateRepo, deriveRoundsService, deriveWalletRoundsService, deriveWalletStatsService, derivePointsService } = input;
-  const provider = new JsonRpcProvider(config.rpcUrl);
+  const provider = makeProvider(config.rpcUrl, config.rpcUrlFallback);
   const iface = new Interface(POOL_EVENT_ABI);
 
   return {
@@ -131,7 +131,7 @@ export function createIndexerRunner(input: {
 }
 
 async function fetchChunk(input: {
- provider: JsonRpcProvider;
+ provider: AbstractProvider;
  iface: Interface;
  contractAddress: string;
  fromBlock: number;
@@ -163,6 +163,16 @@ async function fetchChunk(input: {
 
  await sleep(interChunkDelayMs);
  return output.sort((a, b) => a.blockNumber !== b.blockNumber ? a.blockNumber - b.blockNumber : a.logIndex - b.logIndex);
+}
+
+function makeProvider(rpcUrl: string, rpcUrlFallback?: string): AbstractProvider {
+  const primary = new JsonRpcProvider(rpcUrl);
+  if (!rpcUrlFallback) return primary;
+
+  return new FallbackProvider([
+    { provider: primary, priority: 1, stallTimeout: 2000 },
+    { provider: new JsonRpcProvider(rpcUrlFallback), priority: 2, stallTimeout: 2000 },
+  ], undefined, { quorum: 1 });
 }
 
 function toRawEventRow(input: {
