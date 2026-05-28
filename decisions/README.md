@@ -67,3 +67,4 @@ Anything still unconfirmed.
 - [ADR-0020 — Protocol fee on prize yield](0020-protocol-fee.md)
 - [ADR-0021 — V3 pre-deploy hardening (entropy timelock, per-round metadata, event indexing)](0021-v3-pre-deploy-hardening.md)
 - [ADR-0022 — Operational trust assumptions and resilience model](0022-operational-trust-assumptions.md)
+- [ADR-0023 — shMON dependency model and graceful-degradation roadmap](0023-shmon-dependency-model.md)
