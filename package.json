@@ -25,12 +25,18 @@
     "keeper:alert-test": "bash scripts/keeper-alert-test.sh",
     "keeper:ops-check": "bash scripts/keeper-ops-check.sh",
     "keeper:env-check": "bash scripts/keeper-env-check.sh",
-    "keeper:install-systemd": "bash scripts/keeper-install-systemd.sh"
+    "keeper:install-systemd": "bash scripts/keeper-install-systemd.sh",
+    "keeper:deploy": "flyctl deploy . -c scripts/keeper/fly.toml --ha=false",
+    "keeper:logs": "flyctl logs -a everdraw-keeper",
+    "keeper:status": "flyctl status -a everdraw-keeper",
+    "keeper:restart": "flyctl machine restart -a everdraw-keeper"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "ethers": "^6.13.4"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-ethers": "^3.0.8",
-    "dotenv": "^16.4.5",
-    "ethers": "^6.13.4",
     "hardhat": "^2.22.16"
   }
 }

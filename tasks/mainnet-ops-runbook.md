@@ -5,6 +5,54 @@
 
 ---
 
+## Keeper
+
+Lives on Fly.io as `everdraw-keeper`. Source: `scripts/keeper-watchdog.js` (supervisor) + `scripts/keeper-execute-next.js` (worker). Config: `scripts/keeper/fly.toml`.
+
+Keeper hot wallet: `0x80dE4674dEFC68F06F4772B8Ec2F89aBda43DBE9` — authorized on all V3 vaults via `setKeeper`. Top up periodically; alert fires below `0.2 MON`.
+
+| Action | Command |
+|--------|---------|
+| View logs | `flyctl logs -a everdraw-keeper` |
+| Tail logs (live) | `flyctl logs -a everdraw-keeper -f` |
+| Check machine status | `flyctl status -a everdraw-keeper` |
+| Restart (picks up secret changes) | `flyctl machine restart -a everdraw-keeper` |
+| Update a pool address / schedule | `flyctl secrets set -a everdraw-keeper POOL_ADDRESSES='...'` |
+| SSH in for debugging | `flyctl ssh console -a everdraw-keeper` |
+| Stop temporarily | `flyctl scale count 0 -a everdraw-keeper` |
+| Resume | `flyctl scale count 1 -a everdraw-keeper` |
+| Redeploy after code change | `flyctl deploy -c scripts/keeper/fly.toml` |
+| Rotate keeper hot key | `flyctl secrets set -a everdraw-keeper PRIVATE_KEY='...'`, call `setKeeper(newAddr, true)` from the owner wallet on each vault, then call `setKeeper(oldAddr, false)` to retire the old signer. |
+
+Required cutover order:
+
+1. Create the Fly app with `flyctl apps create everdraw-keeper`.
+2. Set all Fly secrets from `/home/c/.config/everdraw/keeper-mainnet.env`; never commit the values.
+3. Deploy first with `KEEPER_DRY_RUN=true`.
+4. Tail Fly logs for about 10 minutes and confirm RPC, pool reads, ABI decoding, and Telegram heartbeat are healthy.
+5. Stop the local keeper with `pkill -f keeper-watchdog.js` and `pkill -f keeper-execute-next.js`.
+6. Confirm `ps -ef | grep keeper` has no local keeper process.
+7. Flip Fly to live mode by setting `KEEPER_DRY_RUN=false`, then restart the machine.
+8. Confirm the next keeper action, or no-action poll, appears only in Fly logs.
+9. Disable any local autostart path so the laptop cannot restart a second signer.
+
+Rollback before final cutover confirmation:
+
+```bash
+flyctl scale count 0 -a everdraw-keeper
+cd ~/.openclaw/workspace/everdraw-clean
+set -a
+. /home/c/.config/everdraw/keeper-mainnet.env
+set +a
+nohup node scripts/keeper-watchdog.js > /tmp/keeper-watchdog.log 2>&1 &
+```
+
+After cutover, `/home/c/.config/everdraw/keeper-mainnet.env` remains the emergency local fallback. Do not delete it.
+
+If the keeper is stopped for more than 30 minutes during an active VRF window on V3, the owner can call `emergencyForceSettle` after the 1-hour VRF timeout to recover.
+
+---
+
 ## 1) Prerequisites
 
 - Node.js installed
