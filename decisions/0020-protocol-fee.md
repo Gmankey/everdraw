@@ -77,7 +77,7 @@ settlement indexing. Fee data is exposed through `ProtocolFeeAccrued` instead.
 
 - Applies to **V3 only** (`TicketPrizePoolShmonV3`).
 - V2 vaults (`0x2208...`, `0xd4F4...`) are already deployed and audited — no change.
-- Both V3 vaults (Vault A Wed 2026-05-28, Vault B Sun 2026-06-01) will include this from day one.
+- Both V3 vaults (Vault A Wed 2026-05-27 — deployed, Vault B Sun 2026-05-31) will include this from day one.
 
 ---
 

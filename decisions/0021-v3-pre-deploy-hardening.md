@@ -8,7 +8,7 @@
 
 ## Context
 
-`TicketPrizePoolShmonV3` deploys to mainnet on Wed 2026-05-28 13:00 UTC (Vault A) and Sun 2026-06-01 01:00 UTC (Vault B). The contract is non-upgradeable — once deployed, storage layout, event signatures, function selectors, and immutables are locked forever.
+`TicketPrizePoolShmonV3` deploys to mainnet on Wed 2026-05-27 13:00 UTC (Vault A — completed 2026-05-27 13:25 UTC at `0x8F36aaAD5E88585aA54Cc160ef2Eb4d2B2C7B1ee`) and Sun 2026-05-31 01:00 UTC (Vault B — scheduled). The contract is non-upgradeable — once deployed, storage layout, event signatures, function selectors, and immutables are locked forever.
 
 Two categories of risk identified pre-deploy:
 
