@@ -64,3 +64,6 @@ Anything still unconfirmed.
 - [ADR-0017 — Production source-control invariant](0017-production-source-control-invariant.md)
 - [ADR-0018 — Legacy Vault B quarantine](0018-legacy-vault-b-quarantine.md)
 - [ADR-0019 — V3 mainnet migration: replace both V2 vaults with VRF contracts](0019-v3-mainnet-migration.md)
+- [ADR-0020 — Protocol fee on prize yield](0020-protocol-fee.md)
+- [ADR-0021 — V3 pre-deploy hardening (entropy timelock, per-round metadata, event indexing)](0021-v3-pre-deploy-hardening.md)
+- [ADR-0022 — Operational trust assumptions and resilience model](0022-operational-trust-assumptions.md)

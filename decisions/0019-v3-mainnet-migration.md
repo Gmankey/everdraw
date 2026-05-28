@@ -57,8 +57,10 @@ All params below are identical for both V3 contracts except deploy timing.
 
 | Vault | Deploy target | Replaces |
 |---|---|---|
-| Vault A V3 | **Wed 2026-05-28 13:00 UTC** | `0x2208…` (V2) |
-| Vault B V3 | **Sun 2026-06-01 01:00 UTC** | `0xd4F4286…` (V2) |
+| Vault A V3 | **Wed 2026-05-27 13:00 UTC** (deployed 13:25 UTC at `0x8F36aaAD5E88585aA54Cc160ef2Eb4d2B2C7B1ee`) | `0x2208…` (V2) |
+| Vault B V3 | **Sun 2026-05-31 01:00 UTC** | `0xd4F4286…` (V2) |
+
+> **Correction note (2026-05-28):** the original draft of this ADR listed "Wed 2026-05-28" and "Sun 2026-06-01" — the day names were correct for the intended schedule but the date numbers were one calendar week ahead. Vault A V3 was deployed on its true Wednesday, 2026-05-27. Vault B V3 is scheduled for its true Sunday, 2026-05-31.
 
 Vault B V3 is timed one week after tonight's V2-B deploy so that new Vault B V2 round 1
 completes its deposit window before being superseded. No user who deposits into V2-B tonight
@@ -160,9 +162,9 @@ The V2 deploy tonight exposed that the preflight blocks non-staging branches and
 1. **Indexer V3 event support** — add V3 ABI, normalise VRFRequested/VRFFulfilled/V3-shaped
    RoundSettled. Must land on Fly before first V3 round settles.
 2. **Frontend V3 state display** — "Drawing winner…" intermediate state for AwaitingVRF.
-   Must land before Vault A V3 deploy (Wed 2026-05-28).
-3. **Vault A V3 deploy** — Wed 2026-05-28 13:00 UTC, per sequencing above.
-4. **Vault B V3 deploy** — Sun 2026-06-01 01:00 UTC, per sequencing above.
+   Must land before Vault A V3 deploy (Wed 2026-05-27).
+3. **Vault A V3 deploy** — Wed 2026-05-27 13:00 UTC, per sequencing above.
+4. **Vault B V3 deploy** — Sun 2026-05-31 01:00 UTC, per sequencing above.
 5. **V2 vault retirement** — remove V2 addresses from keeper/frontend after all claims clear.
 
 ### Operational
