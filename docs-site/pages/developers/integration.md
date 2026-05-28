@@ -46,13 +46,33 @@ pool.on('RoundSettled', (roundId, winner, winningTicket, ...rest) => {
 
 ## Multi pool
 
-EverDraw runs two pool addresses in parallel on offset weekly anchors. The frontend reads `VITE_POOL_ADDRESSES_V2` (comma separated). The keeper reads `POOL_ADDRESSES_V2` and uses `POOL_SCHEDULE_V2` to gate when each pool can fire its commit transaction.
+EverDraw runs two vaults in parallel on offset weekly anchors (Wed and Sun). V3 is the current contract; V2 vaults remain active for in-flight finalization during the V3 migration. Three frontend env vars are now in play:
 
 ```
-VITE_POOL_ADDRESSES_V2=0x2208a2Fe2d08061B2a5ee69A2a3b906B58C17888,<vaultB>
-POOL_ADDRESSES_V2=0x2208a2Fe2d08061B2a5ee69A2a3b906B58C17888,<vaultB>
-POOL_SCHEDULE_V2=0x2208…7888:Wed:13,<vaultB>:Sun:01
+# V3 vaults — current production
+VITE_POOL_ADDRESSES_V3=0x8F36aaAD5E88585aA54Cc160ef2Eb4d2B2C7B1ee
+# (Vault B V3 added here after the 2026-05-31 deploy)
+
+# V2 vaults — still active for finalization
+VITE_POOL_ADDRESSES_V2=0x2208a2Fe2d08061B2a5ee69A2a3b906B58C17888,0xd4F4286CE1E72562fdAfcD9F491974D0F245Ea9d
+
+# shMON address (used by frontend for previewRedeem of V3 prize shares)
+VITE_SHMON_ADDRESS=0x1B68626dCa36c7fE922fD2d55E4f631d962dE19c
 ```
+
+Keeper env (canonical config lives in Fly secrets for the `everdraw-keeper` app, not local files):
+
+```
+POOL_ADDRESSES=0x2208a2Fe2d08061B2a5ee69A2a3b906B58C17888,0xd4F4286CE1E72562fdAfcD9F491974D0F245Ea9d,0x8F36aaAD5E88585aA54Cc160ef2Eb4d2B2C7B1ee
+POOL_ADDRESSES_V2=0x2208a2Fe2d08061B2a5ee69A2a3b906B58C17888,0xd4F4286CE1E72562fdAfcD9F491974D0F245Ea9d
+POOL_ADDRESSES_V3=0x8F36aaAD5E88585aA54Cc160ef2Eb4d2B2C7B1ee
+POOL_SCHEDULE_V2=0xd4F4286CE1E72562fdAfcD9F491974D0F245Ea9d:Sun:1
+POOL_SCHEDULE_V3=0x8F36aaAD5E88585aA54Cc160ef2Eb4d2B2C7B1ee:Wed:13
+```
+
+The keeper auto-routes by inspecting which list each pool address appears in. V2 Vault A is in `POOL_ADDRESSES` (so the keeper still finalizes its existing rounds) but no longer in `POOL_SCHEDULE_V2` (so no new V2 Vault A rounds start). The Wed anchor now belongs to V3 Vault A.
+
+The canonical address list including runtime bytecode hashes and constructor args is at [`deployments/monad-mainnet.json`](https://github.com/Gmankey/everdraw/blob/staging/deployments/monad-mainnet.json).
 
 When integrating against a single pool, pin to the contract address. State is fully scoped per pool.
 
