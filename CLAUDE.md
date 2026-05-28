@@ -11,6 +11,7 @@ That folder contains Architecture Decision Records (ADRs). Every non-trivial des
 3. **Builder tickets must cite the ADR number** they implement or modify. If a ticket changes a decision, the ADR must be updated in the same change.
 4. **User-facing docs (`docs/how-it-works/`, `docs/getting-started/`, etc.) describe the product to users.** ADRs describe the engineering decisions to ourselves. Do not conflate them.
 5. **External dependencies are part of every design.** Every ADR, builder ticket, and audit must explicitly enumerate the external contracts/services the change relies on and document what happens when each one fails. See `memory/working_rule_external_dependencies.md` for the full checklist. Contract correctness in isolation is not sufficient; a clean audit that doesn't name its dependency assumptions is incomplete.
+6. **A change is not complete until the user-visible surface reflects it.** Pushing a branch, merging a PR, or running a deploy command are intermediate states, not "done." Before declaring any user-facing change complete, fetch the live surface (frontend bundle, docs page, API response, on-chain state) and verify the change is present there. See `memory/working_rule_end_to_end_completion.md` for verification recipes per surface. Recurring failure mode this rule prevents: declaring work shipped while CDN, Vercel env-var resolution, or `flyctl secrets --stage` silently keeps the old version live.
 
 ## Where things live
 
