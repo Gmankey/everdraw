@@ -10,6 +10,7 @@ That folder contains Architecture Decision Records (ADRs). Every non-trivial des
 2. **Never edit `src/` directly.** Code changes go through the builder agent. (See `memory/feedback_use_builder_for_code.md` if available.)
 3. **Builder tickets must cite the ADR number** they implement or modify. If a ticket changes a decision, the ADR must be updated in the same change.
 4. **User-facing docs (`docs/how-it-works/`, `docs/getting-started/`, etc.) describe the product to users.** ADRs describe the engineering decisions to ourselves. Do not conflate them.
+5. **External dependencies are part of every design.** Every ADR, builder ticket, and audit must explicitly enumerate the external contracts/services the change relies on and document what happens when each one fails. See `memory/working_rule_external_dependencies.md` for the full checklist. Contract correctness in isolation is not sufficient; a clean audit that doesn't name its dependency assumptions is incomplete.
 
 ## Where things live
 
