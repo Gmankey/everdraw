@@ -980,8 +980,23 @@ export default function App() {
   const poolAddresses = useMemo(() => parsePoolAddresses(), [])
   const poolAddressesV2 = useMemo(() => parseV2PoolAddresses(), [])
   const poolAddressesV3 = useMemo(() => parseV3PoolAddresses(), [])
-  const allPoolAddresses = useMemo(() => [...poolAddressesV2, ...poolAddressesV3, ...poolAddresses], [poolAddresses, poolAddressesV2, poolAddressesV3])
-  const [selectedPoolAddress, setSelectedPoolAddress] = useState(allPoolAddresses[0] || '')
+  const activeVaultAddresses = useMemo(() => {
+    const slots = [
+      poolAddressesV3[0] || poolAddressesV2[0] || poolAddresses[0],
+      poolAddressesV3[1] || poolAddressesV2[1] || poolAddresses[1],
+    ].filter(Boolean)
+    return [...new Set(slots.map((addr) => addr))]
+  }, [poolAddresses, poolAddressesV2, poolAddressesV3])
+  const allPoolAddresses = useMemo(() => {
+    const seen = new Set()
+    return [...activeVaultAddresses, ...poolAddressesV3, ...poolAddressesV2, ...poolAddresses].filter((addr) => {
+      const lc = String(addr || '').toLowerCase()
+      if (!lc || seen.has(lc)) return false
+      seen.add(lc)
+      return true
+    })
+  }, [activeVaultAddresses, poolAddresses, poolAddressesV2, poolAddressesV3])
+  const [selectedPoolAddress, setSelectedPoolAddress] = useState(activeVaultAddresses[0] || allPoolAddresses[0] || '')
   const poolAddress = selectedPoolAddress
   const isV2Pool = useMemo(() => poolAddressesV2.some((a) => a.toLowerCase() === String(poolAddress).toLowerCase()), [poolAddressesV2, poolAddress])
   const isV3Pool = useMemo(() => poolAddressesV3.some((a) => a.toLowerCase() === String(poolAddress).toLowerCase()), [poolAddressesV3, poolAddress])
@@ -1053,9 +1068,9 @@ export default function App() {
       return
     }
     if (!selectedPoolAddress || !allPoolAddresses.some((a) => a.toLowerCase() === selectedPoolAddress.toLowerCase())) {
-      setSelectedPoolAddress(allPoolAddresses[0])
+      setSelectedPoolAddress(activeVaultAddresses[0] || allPoolAddresses[0])
     }
-  }, [allPoolAddresses, selectedPoolAddress])
+  }, [activeVaultAddresses, allPoolAddresses, selectedPoolAddress])
 
   useEffect(() => {
     // Load user-provided vault SFX from public/sfx
@@ -1535,12 +1550,14 @@ export default function App() {
     const v2Index = poolAddressesV2.findIndex((a) => a.toLowerCase() === lc)
     if (v2Index >= 0) {
       const letter = labelLetter(v2Index)
+      if (v2Index === 0 && poolAddressesV3[0]) return `Retired Vault ${letter}`
+      if (v2Index === 1 && poolAddressesV3[1]) return `Retired Vault ${letter}`
       return isActiveV2PoolIndex(v2Index) ? `Vault ${letter}` : `Retired Vault ${letter}`
     }
     const legacyIndex = poolAddresses.findIndex((a) => a.toLowerCase() === lc)
     if (legacyIndex >= 0) return `Legacy Vault ${labelLetter(legacyIndex)}`
     return isV2 ? `Vault ${shortAddr(addr)}` : `Legacy ${shortAddr(addr)}`
-  }, [poolAddresses, poolAddressesV2])
+  }, [poolAddresses, poolAddressesV2, poolAddressesV3])
 
   const currentState = roundInfo ? Number(roundInfo.state) : null
   const isOpenState = currentState === 0
@@ -1585,7 +1602,9 @@ export default function App() {
   const shownSecondsRemaining = shownRoundInfo ? Math.max(0, Number(shownRoundInfo.salesEndTime ?? 0) - now) : 0
   const shownCommitAfterRemaining = shownRoundInfo && (isV2Pool || isV3Pool) ? Math.max(0, Number(commitAfterTime || 0) - now) : 0
   const shownSalesOpen = shownState === 0 && shownSecondsRemaining > 0
-  const shownYieldAccruing = isV2Pool && shownState === 0 && shownSecondsRemaining === 0 && shownCommitAfterRemaining > 0
+  const shownHasActivity = Number(shownRoundInfo?.totalTickets ?? 0) > 0 || BigInt(shownRoundInfo?.totalPrincipalMON ?? 0n) > 0n
+  const shownEmptyClosedRound = isV2Pool && shownState === 0 && shownSecondsRemaining === 0 && !shownHasActivity
+  const shownYieldAccruing = isV2Pool && shownState === 0 && shownSecondsRemaining === 0 && shownCommitAfterRemaining > 0 && shownHasActivity
   const shownSettled = isTerminalRound(shownState, isV2Pool)
   const salesOpen = shownIsCurrentRound ? shownSalesOpen : isOpenState && secondsRemaining > 0
   const buyFormOpen = shownIsCurrentRound && shownSalesOpen
@@ -1680,6 +1699,16 @@ export default function App() {
           sub: 'Deposits close in',
           metaLabel: 'Progress',
           metaValue: `${shownProgressPct}%`
+        }
+      }
+
+      if (shownEmptyClosedRound) {
+        return {
+          heading: 'Round Skipped',
+          value: 'Skipped',
+          sub: 'No entries in this round',
+          metaLabel: 'Vault status',
+          metaValue: 'Skipped'
         }
       }
 
@@ -1871,7 +1900,7 @@ export default function App() {
       metaLabel: 'Progress',
       metaValue: '0%'
     }
-  }, [isV2Pool, isDeadRound, shownState, shownSecondsRemaining, shownCommitAfterRemaining, shownYieldAccruing, shownProgressPct, shownRoundInfo, shownSettlementSecs, shownIsCurrentRound, nextAction, currentInternalEpoch, yieldPeriod, now])
+  }, [isV2Pool, isDeadRound, shownState, shownSecondsRemaining, shownCommitAfterRemaining, shownEmptyClosedRound, shownYieldAccruing, shownProgressPct, shownRoundInfo, shownSettlementSecs, shownIsCurrentRound, nextAction, currentInternalEpoch, yieldPeriod, now])
 
   const timerProgressPct = shownState === 0 ? shownProgressPct : shownSettled ? 100 : 50
   const timerIsClock = /^\d+:\d{2}:\d{2}:\d{2}$/.test(timerCard.value)
@@ -2013,7 +2042,7 @@ export default function App() {
                 poolAddr: addr,
                 isV2: false,
                 state: Number(info.state),
-                salesEndTime: 0,
+                salesEndTime: Number(info.salesEndTime ?? 0),
                 commitAfterTime: 0,
                 isWinner,
                 prizeClaimed: Boolean(info.prizeClaimed),
@@ -2547,8 +2576,8 @@ export default function App() {
             <>
               {/* V3 takes the Vault A slot when present; V2 Vault A is reachable via My Rounds for in-flight finalization */}
               {(() => {
-                const vaultASlot = poolAddressesV3[0] || poolAddressesV2[0]
-                const vaultBSlot = poolAddressesV3[1] || poolAddressesV2[1]
+                const vaultASlot = activeVaultAddresses[0]
+                const vaultBSlot = activeVaultAddresses[1]
                 const hasTwoSlots = Boolean(vaultASlot && vaultBSlot)
                 const selLc = selectedPoolAddress.toLowerCase()
                 const isOnA = selLc === vaultASlot?.toLowerCase()
@@ -2631,7 +2660,14 @@ export default function App() {
                   ? (r.state === 0 ? 'Open' : r.state < 2 ? 'Active' : r.state === 2 ? (r.isWinner ? 'Won' : 'No win') : 'No draw')
                   : (r.state === 0 ? 'Open' : r.state < 3 ? 'Locked' : (r.isWinner ? 'Won' : 'Participant'))
                 const canRedeemRound = Boolean(r.canClaimPrize || r.canWithdraw)
-                const actionLabel = canRedeemRound ? 'Redeem' : (r.state === 0 ? 'Deposit' : 'Claimed')
+                const canDepositRound = r.state === 0 && Number(r.salesEndTime || 0) > now
+                const actionLabel = canRedeemRound
+                  ? 'Redeem'
+                  : canDepositRound
+                    ? 'Deposit'
+                    : isTerminalRound(r.state, r.isV2)
+                      ? 'Claimed'
+                      : '—'
                 const pendingActionLabel = actionLabel
                 const prizeLabel = r.isWinner
                   ? `${Number(ethers.formatEther(r.prizeWei || 0n)).toFixed(4)} MON`
@@ -2661,28 +2697,17 @@ export default function App() {
                       >
                         {withdrawingRid === `${r.poolAddr}:${r.rid}` ? pendingActionLabel : actionLabel}
                       </button>
-                    ) : r.state === 0 ? (
-                      r.isV2
-                        ? (now < r.salesEndTime
-                          ? (
-                            <button
-                              className="max-btn"
-                              onClick={() => setMainView('current')}
-                            >
-                              Deposit
-                            </button>
-                          )
-                          : now < r.commitAfterTime
-                            ? '—'
-                            : '—')
-                        : (
-                          <button
-                            className="max-btn"
-                            onClick={() => setMainView(Number(r.rid) % 2 === 1 ? 'vaultA' : 'vaultB')}
-                          >
-                            Deposit
-                          </button>
-                        )
+                    ) : canDepositRound ? (
+                      <button
+                        className="max-btn"
+                        onClick={() => {
+                          setVaultBPending(false)
+                          setSelectedPoolAddress(r.poolAddr)
+                          setMainView('current')
+                        }}
+                      >
+                        Deposit
+                      </button>
                     ) : isTerminalRound(r.state, r.isV2) && !canRedeemRound ? 'Claimed' : '—'}
                   </span>
                 </div>
