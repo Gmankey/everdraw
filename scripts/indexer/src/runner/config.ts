@@ -1,5 +1,6 @@
 export interface RunnerConfig {
   rpcUrl: string;
+  rpcUrlFallback?: string;
   poolAddresses: string[];
   deployBlock: number;
   confirmations: number;
@@ -9,6 +10,7 @@ export interface RunnerConfig {
 
 export function getRunnerConfig(): RunnerConfig {
   const rpcUrl = process.env.RPC_URL ?? process.env.INDEXER_RPC_URL;
+  const rpcUrlFallback = process.env.RPC_URL_FALLBACK?.trim() || undefined;
   const raw = process.env.POOL_ADDRESSES ?? process.env.POOL_ADDRESS ?? process.env.INDEXER_POOL_ADDRESS ?? '';
   const poolAddresses = raw.split(',').map((a) => a.trim()).filter(Boolean);
   const deployBlock = Number(process.env.START_BLOCK ?? process.env.INDEXER_DEPLOY_BLOCK ?? 0);
@@ -19,6 +21,7 @@ export function getRunnerConfig(): RunnerConfig {
 
   return {
     rpcUrl,
+    rpcUrlFallback,
     poolAddresses,
     deployBlock,
     confirmations: Number(process.env.INDEXER_CONFIRMATIONS ?? 0),

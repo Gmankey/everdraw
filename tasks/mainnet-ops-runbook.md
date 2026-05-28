@@ -51,6 +51,51 @@ After cutover, `/home/c/.config/everdraw/keeper-mainnet.env` remains the emergen
 
 If the keeper is stopped for more than 30 minutes during an active VRF window on V3, the owner can call `emergencyForceSettle` after the 1-hour VRF timeout to recover.
 
+### Keeper alert watcher
+
+The same Fly app also runs `scripts/keeper-alert-watcher.js` as a separate `alerts` process. It watches only governance/security events on `POOL_ADDRESSES` and sends Telegram alerts for:
+
+- `OwnershipTransferred`
+- `EntropyChangeQueued`, `EntropyChanged`, `EntropyChangeCancelled`
+- `FeeUpdated`
+- `KeeperSet`
+- `Paused`, `Unpaused`
+- `VRFReserveWithdrawn`
+- `EmergencyForceSettled`
+- periodic low VRF reserve warnings
+
+Required before enabling the `alerts` process:
+
+```bash
+flyctl volumes create everdraw_keeper_alert_state --region sjc --size 1 -a everdraw-keeper
+flyctl secrets set -a everdraw-keeper VRF_LOW_THRESHOLD_MON='5'
+```
+
+`POOL_ADDRESSES`, `RPC_URL`, `RPC_URL_FALLBACK`, `TELEGRAM_BOT_TOKEN`, and `TELEGRAM_CHAT_ID` must already be present on `everdraw-keeper`. The watcher stores its catch-up cursor in `/data/keeper-alert-watcher-state.json`; do not remove the Fly volume unless you intentionally accept a manual governance-event review from the last stored block.
+
+Deploy and scale:
+
+```bash
+flyctl deploy . -c scripts/keeper/fly.toml --ha=false
+flyctl scale count keeper=1 alerts=1 -a everdraw-keeper
+flyctl status -a everdraw-keeper
+flyctl logs -a everdraw-keeper
+```
+
+Expected logs:
+
+- boot line: `[alert-watcher] start ... watching N pools`
+- scan lines when new blocks are processed
+- heartbeat every 15 minutes: `[alert-watcher] heartbeat ...`
+
+Smoke test after deploy:
+
+1. From the owner wallet, call an idempotent benign governance action such as `setKeeper(existingKeeper, true)` on a watched vault.
+2. Confirm a Telegram `Keeper ... authorized` alert arrives within 30 seconds.
+3. If Telegram does not arrive, treat the alert path as broken and investigate before relying on it.
+
+Add a recurring monthly operator check that repeats the same benign governance action and confirms Telegram delivery.
+
 ---
 
 ## 1) Prerequisites

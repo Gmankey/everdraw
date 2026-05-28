@@ -18,6 +18,15 @@ primary_region = "sjc"
   TELEGRAM_TIMEOUT_MS = "8000"
   TELEGRAM_RETRIES = "2"
 
+[processes]
+  keeper = "./scripts/keeper/entrypoint.sh"
+  alerts = "node scripts/keeper-alert-watcher.js"
+
+[[mounts]]
+  source = "everdraw_keeper_alert_state"
+  destination = "/data"
+  processes = ["alerts"]
+
 [[vm]]
   size = "shared-cpu-1x"
   memory = "256mb"
@@ -25,5 +34,4 @@ primary_region = "sjc"
 [deploy]
   strategy = "immediate"
 
-# No service block: the keeper is a pure background worker.
-# No volumes: keeper state comes from chain state and Fly secrets.
+# No service block: the keeper and alert watcher are pure background workers.
