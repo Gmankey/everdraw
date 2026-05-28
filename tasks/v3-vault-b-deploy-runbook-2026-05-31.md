@@ -73,7 +73,7 @@ mkdir -p /tmp/everdraw-untracked-stash
 for f in .claude/settings.local.json AGENTS.md AUDIT_REPORT_V2.md \
          BUILDER_TICKET_VRF_INTEGRATION.md script/DeployTicketPrizePoolShmonV3.s.sol \
          scripts/keeper-event-monitor.js web/AGENTS.md \
-         'security_audit/AUDIT_REPORT.md:Zone.Identifier'; do
+         'security_audit/AUDIT_REPORT_2026-04-08_v1-era.md:Zone.Identifier'; do
   [ -e "$f" ] && mv "$f" "/tmp/everdraw-untracked-stash/$(basename "$f")"
 done
 git status --short   # must be truly empty now

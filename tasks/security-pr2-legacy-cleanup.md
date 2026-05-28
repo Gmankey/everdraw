@@ -2,7 +2,7 @@
 
 **Status:** Urgent, runs parallel to PR 1
 **Target files:** `src/PrizeVault.sol`, `src/TicketPrizePool.sol`, `src/TicketPrizePoolShmon.sol` and their deploy scripts
-**Source:** `security_audit/AUDIT_REPORT.md` findings C-02, C-04, H-01, M-01 through M-05
+**Source:** `security_audit/AUDIT_REPORT_2026-04-08_v1-era.md` findings C-02, C-04, H-01, M-01 through M-05
 **Owner:** Builder → PM review before merge
 **Target effort:** half a day
 
@@ -44,7 +44,7 @@ Remove legacy code that carries critical security bugs but is NOT used in produc
 
 Add a one-paragraph section near the top:
 
-> **Supported contracts:** the only supported and deployed contract is `TicketPrizePoolShmonShMonad`. Earlier iterations (`TicketPrizePool`, `TicketPrizePoolShmon`, `PrizeVault`) have been removed from this repository as of PR 2 — they were not in production and carried security issues that were not worth fixing in place. See `security_audit/AUDIT_REPORT.md` for detail.
+> **Supported contracts:** the only supported and deployed contract is `TicketPrizePoolShmonShMonad`. Earlier iterations (`TicketPrizePool`, `TicketPrizePoolShmon`, `PrizeVault`) have been removed from this repository as of PR 2 — they were not in production and carried security issues that were not worth fixing in place. See `security_audit/AUDIT_REPORT_2026-04-08_v1-era.md` for detail.
 
 ### 5. Update `remappings.txt` / `foundry.toml` if needed
 
