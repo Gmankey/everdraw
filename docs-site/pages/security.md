@@ -47,13 +47,16 @@ Full owner-power inventory and the trust model: [ADR-0022](https://github.com/Gm
 
 ## External dependencies
 
-EverDraw inherits trust from three external systems. Each is documented with explicit failure-mode coverage:
+EverDraw inherits trust from several external systems. Each is documented with explicit failure-mode coverage:
 
 | Dependency | Used for | Failure model |
 |---|---|---|
 | **shMON** (`0x1B68626d...62dE19c`) | Holds all user principal as ERC-4626 shares | [ADR-0023](https://github.com/Gmankey/everdraw/blob/staging/decisions/0023-shmon-dependency-model.md) |
-| **Pyth Entropy** (contract `0xD4582618...0ce6F134`, provider `0x52DeaA1c...c616506`) | VRF for winner selection | [ADR-0014](https://github.com/Gmankey/everdraw/blob/staging/decisions/0014-vrf-launch-requirement-pyth-entropy.md), [ADR-0015](https://github.com/Gmankey/everdraw/blob/staging/decisions/0015-vrf-failover-playbook.md) |
+| **Pyth Entropy** (contract `0xD458261E...0ce6F134`, provider `0x52DeaA1c...c616506`) | VRF for winner selection | [ADR-0014](https://github.com/Gmankey/everdraw/blob/staging/decisions/0014-vrf-launch-requirement-pyth-entropy.md), [ADR-0015](https://github.com/Gmankey/everdraw/blob/staging/decisions/0015-vrf-failover-playbook.md) |
 | **Monad L1** | Execution + finality | Standard L1 trust |
+| **Fly.io keeper/indexer** | Round progression and history API | [ADR-0022](https://github.com/Gmankey/everdraw/blob/staging/decisions/0022-operational-trust-assumptions.md), [mainnet ops runbook](https://github.com/Gmankey/everdraw/blob/staging/tasks/mainnet-ops-runbook.md) |
+| **Vercel / DNS** | Public frontend and docs routing | [ADR-0022](https://github.com/Gmankey/everdraw/blob/staging/decisions/0022-operational-trust-assumptions.md), canonical addresses in [README](https://github.com/Gmankey/everdraw/blob/staging/README.md) |
+| **Owner / keeper keys** | Admin functions and automated progression | [ADR-0022](https://github.com/Gmankey/everdraw/blob/staging/decisions/0022-operational-trust-assumptions.md) |
 
 If you build on top of EverDraw or audit it, **read the relevant ADRs first**. Contract correctness in isolation is not sufficient — the protocol's safety depends on documented assumptions about each of the above.
 
