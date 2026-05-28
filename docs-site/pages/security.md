@@ -2,7 +2,7 @@
 
 ## Audit status
 
-EverDraw V3 has been through an internal security review (2026-05-28) covering the `TicketPrizePoolShmonV3` contract at commit `186f1ad`. The review found **no high or medium-severity vulnerabilities at high confidence**. See the [internal audit report](https://github.com/Gmankey/everdraw/blob/staging/security_audit/) in the repo for full methodology and findings.
+EverDraw V3 has been through an internal security review (2026-05-28) covering the `TicketPrizePoolShmonV3` contract at commit `186f1ad`. The review found **no high or medium-severity vulnerabilities at high confidence**. See the [internal audit report](https://github.com/Gmankey/everdraw/blob/staging/security_audit/AUDIT_REPORT_V3_2026-05-28.md) in the repo for full methodology and findings.
 
 A formal third-party audit is budgeted and planned **before scaling TVL beyond bootstrapping levels**.
 
@@ -14,7 +14,7 @@ This page updates with each audit milestone.
 
 ## What has been validated
 
-- V3 contract internal audit complete; no findings at the reporting threshold ([report](https://github.com/Gmankey/everdraw/blob/staging/security_audit/))
+- V3 contract internal audit complete; no findings at the reporting threshold ([report](https://github.com/Gmankey/everdraw/blob/staging/security_audit/AUDIT_REPORT_V3_2026-05-28.md))
 - V3 contract source verified on the Monad explorer; runtime bytecode hash committed to the canonical [deployment manifest](https://github.com/Gmankey/everdraw/blob/staging/deployments/monad-mainnet.json) and independently checkable
 - 115+ V2 and V3 unit + integration tests passing in CI (Foundry)
 - Full V3 lifecycle (deposit → commit → Pyth VRF callback → finalize → claim → withdraw) tested on testnet and verified on mainnet

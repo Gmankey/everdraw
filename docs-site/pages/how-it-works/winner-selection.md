@@ -39,14 +39,6 @@ Tickets map to buyers in the order purchases were made. The winning ticket, winn
 
 ---
 
-## Costs
-
-Pyth Entropy charges a per-request fee, currently 0.77 MON on Monad mainnet. The fee is paid from each vault's own MON reserve, which the owner tops up via `depositVRFReserve`. The fee does not come out of the prize pool or user principal. At deploy time each vault is seeded with 20 MON, sufficient for ~26 draws (roughly six months at one draw per week per vault).
-
-If the Pyth fee changes significantly, the owner can adjust by topping up the reserve more frequently. The fee never affects the user — only the operator's reserve runway.
-
----
-
 ## Probability is linear
 
 Tickets divided by total tickets. 1 in 100 is 1%. 50 in 100 is 50%. No bonuses, no tiers, no house edge. The protocol fee on yield (currently 0%) does not change odds — it only affects the size of the prize, not who wins.
