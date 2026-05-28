@@ -1,3 +1,20 @@
+> ## ⚠️ Historical Audit — Superseded
+>
+> **This report dates from 2026-04-08 and audits the V1-era contracts** (`TicketPrizePoolShmonShMonad`, `TicketPrizePool`, `TicketPrizePoolShmon`, `PrizeVault`). It predates the V2 cadence-invariant work ([ADR-0010](../decisions/0010-cadence-invariant-for-vault-a-and-b.md), May 2026), the V2 source-recovery work ([ADR-0016](../decisions/0016-production-v2-source-recovery.md), May 2026), and the V3 redesign with Pyth Entropy VRF ([ADR-0019](../decisions/0019-v3-mainnet-migration.md), May 2026).
+>
+> **What changed since this audit was written:**
+>
+> - **Blockhash PRNG manipulation (Critical)** — addressed by ADR-0014 (Pyth Entropy as launch VRF). V3 contracts no longer use blockhashes for winner selection. V2 contracts still in operation are being retired and have no new rounds opening.
+> - **Emergency force-settle principal loss (Critical)** — V3 `emergencyForceSettle` only handles `AwaitingVRF` timeouts and leaves principal recoverable by every depositor at full deposited share count (`prizeShares == 0` branch in `withdrawPrincipal`). See [ADR-0015](../decisions/0015-vrf-failover-playbook.md) for the V3 design.
+> - **Legacy contracts (`TicketPrizePool`, `TicketPrizePoolShmon`, `PrizeVault`)** — not deployed to mainnet at any point; their deploy scripts and source remain in the repo for historical reference only.
+> - **Legacy Vault B `0xed67ad46...`** — quarantined per [ADR-0018](../decisions/0018-legacy-vault-b-quarantine.md). Retired from active operation. Existing depositors can still claim.
+>
+> **For the current production review**, see [`AUDIT_REPORT_V3_2026-05-28.md`](./AUDIT_REPORT_V3_2026-05-28.md) — the V3 internal audit of `TicketPrizePoolShmonV3` at commit `186f1ad`.
+>
+> The findings below are retained for the historical record and for any third-party auditor who wants to trace the protocol's evolution. They do not reflect risks against the current V3 production contracts.
+
+---
+
 # EverDraw Security Audit Report
 
 **Project:** EverDraw — No-Loss Lottery on Monad

@@ -2,7 +2,7 @@
 
 **Status:** Urgent, blocks Phase 2 mainnet
 **Target contract:** `src/TicketPrizePoolShmonShMonad.sol` (production v3)
-**Source:** `security_audit/AUDIT_REPORT.md` findings C-01, C-03, H-02
+**Source:** `security_audit/AUDIT_REPORT_2026-04-08_v1-era.md` findings C-01, C-03, H-02
 **Owner:** Builder → PM review before deploy
 **Target effort:** 2 days build + 1 day testing
 
