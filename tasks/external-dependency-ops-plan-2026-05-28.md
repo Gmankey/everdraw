@@ -11,11 +11,11 @@
 | # | Gap | Status |
 |---|-----|--------|
 | 1 | shMON pause could brick fee transfer | ✅ Already mitigated — `feeBps = 0` verified on-chain (Vault A V3); ADR-0023 codifies the policy |
-| 2 | No multi-VRF abstraction (`IEntropy` is Pyth-specific) | ⏳ Phase 2 (V4 contract) — track in ADR-0024 (to be written) |
-| 3 | DNS hijack on `everdraw.xyz` | 🔲 Out-of-band canonical-addresses publication needed (this plan) |
+| 2 | No multi-VRF abstraction (`IEntropy` is Pyth-specific) | ⏳ Phase 2 (V4 contract) — PM to write ADR before implementation |
+| 3 | DNS hijack on `everdraw.xyz` | ✅ Repo-side publication added to README; operator still needs Twitter/X + Discord |
 | 4 | No succession plan if operator is incapacitated | 🔲 Sealed succession document + multisig migration (this plan) |
-| 5 | No backup RPC configured | 🔲 30 min of work (this plan) |
-| 6 | No automated alert on governance events | 🔲 Builder ticket (this plan) |
+| 5 | No backup RPC configured | ✅ Keeper/indexer fallback shipped in PR #60; operator must verify Fly runtime |
+| 6 | No automated alert on governance events | ✅ Alert watcher shipped in PR #60; operator must deploy/scale and smoke test |
 
 This document covers gaps **3, 4, 5, 6** with concrete actions. Gaps 1 and 2 are tracked elsewhere.
 

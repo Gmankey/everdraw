@@ -98,6 +98,20 @@ Add a recurring monthly operator check that repeats the same benign governance a
 
 ---
 
+## Contract Address Publication Checklist
+
+Every mainnet contract deploy or retirement must update the canonical address set in:
+
+- `README.md`
+- `deployments/monad-mainnet.json`
+- `docs-site/pages/security.md`
+- Twitter/X pinned post
+- Discord announcement/sticky
+
+Treat this as security work, not marketing. If `everdraw.xyz` or DNS is compromised, these independent surfaces are how users and operators verify the real contracts.
+
+---
+
 ## 1) Prerequisites
 
 - Node.js installed

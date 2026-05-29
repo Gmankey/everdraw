@@ -204,6 +204,19 @@ Notes:
   POOL_ADDRESSES_V3='0x8F36aaAD5E88585aA54Cc160ef2Eb4d2B2C7B1ee,<NEW_VAULT_B_ADDRESS>'
 ```
 
+### 11a. Update canonical public addresses
+
+Update every public address surface before declaring the deploy complete:
+
+- `README.md` canonical deployments table
+- `deployments/monad-mainnet.json`
+- `docs-site/pages/security.md`
+- GitHub release/announcement text, if used
+- Twitter/X pinned post
+- Discord announcement/sticky
+
+Then verify the Vercel production bundle and docs site show the new Vault B V3 address. This is part of the DNS-hijack mitigation: users need at least one out-of-band place to compare contract addresses if the website ever looks wrong.
+
 ### 12. Reset indexer `last_finalized_block` to before Vault B deploy
 
 **Without this, the indexer never picks up the Vault B deploy / round-1-start events** because it already scanned past those blocks under the old `POOL_ADDRESSES` (which didn't include the new vault address).
