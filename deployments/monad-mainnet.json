@@ -97,6 +97,39 @@
       "adrs": ["ADR-0010", "ADR-0019", "ADR-0021"]
     },
     {
+      "role": "Vault B (V3)",
+      "status": "active",
+      "address": "0x56b494215B82C52906984ceAb3874Fb49e271c41",
+      "contractName": "TicketPrizePoolShmonV3",
+      "source": "src/TicketPrizePoolShmonV3.sol",
+      "abi": "abi/TicketPrizePoolShmonV3.json",
+      "deployedAt": "2026-05-31T01:00:00.000Z",
+      "anchor": "Sun 01:00 UTC",
+      "compiler": {
+        "version": "0.8.33+commit.64118f21",
+        "optimizer": true,
+        "optimizerRuns": 200,
+        "viaIR": true,
+        "evmVersion": "paris"
+      },
+      "constructorArgs": {
+        "ticketPriceMON": "1000000000000000000",
+        "roundDurationSec": 86400,
+        "yieldPeriodSec": 518100,
+        "shmon": "0x1B68626dCa36c7fE922fD2d55E4f631d962dE19c",
+        "entropy": "0xD458261E832415CFd3BAE5E416FdF3230ce6F134",
+        "entropyProvider": "0x52DeaA1c84233F7bb8C8A45baeDE41091c616506"
+      },
+      "runtimeBytecodeSha256": "268813a37d1bd4e54c9b81c311329d65d12339093687910df51827154f6008e7",
+      "verification": {
+        "status": "verified",
+        "verifiedAt": "2026-05-31T01:05:00.000Z",
+        "method": "Runtime bytecode fetched via eth_getCode and SHA256-hashed immediately post-deploy. Hash matches Vault A V3 exactly (identical V3 source compiled with identical settings and identical constructor args). VRF reserve seeded with 20 MON, keeper 0x80dE...DBE9 authorized via setKeeper.",
+        "evidence": "decisions/0019-v3-mainnet-migration.md"
+      },
+      "adrs": ["ADR-0010", "ADR-0019", "ADR-0021"]
+    },
+    {
       "role": "Legacy Vault B",
       "status": "retiring-monitoring-only",
       "address": "0xed67ad46C694a5e963119a1Ca5F88eEBbb6e5a8a",
