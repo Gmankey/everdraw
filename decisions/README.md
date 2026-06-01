@@ -68,3 +68,5 @@ Anything still unconfirmed.
 - [ADR-0021 — V3 pre-deploy hardening (entropy timelock, per-round metadata, event indexing)](0021-v3-pre-deploy-hardening.md)
 - [ADR-0022 — Operational trust assumptions and resilience model](0022-operational-trust-assumptions.md)
 - [ADR-0023 — shMON dependency model and graceful-degradation roadmap](0023-shmon-dependency-model.md)
+- [ADR-0024 — Generic asset vault design (V4)](0024-generic-asset-vault-design.md)
+- [ADR-0025 — Multi-winner round design (V4)](0025-multi-winner-round-design.md)
