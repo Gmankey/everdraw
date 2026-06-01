@@ -20,130 +20,91 @@ That is the part I think the industry still underestimates.
 
 External dependency security is not a side note. It is protocol security.
 
-## The Dependency Stack
+## The Invisible Surface Area
 
-EverDraw looks simple from the user's point of view. You deposit MON, the vault converts it to shMON, the yield funds the prize, one winner takes the pot, and everyone else keeps their principal exposure.
+Every DeFi protocol has a dependency graph, whether it admits it or not.
 
-That simple loop is intentional. But underneath it is a dependency stack. Some parts can delay the app. Some can mislead users. A few can directly affect whether users recover the value they expect.
+If your app uses a frontend, users depend on the website being real. If it uses an indexer, users depend on off-chain data being accurate. If it uses an oracle, the protocol depends on that oracle's assumptions. If it uses a yield source, users inherit that yield source's risk. If a keeper needs to call a function, rounds can stall when that keeper disappears. If the owner key can change parameters, users are trusting the owner key's custody.
 
-The useful way to talk about those dependencies is not "we use X." It is:
+None of this automatically means the protocol is bad. It means the trust model is bigger than the contract.
 
-- how X can fail;
-- what that failure does to EverDraw;
-- what we have done about it;
-- what risk remains anyway.
+The real question is whether those dependencies are named, documented, monitored, and handled when they fail.
 
-So here is the dependency model in roughly the order I care about it.
+If they are not, then the protocol is asking users to trust systems they cannot even see.
 
-## 1. shMON
+## What EverDraw Depends On
 
-shMON is the biggest dependency because it is where user principal actually lives after deposit.
+EverDraw looks simple from the user's point of view. You deposit MON, the vault converts it to shMON, the staking yield funds the prize, one winner takes the pot, and everyone else keeps their principal exposure.
 
-EverDraw does not hold user deposits as idle MON. The vault deposits MON into shMON, receives shMON shares, and later uses those shares for principal withdrawals and prize claims. That is the product: staking yield funds the prize. It is also the risk: users inherit shMON behavior.
+That simple loop is intentional. But underneath it are several external systems that matter.
 
-There are a few ways this can fail.
+The first is **shMON**. EverDraw uses shMON as the yield source. That is what makes the product work: deposited MON becomes productive through Monad staking, and that yield becomes the prize. But it also means users inherit shMON risk. If shMON share value falls because of slashing or some underlying loss, EverDraw cannot pretend that did not happen. Users still receive their recorded shares, but those shares may be worth less MON. If shMON transfers were paused, claims and withdrawals could be delayed until transfers resume. If shMON were catastrophically compromised, there is no contract-level magic trick that restores principal from a drained dependency.
 
-If shMON share value drops because of slashing or an underlying pool loss, EverDraw cannot make the shares worth the original amount of MON. Users still receive their recorded shares, but those shares may redeem for less MON. That is not a UI issue or an indexer issue. That is yield-source risk.
+That is uncomfortable to write, which is exactly why it needs to be written.
 
-If shMON transfers are paused, blacklisted, or broken, withdrawals and prize claims can revert until shMON recovers. In the current V3 contract, the shMON address is immutable and transfers are direct `shmon.transfer` calls. There is no alternate asset path and no emergency conversion route. If shMON itself is hacked or drained, EverDraw cannot restore principal from inside the vault. That is the catastrophic case.
+The second dependency is **Pyth Entropy**, which EverDraw V3 uses for verifiable randomness. The design is not "trust the operator to pick a winner." Randomness comes from an external entropy system. Pyth's commit-and-reveal design means the provider cannot wait to see the participants and then choose a favorable value. The realistic failure mode is refusal or failure to reveal. In that case, EverDraw has a one-hour callback timeout and an emergency settlement path: the affected round can be settled with no winner, depositors recover principal in shMON shares, and the protocol moves on.
 
-The mitigation today is mostly policy and honesty. Protocol fees are kept at 0 bps, which removes the worst round-settlement surface: a fee transfer failing inside finalization. Claims and withdrawals are user-initiated, so if shMON has a temporary transfer issue, users can retry once shMON recovers. The next contract version should add graceful-degradation around shMON transfers, especially deferred accounting if a transfer fails.
+That is not as exciting as a prize, but it is much better than a stuck vault.
 
-The uncomfortable truth is still this: EverDraw's no-loss framing depends on shMON remaining solvent and redeemable. The contract can account fairly in shares. It cannot make a broken yield source whole by pretending.
+The third dependency is **Monad L1 and RPC access**. If the chain itself is down, nobody can progress. That is base-layer risk. If the primary RPC is down, the contracts still exist, but off-chain systems can lose visibility. The mitigation is boring and necessary: fallback RPCs, retry logic, and operational runbooks.
 
-## 2. Pyth Entropy
+The fourth dependency is **off-chain infrastructure**. The keeper and indexer run on Fly.io. The frontend runs on Vercel. DNS points users to everdraw.xyz. Those systems do not hold user principal inside the contract, but they shape what users see and what operators can respond to. If the frontend is down, the contracts are still there. If the indexer is stale, history can look wrong. If DNS is hijacked, the danger is more serious: users could be shown a fake interface that asks them to sign hostile transactions.
 
-Pyth Entropy is the randomness dependency. EverDraw V3 uses it to choose winners.
+That last one is the nasty one. A malicious frontend does not need to break the protocol. It only needs to trick users into signing the wrong thing.
 
-The main risk is not that the operator secretly picks a winner. The winner is driven by an external entropy flow. The realistic failure modes are more specific: Pyth callback does not arrive, the provider refuses or fails to reveal, the Entropy contract migrates, or the configured provider needs to rotate.
+## The Lesson From Building EverDraw
 
-If the callback does not arrive, a round can get stuck waiting for randomness. That does not drain funds, but it delays settlement and leaves users waiting. EverDraw mitigates this with a one-hour callback timeout and an emergency settlement path. In that path, the round can be settled with no winner and depositors can recover principal in shMON shares. Nobody gets the prize for that skipped round, but the vault does not sit frozen forever.
+The biggest lesson for me has been that dependency failures are not hypothetical paperwork. They change design.
 
-If Pyth migrates its Entropy contract or rotates the provider, a fully immutable address would be worse. It could leave a live vault pointed at dead randomness infrastructure. That is why V3 makes `entropy` and `entropyProvider` changeable by the owner, but only through a 24-hour timelock. The queue event is public. Watchers can alert on it. Users have time to see that a randomness dependency is changing before it takes effect.
+EverDraw V3 made Pyth Entropy mutable behind a 24-hour timelock. At first glance, immutable addresses feel cleaner. But if Pyth ever rotates its Entropy contract or provider, a fully immutable dependency could brick the vault forever and force a new contract deployment. Making that dependency changeable, while forcing a public 24-hour delay, gives users an exit window and gives the protocol a recovery path.
 
-That design is a tradeoff. Immutability feels cleaner until the immutable thing you rely on goes away. Mutability is dangerous if it is instant and hidden. It becomes acceptable when it is delayed, public, and narrow.
+That is the tradeoff: mutability is dangerous if it is instant and hidden. It becomes useful when it is delayed, observable, and bounded.
 
-The remaining risk is that Pyth itself is still an external system. EverDraw can detect failure, wait, skip, or migrate. It cannot force a third-party entropy provider to behave.
+The shMON dependency led to a different decision. EverDraw V3 keeps protocol fees at zero for now because fee transfer failure would create a worse settlement surface than we are willing to accept. Future contract versions need more graceful handling around shMON transfers before fees should be enabled. That is not a marketing-friendly sentence, but it is the correct one.
 
-## 3. Owner Key
+The infrastructure dependency led to another set of changes: fallback RPC support, keeper alerts, governance-event monitoring, and canonical contract addresses published outside the main website. None of this changes the core product. It changes the blast radius when something outside the contract goes wrong.
 
-The owner key is the most important human dependency.
+## How We Are Mitigating It
 
-The owner cannot steal user principal directly. That matters. But the owner does control real protocol levers: fee configuration, keeper authorization, entropy changes, VRF reserve management, pause/unpause, next-round metadata, and ownership transfer.
+The current EverDraw rule is simple: every meaningful change must name the external systems it touches.
 
-If the owner key is lost, the protocol keeps running on the current configuration, but recovery becomes difficult. We cannot rotate keepers, update entropy settings, change fees, withdraw VRF reserves, or respond cleanly to a major dependency migration. The system becomes less dangerous, but also less adaptable.
+If a PR changes frontend behavior, it needs to say whether it depends on Vercel, DNS, wallet RPCs, or indexer data. If a contract change touches randomness, it needs to explain the Pyth failure mode. If a keeper change touches round progression, it needs to say what happens when Fly.io, RPC, Telegram, or the keeper key fails. A clean code review is not enough if the dependency model is missing.
 
-If the owner key is compromised, the attacker still cannot call an admin function that simply drains user deposits. But they can make the protocol worse. They can pause it, set future fees up to the hard cap, add malicious keepers, drain the VRF reserve, or queue a malicious entropy change that becomes active after 24 hours.
+We are also making canonical addresses easier to verify. Contract addresses, constructor arguments, bytecode hashes, and ABI references live in the public GitHub repo and docs. The plan is to keep those addresses mirrored across GitHub, docs, Twitter/X, and Discord so users have more than one place to verify what they are signing. This matters because website compromise is not the same as contract compromise, but it can still hurt users.
 
-The mitigations are structural and operational. Fee changes are capped and snapshotted for future rounds. Entropy changes have a 24-hour delay. Keeper permissions are separate from owner permissions. Governance events need monitoring so unexpected ownership, fee, keeper, pause, entropy, and reserve actions are caught quickly.
+We have also added monitoring around the operations that matter: ownership changes, Pyth entropy changes, keeper changes, fee updates, pause/unpause, VRF reserve withdrawals, emergency settlements, and low reserve warnings. The goal is not to pretend nothing can go wrong. The goal is to know quickly, communicate clearly, and preserve as much user safety as possible.
 
-Longer term, the owner role should move to a multisig or timelocked Safe. Early-stage speed is useful. It should not become permanent key-person risk dressed up as agility.
+## Security Is Not Just Prevention
 
-## 4. Frontend And DNS
+There is a temptation in crypto to talk about security as if it only means prevention.
 
-The frontend is not where the funds live, but it is where users decide what to sign.
+Prevent the exploit. Prevent the bad call. Prevent the admin from doing something dangerous. Prevent the oracle from being manipulated.
 
-That makes `everdraw.xyz`, Vercel, and DNS important. If the frontend is down, users lose the easiest interface, but the contracts remain live. If Vercel deploys a bad build, users may see wrong state or broken flows. If DNS or the frontend is hijacked, the risk is worse: users could be shown a fake interface that asks them to sign hostile transactions.
+Prevention is ideal, but real systems also need recovery. What happens if the provider goes offline? What happens if the RPC fails? What happens if the operator loses a laptop? What happens if a cloud account gets locked? What happens if the website is down? What happens if the yield source changes behavior?
 
-That kind of compromise does not need to break the EverDraw contracts. It only needs to trick a user into signing something that is not EverDraw.
+If the answer is "we will figure it out live," that is not a plan. That is a hope with a keyboard.
 
-The mitigation is address verification outside the website. Canonical contract addresses, ABIs, constructor arguments, and bytecode references should live in the public GitHub repo and be mirrored through other channels such as Twitter/X, Discord, docs, and block explorers. Users should have more than one place to verify that the contract they are interacting with is the real one.
+For EverDraw, the standard we are moving toward is this: every dependency has a named failure mode, every serious failure mode has either a mitigation or an accepted risk, and accepted risks are written down plainly enough that users and auditors can judge them.
 
-This is why frontend security is protocol security. A malicious site can hurt users even when the Solidity is perfectly fine. "The contract was safe" is not a satisfying answer to someone who signed through a poisoned interface.
+## Why This Matters For Users
 
-## 5. Keeper
+Users should not need to read every ADR before depositing. That would be absurd.
 
-The keeper is the automation that moves rounds forward.
+But users deserve a protocol that has done that work internally. They deserve docs that explain the real assumptions. They deserve public addresses they can verify. They deserve alerts when governance changes happen. They deserve a team that does not hide behind "the contract is fine" when the problem lives one layer outside it.
 
-It commits draws, triggers randomness, settles rounds, and calls the convenience flows that keep the product feeling alive. If the keeper goes offline, rounds can stall at the lifecycle stage they reached. That is frustrating and visible, but it is not the same as funds being drained or accounting being corrupted.
+EverDraw is built around a simple promise: a chance at meaningful upside without taking the usual destructive bet. To make that credible, the security model has to respect the whole system, not just the Solidity.
 
-The keeper has deliberately limited power. It cannot change fees, change the owner, pause the protocol, update entropy, or withdraw the VRF reserve. If the keeper key is compromised, the blast radius is mostly operational and gas-related. The owner can authorize a new keeper and remove the old one.
+That means talking about shMON risk. It means talking about Pyth. It means talking about DNS. It means talking about owner keys, keepers, RPCs, and cloud infrastructure.
 
-The mitigation is redundancy and monitoring. The keeper now runs as always-on infrastructure rather than from a local laptop. It needs funding alerts, health checks, and clear recovery steps. The goal is not to make the keeper magical. The goal is to make keeper failure boring: visible, recoverable, and not fund-threatening.
+Not because any one of those things makes EverDraw uniquely fragile.
 
-## 6. Monad L1 And RPC Access
-
-EverDraw depends on Monad itself. That sounds obvious, but obvious dependencies are still dependencies.
-
-If Monad L1 is down, nobody can progress. Users cannot deposit, withdraw, claim, or verify state. There is no protocol-level workaround for base-layer downtime. The honest mitigation is communication and waiting for the chain to recover.
-
-RPC failure is different. If the primary RPC is down but Monad is still producing blocks, the contracts still exist and users can still interact through other routes. Off-chain services may lose visibility, keepers may fail to submit transactions, and the frontend may show stale or missing data.
-
-That is why fallback RPCs matter. The keeper and indexer need backup RPC endpoints, retry logic, and operational runbooks. This is not glamorous security work. It is the kind of plumbing that prevents a perfectly healthy contract from looking broken because one endpoint had a bad day.
-
-The remaining risk is that all RPCs can lag, censor, rate-limit, or disagree temporarily. The chain is the source of truth. RPCs are windows into it, and windows can get dirty.
-
-## 7. Indexer And Historical Data
-
-The indexer makes EverDraw usable. It powers history, wallet positions, round outcomes, and views that would be painful to reconstruct directly in the browser.
-
-If the indexer is down, users may see missing history. If it is behind, the UI may show stale results. If it has a bug, the app can display a wrong interpretation of past events. That can confuse users and operators, even though on-chain state remains unchanged.
-
-The mitigation is to treat the indexer as a cache, not an authority. Critical values should be reproducible from on-chain logs or direct contract reads. The code should be open enough that another operator can rebuild it. User-facing flows should fall back to direct reads where practical.
-
-The indexer does not decide who won. It reports what happened. That distinction matters.
-
-## 8. Cloud Accounts, Alerts, And Operator Process
-
-The last dependency is the least elegant one: process.
-
-Fly.io hosts runtime services. Vercel hosts the frontend. Telegram carries operational alerts. GitHub carries source, deployment records, and public addresses. The operator's devices and accounts hold the access needed to respond when something breaks.
-
-None of these are the protocol contract. All of them affect whether the protocol can be operated responsibly.
-
-If a Fly app dies, the keeper or indexer can stop. If Telegram alerts fail, the operator may miss a low reserve or governance event. If GitHub is stale, users cannot verify addresses confidently. If the operator is incapacitated and no succession plan exists, the protocol may keep running but lose the ability to adapt.
-
-The mitigation is unromantic: runbooks, alerts, backups, public address records, recovery contacts, and eventually multisig operations. This is the part of DeFi that does not fit nicely in a contract audit, but it is where a lot of real-world failure lives.
+Because every real DeFi protocol has dependencies. The honest ones name them.
 
 ## The Standard Going Forward
 
-The standard for EverDraw is simple: every meaningful change must name the external systems it touches.
+External dependency security will be part of EverDraw's design process from here on out.
 
-If a frontend change depends on Vercel, DNS, wallet RPCs, or indexer data, say so. If a contract change touches randomness, explain the Pyth failure mode. If a keeper change touches round progression, explain what happens when Fly.io, RPC, Telegram, or the keeper key fails. If a yield-source assumption changes, say whether users can lose value, get stuck, or be misled.
-
-A clean code review is not enough if the dependency model is missing.
-
-Every future vault, campaign, keeper change, indexer change, and frontend release should answer five questions:
+Every future vault, campaign, keeper change, indexer change, and frontend release should answer the same basic questions:
 
 - What external systems does this depend on?
 - What happens when each one fails?
@@ -152,8 +113,6 @@ Every future vault, campaign, keeper change, indexer change, and frontend releas
 - What should users or operators do when it happens?
 
 That is not bureaucracy. That is how a small protocol grows up without lying to itself.
-
-Users should not need to read every ADR before depositing. That would be absurd. But users deserve a protocol that has done that work internally. They deserve docs that explain the real assumptions. They deserve public addresses they can verify. They deserve alerts when governance changes happen. They deserve a team that does not hide behind "the contract is fine" when the problem lives one layer outside it.
 
 EverDraw is still early. The product will change, the vaults will improve, and the dependency model will keep getting sharper. But the principle is already set:
 
