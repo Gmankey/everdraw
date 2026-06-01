@@ -12,6 +12,16 @@ const checks = [
     artifact: 'artifacts/src/TicketPrizePoolShmonV3.sol/TicketPrizePoolShmonV3.json',
     abi: 'abi/TicketPrizePoolShmonV3.json',
   },
+  {
+    contract: 'TicketPrizePoolV4',
+    artifact: 'artifacts/src/TicketPrizePoolV4.sol/TicketPrizePoolV4.json',
+    abi: 'abi/TicketPrizePoolV4.json',
+  },
+  {
+    contract: 'PythRandomnessOracle',
+    artifact: 'artifacts/src/PythRandomnessOracle.sol/PythRandomnessOracle.json',
+    abi: 'abi/PythRandomnessOracle.json',
+  },
 ]
 
 let failed = false
