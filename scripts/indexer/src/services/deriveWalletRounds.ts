@@ -62,6 +62,14 @@ export function createDeriveWalletRoundsService(
             acc.won = 1;
             break;
 
+          case 'WinnersDrawn': {
+            const payload = parsePayload<{ winners?: string[] }>(event.payload);
+            if ((payload.winners ?? []).some((winner) => winner.toLowerCase() === event.wallet)) {
+              acc.won = 1;
+            }
+            break;
+          }
+
           case 'RoundSettled': {
             // V2: winner is embedded in RoundSettled payload; mark won for the winning wallet
             const payload = parsePayload<{ winner?: string }>(event.payload);

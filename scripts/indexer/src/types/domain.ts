@@ -19,7 +19,15 @@ export type SupportedEventName =
   // V3-only
   | 'VRFRequested'
   | 'VRFFulfilled'
-  | 'EmergencyForceSettled';
+  | 'EmergencyForceSettled'
+  // V4-only
+  | 'RandomnessRequested'
+  | 'RandomnessFulfilled'
+  | 'WinnersDrawn'
+  | 'Sponsored'
+  | 'SponsorRefunded'
+  | 'TransferDeferred'
+  | 'DeferredClaimSucceeded';
 
 export interface RawEventRow {
   txHash: string;

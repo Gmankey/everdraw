@@ -78,6 +78,18 @@ export function createDeriveRoundsService(
             break;
           }
 
+          case 'WinnersDrawn': {
+            const payload = parsePayload<{ roundId: number; winners?: string[]; winningTickets?: number[] }>(event.payload);
+            acc.state = 'drawn';
+            acc.drawnAt = event.blockTimestamp;
+            acc.winner = payload.winners?.[0] ?? null;
+            acc.winningTicket = payload.winningTickets?.[0] != null ? Number(payload.winningTickets[0]) : null;
+            for (const winner of payload.winners ?? []) {
+              acc.winnerWallets.add(winner.toLowerCase());
+            }
+            break;
+          }
+
           case 'UnstakeRequested':
             acc.state = 'unstaking';
             acc.unstakingAt = event.blockTimestamp;
@@ -122,7 +134,14 @@ export function createDeriveRoundsService(
             acc.committedAt = event.blockTimestamp;
             break;
 
+          case 'RandomnessRequested':
+            // V4 oracle request submitted — treat as committed (sales closed, draw in progress)
+            acc.state = 'committed';
+            acc.committedAt = event.blockTimestamp;
+            break;
+
           case 'VRFFulfilled':
+          case 'RandomnessFulfilled':
             // V3: VRF callback received — WinnerDrawn follows immediately via finalizeDraw
             // State will be updated to 'drawn' by the subsequent WinnerDrawn event
             break;
@@ -145,6 +164,10 @@ export function createDeriveRoundsService(
 
           case 'PrizeClaimed':
           case 'PrincipalWithdrawn':
+          case 'Sponsored':
+          case 'SponsorRefunded':
+          case 'TransferDeferred':
+          case 'DeferredClaimSucceeded':
             break;
         }
       }

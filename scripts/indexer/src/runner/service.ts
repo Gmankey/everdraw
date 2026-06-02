@@ -188,6 +188,9 @@ function toRawEventRow(input: {
   if (parsed.args.buyer) wallet = String(parsed.args.buyer).toLowerCase();
   else if (parsed.args.winner) wallet = String(parsed.args.winner).toLowerCase();
   else if (parsed.args.user) wallet = String(parsed.args.user).toLowerCase();
+  else if (parsed.args.sponsor) wallet = String(parsed.args.sponsor).toLowerCase();
+  else if (parsed.args.recipient) wallet = String(parsed.args.recipient).toLowerCase();
+  else if (parsed.args.winners?.[0]) wallet = String(parsed.args.winners[0]).toLowerCase();
 
   const amountMon = parsed.args.monPaid != null
     ? String(parsed.args.monPaid)
@@ -224,6 +227,9 @@ function normalizeArgs(eventName: SupportedEventName, args: any): Record<string,
 
     case 'RoundSkipped':
     case 'RoundFailed':
+      return { roundId: Number(args.roundId) };
+
+    case 'EmergencyForceSettled':
       return { roundId: Number(args.roundId) };
 
     case 'RoundSettled': {
@@ -282,6 +288,44 @@ function normalizeArgs(eventName: SupportedEventName, args: any): Record<string,
       return { roundId: Number(args.roundId), user: String(args.user).toLowerCase(), amount: String(args.amount) };
     }
 
+    case 'RandomnessRequested':
+      return { roundId: Number(args.roundId), requestId: String(args.requestId), fee: String(args.fee) };
+
+    case 'RandomnessFulfilled':
+      return { roundId: Number(args.roundId), requestId: String(args.requestId), randomNumber: String(args.randomNumber) };
+
+    case 'WinnersDrawn':
+      return {
+        roundId: Number(args.roundId),
+        winners: Array.from(args.winners ?? []).map((winner) => String(winner).toLowerCase()),
+        winningTickets: Array.from(args.winningTickets ?? []).map((ticket) => Number(ticket)),
+        prizeShares: Array.from(args.prizeShares ?? []).map((shares) => String(shares)),
+      };
+
+    case 'Sponsored':
+      return {
+        roundId: Number(args.roundId),
+        sponsor: String(args.sponsor).toLowerCase(),
+        amount: String(args.amount),
+        memo: String(args.memo ?? ''),
+      };
+
+    case 'SponsorRefunded':
+      return {
+        roundId: Number(args.roundId),
+        sponsor: String(args.sponsor).toLowerCase(),
+        amount: String(args.amount),
+      };
+
+    case 'TransferDeferred':
+    case 'DeferredClaimSucceeded':
+      return {
+        roundId: Number(args.rid),
+        recipient: String(args.recipient).toLowerCase(),
+        slot: Number(args.slot),
+        shares: String(args.shares),
+      };
+
     // ── Legacy V2Compat-only ────────────────────────────────────────────────
     case 'DrawCommitted':
       return { roundId: Number(args.roundId), targetBlockNumber: String(args.targetBlockNumber) };
@@ -309,9 +353,6 @@ function normalizeArgs(eventName: SupportedEventName, args: any): Record<string,
 
     case 'VRFFulfilled':
       return { roundId: Number(args.roundId), sequence: String(args.sequence) };
-
-    case 'EmergencyForceSettled':
-      return { roundId: Number(args.roundId) };
 
     default:
       return { roundId: Number(args.roundId) };

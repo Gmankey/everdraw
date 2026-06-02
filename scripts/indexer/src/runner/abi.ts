@@ -32,4 +32,16 @@ export const POOL_EVENT_ABI = [
   // V3 RoundSettled — principalShares + prizeShares, no winner (different topic hash from legacy and V2)
   'event RoundSettled(uint256 indexed roundId, uint256 principalShares, uint256 prizeShares)',
   'event EmergencyForceSettled(uint256 indexed roundId)',
+
+  // ── V4 (TicketPrizePoolV4) events ───────────────────────────────────────
+  // TicketsBought, RoundSettled, PrizeClaimed, PrincipalWithdrawn,
+  // RoundStarted, RoundSkipped and EmergencyForceSettled share existing
+  // signatures above.
+  'event RandomnessRequested(uint256 indexed roundId, uint64 indexed requestId, uint128 fee)',
+  'event RandomnessFulfilled(uint256 indexed roundId, uint64 indexed requestId, bytes32 randomNumber)',
+  'event WinnersDrawn(uint256 indexed roundId, address[] winners, uint32[] winningTickets, uint256[] prizeShares)',
+  'event Sponsored(uint256 indexed roundId, address indexed sponsor, uint256 amount, string memo)',
+  'event SponsorRefunded(uint256 indexed roundId, address indexed sponsor, uint256 amount)',
+  'event TransferDeferred(uint256 indexed rid, address indexed recipient, uint8 slot, uint256 shares)',
+  'event DeferredClaimSucceeded(uint256 indexed rid, address indexed recipient, uint8 slot, uint256 shares)',
 ] as const;

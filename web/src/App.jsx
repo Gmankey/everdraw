@@ -59,6 +59,23 @@ const POOL_V3_ABI = [
   'function getUserPosition(uint256 rid, address user) view returns (uint128 principalMONOut, uint128 principalShmonSharesOut)',
 ]
 
+const POOL_V4_ABI = [
+  'function currentRoundId() view returns (uint256)',
+  'function getRoundInfo(uint256 rid) view returns (uint8 state,uint64 salesEndTime,uint64 requestId,uint32 totalTickets,uint256 totalPrincipalAsset,uint256 totalPrincipalShares,uint256 principalSharesAtSettle,uint256 totalPrizeShares,uint16 forfeitBps,bool wasSkipped)',
+  'function getRoundWinners(uint256 rid) view returns (address[] winners,uint32[] winningTickets,uint256[] prizeShares)',
+  'function nextExecutable() view returns (uint256 rid,uint8 action)',
+  'function ticketPriceAsset() view returns (uint256)',
+  'function roundDurationSec() view returns (uint64)',
+  'function yieldPeriodSec() view returns (uint64)',
+  'function getCommitAfterTime(uint256 rid) view returns (uint64)',
+  'function yieldVault() view returns (address)',
+  'function buyTickets(uint32 ticketCount) payable',
+  'function claimPrize(uint256 rid)',
+  'function withdrawPrincipal(uint256 rid)',
+  'function getUserPosition(uint256 rid, address user) view returns (uint128 principalAssetOut, uint128 principalSharesOut)',
+  'event TicketsBought(uint256 indexed roundId, address indexed buyer, uint32 ticketCount, uint256 assetPaid)'
+]
+
 const SHMON_READ_ABI = [
   'function getInternalEpoch() view returns (uint64)',
   'function balanceOf(address) view returns (uint256)',
@@ -149,6 +166,10 @@ function parseV2PoolAddresses() {
 
 function parseV3PoolAddresses() {
   return parseAddressEnv(import.meta.env.VITE_POOL_ADDRESSES_V3, import.meta.env.VITE_POOL_ADDRESS_V3)
+}
+
+function parseV4PoolAddresses() {
+  return parseAddressEnv(import.meta.env.VITE_POOL_ADDRESSES_V4, import.meta.env.VITE_POOL_ADDRESS_V4)
 }
 
 function hexChainIdToDec(hexId) {
@@ -980,31 +1001,39 @@ export default function App() {
   const poolAddresses = useMemo(() => parsePoolAddresses(), [])
   const poolAddressesV2 = useMemo(() => parseV2PoolAddresses(), [])
   const poolAddressesV3 = useMemo(() => parseV3PoolAddresses(), [])
+  const poolAddressesV4 = useMemo(() => parseV4PoolAddresses(), [])
   const activeVaultAddresses = useMemo(() => {
     const slots = [
-      poolAddressesV3[0] || poolAddressesV2[0] || poolAddresses[0],
-      poolAddressesV3[1] || poolAddressesV2[1] || poolAddresses[1],
+      poolAddressesV4[0] || poolAddressesV3[0] || poolAddressesV2[0] || poolAddresses[0],
+      poolAddressesV4[1] || poolAddressesV3[1] || poolAddressesV2[1] || poolAddresses[1],
     ].filter(Boolean)
     return [...new Set(slots.map((addr) => addr))]
-  }, [poolAddresses, poolAddressesV2, poolAddressesV3])
+  }, [poolAddresses, poolAddressesV2, poolAddressesV3, poolAddressesV4])
   const allPoolAddresses = useMemo(() => {
     const seen = new Set()
-    return [...activeVaultAddresses, ...poolAddressesV3, ...poolAddressesV2, ...poolAddresses].filter((addr) => {
+    return [...activeVaultAddresses, ...poolAddressesV4, ...poolAddressesV3, ...poolAddressesV2, ...poolAddresses].filter((addr) => {
       const lc = String(addr || '').toLowerCase()
       if (!lc || seen.has(lc)) return false
       seen.add(lc)
       return true
     })
-  }, [activeVaultAddresses, poolAddresses, poolAddressesV2, poolAddressesV3])
+  }, [activeVaultAddresses, poolAddresses, poolAddressesV2, poolAddressesV3, poolAddressesV4])
   const [selectedPoolAddress, setSelectedPoolAddress] = useState(activeVaultAddresses[0] || allPoolAddresses[0] || '')
   const poolAddress = selectedPoolAddress
   const isV2Pool = useMemo(() => poolAddressesV2.some((a) => a.toLowerCase() === String(poolAddress).toLowerCase()), [poolAddressesV2, poolAddress])
   const isV3Pool = useMemo(() => poolAddressesV3.some((a) => a.toLowerCase() === String(poolAddress).toLowerCase()), [poolAddressesV3, poolAddress])
+  const isV4Pool = useMemo(() => poolAddressesV4.some((a) => a.toLowerCase() === String(poolAddress).toLowerCase()), [poolAddressesV4, poolAddress])
   const usesSharePrizeAccounting = useCallback((addr) => {
     const lc = String(addr || '').toLowerCase()
-    return poolAddressesV2.some((a) => a.toLowerCase() === lc) || poolAddressesV3.some((a) => a.toLowerCase() === lc)
-  }, [poolAddressesV2, poolAddressesV3])
-  const activePoolAbi = isV2Pool || isV3Pool ? POOL_V2_ABI : POOL_ABI
+    return poolAddressesV2.some((a) => a.toLowerCase() === lc) || poolAddressesV3.some((a) => a.toLowerCase() === lc) || poolAddressesV4.some((a) => a.toLowerCase() === lc)
+  }, [poolAddressesV2, poolAddressesV3, poolAddressesV4])
+  const abiForPool = useCallback((addr) => {
+    const lc = String(addr || '').toLowerCase()
+    if (poolAddressesV4.some((a) => a.toLowerCase() === lc)) return POOL_V4_ABI
+    if (poolAddressesV2.some((a) => a.toLowerCase() === lc) || poolAddressesV3.some((a) => a.toLowerCase() === lc)) return POOL_V2_ABI
+    return POOL_ABI
+  }, [poolAddressesV2, poolAddressesV3, poolAddressesV4])
+  const activePoolAbi = abiForPool(poolAddress)
 
   const expectedChainId = import.meta.env.VITE_CHAIN_ID ? Number(import.meta.env.VITE_CHAIN_ID) : 143
   const estimatedApyPercent = import.meta.env.VITE_ESTIMATED_APY_PERCENT ? Number(import.meta.env.VITE_ESTIMATED_APY_PERCENT) : 12
@@ -1127,8 +1156,9 @@ export default function App() {
       try {
         assertNotAborted(signal)
         const v2 = poolAddressesV2.some((a) => a.toLowerCase() === addr.toLowerCase())
+        const v4 = poolAddressesV4.some((a) => a.toLowerCase() === addr.toLowerCase())
         const sharePrize = usesSharePrizeAccounting(addr)
-        const abi = sharePrize ? POOL_V2_ABI : POOL_ABI
+        const abi = abiForPool(addr)
         const pool = new ethers.Contract(addr, abi, provider)
         const rid = await _cached(`currentRound:${addr}`, 10_000, () => pool.currentRoundId(), signal)
         const info = await getCachedRoundInfo(pool, addr, rid, signal)
@@ -1152,7 +1182,7 @@ export default function App() {
           timeRemainingSec: v2 && state === 0 && secs === 0 ? yieldSecs : secs,
           commitAfterTime: commitAfter,
           totalTickets: Number(info.totalTickets ?? 0),
-          tvlMon: Number(ethers.formatEther(info.totalPrincipalMON ?? 0n)).toFixed(4),
+          tvlMon: Number(ethers.formatEther((v4 ? info.totalPrincipalAsset : info.totalPrincipalMON) ?? 0n)).toFixed(4),
         }
       } catch {
         return {
@@ -1185,7 +1215,7 @@ export default function App() {
 
     assertNotAborted(signal)
     setVaultSummaries(summaries)
-  }, [allPoolAddresses, poolAddressesV2, usesSharePrizeAccounting])
+  }, [abiForPool, allPoolAddresses, poolAddressesV2, poolAddressesV4, usesSharePrizeAccounting])
 
   const refresh = useCallback(async ({ signal } = {}) => {
     if (!poolAddress) return
@@ -1209,12 +1239,12 @@ export default function App() {
     ] = await Promise.all([
       _cached(`currentRound:${poolAddress}`, 10_000, () => pool.currentRoundId(), signal),
       _cached(`nextExecutable:${poolAddress}`, 5_000, () => pool.nextExecutable(), signal),
-      _cached(`ticketPrice:${poolAddress}`, 86400_000 * 365, () => pool.ticketPriceMON(), signal),
-      _cached(`deposit:${poolAddress}`, 86400_000 * 365, () => isV2Pool || isV3Pool ? pool.roundDurationSec() : pool.depositPeriodSec(), signal),
-      _cached(`yieldPeriod:${poolAddress}`, 86400_000 * 365, () => isV2Pool ? pool.yieldPeriodSec().catch(() => 0) : pool.yieldPeriodSec(), signal),
+      _cached(`ticketPrice:${poolAddress}`, 86400_000 * 365, () => isV4Pool ? pool.ticketPriceAsset() : pool.ticketPriceMON(), signal),
+      _cached(`deposit:${poolAddress}`, 86400_000 * 365, () => isV2Pool || isV3Pool || isV4Pool ? pool.roundDurationSec() : pool.depositPeriodSec(), signal),
+      _cached(`yieldPeriod:${poolAddress}`, 86400_000 * 365, () => isV2Pool || isV4Pool ? pool.yieldPeriodSec().catch(() => 0) : pool.yieldPeriodSec(), signal),
       _cached('provider:blockNumber', 2_000, () => provider.getBlockNumber(), signal),
       _cached('provider:network', 60_000, () => provider.getNetwork(), signal),
-      _cached(`shmon:${poolAddress}`, 86400_000 * 365, () => pool.shmon().catch(() => ethers.ZeroAddress), signal),
+      _cached(`shmon:${poolAddress}`, 86400_000 * 365, () => isV4Pool ? pool.yieldVault().catch(() => ethers.ZeroAddress) : pool.shmon().catch(() => ethers.ZeroAddress), signal),
       account ? _cached(`balance:${account}`, 5_000, () => provider.getBalance(account).catch(() => null), signal) : Promise.resolve(null),
     ])
 
@@ -1252,7 +1282,7 @@ export default function App() {
       // Keep fallback timers if epoch endpoint is unavailable.
     }
 
-    if (isV2Pool || isV3Pool) {
+    if (isV2Pool || isV3Pool || isV4Pool) {
       const commitAt = Number(await _cached(`commitAfter:${poolAddress}:${rid}`, 5_000, () => pool.getCommitAfterTime(rid).catch(() => 0), signal))
       assertNotAborted(signal)
       setCommitAfterTime(commitAt)
@@ -1278,7 +1308,7 @@ export default function App() {
       try {
         if (!ethers.isAddress(scanAddr)) continue
         const scanIsV2 = poolAddressesV2.some((a) => a.toLowerCase() === scanAddr.toLowerCase())
-        const scanAbi = usesSharePrizeAccounting(scanAddr) ? POOL_V2_ABI : POOL_ABI
+        const scanAbi = abiForPool(scanAddr)
         const scanPool = new ethers.Contract(scanAddr, scanAbi, provider)
         const scanCurrentRid = Number(await _cached(`currentRound:${scanAddr}`, 10_000, () => scanPool.currentRoundId(), signal))
         const scanRids = []
@@ -1287,7 +1317,7 @@ export default function App() {
         for (let i = 0; i < results.length; i++) {
           const si = results[i]
           if (!si) continue
-          const hasActivity = Number(si.totalTickets ?? 0) > 0 || BigInt(si.totalPrincipalMON ?? 0n) > 0n
+          const hasActivity = Number(si.totalTickets ?? 0) > 0 || BigInt((si.totalPrincipalAsset ?? si.totalPrincipalMON) ?? 0n) > 0n
           if (isTerminalRound(si.state, scanIsV2) && hasActivity) {
             const candidate = {
               poolAddr: scanAddr,
@@ -1315,7 +1345,7 @@ export default function App() {
       setSettledPoolAddress('')
       setSettledParticipants([])
     }
-  }, [account, poolAddress, activePoolAbi, isV2Pool, isV3Pool, allPoolAddresses, poolAddressesV2, usesSharePrizeAccounting])
+  }, [abiForPool, account, poolAddress, activePoolAbi, isV2Pool, isV3Pool, isV4Pool, allPoolAddresses, poolAddressesV2])
 
   useEffect(() => {
     if (!poolAddress) return
