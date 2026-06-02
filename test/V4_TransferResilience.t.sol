@@ -70,6 +70,8 @@ contract V4_TransferResilience_Test is V4TestBase {
         vm.prank(alice);
         pool.withdrawPrincipal(1);
         assertGt(pool.pendingClaims(1, alice, 0xff), 0);
+        assertEq(pool.pendingClaimSlotCount(alice), 1);
+        assertTrue(pool.hasPendingClaims(alice));
     }
 
     function test_deferred_retry_succeeds_after_unpause() public {
@@ -78,10 +80,47 @@ contract V4_TransferResilience_Test is V4TestBase {
         yieldVault.setTransfersPaused(true);
         vm.prank(alice);
         pool.withdrawPrincipal(1);
+        assertEq(pool.pendingClaimSlotCount(alice), 1);
+        assertTrue(pool.hasPendingClaims(alice));
         yieldVault.setTransfersPaused(false);
         vm.prank(alice);
         pool.claimDeferred(1, 0xff);
         assertEq(pool.pendingClaims(1, alice, 0xff), 0);
+        assertEq(pool.pendingClaimSlotCount(alice), 0);
+        assertFalse(pool.hasPendingClaims(alice));
+    }
+
+    function test_hasPendingClaims_tracks_multiple_slots_o1() public {
+        _buyNative(alice, 1);
+        _settleWithRandom(bytes32(uint256(1)));
+
+        yieldVault.setTransfersPaused(true);
+        vm.prank(alice);
+        pool.withdrawPrincipal(1);
+
+        vm.deal(alice, 2 ether);
+        vm.prank(alice);
+        pool.sponsor{value: 2 ether}(2, "promo");
+        vm.warp(block.timestamp + ROUND_SEC + 1);
+        pool.executeNext(2);
+        vm.prank(alice);
+        pool.claimSponsorRefund(2);
+
+        assertEq(pool.pendingClaimSlotCount(alice), 2);
+        assertTrue(pool.hasPendingClaims(alice));
+
+        yieldVault.setTransfersPaused(false);
+        vm.prank(alice);
+        pool.claimDeferred(1, 0xff);
+
+        assertEq(pool.pendingClaimSlotCount(alice), 1);
+        assertTrue(pool.hasPendingClaims(alice));
+
+        vm.prank(alice);
+        pool.claimDeferred(2, 0xfe);
+
+        assertEq(pool.pendingClaimSlotCount(alice), 0);
+        assertFalse(pool.hasPendingClaims(alice));
     }
 
     function test_executeNext_reentry_from_yield_vault_transfer_hits_guard() public {
