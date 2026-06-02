@@ -206,6 +206,7 @@ contract TicketPrizePoolV4 is IRandomnessOracleConsumer {
     mapping(uint256 => mapping(address => uint256)) public principalShares;
     mapping(uint256 => mapping(address => uint256)) public sponsorContribution;
     mapping(uint256 => mapping(address => mapping(uint8 => uint256))) public pendingClaims;
+    mapping(address => uint256) public pendingClaimSlotCount;
 
     uint256 public totalUnclaimedShares;
 
@@ -879,6 +880,7 @@ contract TicketPrizePoolV4 is IRandomnessOracleConsumer {
         }
 
         totalUnclaimedShares -= shares;
+        pendingClaimSlotCount[msg.sender] -= 1;
         emit DeferredClaimSucceeded(rid, msg.sender, slot, shares);
     }
 
@@ -889,6 +891,9 @@ contract TicketPrizePoolV4 is IRandomnessOracleConsumer {
             return true;
         }
 
+        if (pendingClaims[rid][recipient][slot] == 0) {
+            pendingClaimSlotCount[recipient] += 1;
+        }
         pendingClaims[rid][recipient][slot] += shares;
         emit TransferDeferred(rid, recipient, slot, shares);
         return false;
@@ -994,12 +999,7 @@ contract TicketPrizePoolV4 is IRandomnessOracleConsumer {
     }
 
     function hasPendingClaims(address user) external view returns (bool) {
-        for (uint256 rid = 1; rid <= currentRoundId; rid++) {
-            for (uint256 i = 0; i < 256; i++) {
-                if (pendingClaims[rid][user][uint8(i)] != 0) return true;
-            }
-        }
-        return false;
+        return pendingClaimSlotCount[user] != 0;
     }
 
     // ---------------------------------------------------------------------
