@@ -573,14 +573,14 @@ contract TicketPrizePoolV4 is IRandomnessOracleConsumer {
     // Progression
     // ---------------------------------------------------------------------
 
-    function executeNext() external whenNotPaused returns (uint256 rid, NextAction action) {
+    function executeNext() external whenNotPaused nonReentrant returns (uint256 rid, NextAction action) {
         (rid, action) = nextExecutable();
         if (action == NextAction.None) return (rid, action);
         _execute(rid, action);
         emit ExecuteNext(rid, action);
     }
 
-    function executeNext(uint256 rid) external whenNotPaused returns (NextAction action) {
+    function executeNext(uint256 rid) external whenNotPaused nonReentrant returns (NextAction action) {
         action = nextAction(rid);
         if (action == NextAction.None) return action;
         _execute(rid, action);
@@ -762,6 +762,8 @@ contract TicketPrizePoolV4 is IRandomnessOracleConsumer {
         if (r.state != RoundState.AwaitingVRF) revert BadState();
         require(block.timestamp >= uint256(r.vrfRequestTime) + uint256(VRF_CALLBACK_TIMEOUT), "vrf timeout not reached");
         r.state = RoundState.Settled;
+        // "Skipped" means settled without a completed draw, including VRF timeout force-settles.
+        r.wasSkipped = true;
         emit EmergencyForceSettled(rid);
         _bumpCursor();
     }
