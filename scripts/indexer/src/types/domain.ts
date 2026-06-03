@@ -19,6 +19,9 @@ export type SupportedEventName =
   // V3-only
   | 'VRFRequested'
   | 'VRFFulfilled'
+  // V4-only
+  | 'RandomnessRequested'
+  | 'RandomnessFulfilled'
   | 'EmergencyForceSettled';
 
 export interface RawEventRow {
