@@ -1716,7 +1716,7 @@ export default function App() {
   const shownEmptyClosedRound = (isV2Pool || isV4Pool) && shownState === 0 && shownSecondsRemaining === 0 && !shownHasActivity
   const shownYieldAccruing = (isV2Pool || isV4Pool) && shownState === 0 && shownSecondsRemaining === 0 && shownCommitAfterRemaining > 0 && shownHasActivity
   const shownSettled = isTerminalRound(shownState, isV2Pool)
-  const salesOpen = shownIsCurrentRound ? shownSalesOpen : isOpenState && secondsRemaining > 0
+  const salesOpen = (shownIsCurrentRound ? shownSalesOpen : isOpenState && secondsRemaining > 0) && !vaultPaused
   const buyFormOpen = shownIsCurrentRound && shownSalesOpen && !vaultPaused
   const canBuyTx = !!account && buyFormOpen && !loading
 
@@ -2022,7 +2022,7 @@ export default function App() {
     }
   }, [vaultPaused, isV2Pool, isDeadRound, shownState, shownSecondsRemaining, shownCommitAfterRemaining, shownEmptyClosedRound, shownYieldAccruing, shownProgressPct, shownRoundInfo, shownSettlementSecs, shownIsCurrentRound, nextAction, currentInternalEpoch, yieldPeriod, now])
 
-  const timerProgressPct = shownState === 0 ? shownProgressPct : shownSettled ? 100 : 50
+  const timerProgressPct = vaultPaused ? 100 : shownState === 0 ? shownProgressPct : shownSettled ? 100 : 50
   const timerIsClock = /^\d+:\d{2}:\d{2}:\d{2}$/.test(timerCard.value)
 
   const isUnstaking = !isV2Pool && shownState === 2 && shownSettlementSecs > 0 && shownSettlementSecs <= 86400
