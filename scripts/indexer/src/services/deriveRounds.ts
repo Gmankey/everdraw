@@ -117,12 +117,14 @@ export function createDeriveRoundsService(
             break;
 
           case 'VRFRequested':
+          case 'RandomnessRequested':
             // V3: VRF request submitted — treat as committed (sales closed, draw in progress)
             acc.state = 'committed';
             acc.committedAt = event.blockTimestamp;
             break;
 
           case 'VRFFulfilled':
+          case 'RandomnessFulfilled':
             // V3: VRF callback received — WinnerDrawn follows immediately via finalizeDraw
             // State will be updated to 'drawn' by the subsequent WinnerDrawn event
             break;

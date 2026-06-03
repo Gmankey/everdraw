@@ -5,6 +5,7 @@ export interface RunnerConfig {
   deployBlock: number;
   confirmations: number;
   chunkSize: number;
+  maxBlocksPerSync: number;
   pollIntervalMs: number;
 }
 
@@ -26,6 +27,7 @@ export function getRunnerConfig(): RunnerConfig {
     deployBlock,
     confirmations: Number(process.env.INDEXER_CONFIRMATIONS ?? 0),
     chunkSize: Number(process.env.INDEXER_CHUNK_SIZE ?? 100),
+    maxBlocksPerSync: Number(process.env.INDEXER_MAX_BLOCKS_PER_SYNC ?? 10_000),
     pollIntervalMs: Number(process.env.INDEXER_POLL_INTERVAL_MS ?? 2000),
   };
 }

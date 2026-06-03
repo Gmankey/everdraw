@@ -31,6 +31,9 @@ const SUPPORTED_EVENTS: SupportedEventName[] = [
   // V3-only
   'VRFRequested',
   'VRFFulfilled',
+  // V4-only
+  'RandomnessRequested',
+  'RandomnessFulfilled',
   'EmergencyForceSettled',
 ];
 
@@ -60,8 +63,7 @@ export function createIndexerRunner(input: {
       const finalizedHead = Math.max(config.deployBlock, latestBlock - config.confirmations);
       const lastFinalizedBlock = Number(indexerStateRepo.get(LAST_FINALIZED_BLOCK_KEY)?.value ?? (config.deployBlock - 1));
       const fromBlock = Math.max(config.deployBlock, lastFinalizedBlock + 1);
-      const maxBlocksPerSync = 10_000;
-      const toBlock = Math.min(finalizedHead, fromBlock + maxBlocksPerSync - 1);
+      const toBlock = Math.min(finalizedHead, fromBlock + config.maxBlocksPerSync - 1);
       console.log(`[indexer] chain head: ${latestBlock}, will scan from ${fromBlock} to ${toBlock}`);
 
       if (fromBlock > finalizedHead) {
@@ -309,6 +311,13 @@ function normalizeArgs(eventName: SupportedEventName, args: any): Record<string,
 
     case 'VRFFulfilled':
       return { roundId: Number(args.roundId), sequence: String(args.sequence) };
+
+    // ── V4-only ────────────────────────────────────────────────────────────
+    case 'RandomnessRequested':
+      return { roundId: Number(args.roundId), sequence: String(args.requestId), fee: String(args.fee) };
+
+    case 'RandomnessFulfilled':
+      return { roundId: Number(args.roundId), sequence: String(args.requestId) };
 
     case 'EmergencyForceSettled':
       return { roundId: Number(args.roundId) };

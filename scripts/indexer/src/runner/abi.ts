@@ -29,6 +29,9 @@ export const POOL_EVENT_ABI = [
   // RoundStarted, RoundSkipped share topic hashes with legacy — no new entries needed.
   'event VRFRequested(uint256 indexed roundId, uint64 indexed sequence, uint128 fee)',
   'event VRFFulfilled(uint256 indexed roundId, uint64 indexed sequence, bytes32 randomNumber)',
+  // V4 aliases the same randomness lifecycle with generic names.
+  'event RandomnessRequested(uint256 indexed roundId, uint64 indexed requestId, uint128 fee)',
+  'event RandomnessFulfilled(uint256 indexed roundId, uint64 indexed requestId, bytes32 randomNumber)',
   // V3 RoundSettled — principalShares + prizeShares, no winner (different topic hash from legacy and V2)
   'event RoundSettled(uint256 indexed roundId, uint256 principalShares, uint256 prizeShares)',
   'event EmergencyForceSettled(uint256 indexed roundId)',
