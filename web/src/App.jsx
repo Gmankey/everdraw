@@ -1123,6 +1123,7 @@ export default function App() {
 
   const [roundId, setRoundId] = useState('0')
   const [roundInfo, setRoundInfo] = useState(null)
+  const [vaultPaused, setVaultPaused] = useState(false)
   const [nextAction, setNextAction] = useState(0)
   const [ticketPrice, setTicketPrice] = useState(0n)
   const [roundDuration, setRoundDuration] = useState(0)
@@ -1309,6 +1310,7 @@ export default function App() {
       network,
       shmonAddr,
       accountBalance,
+      pausedFlag,
     ] = await Promise.all([
       _cached(`currentRound:${poolAddress}`, 10_000, () => pool.currentRoundId(), signal),
       _cached(`nextExecutable:${poolAddress}`, 5_000, () => pool.nextExecutable(), signal),
@@ -1319,6 +1321,7 @@ export default function App() {
       _cached('provider:network', 60_000, () => provider.getNetwork(), signal),
       _cached(`shmon:${poolAddress}`, 86400_000 * 365, () => isV4Pool ? pool.yieldVault().catch(() => ethers.ZeroAddress) : pool.shmon().catch(() => ethers.ZeroAddress), signal),
       account ? _cached(`balance:${account}`, 5_000, () => provider.getBalance(account).catch(() => null), signal) : Promise.resolve(null),
+      isV4Pool ? _cached(`paused:${poolAddress}`, 5_000, () => pool.paused().catch(() => false), signal) : Promise.resolve(false),
     ])
 
     const info = await hydrateV4RoundInfo(pool, poolAddress, rid, await getCachedRoundInfo(pool, poolAddress, rid, signal), signal)
@@ -1326,6 +1329,7 @@ export default function App() {
     assertNotAborted(signal)
     setRoundId(rid.toString())
     setRoundInfo(info)
+    setVaultPaused(Boolean(pausedFlag))
     setNextAction(Number(nextExecutable?.[1] ?? 0))
     setTicketPrice(price)
     setRoundDuration(Number(duration))
@@ -1713,11 +1717,12 @@ export default function App() {
   const shownYieldAccruing = (isV2Pool || isV4Pool) && shownState === 0 && shownSecondsRemaining === 0 && shownCommitAfterRemaining > 0 && shownHasActivity
   const shownSettled = isTerminalRound(shownState, isV2Pool)
   const salesOpen = shownIsCurrentRound ? shownSalesOpen : isOpenState && secondsRemaining > 0
-  const buyFormOpen = shownIsCurrentRound && shownSalesOpen
+  const buyFormOpen = shownIsCurrentRound && shownSalesOpen && !vaultPaused
   const canBuyTx = !!account && buyFormOpen && !loading
 
   const buyDisabledReason = useMemo(() => {
     if (loading) return 'Transaction in progress'
+    if (vaultPaused && shownIsCurrentRound) return 'Vault is temporarily closed'
     if (!shownIsCurrentRound) return 'Deposits are only available in the active vault'
     if (!shownSalesOpen) {
       if (shownYieldAccruing) return 'Yield accruing'
@@ -1727,7 +1732,7 @@ export default function App() {
     if (!account) return 'Connect wallet to deposit'
     if (wrongNetwork) return 'Wrong network — click Buy to switch automatically'
     return ''
-  }, [loading, shownIsCurrentRound, shownSalesOpen, shownYieldAccruing, shownState, account, wrongNetwork])
+  }, [loading, vaultPaused, shownIsCurrentRound, shownSalesOpen, shownYieldAccruing, shownState, account, wrongNetwork])
 
   useEffect(() => {
     if (!buyFormOpen && /missing revert data|SalesEnded|sales ended/i.test(error || '')) setError('')
@@ -1797,6 +1802,15 @@ export default function App() {
   }, [shownIsCurrentRound, settlementSecondsRemaining, shownRoundInfo, currentInternalEpoch, latestBlockNumber])
 
   const timerCard = useMemo(() => {
+    if (vaultPaused && shownIsCurrentRound) {
+      return {
+        heading: 'Vault Closed',
+        value: 'Paused',
+        sub: 'This vault is temporarily closed. Deposits are paused.',
+        metaLabel: 'Vault status',
+        metaValue: 'Closed'
+      }
+    }
     if (isV2Pool) {
       if (shownState === 0 && shownSecondsRemaining > 0) {
         return {
@@ -2006,7 +2020,7 @@ export default function App() {
       metaLabel: 'Progress',
       metaValue: '0%'
     }
-  }, [isV2Pool, isDeadRound, shownState, shownSecondsRemaining, shownCommitAfterRemaining, shownEmptyClosedRound, shownYieldAccruing, shownProgressPct, shownRoundInfo, shownSettlementSecs, shownIsCurrentRound, nextAction, currentInternalEpoch, yieldPeriod, now])
+  }, [vaultPaused, isV2Pool, isDeadRound, shownState, shownSecondsRemaining, shownCommitAfterRemaining, shownEmptyClosedRound, shownYieldAccruing, shownProgressPct, shownRoundInfo, shownSettlementSecs, shownIsCurrentRound, nextAction, currentInternalEpoch, yieldPeriod, now])
 
   const timerProgressPct = shownState === 0 ? shownProgressPct : shownSettled ? 100 : 50
   const timerIsClock = /^\d+:\d{2}:\d{2}:\d{2}$/.test(timerCard.value)
