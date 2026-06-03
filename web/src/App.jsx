@@ -1080,14 +1080,15 @@ export default function App() {
 
   const hydrateV4RoundInfo = useCallback(async (pool, addr, rid, info, signal) => {
     if (!isV4Address(addr) || !info) return info
-    const enriched = Object.assign(info, {
+    const enriched = {
+      ...info,
       winner: ethers.ZeroAddress,
       winningTicket: 0,
       winners: [],
       winningTickets: [],
       prizeShares: [],
       prizeClaimed: false,
-    })
+    }
     try {
       const fromBlock = deployBlockForPool(addr)
       const logs = await _cached(
