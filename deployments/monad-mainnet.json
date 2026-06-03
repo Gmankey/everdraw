@@ -130,6 +130,142 @@
       "adrs": ["ADR-0010", "ADR-0019", "ADR-0021"]
     },
     {
+      "role": "Vault A (V4)",
+      "status": "active",
+      "address": "0x9263d84a141172d9618f4b08839f595EE03bC7E8",
+      "contractName": "TicketPrizePoolV4",
+      "source": "src/TicketPrizePoolV4.sol",
+      "abi": "abi/TicketPrizePoolV4.json",
+      "deployedAt": "2026-06-03T06:10:23.000Z",
+      "deployBlock": 78796629,
+      "anchor": "Wed 06:10:23 UTC",
+      "compiler": {
+        "version": "0.8.33+commit.64118f21",
+        "optimizer": true,
+        "optimizerRuns": 200,
+        "viaIR": true,
+        "evmVersion": "paris"
+      },
+      "constructorArgs": {
+        "depositMode": 0,
+        "asset": "0x0000000000000000000000000000000000000000",
+        "yieldVault": "0x1B68626dCa36c7fE922fD2d55E4f631d962dE19c",
+        "ticketPriceAsset": "1000000000000000000",
+        "roundDurationSec": 86400,
+        "yieldPeriodSec": 518100,
+        "numWinners": 1,
+        "winnerAllocationBps": [10000],
+        "randomnessOracle": "0xB06d11dF2B6b351DFF64f3270e7C7F8cd43fe799",
+        "randomnessOracleInitData": "0x",
+        "vaultSymbol": "EVRDRAW-A"
+      },
+      "runtimeBytecodeSha256": "9952102a28c455763d48e4ee7a77042168dfa9ad3e9ea1618e89c19aadb0a280",
+      "verification": {
+        "status": "verified",
+        "verifiedAt": "2026-06-03T06:10:23.000Z",
+        "method": "Runtime bytecode fetched via eth_getCode and SHA256-hashed immediately post-deploy. Hash matches Vault B V4 exactly. Constructor args verified against V4 launch config: native MON deposits, shMON yield vault, Pyth randomness adapter, 1 MON ticket, 24h round, 518100s yield period, one winner.",
+        "evidence": "decisions/0032-v4-launch-record.md"
+      },
+      "adrs": ["ADR-0024", "ADR-0029"]
+    },
+    {
+      "role": "Vault A (V4) Pyth oracle",
+      "status": "active",
+      "address": "0xB06d11dF2B6b351DFF64f3270e7C7F8cd43fe799",
+      "contractName": "PythRandomnessOracle",
+      "source": "src/PythRandomnessOracle.sol",
+      "abi": "abi/PythRandomnessOracle.json",
+      "deployedAt": "2026-06-03T06:10:23.000Z",
+      "compiler": {
+        "version": "0.8.33+commit.64118f21",
+        "optimizer": true,
+        "optimizerRuns": 200,
+        "viaIR": true,
+        "evmVersion": "paris"
+      },
+      "constructorArgs": {
+        "entropy": "0xD458261E832415CFd3BAE5E416FdF3230ce6F134",
+        "provider": "0x52DeaA1c84233F7bb8C8A45baeDE41091c616506",
+        "consumer": "0x9263d84a141172d9618f4b08839f595EE03bC7E8"
+      },
+      "runtimeBytecodeSha256": "654a35b8f7df518076b0c211aae3549d5cebaa44259764b8f8480dd38cf09942",
+      "verification": {
+        "status": "verified",
+        "verifiedAt": "2026-06-03T06:10:23.000Z",
+        "method": "Runtime bytecode fetched via eth_getCode and SHA256-hashed immediately post-deploy. Constructor args verified against ADR-0029 Pyth Entropy config and Vault A V4 consumer address.",
+        "evidence": "decisions/0032-v4-launch-record.md"
+      },
+      "adrs": ["ADR-0029"]
+    },
+    {
+      "role": "Vault B (V4)",
+      "status": "active",
+      "address": "0x0032c9F6621Ef5d53b48dc602D4d056d7a47c5fF",
+      "contractName": "TicketPrizePoolV4",
+      "source": "src/TicketPrizePoolV4.sol",
+      "abi": "abi/TicketPrizePoolV4.json",
+      "deployedAt": "2026-06-03T07:05:22.000Z",
+      "deployBlock": 78804885,
+      "anchor": "Wed 07:05:22 UTC",
+      "compiler": {
+        "version": "0.8.33+commit.64118f21",
+        "optimizer": true,
+        "optimizerRuns": 200,
+        "viaIR": true,
+        "evmVersion": "paris"
+      },
+      "constructorArgs": {
+        "depositMode": 0,
+        "asset": "0x0000000000000000000000000000000000000000",
+        "yieldVault": "0x1B68626dCa36c7fE922fD2d55E4f631d962dE19c",
+        "ticketPriceAsset": "1000000000000000000",
+        "roundDurationSec": 86400,
+        "yieldPeriodSec": 518100,
+        "numWinners": 1,
+        "winnerAllocationBps": [10000],
+        "randomnessOracle": "0x1eE7502BD22940523aE504dF9855aBc0c417347d",
+        "randomnessOracleInitData": "0x",
+        "vaultSymbol": "EVRDRAW-B"
+      },
+      "runtimeBytecodeSha256": "9952102a28c455763d48e4ee7a77042168dfa9ad3e9ea1618e89c19aadb0a280",
+      "verification": {
+        "status": "verified",
+        "verifiedAt": "2026-06-03T07:05:22.000Z",
+        "method": "Runtime bytecode fetched via eth_getCode and SHA256-hashed immediately post-deploy. Hash matches Vault A V4 exactly. Constructor args verified against V4 launch config: native MON deposits, shMON yield vault, Pyth randomness adapter, 1 MON ticket, 24h round, 518100s yield period, one winner.",
+        "evidence": "decisions/0032-v4-launch-record.md"
+      },
+      "adrs": ["ADR-0024", "ADR-0029"]
+    },
+    {
+      "role": "Vault B (V4) Pyth oracle",
+      "status": "active",
+      "address": "0x1eE7502BD22940523aE504dF9855aBc0c417347d",
+      "contractName": "PythRandomnessOracle",
+      "source": "src/PythRandomnessOracle.sol",
+      "abi": "abi/PythRandomnessOracle.json",
+      "deployedAt": "2026-06-03T07:05:22.000Z",
+      "compiler": {
+        "version": "0.8.33+commit.64118f21",
+        "optimizer": true,
+        "optimizerRuns": 200,
+        "viaIR": true,
+        "evmVersion": "paris"
+      },
+      "constructorArgs": {
+        "entropy": "0xD458261E832415CFd3BAE5E416FdF3230ce6F134",
+        "provider": "0x52DeaA1c84233F7bb8C8A45baeDE41091c616506",
+        "consumer": "0x0032c9F6621Ef5d53b48dc602D4d056d7a47c5fF"
+      },
+      "runtimeBytecodeSha256": "e2eaf9ba29592089f701a8af54e9b1adc4521ab2c839965b8ab7e9d8ff95fe09",
+      "verification": {
+        "status": "verified",
+        "verifiedAt": "2026-06-03T07:05:22.000Z",
+        "method": "Runtime bytecode fetched via eth_getCode and SHA256-hashed immediately post-deploy. Constructor args verified against ADR-0029 Pyth Entropy config and Vault B V4 consumer address.",
+        "evidence": "decisions/0032-v4-launch-record.md"
+      },
+      "adrs": ["ADR-0029"]
+    },
+    {
       "role": "Legacy Vault B",
       "status": "retiring-monitoring-only",
       "address": "0xed67ad46C694a5e963119a1Ca5F88eEBbb6e5a8a",
