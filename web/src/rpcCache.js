@@ -50,6 +50,11 @@ export function _cached(key, ttlMs, fetcher, signal) {
   return withAbort(p, signal)
 }
 
+function toPlainRpcObject(value) {
+  if (value && typeof value.toObject === 'function') return value.toObject()
+  return value
+}
+
 export async function getCachedRoundInfo(pool, poolAddress, rid, signal) {
   const key = `roundInfo:${poolAddress}:${rid}`
   const hit = _rpcCache.get(key)
@@ -63,7 +68,11 @@ export async function getCachedRoundInfo(pool, poolAddress, rid, signal) {
 
   const p = Promise.resolve()
     .then(() => pool.getRoundInfo(rid))
-    .then((info) => { _rpcCache.set(key, { value: info, ts: Date.now() }); return info })
+    .then((info) => {
+      const plainInfo = toPlainRpcObject(info)
+      _rpcCache.set(key, { value: plainInfo, ts: Date.now() })
+      return plainInfo
+    })
     .catch((err) => {
       if (_rpcCache.get(key)?.value === p) _rpcCache.delete(key)
       throw err
