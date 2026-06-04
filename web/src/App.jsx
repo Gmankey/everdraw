@@ -651,7 +651,7 @@ function StatCard({ label, value, sub, icon }) {
   )
 }
 
-function ClaimFlowModal({ open, mode, busy, status, error, onClose, onRedeemToWallet, onRedeposit, onRedeemAndConvert, onBackFromRedirectWarning, confirmRedirectOpen, onConfirmRedirect, isV2 = false }) {
+function ClaimFlowModal({ open, mode, busy, status, error, onClose, onRedeemToWallet, onRedeemAndConvert, onBackFromRedirectWarning, confirmRedirectOpen, onConfirmRedirect, isV2 = false }) {
   if (!open) return null
 
   const isWinner = mode === 'winner'
@@ -700,13 +700,6 @@ function ClaimFlowModal({ open, mode, busy, status, error, onClose, onRedeemToWa
           title: 'Redeem to wallet',
           body: '',
           onClick: onRedeemToWallet,
-          tone: 'default',
-        },
-        {
-          kicker: busy ? 'Working...' : 'KEEP PLAYING',
-          title: 'Re-deposit into the next active round',
-          body: '',
-          onClick: onRedeposit,
           tone: 'primary',
         },
         {
@@ -1485,14 +1478,25 @@ export default function App() {
         return
       }
       const data = await res.json()
-      const totalTicketsNum = data.reduce((acc, p) => acc + (Number(p.tickets) || 0), 0)
-      const built = data.map((p) => ({
+      const byWallet = new Map()
+      for (const p of Array.isArray(data) ? data : []) {
+        const wallet = p.wallet || p.buyer || p.address
+        const tickets = Number(p.tickets ?? p.ticketCount ?? 0) || 0
+        if (!wallet || !ethers.isAddress(wallet) || tickets <= 0) continue
+        const key = wallet.toLowerCase()
+        const prev = byWallet.get(key) || { wallet, tickets: 0, depositedWei: 0n }
+        prev.tickets += tickets
+        prev.depositedWei += BigInt(p.assetPaid || p.monPaid || p.depositedWei || p.deposited_mon_wei || '0')
+        byWallet.set(key, prev)
+      }
+      const totalTicketsNum = [...byWallet.values()].reduce((acc, p) => acc + p.tickets, 0)
+      const built = [...byWallet.values()].map((p) => ({
         wallet: p.wallet,
         walletShort: shortAddr(p.wallet),
-        tickets: Number(p.tickets) || 0,
-        sharePct: totalTicketsNum > 0 ? ((Number(p.tickets) / totalTicketsNum) * 100).toFixed(2) : '0.00',
-        depositedMon: Number(ethers.formatEther(BigInt(p.assetPaid || p.monPaid || '0'))).toFixed(4),
-      })).sort((a, b) => b.tickets - a.tickets)
+        tickets: p.tickets,
+        sharePct: totalTicketsNum > 0 ? ((p.tickets / totalTicketsNum) * 100).toFixed(2) : '0.00',
+        depositedMon: Number(ethers.formatEther(p.depositedWei)).toFixed(4),
+      })).sort((a, b) => b.tickets - a.tickets || a.wallet.localeCompare(b.wallet))
       assertNotAborted(signal)
       setter(built)
     } catch (e) {
@@ -2446,56 +2450,6 @@ export default function App() {
     if (ok) setClaimFlow((prev) => ({ ...prev, open: false }))
   }, [claimFlow.claimPrize, claimFlow.poolAddr, claimFlow.rid, claimFlow.withdrawPrincipal, handleRedeemRound])
 
-  const handleRedeposit = useCallback(async () => {
-    if (!poolAddress) {
-      setActionError('Missing pool address')
-      return
-    }
-    if (!claimFlow.rid) {
-      setActionError('Missing round to claim')
-      return
-    }
-
-    const redepositTickets = ticketPrice > 0n ? claimFlow.prizeWei / ticketPrice : 0n
-    const redepositValue = redepositTickets * ticketPrice
-
-    await runSignedAction('Claim and re-deposit', async (sendTx) => {
-      if (!salesOpen || !roundId) {
-        throw new Error('No open vault is currently accepting deposits')
-      }
-      if (ticketPrice <= 0n) {
-        throw new Error('Ticket price not loaded yet')
-      }
-      if (redepositTickets <= 0n || redepositValue <= 0n) {
-        throw new Error('Prize is smaller than one ticket, so it cannot be re-deposited automatically')
-      }
-      if (redepositTickets > BigInt(Number.MAX_SAFE_INTEGER)) {
-        throw new Error('Prize is too large to convert into a safe ticket count')
-      }
-
-      let nonceOffset = 0
-      if (claimFlow.claimPrize) {
-        const claimTxHash = await sendTx('claimPrize', [BigInt(claimFlow.rid)], 500000n, { nonceOffset })
-        nonceOffset += 1
-        setActionStatus(`Redeem (Round #${claimFlow.rid}): prize submitted ${String(claimTxHash).slice(0, 10)}...`)
-      }
-      if (claimFlow.withdrawPrincipal) {
-        const withdrawTxHash = await sendTx('withdrawPrincipal', [BigInt(claimFlow.rid)], 500000n, { nonceOffset })
-        nonceOffset += 1
-        setActionStatus(`Redeem (Round #${claimFlow.rid}): principal submitted ${String(withdrawTxHash).slice(0, 10)}...`)
-      }
-
-      setActionStatus(`Re-deposit: buying ${redepositTickets.toString()} ticket${redepositTickets === 1n ? '' : 's'} in Round #${roundId}...`)
-      const buyTxHash = await sendTx('buyTickets', [Number(redepositTickets)], 700000n, { nonceOffset, value: redepositValue })
-      setActionStatus(`Re-deposit: submitted ${String(buyTxHash).slice(0, 10)}...`)
-
-      setMainView(Number(roundId) % 2 === 1 ? 'vaultA' : 'vaultB')
-      setTicketCountInput(redepositTickets.toString())
-      setClaimFlow((prev) => ({ ...prev, open: false }))
-      setActionStatus(`Prize claimed and re-deposited into Round #${roundId}.`)
-    })
-  }, [poolAddress, claimFlow.claimPrize, claimFlow.rid, claimFlow.prizeWei, claimFlow.withdrawPrincipal, ticketPrice, runSignedAction, salesOpen, roundId])
-
   const handleRedeemAndConvert = useCallback(() => {
     setClaimRedirectWarningOpen(true)
   }, [])
@@ -3099,7 +3053,6 @@ export default function App() {
           error={actionError}
           onClose={closeClaimFlow}
           onRedeemToWallet={handleRedeemToWallet}
-          onRedeposit={handleRedeposit}
           onRedeemAndConvert={handleRedeemAndConvert}
           onBackFromRedirectWarning={() => setClaimRedirectWarningOpen(false)}
           confirmRedirectOpen={claimRedirectWarningOpen}
