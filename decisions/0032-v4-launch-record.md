@@ -4,6 +4,8 @@
 **Date:** 2026-06-03  
 **Network:** Monad mainnet, chain ID 143  
 
+> **Cadence-defect addendum (2026-06-03):** post-launch verification found V4-A and V4-B were deployed ~55 minutes apart, violating ADR-0010's required 3.5-day stagger. V4-B is being re-anchored via redeploy (target Sat Jun 6 18:10 UTC). See **ADR-0033** and `tasks/v4-vaultb-cadence-fix-2026-06-03.md`. The V4-B address recorded below (`0x0032c9F6…`) is being retired and will change after the Saturday redeploy.
+
 ## Summary
 
 EverDraw V4 launched on Monad mainnet with two native-MON vaults and one Pyth randomness adapter per vault.
