@@ -99,7 +99,97 @@ Old V4-B (`0x0032c9F6…`) has zero deposits and its reserve withdrawn. Mark it 
 
 - `deployments/monad-mainnet.json`: replace the V4-B entry's address with the new one; add the old one as `status: "retired-cadence-error"`.
 - ADR-0032: update V4-B address, add a note pointing to this remediation and ADR-0010.
-- Backfill deploy blocks/txs/anchors for V4-A (from original logs) and new V4-B.
+- Backfill deploy blocks/txs/anchors for the new V4-B (from the redeploy log).
+
+---
+
+## Step 7 — Finalize the new V4-B (PROVEN RECIPE — same as V4-A, do not re-investigate)
+
+Everything below was validated end-to-end during the V4-A launch. Substitute `<NEW_V4B>` and `<NEW_V4B_ORACLE>` and run exactly.
+
+### 7a. Verify the contracts on-chain (independent of any report)
+
+```bash
+RPC=https://rpc.monad.xyz
+cast call <NEW_V4B> 'VERSION()(string)' --rpc-url $RPC                 # "4.0.0"
+cast call <NEW_V4B> 'symbol()(string)' --rpc-url $RPC                  # "EVRDRAW-B"
+cast call <NEW_V4B> 'owner()(address)' --rpc-url $RPC                  # 0xd399d4e24021eA08f2Cd11Fbb78a633e8D9B84A2
+cast call <NEW_V4B> 'pauser()(address)' --rpc-url $RPC                 # same Ledger
+cast call <NEW_V4B> 'ticketPriceAsset()(uint256)' --rpc-url $RPC       # 1000000000000000000
+cast call <NEW_V4B> 'getRoundState(uint256)(uint8)' 1 --rpc-url $RPC   # 0 (Open)
+cast call <NEW_V4B_ORACLE> 'consumer()(address)' --rpc-url $RPC        # == <NEW_V4B>
+cast balance <NEW_V4B> --rpc-url $RPC                                  # ~9 MON VRF reserve
+```
+
+### 7b. Verify source on the explorer (Sourcify via Foundry — NO API key, NO constructor args)
+
+The `monadexplorer.com` "Verify Code" UI is **Sourcify-based** — it is a `forge` command, not a file upload. Foundry must be installed (`curl -L https://foundry.paradigm.xyz | bash && foundryup`). `foundry.toml` already matches the deploy (solc 0.8.33 / optimizer 200 / viaIR / paris), so bytecode matches.
+
+```bash
+# New V4-B pool
+forge verify-contract \
+  --rpc-url https://rpc.monad.xyz \
+  --verifier sourcify \
+  --verifier-url 'https://sourcify-api-monad.blockvision.org/' \
+  --chain-id 143 \
+  <NEW_V4B> \
+  src/TicketPrizePoolV4.sol:TicketPrizePoolV4
+
+# New V4-B oracle
+forge verify-contract \
+  --rpc-url https://rpc.monad.xyz \
+  --verifier sourcify \
+  --verifier-url 'https://sourcify-api-monad.blockvision.org/' \
+  --chain-id 143 \
+  <NEW_V4B_ORACLE> \
+  src/PythRandomnessOracle.sol:PythRandomnessOracle
+```
+
+If forge errors with `Failed to deserialize response`, append `/api` to the verifier-url.
+
+**Confirm verification independently** (don't trust forge output alone):
+```bash
+curl -s 'https://sourcify-api-monad.blockvision.org/v2/contract/143/<NEW_V4B>'
+curl -s 'https://sourcify-api-monad.blockvision.org/v2/contract/143/<NEW_V4B_ORACLE>'
+# Expect: "creationMatch":"match","runtimeMatch":"match","match":"match"
+```
+(The legacy `check-all-by-addresses` endpoint may say `partial`; the authoritative v2 endpoint says full `match`. Trust v2.)
+
+### 7c. Deployer key handling (avoid the V4-A near-miss)
+
+- The Saturday deployer key **must be saved** during deploy (e.g. `.openclaw/secrets/v4b-redeploy-<date>.txt`) so leftover funds are recoverable. The V4-A throwaway key was nearly lost with 10.4 MON on it.
+- After deploy + role rotation, **sweep the deployer's residual balance back to the Ledger**, then **delete the key file**. A saved mainnet key with no remaining purpose is an attack surface.
+
+### 7d. Manifest + ADR backfill (same fields as V4-A)
+
+New V4-B manifest entry must carry: `address`, `randomnessOracle`, `deployBlock`, `deployTx`, oracle `deployTx`+`deployBlock`, `round1SalesEndAt` + `anchor` (should be ~Sun 18:10 UTC — confirm it's 3.5 days off V4-A's Thu 06:10), `runtimeBytecodeSha256`, and `verification` block (sourcify match + matchId). Mark old `0x0032c9F6…` as `status: "retired-cadence-error"`. Update ADR-0032 + ADR-0033 with the new address.
+
+### 7e. Cut over frontend / keeper / indexer
+
+- Frontend: set `VITE_POOL_ADDRESSES` second slot to `<NEW_V4B>` (Vercel prod env, **not** local). Redeploy. Confirm `everdraw.xyz` shows Vault B Open with the green ring + working buy (no longer the paused "Vault Closed" graphic). Hard-refresh to clear the cached bundle.
+- Keeper: `flyctl secrets set V4_B_ADDRESS=<NEW_V4B> --app everdraw-keeper` (**no `--stage`**).
+- Indexer: `flyctl secrets set V4_B_ADDRESS=<NEW_V4B> V4_B_DEPLOY_BLOCK=<block> --app everdraw-indexer` (**no `--stage`**).
+
+### 7f. Merkl — submit Vault B (was deferred at launch)
+
+V4-B was intentionally held back from the Merkl form because the old address was being retired. Now submit the **new** V4-B address using `tasks/v4-merkl-submission-2026-06-02.md`. Wait until ≥1 deposit exists on the new V4-B so `totalSupply > 0`. Same Merkl-readable surface as V4-A.
+
+### 7g. Retire the old V4-B
+
+Operator `stop()` on `0x0032c9F6…` from the Ledger via Remix (IV4 interface → At Address → `stop`). It's already paused and drained; `stop()` makes the retirement explicit and one-way.
+
+---
+
+## V4-B done checklist (everything that was done for V4-A)
+
+- [ ] New V4-B + oracle deployed at the 3.5-day anchor (~Sun 18:10 UTC)
+- [ ] On-chain config verified (7a)
+- [ ] Both contracts Sourcify-verified, confirmed via v2 API (7b)
+- [ ] Deployer residual swept to Ledger, key file deleted (7c)
+- [ ] Manifest + ADR-0032/0033 updated with new address (7d)
+- [ ] Frontend/keeper/indexer cut over, no `--stage` (7e)
+- [ ] Merkl Vault B submitted after first deposit (7f)
+- [ ] Old V4-B `stop()`ed and marked retired (7g)
 
 ## What stays live and correct throughout
 
