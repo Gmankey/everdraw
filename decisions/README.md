@@ -74,3 +74,7 @@ Anything still unconfirmed.
 - [ADR-0027 — Multi-recipient fee router (V4)](0027-multi-recipient-fee-router.md)
 - [ADR-0028 — Transfer-failure resilience (V4)](0028-transfer-failure-resilience.md)
 - [ADR-0029 — Randomness oracle abstraction (V4)](0029-randomness-oracle-abstraction.md)
+- [ADR-0030 — V4 future-proofing inventory](0030-v4-future-proofing-inventory.md)
+- [ADR-0031 — V4 EOA ownership for hotfix deploy; multisig deferred to V5](0031-v4-eoa-ownership-hotfix.md)
+- [ADR-0032 — V4 mainnet launch record](0032-v4-launch-record.md)
+- [ADR-0033 — V4-B cadence defect and re-anchor remediation](0033-v4b-cadence-defect-reanchor.md)

@@ -138,7 +138,9 @@
       "abi": "abi/TicketPrizePoolV4.json",
       "deployedAt": "2026-06-03T06:10:23.000Z",
       "deployBlock": 78796629,
-      "anchor": "Wed 06:10:23 UTC",
+      "deployTx": "0x4f48b7346ff4c6d43ac688ee16045107c52c87ea94d7c079cee78ade952e15fa",
+      "round1SalesEndAt": "2026-06-04T06:10:23.000Z",
+      "anchor": "Thu 06:10:23 UTC",
       "compiler": {
         "version": "0.8.33+commit.64118f21",
         "optimizer": true,
@@ -176,6 +178,8 @@
       "source": "src/PythRandomnessOracle.sol",
       "abi": "abi/PythRandomnessOracle.json",
       "deployedAt": "2026-06-03T06:10:23.000Z",
+      "deployBlock": 78796617,
+      "deployTx": "0x3153bcff09b36899b0ec8381535e9568e8dd03c5be2669b1e555f79c21415b67",
       "compiler": {
         "version": "0.8.33+commit.64118f21",
         "optimizer": true,
