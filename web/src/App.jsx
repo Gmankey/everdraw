@@ -1450,28 +1450,34 @@ export default function App() {
     const vaultBRoundIdNum = currentRidNum % 2 === 0 ? currentRidNum : prevRidNum
 
     let targetRoundId = 0
+    let targetPoolAddress = ''
     let setter = null
 
     if (view === 'vaultA') {
       targetRoundId = vaultARoundIdNum
+      targetPoolAddress = activeVaultAddresses[0] || poolAddress
       setter = setParticipants
     } else if (view === 'vaultB') {
       targetRoundId = vaultBRoundIdNum
+      targetPoolAddress = activeVaultAddresses[1] || poolAddress
       setter = setPreviousParticipants
     } else if (view === 'previous') {
       targetRoundId = Number(settledRoundId) || 0
+      targetPoolAddress = settledPoolAddress || poolAddress
       setter = setSettledParticipants
     } else {
       return
     }
 
-    if (!targetRoundId) {
+    if (!targetRoundId || !ethers.isAddress(targetPoolAddress)) {
       setter?.([])
       return
     }
 
     try {
-      const res = await fetch(`https://everdraw-indexer.fly.dev/api/rounds/${targetRoundId}/participants`, { signal })
+      const url = new URL(`https://everdraw-indexer.fly.dev/api/rounds/${targetRoundId}/participants`)
+      url.searchParams.set('pool', targetPoolAddress)
+      const res = await fetch(url.toString(), { signal })
       if (!res.ok) {
         console.warn('[EverDraw] indexer participants fetch failed:', res.status)
         setter([])
@@ -1480,6 +1486,7 @@ export default function App() {
       const data = await res.json()
       const byWallet = new Map()
       for (const p of Array.isArray(data) ? data : []) {
+        if (p.poolAddress && String(p.poolAddress).toLowerCase() !== targetPoolAddress.toLowerCase()) continue
         const wallet = p.wallet || p.buyer || p.address
         const tickets = Number(p.tickets ?? p.ticketCount ?? 0) || 0
         if (!wallet || !ethers.isAddress(wallet) || tickets <= 0) continue
@@ -1505,7 +1512,7 @@ export default function App() {
         setter([])
       }
     }
-  }, [roundId, previousRoundId, settledRoundId])
+  }, [activeVaultAddresses, poolAddress, previousRoundId, roundId, settledPoolAddress, settledRoundId])
 
   useEffect(() => {
     if (mainView === 'myrounds') return
