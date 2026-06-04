@@ -88,6 +88,8 @@ const KEEPER_PREFLIGHT = String(process.env.KEEPER_PREFLIGHT || 'true').toLowerC
 const execFileAsync = promisify(execFile)
 
 const ABI = [
+  'function paused() view returns (bool)',
+  'function stoppedAt() view returns (uint64)',
   'function nextExecutable() view returns (uint256 rid, uint8 action)',
   'function executeNext() returns (uint256 rid, uint8 action)',
   'function commit(uint256 rid)',
@@ -337,8 +339,37 @@ async function checkVRFReserve(poolCtx) {
   }
 }
 
+async function readPoolLifecycle(poolCtx) {
+  const { contract } = poolCtx
+  let paused = false
+  let stoppedAt = 0
+
+  try {
+    paused = Boolean(await contract.paused())
+  } catch {
+    paused = false
+  }
+
+  try {
+    stoppedAt = Number(await contract.stoppedAt())
+  } catch {
+    stoppedAt = 0
+  }
+
+  return { paused, stoppedAt }
+}
+
 async function tickPool(poolCtx) {
   const { address, contract, isV2, isV3 } = poolCtx
+
+  const lifecycle = await readPoolLifecycle(poolCtx)
+  if (lifecycle.paused || lifecycle.stoppedAt > 0) {
+    const reason = lifecycle.stoppedAt > 0 ? `stoppedAt=${lifecycle.stoppedAt}` : 'paused=true'
+    console.log(`${ts()} [keeper][pool=${address}] lifecycle skip ${reason} (no tx sent)`)
+    if (tickCount % HEARTBEAT_LOG_EVERY_TICKS === 0) keeperHeartbeat(address, '-', reason)
+    poolCtx.consecutiveErrors = 0
+    return
+  }
 
   if (isV3) {
     await checkVRFTimeout(poolCtx)
