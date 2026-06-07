@@ -29,6 +29,61 @@ async function main() {
   const numWinners = Number(process.env.NUM_WINNERS || "1");
   const winnerAllocationBps = (process.env.WINNER_ALLOCATION_BPS || "10000").split(",").map((v) => Number(v.trim()));
 
+  // ── Cadence stagger guard (ADR-0010) ──────────────────────────────────────
+  // Two vaults must run ~half a weekly cycle (3.5 days) apart so their draws
+  // stay spread across the week. This guard makes that invariant unbreakable:
+  // when deploying a SECOND vault, set STAGGER_REFERENCE_VAULT to its sibling's
+  // address. The script reads the sibling's anchor on-chain and ABORTS if this
+  // deploy would land outside tolerance of the 3.5-day offset. Leave the env var
+  // unset for the first vault or testnet. This exists because the 2026-06 launch
+  // deployed both vaults ~55 minutes apart, collapsing the stagger.
+  const staggerRef = process.env.STAGGER_REFERENCE_VAULT;
+  if (staggerRef && hre.network.name !== "monadTestnet") {
+    const cycle = roundDurationSec + yieldPeriodSec;                 // ~weekly
+    const halfCycle = Math.floor(cycle / 2);                         // intended stagger (~3.5d)
+    const toleranceSec = Number(process.env.STAGGER_TOLERANCE_SEC || 43200); // 12h default
+    let refSalesEnd = 0;
+    try {
+      const ref = new ethers.Contract(
+        staggerRef,
+        ["function getRoundTimes(uint256) view returns (uint64 salesEndTime, uint64 vrfRequestTime)"],
+        ethers.provider,
+      );
+      const [se] = await ref.getRoundTimes(1n);
+      refSalesEnd = Number(se);
+      if (!refSalesEnd) throw new Error("reference vault round-1 salesEndTime is 0");
+    } catch (e) {
+      const msg = `STAGGER GUARD: could not read reference vault ${staggerRef}: ${e.message}`;
+      if (process.env.STAGGER_OVERRIDE === "1") console.warn("⚠️  " + msg + " — proceeding due to STAGGER_OVERRIDE=1");
+      else throw new Error(msg + "\nFix STAGGER_REFERENCE_VAULT / RPC, or set STAGGER_OVERRIDE=1 to bypass (NOT recommended).");
+    }
+    if (refSalesEnd) {
+      const now = Math.floor(Date.now() / 1000);
+      const newSalesEnd = now + roundDurationSec;                    // this vault's round-1 anchor (approx)
+      const gap = (((newSalesEnd - refSalesEnd) % cycle) + cycle) % cycle;
+      const distance = Math.abs(gap - halfCycle);
+      const d = (s) => (s / 86400).toFixed(2);
+      console.log(
+        `Stagger guard: sibling anchor ${new Date(refSalesEnd * 1000).toISOString()} | this gap ${d(gap)}d | target ${d(halfCycle)}d | tol ±${(toleranceSec / 3600).toFixed(0)}h`,
+      );
+      if (distance > toleranceSec) {
+        let nextDeploy = refSalesEnd + halfCycle - roundDurationSec; // T + roundDuration ≡ refSalesEnd + halfCycle (mod cycle)
+        while (nextDeploy < now) nextDeploy += cycle;
+        const m =
+          `STAGGER GUARD ABORT (ADR-0010): deploying now would put this vault ${d(gap)} days from the sibling, ` +
+          `but the required stagger is ${d(halfCycle)} days (±${(toleranceSec / 3600).toFixed(0)}h). ` +
+          `Next acceptable deploy time: ${new Date(nextDeploy * 1000).toISOString()} ` +
+          `(repeats every ${d(cycle)} days). Deploy in that window, or override with STAGGER_OVERRIDE=1 (records a deliberate deviation).`;
+        if (process.env.STAGGER_OVERRIDE === "1") console.warn("⚠️  " + m + "\n— proceeding anyway due to STAGGER_OVERRIDE=1");
+        else throw new Error(m);
+      } else {
+        console.log("✅ Stagger guard passed — cadence offset within tolerance.");
+      }
+    }
+  } else if (!staggerRef) {
+    console.log("Stagger guard: STAGGER_REFERENCE_VAULT not set — skipping (first vault / testnet).");
+  }
+
   const [deployer] = await ethers.getSigners();
   const nonce = await deployer.getNonce();
   const predictedVault = ethers.getCreateAddress({ from: deployer.address, nonce: nonce + 1 });

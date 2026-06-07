@@ -65,7 +65,9 @@ Full runbook: [tasks/v4-vaultb-cadence-fix-2026-06-03.md](../tasks/v4-vaultb-cad
 
 ## Process lesson (enforced going forward)
 
-**Deploy timing / cadence is a spec-governed parameter, not an operational convenience.** Every redeploy ticket must cite the ADR-0010 anchor and an exact target timestamp — never "whenever convenient." Cross-check deploy timing against ADR-0010 before any vault deploy reaches the builder. Added to the multi-surface discipline.
+**Deploy timing / cadence is a spec-governed parameter, not an operational convenience.** Every redeploy ticket must cite the ADR-0010 anchor and an exact target timestamp — never "whenever convenient."
+
+**Now enforced in tooling (not just documented).** A written rule is not a safeguard — it only works if someone remembers to read it at the decision moment, which is exactly when it gets skipped (this very ADR was on record when "one coordinated redeploy of both vaults" was nearly proposed, recreating the bug). So the invariant is now a **hard gate in the deploy script** (`scripts/deploy-ticket-prize-pool-v4.js`): when deploying a second vault, set `STAGGER_REFERENCE_VAULT=<sibling address>`; the script reads the sibling's anchor on-chain and **aborts the deploy** unless the new vault would land within tolerance (±12h default) of the 3.5-day offset. A near-simultaneous deploy physically cannot proceed. Override only via `STAGGER_OVERRIDE=1`, which logs the deliberate deviation loudly. The deploy runbooks must set `STAGGER_REFERENCE_VAULT` for the second-vault deploy.
 
 ## Open questions
 
