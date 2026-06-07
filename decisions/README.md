@@ -78,3 +78,4 @@ Anything still unconfirmed.
 - [ADR-0031 — V4 EOA ownership for hotfix deploy; multisig deferred to V5](0031-v4-eoa-ownership-hotfix.md)
 - [ADR-0032 — V4 mainnet launch record](0032-v4-launch-record.md)
 - [ADR-0033 — V4-B cadence defect and re-anchor remediation](0033-v4b-cadence-defect-reanchor.md)
+- [ADR-0034 — V5 architecture requirements: flexible yield, decoupled rewards, rebasing (Proposed)](0034-v5-yield-and-reward-architecture.md)
