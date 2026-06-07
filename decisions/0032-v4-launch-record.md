@@ -5,6 +5,8 @@
 **Network:** Monad mainnet, chain ID 143  
 
 > **Cadence-defect addendum (resolved 2026-06-07):** post-launch verification found V4-A and V4-B were deployed ~55 minutes apart, violating ADR-0010's required 3.5-day stagger. **This was remediated by redeploying V4-B.** The original V4-B (`0x0032c9F6…`, recorded below) was paused, drained, and `stop()`ed. The **current Vault B (V4) is `0x08bdD3710abB0616Cc29f388867f5625106B2A3E`** (oracle `0xa5D9c8DE8d9b04FEA8a8197dfD3c9D864FfbD95a`), correctly staggered ~3.75 days from Vault A. Full details in **ADR-0033** and the canonical [`deployments/monad-mainnet.json`](../deployments/monad-mainnet.json). The original-V4-B sections below are retained as historical record.
+>
+> **V4.1-A migration addendum (2026-06-08):** Vault A has been superseded by **V4.1-A** at `0x933FF608eaC2b3221088bd9AE19b05F266dBF7DA` (oracle `0x59fFe0DA7C975F96E2b3ae19f818BAEFc2d4DddF`) to add direct shMON ticket deposits while preserving the V4 native-MON configuration. The old V4-A (`0x9263d84…`) still holds its `9 MON` VRF reserve and must be retired by Ledger only after its current round settles and depositors can withdraw. V4-B remains `0x08bdD3710abB0616Cc29f388867f5625106B2A3E` until the V4.1-B staggered redeploy.
 
 ## Summary
 
@@ -28,6 +30,38 @@ Both V4 vaults use committed source from `origin/staging` at commit `8c13f69f2af
 - Fly keeper: `0x80dE4674dEFC68F06F4772B8Ec2F89aBda43DBE9`
 - VRF reserve seeded: `9 MON` per vault
 
+## Vault A V4.1
+
+- Vault: `0x933FF608eaC2b3221088bd9AE19b05F266dBF7DA`
+- Oracle: `0x59fFe0DA7C975F96E2b3ae19f818BAEFc2d4DddF`
+- Symbol: `EVRDRAW-A`
+- Version: `4.1.0`
+- Deployer: `0xFA5862e7093B0030416e5F871F88A0e7A041287A`
+- First `RoundStarted` block: `79739940`
+- First `RoundStarted` tx: `0x0abd8b1eef5ab16651df44fbbb0b5113fc2cd89f23c2237fe675b8f1d04eba32`
+- First `RoundStarted` timestamp: `2026-06-07T15:03:17.000Z`
+- First sales end time: `1780930997`
+- Vault runtime bytecode SHA-256: `92a210121791f89c7a6599d38adca12b4490e236e6a6bbabcb835596b40cb23c`
+- Oracle runtime bytecode SHA-256: `3b5009d69cf442c4e4115fefcc98acd27ca5e5722dd49a7f03feb5e119209ff2`
+- Sourcify: full match for pool and oracle (`creationMatch = match`, `runtimeMatch = match`, verified `2026-06-07T15:05:48Z`)
+
+Post-deploy verification:
+
+- Owner: `0xd399d4e24021eA08f2Cd11Fbb78a633e8D9B84A2`
+- Pending owner: zero address
+- Pauser: `0xd399d4e24021eA08f2Cd11Fbb78a633e8D9B84A2`
+- Fly keeper allowed: true
+- Deployer keeper allowed: false
+- Round 1 state: Open
+- Contract balance / VRF reserve: `0 MON` at migration record time; reserve seeding is an operator/Ledger follow-up after old V4-A reserve recovery
+- Config: native MON deposits, direct shMON ticket deposits enabled by V4.1, shMON yield vault, 1 MON ticket, 24h round, 518100s yield period, one winner
+
+Operator follow-up:
+
+- Ledger recovers `9 MON` from old V4-A with `withdrawVRFReserve(9e18)` only after the old round settles.
+- Ledger seeds V4.1-A with `depositVRFReserve()` value `9 MON` after recovery.
+- Ledger calls `stop()` on old V4-A only after last-round settlement and depositor withdrawals.
+
 ## Vault A V4
 
 - Vault: `0x9263d84a141172d9618f4b08839f595EE03bC7E8`
@@ -40,6 +74,8 @@ Both V4 vaults use committed source from `origin/staging` at commit `8c13f69f2af
 - First sales end time: `1780553423`
 - Vault runtime bytecode SHA-256: `9952102a28c455763d48e4ee7a77042168dfa9ad3e9ea1618e89c19aadb0a280`
 - Oracle runtime bytecode SHA-256: `654a35b8f7df518076b0c211aae3549d5cebaa44259764b8f8480dd38cf09942`
+
+Status: superseded by V4.1-A. The old V4-A was not stopped at the time of this update; it still held `9 MON` and requires the Ledger-only retirement flow above.
 
 Post-deploy role transactions:
 
