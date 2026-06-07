@@ -101,6 +101,24 @@ Recurrence (5c auto-roll) is the operationally important one: a partner funds a 
 
 ---
 
+## R6 — Fee-model flexibility (operator directive)
+
+The V4 fee router (ADR-0027) is correct and resilient, but the fee logic is **hardwired to "bps of the deposit-asset's yield-vault shares, on the whole prize."** Three flexibilities are required for V5; surfaced during the V4 feature review.
+
+| # | Capability | V4 today |
+|---|---|---|
+| **6a — Configurable fee base** | Choose whether the fee applies to **all** prize yield (participant **+** sponsored) or to **participant yield only** (sponsored amount exempt). Possibly per-vault or per-sponsorship. | ❌ Hardwired: fee = bps of `totalPrize = participantYield + sponsoredPrize`. Sponsored money is always taxed; no exemption switch. ADR-0026 rejected the participant-only option as "ambiguous" — wrong call given R5. |
+| **6b — Fee under value-based / rebasing accounting** | Fee must be derived from the **value delta** captured by R1/R3, not from a share count. | ❌ Fee is bps of `totalPrizeShares`. Under rebasing (R3) `totalPrizeShares ≈ 0`, so the fee would be **0**. The fee is only as correct as the share-appreciation assumption beneath it. |
+| **6c — Fee-token handling for different-token yield/rewards** | When yield or rewards accrue in a **different token** than the deposit (R1 emissions, R2 reward pool), decide where the fee is taken: in that token, in the deposit asset, or as a **multi-token** fee. | ❌ Fee is always collected in the **same** token as the prize (the deposit asset's yield-vault shares). Separate reward-token yield is not captured by V4, so it is neither prized nor fee'd. |
+
+**What does work in V4 (no change needed):** the operator has **full control over fee recipient wallet(s)** and can split across up to 8, each with independent bps (`setFeeAllocations`); there is **no hidden/default fee sink** — empty allocation = zero fee. Recipient-wallet control and splitting are not V5 gaps.
+
+**Proposed solution.** Fold the fee into the same R1/R2 accounting redesign rather than treating it as a standalone module: compute the fee against the **value delta** (6b), expose a **fee-base flag** (all-yield vs participant-only, 6a), and let the fee be denominated in the **reward/yield token** the R1/R2 pipeline already handles (6c). The fee router's recipient/split/cap/snapshot/deferred-claim machinery (ADR-0027/0028) is sound and carries over unchanged.
+
+**Pairs with R1/R2/R3:** 6b and 6c are not independent — they are determined by whatever yield-accounting and reward-asset model R1/R2/R3 land on. Spec the fee base **with** that accounting, not after.
+
+---
+
 ## Why these are V5, not a V4 patch
 
 R1–R5 are accounting and prize-flow redesigns, not additive functions. They change how yield is measured, how prizes are funded, and how sponsors retain/redeem capital — the core of the contract. They cannot be bolted onto the deployed V4 vaults; they define the next contract generation. (The immediate V4.x shMON-deposit fix, ADR-pending, is separate and small.)
