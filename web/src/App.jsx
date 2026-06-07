@@ -74,6 +74,7 @@ const POOL_V4_ABI = [
   'function paused() view returns (bool)',
   'function stoppedAt() view returns (uint64)',
   'function buyTickets(uint32 ticketCount) payable',
+  'function buyTicketsShmon(uint32 ticketCount)',
   'function sponsor(uint256 rid, string memo) payable',
   'function sponsorERC20(uint256 rid, uint256 amount, string memo)',
   'function claimPrize(uint256 rid)',
@@ -98,6 +99,7 @@ const SHMON_READ_ABI = [
   'function balanceOf(address) view returns (uint256)',
   'function convertToAssets(uint256 shares) view returns (uint256 assets)',
   'function previewDeposit(uint256 assets) view returns (uint256 shares)',
+  'function previewWithdraw(uint256 assets) view returns (uint256 shares)',
 ]
 
 const ERC20_ABI = [
@@ -2568,9 +2570,10 @@ export default function App() {
         () => isV4Pool ? pool.ticketPriceAsset() : pool.getFunction('ticketPriceMON').staticCall()
       )
       const monCost = BigInt(ticketPriceForAsset) * BigInt(n)
+      const shmonRead = new ethers.Contract(shmonAddress, SHMON_READ_ABI, readProvider)
       const sharesOwed = isV4Pool
-        ? await new ethers.Contract(shmonAddress, SHMON_READ_ABI, readProvider).previewDeposit(monCost)
-        : monCost
+        ? await shmonRead.previewDeposit(monCost)
+        : (await shmonRead.previewWithdraw(monCost)) + 1n
       const nonce = await fetchNonceWithRetry(account)
       const feeData = await readProvider.getFeeData()
       const gasPrice = feeData.gasPrice ?? feeData.maxFeePerGas
