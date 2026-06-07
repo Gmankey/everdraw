@@ -1,8 +1,24 @@
 # ADR-0033 — V4-B Cadence Defect and Re-Anchor Remediation
 
-**Status:** Accepted (remediation in progress).
-**Date:** 2026-06-03
+**Status:** Accepted — **remediation complete (2026-06-07).**
+**Date:** 2026-06-03 (updated 2026-06-07)
 **Parent:** ADR-0010 (cadence invariant), ADR-0032 (V4 launch record).
+
+## Resolution (completed 2026-06-07)
+
+V4-B was redeployed and is now correctly staggered. PM-verified on-chain.
+
+| | |
+|---|---|
+| **New V4-B** | `0x08bdD3710abB0616Cc29f388867f5625106B2A3E` |
+| New V4-B oracle | `0xa5D9c8DE8d9b04FEA8a8197dfD3c9D864FfbD95a` |
+| Deploy tx / block | `0x674cb9ebb4add6a4112a9f0171fe0513e57045952b3a3edff02190f3d6618048` / 79606901 |
+| New V4-B anchor (round-1 sales-end) | 2026-06-08T00:16:08Z (~Mon 00:16 UTC) |
+| Retired old V4-B | `0x0032c9F6621Ef5d53b48dc602D4d056d7a47c5fF` — `stop()` tx `0x49cee1e89b476bd8571048f6a9e3425d450d7ba5aa44ff5a3cd94d3c5567eed5`, stoppedAt 2026-06-07T01:31:16Z |
+
+**Actual stagger: ~3.75 / 3.25 days** (V4-A anchor Thu 06:10 UTC → V4-B anchor ~Mon 00:16 UTC). This is a deliberate, accepted deviation from the exact 3.5-day slot: the precise 18:10 UTC slot fell at ~4am AEST with no team awake to monitor, so the deploy was moved to a daytime-AEST window. A ~0.25-day deviation is invisible to users and fully satisfies ADR-0010's intent (the two vaults' weekly draws are spread across the week, not near-simultaneous). The exact-3.5 invariant is treated as the target; small operational deviations for monitoring coverage are acceptable and recorded.
+
+Verified: VERSION 4.0.0, owner+pauser = Ledger, numWinners 1, 1 MON ticket, shMON vault, round Open, oracle.consumer = vault, 9 MON reserve, Fly keeper authorized / deployer de-authorized, Sourcify full match (pool + oracle), live frontend serving the new V4-B with the old address removed.
 
 ## Context
 

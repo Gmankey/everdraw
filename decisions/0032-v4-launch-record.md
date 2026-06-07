@@ -4,7 +4,7 @@
 **Date:** 2026-06-03  
 **Network:** Monad mainnet, chain ID 143  
 
-> **Cadence-defect addendum (2026-06-03):** post-launch verification found V4-A and V4-B were deployed ~55 minutes apart, violating ADR-0010's required 3.5-day stagger. V4-B is being re-anchored via redeploy (target Sat Jun 6 18:10 UTC). See **ADR-0033** and `tasks/v4-vaultb-cadence-fix-2026-06-03.md`. The V4-B address recorded below (`0x0032c9F6…`) is being retired and will change after the Saturday redeploy.
+> **Cadence-defect addendum (resolved 2026-06-07):** post-launch verification found V4-A and V4-B were deployed ~55 minutes apart, violating ADR-0010's required 3.5-day stagger. **This was remediated by redeploying V4-B.** The original V4-B (`0x0032c9F6…`, recorded below) was paused, drained, and `stop()`ed. The **current Vault B (V4) is `0x08bdD3710abB0616Cc29f388867f5625106B2A3E`** (oracle `0xa5D9c8DE8d9b04FEA8a8197dfD3c9D864FfbD95a`), correctly staggered ~3.75 days from Vault A. Full details in **ADR-0033** and the canonical [`deployments/monad-mainnet.json`](../deployments/monad-mainnet.json). The original-V4-B sections below are retained as historical record.
 
 ## Summary
 
