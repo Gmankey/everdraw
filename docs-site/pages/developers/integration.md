@@ -1,6 +1,6 @@
 # Integration Guide
 
-EverDraw exposes two interfaces. The vault contract for on chain state, and the indexer API for derived state (participation history, points, leaderboards). Use the contract for ground truth, use the indexer for anything that would otherwise require scanning logs.
+EverDraw exposes two interfaces: the vault contract for on-chain ground truth, and the indexer API for derived state (participation history, points, leaderboards). Use the contract for correctness; use the indexer for anything that would otherwise require scanning logs.
 
 ---
 
@@ -10,79 +10,58 @@ EverDraw exposes two interfaces. The vault contract for on chain state, and the 
 const roundId = await pool.currentRoundId()
 const info = await pool.getRoundInfo(roundId)
 
-// info.state              0 Open, 1 Committed, 2 Settled, 3 Skipped, 4 Failed
-// info.salesEndTime       unix timestamp deposit window closes
-// info.targetBlockNumber  block whose hash is the random source (set on commit)
-// info.totalTickets       tickets sold in this round
-// info.totalPrincipalMON  sum of MON principal in wei
-// info.totalShmonShares   shMON shares held against that principal
-// info.prizeShares        prize in shMON shares (set on settle)
-// info.shareRateAtSettle  shMON share rate at settlement
-// info.winner             address(0) until settled
-// info.winningTicket      ticket index of the winner
-// info.prizeClaimed       true after the winner claims
+// info.state                 0 Open, 1 AwaitingVRF, 2 Drawn, 3 Settled
+// info.salesEndTime          unix timestamp the deposit window closes
+// info.requestId             randomness request id (0 until committed)
+// info.totalTickets          tickets sold this round
+// info.totalPrincipalAsset   sum of principal in asset units (wei)
+// info.totalPrincipalShares  yield-vault shares held against that principal
+// info.principalSharesAtSettle  set at settlement
+// info.totalPrizeShares      prize in yield-vault shares (set at settle)
+// info.forfeitBps            unfilled winner allocation returned to depositors (too-few-tickets case)
+// info.wasSkipped            true for empty-skip AND VRF-timeout force-settle
+
+// Winners are an ARRAY (a vault may pay multiple positions):
+const [winners, winningTickets, prizeShares] = await pool.getRoundWinners(roundId)
 ```
 
 ## Checking a user position
 
 ```javascript
-const [principalMON, shmonShares] = await pool.getUserPosition(roundId, userAddress)
-const withdrawable             = await pool.getWithdrawableShares(roundId, userAddress)
+const [principalAsset, principalShares] = await pool.getUserPosition(roundId, userAddress)
+const hasPending = await pool.hasPendingClaims(userAddress)  // O(1); true if any payout deferred
 ```
-
-`withdrawable` is the shMON share amount the user receives from `withdrawPrincipal`, accounting for prize allocation if the round has settled.
 
 ## Listening for events
 
+Key by **topic hash**, not name — earlier protocol generations use differently-shaped events.
+
 ```javascript
-pool.on('TicketsPurchased', (roundId, buyer, ticketCount, costMON, shares, shareRate, depositAsset) => {
-  // depositAsset: 0 MON, 1 shMON
+pool.on('TicketsBought', (roundId, buyer, ticketCount, assetPaid) => { /* ... */ })
+
+pool.on('WinnersDrawn', (roundId, winners, winningTickets, prizeShares) => {
+  // arrays — one entry per winning position
 })
 
-pool.on('RoundSettled', (roundId, winner, winningTicket, ...rest) => {
-  // pull info via getRoundInfo for the rest
-})
+pool.on('RoundSettled', (roundId, principalShares, prizeShares) => { /* ... */ })
+
+// Deferred payouts — surface a retry path
+pool.on('TransferDeferred', (rid, recipient, slot, shares) => { /* prompt claimDeferred */ })
 ```
 
-## Multi pool
+See [Smart Contract](smart-contract.md#events) for the full event list.
 
-EverDraw runs two vaults in parallel on offset weekly anchors (Wed and Sun). V3 is the current contract; V2 vaults remain active for in-flight finalization during the V3 migration. Three frontend env vars are now in play:
+## Multiple vaults
 
-```
-# V3 vaults — current production
-VITE_POOL_ADDRESSES_V3=0x8F36aaAD5E88585aA54Cc160ef2Eb4d2B2C7B1ee
-# (Vault B V3 added here after the 2026-05-31 deploy)
-
-# V2 vaults — still active for finalization
-VITE_POOL_ADDRESSES_V2=0x2208a2Fe2d08061B2a5ee69A2a3b906B58C17888,0xd4F4286CE1E72562fdAfcD9F491974D0F245Ea9d
-
-# shMON address (used by frontend for previewRedeem of V3 prize shares)
-VITE_SHMON_ADDRESS=0x1B68626dCa36c7fE922fD2d55E4f631d962dE19c
-```
-
-Keeper env (canonical config lives in Fly secrets for the `everdraw-keeper` app, not local files):
-
-```
-POOL_ADDRESSES=0x2208a2Fe2d08061B2a5ee69A2a3b906B58C17888,0xd4F4286CE1E72562fdAfcD9F491974D0F245Ea9d,0x8F36aaAD5E88585aA54Cc160ef2Eb4d2B2C7B1ee
-POOL_ADDRESSES_V2=0x2208a2Fe2d08061B2a5ee69A2a3b906B58C17888,0xd4F4286CE1E72562fdAfcD9F491974D0F245Ea9d
-POOL_ADDRESSES_V3=0x8F36aaAD5E88585aA54Cc160ef2Eb4d2B2C7B1ee
-POOL_SCHEDULE_V2=0xd4F4286CE1E72562fdAfcD9F491974D0F245Ea9d:Sun:1
-POOL_SCHEDULE_V3=0x8F36aaAD5E88585aA54Cc160ef2Eb4d2B2C7B1ee:Wed:13
-```
-
-The keeper auto-routes by inspecting which list each pool address appears in. V2 Vault A is in `POOL_ADDRESSES` (so the keeper still finalizes its existing rounds) but no longer in `POOL_SCHEDULE_V2` (so no new V2 Vault A rounds start). The Wed anchor now belongs to V3 Vault A.
-
-The canonical address list including runtime bytecode hashes and constructor args is at [`deployments/monad-mainnet.json`](https://github.com/Gmankey/everdraw/blob/staging/deployments/monad-mainnet.json).
-
-When integrating against a single pool, pin to the contract address. State is fully scoped per pool.
+The frontend and keeper are configured with the current set of vault addresses; each vault's state is fully scoped to its own contract. The **canonical, current address list** (with bytecode hashes and constructor args) is in [`deployments/monad-mainnet.json`](https://github.com/Gmankey/everdraw/blob/staging/deployments/monad-mainnet.json) — read addresses from there rather than hardcoding, since they change across protocol generations. When integrating against a single vault, pin to its address.
 
 ## Merkl indexing
 
-Both pools emit `Deposit(address indexed recipient, uint256 amount)` on every ticket purchase and `Withdraw(address indexed recipient, uint256 amount)` on every principal withdrawal. `balanceOf(user)` and `totalSupply()` follow standard ERC20 read semantics. The position is non transferable. See [Smart Contract](smart-contract.md#merkl-readable-position-surface) for the full surface.
+Every vault emits `Deposit(address indexed recipient, uint256 amount)` on each ticket purchase and `Withdraw(address indexed recipient, uint256 amount)` on each principal withdrawal. `balanceOf(user)` and `totalSupply()` follow standard ERC-20 read semantics (denominated in the deposit asset). The position is non-transferable. Full surface: [Smart Contract](smart-contract.md#merkl-readable-position-surface).
 
 ## ABI
 
-`out/TicketPrizePoolShmonV2.sol/TicketPrizePoolShmonV2.json` in the repo, or the verified contract page on MonadVision.
+The verified ABI is published with each contract on the Monad explorer (Sourcify), and the artifact is in the repo at `abi/TicketPrizePoolV4.json`.
 
 ---
 
@@ -90,7 +69,7 @@ Both pools emit `Deposit(address indexed recipient, uint256 amount)` on every ti
 
 Base URL: `https://everdraw-indexer.fly.dev`
 
-The indexer is multi pool aware and follows on chain events with a few seconds of lag. CORS is open. All responses are JSON.
+Vault-aware, follows on-chain events with a few seconds of lag. CORS open. All responses JSON.
 
 ### Rounds
 
@@ -100,7 +79,7 @@ GET /api/rounds/:roundId?pool=<address>
 GET /api/rounds/:roundId/participants?pool=<address>
 ```
 
-The `pool` query parameter is required when more than one pool is being indexed. Without it, the legacy single pool form is used and may merge data across pools.
+The `pool` query parameter is required when more than one vault is indexed.
 
 ### Wallet history
 
@@ -108,83 +87,31 @@ The `pool` query parameter is required when more than one pool is being indexed.
 GET /api/wallets/:wallet/rounds?limit=50
 ```
 
-Returns every round the wallet participated in across all pools, sorted newest first. Includes settled outcome (won or not), principal, prize if any, withdraw timestamp.
+Every round the wallet participated in across all vaults, newest first: settled outcome, principal, prize if any, withdraw timestamp.
 
 ### Points
 
-The points endpoints back the profile page and leaderboard.
-
 ```
 GET /api/points/:wallet
-```
-
-Returns:
-
-```json
-{
-  "wallet": "0x...",
-  "ens": null,
-  "lifetime_points": 0,
-  "current_streak_weeks": 0,
-  "longest_streak_weeks": 0,
-  "current_multiplier_x100": 100,
-  "current_tier": "Bronze",
-  "consecutive_non_wins": 0,
-  "highest_streak_milestone_awarded": 0,
-  "has_received_first_deposit_bonus": 0,
-  "has_received_first_win_bonus": 0,
-  "next_tier_threshold": 4,
-  "next_milestone": 4,
-  "rank": 1
-}
-```
-
-```
 GET /api/points/:wallet/history?limit=12
-```
-
-Returns an array of per round point awards with the breakdown:
-
-```json
-[
-  {
-    "pool_address": "0x...",
-    "round_id": 28,
-    "base_points": 2,
-    "multiplier_x100": 100,
-    "bonuses_breakdown": {},
-    "total_points": 2,
-    "awarded_at_unix": 1746724800
-  }
-]
-```
-
-```
 GET /api/leaderboard?limit=100&period=all
 GET /api/leaderboard?limit=100&period=month
-```
-
-```
 GET /api/points/preview?wallet=<address>&pool=<address>&tickets=<n>
 ```
 
-Estimates the points the wallet would earn by buying `n` tickets in the active round of `pool` right now, including the streak multiplier and any applicable both-vaults bonus. Read only, does not write state. Used by the frontend's deposit preview line.
+`/api/points/:wallet` returns lifetime points, current streak, multiplier, tier, and the next thresholds. `/preview` estimates points for buying `n` tickets in a vault's active round (read-only). Prefer the returned `current_multiplier_x100` / `current_tier` fields over hardcoding the ladder — it may evolve. Points formula and tiers: [Points](../how-it-works/points.md).
 
-### Multipliers and tiers
-
-The multiplier and tier values returned by the points API match the table in the [Points](../how-it-works/points.md) doc. Consumers should not hard code the ladder, prefer the `current_multiplier_x100` and `current_tier` fields returned by the API, since the ladder may evolve in future phases.
-
-### Health and metadata
+### Health
 
 ```
 GET /api/health
 ```
 
-Returns the indexer's current `latestBlock`, the pool addresses it is following, and the points-start cutoff block (only events at or after this block contribute to points, per ADR-0008).
+Returns the indexer's latest scanned block, chain head, lag, DB status, and the vaults it's following.
 
 ### Schema notes
 
-- All wallet addresses are returned lowercase.
-- `ens` is best effort. If the resolver is slow or unavailable, the field is `null`. Consumers should fall back to the shortened address.
+- Wallet addresses are returned lowercase.
+- `ens` is best-effort; may be `null` — fall back to the shortened address.
 - Timestamps are unix seconds.
-- Numeric fields that represent shMON shares or MON wei are decimal strings to avoid JS precision loss.
+- Share / asset amounts are decimal strings to avoid JS precision loss.

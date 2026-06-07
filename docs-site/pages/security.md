@@ -2,7 +2,9 @@
 
 ## Audit status
 
-The EverDraw vault contract has been through internal security review combining a structured manual methodology (map → hunt → attack → verify) with automated static analysis (Slither). The review found **no critical, high, or medium-severity vulnerabilities at high confidence**; the only items raised were low-severity, defense-in-depth improvements. Full audit reports — methodology, findings, and reconciliation — live in the [`security_audit/`](https://github.com/Gmankey/everdraw/tree/staging/security_audit) directory of the repo.
+The current `TicketPrizePoolV4` contract has been through internal security review combining a structured manual methodology (map → hunt → attack → verify, with skeptic-judge conflict resolution) and automated static analysis (Slither). The review found **no critical, high, or medium-severity vulnerabilities at high confidence**; the only items raised were low-severity, defense-in-depth improvements, and the automated pass independently corroborated the manual findings.
+
+→ **Latest report: [V4 internal audit (`AUDIT_REPORT_V4_2026-06-05.md`)](https://github.com/Gmankey/everdraw/blob/staging/security_audit/AUDIT_REPORT_V4_2026-06-05.md).** All audit reports live in the [`security_audit/`](https://github.com/Gmankey/everdraw/tree/staging/security_audit) directory.
 
 A formal third-party audit is planned **before scaling TVL beyond bootstrapping levels.**
 
