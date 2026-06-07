@@ -1,71 +1,54 @@
 # Keeper Bot
 
-The keeper is the off chain service that drives round transitions. Without it, rounds do not advance automatically. Anyone with gas can call the same functions, so funds are not at risk if it goes offline.
+The keeper is the off-chain service that drives round transitions. Without it, rounds don't advance automatically — but anyone with gas can call the same public functions, so funds are never at risk if it goes offline.
 
 ---
 
 ## What the keeper does
 
-It polls `nextExecutable()` on each configured pool every 30 seconds. The function returns the round id and the next pending action. When an action is due, the keeper:
+It polls `nextExecutable()` on each configured vault on a short interval. The function returns the round id and the next pending action; when one is due, the keeper:
 
-1. Runs preflight: simulates the call, checks gas, verifies preconditions.
+1. Runs preflight (simulates the call, checks gas and preconditions).
 2. Submits the transaction.
-3. Waits for confirmation and reports to Telegram.
+3. Waits for confirmation and reports to its alert channel.
 4. Retries on the next poll if it failed.
 
-Action types:
+Action types (`nextAction` / `nextExecutable`):
 
-- **Commit.** Fired at the end of the lock period. Closes the previous round and opens the next one in the same transaction.
-- **Settle.** Fired three blocks after commit. Reads the target block hash and computes the winner.
-- **MarkFailed.** Fired if the target block hash falls outside the 255 block retention window. Should not happen in normal operation.
-- **None.** Nothing to do this tick.
+- **Commit (2).** Fired when the deposit window and lock have both ended on a round with tickets. Requests randomness and opens the next round.
+- **Finalize (3).** Fired once randomness has been delivered (round in `Drawn`). Computes the winner(s) and settles.
+- **Skip (1).** Fired on a round that closed with zero tickets. Settles it with no draw.
+- **None (0).** Nothing to do this tick.
+
+Because randomness arrives via an async oracle callback, commit and finalize are two separate steps a few seconds to minutes apart.
 
 ---
 
-## Anchor gating
+## Cadence
 
-V2 vaults run on fixed weekly schedules. The contract's `commit` becomes eligible 5 minutes before each scheduled anchor (Wed 13:00 UTC for Vault A, Sun 01:00 UTC for Vault B). The keeper does not fire `commit` until the wall clock reaches the exact anchor. This keeps each vault's deposit window opening on the same weekday and time every week.
+Each vault opens its next round automatically the moment the current one settles, so a vault's weekly anchor is set by its deploy time and preserved as long as rounds progress on schedule. The protocol runs vaults on staggered anchors so draws are spread across the week (the stagger invariant is pinned in ADR-0010). There is no special weekday/time gating in the keeper for V4 — it simply executes whatever `nextExecutable` reports as due.
 
-`settle` runs immediately when eligible. There is no anchor gate on settle.
-
-If the keeper is offline for more than 5 minutes spanning an anchor, the new round opens at the moment of recovery instead, which permanently shifts that vault's anchor. Recovery procedure is in the runbook (`tasks/mainnet-ops-runbook.md`).
+If a round's randomness callback never arrives, the keeper should **alert** rather than act: force-settling is an owner-only action (`emergencyForceSettle`) and a human decision.
 
 ---
 
 ## Reliability
 
-- systemd unit with `Restart=always` and a 5 second restart delay
-- Multi RPC failover via `FallbackProvider`. Configure with `RPC_URL` and `RPC_URL_FALLBACK`.
-- Low balance Telegram alert at 0.2 MON
-- Consecutive error Telegram alert after 3 failures on the same pool
-- Uncaught exception alert and graceful exit
+- Auto-restart on crash (no state is held off-chain; everything is on the contract)
+- Multi-RPC failover (primary + fallback RPC)
+- Low-balance alert (keeper wallet must hold gas)
+- VRF-reserve alert: each vault pays a randomness fee per commit from its own native balance; alert when that reserve runs low so the owner can top it up
+- Consecutive-error and uncaught-exception alerts
+- Governance-event alerts (ownership/pauser/oracle/stop changes) so any unexpected admin action is visible immediately
 
 ---
 
 ## Configuration
 
-Environment variables (typical mainnet):
-
-```
-RPC_URL=https://...
-RPC_URL_FALLBACK=https://...
-PRIVATE_KEY=...
-POOL_ADDRESSES=0x2208a2Fe2d08061B2a5ee69A2a3b906B58C17888,0xd4F4286CE1E72562fdAfcD9F491974D0F245Ea9d,0x8F36aaAD5E88585aA54Cc160ef2Eb4d2B2C7B1ee
-POOL_ADDRESSES_V2=0x2208a2Fe2d08061B2a5ee69A2a3b906B58C17888,0xd4F4286CE1E72562fdAfcD9F491974D0F245Ea9d
-POOL_ADDRESSES_V3=0x8F36aaAD5E88585aA54Cc160ef2Eb4d2B2C7B1ee
-POOL_SCHEDULE_V2=0xd4F4286CE1E72562fdAfcD9F491974D0F245Ea9d:Sun:1
-POOL_SCHEDULE_V3=0x8F36aaAD5E88585aA54Cc160ef2Eb4d2B2C7B1ee:Wed:13
-KEEPER_INTERVAL_MS=30000
-KEEPER_LOW_BALANCE_MON=0.2
-KEEPER_ERROR_ALERT_THRESHOLD=3
-TELEGRAM_BOT_TOKEN=...
-TELEGRAM_CHAT_ID=...
-```
-
-Secrets are read from a file outside the repository. Never commit live keys.
+The keeper takes a set of vault addresses to service plus RPC, signer, and alert configuration. Canonical production config lives in the hosting platform's secrets (not in the repo); the current vault addresses are in [`deployments/monad-mainnet.json`](https://github.com/Gmankey/everdraw/blob/staging/deployments/monad-mainnet.json). Secrets are never committed.
 
 ---
 
-## Non privileged
+## Non-privileged
 
-The keeper cannot access user funds, modify contract parameters, or override draws. It only calls `commit` and `settle`, which are public on the contract. The contract is the source of truth.
+The keeper cannot access user funds, modify contract parameters, or override draws. It only calls the public lifecycle functions (`commitDraw`, `finalizeDraw`, `skipRound`, `executeNext`). The contract is the source of truth.

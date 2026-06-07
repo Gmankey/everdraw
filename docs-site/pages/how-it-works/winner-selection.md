@@ -1,50 +1,44 @@
 # Winner Selection
 
-EverDraw V3 uses **Pyth Entropy** for verifiable randomness. The full draw is on-chain, signed by an external provider, and independently verifiable.
-
-The V3 architecture replaced an earlier block-hash-based commit-reveal scheme. Block-hash randomness was operationally simple but vulnerable in two ways at meaningful prize sizes: (1) the producer of the target block could in principle bias the outcome by reordering or withholding, and (2) only ~256 blocks of look-back is available, which constrains the timing window. Pyth Entropy resolves both at the cost of a small per-draw fee paid from an owner-funded reserve (~0.77 MON, see [ADR-0014](https://github.com/Gmankey/everdraw/blob/staging/decisions/0014-vrf-launch-requirement-pyth-entropy.md)).
+EverDraw uses **Pyth Entropy** for verifiable randomness. Every draw is performed on-chain, derived from a value an external provider commits to in advance, and is independently reproducible by anyone from public data.
 
 ---
 
-## How V3 randomness works
+## How the draw works
 
-**1. Commit.** When the deposit window plus yield period both close, the keeper calls `commitDraw`. The contract:
-- Constructs a user-side entropy seed from on-chain state (round id, ticket count, principal, `block.prevrandao`, `block.timestamp`).
-- Calls `entropy.requestWithCallback{value: fee}(provider, userRandom)` on the Pyth Entropy contract. The fee is paid from the contract's own VRF reserve.
-- Stores the returned Pyth sequence number and transitions the round to `AwaitingVRF`.
+**1. Commit.** When a round's deposit window and lock have both ended, the round is committed. The contract builds a user-side seed from on-chain state and requests randomness from the Pyth Entropy contract, paying a small fee from the vault's own randomness reserve. The round moves to an *awaiting randomness* state.
 
-**2. Reveal.** The Pyth provider observes the request off-chain and submits a callback transaction back to the contract within seconds to minutes. The callback delivers a `randomNumber` that is the cryptographic combination of:
-- The provider's pre-committed, hashed value (the provider committed to it before the request was made, so cannot choose it after the fact),
-- The user-side entropy from step 1.
+**2. Reveal.** The Pyth provider delivers a callback within seconds to minutes. The delivered random value is the cryptographic combination of two independent inputs:
 
-Neither party can bias the output. The contract validates `msg.sender == entropy` and `provider == entropyProvider`, stores the random number, and transitions to `Drawn`.
+- The provider's pre-committed, hashed value — committed *before* the request was made, so it cannot be chosen after the fact.
+- The user-side seed from the commit step.
 
-**3. Finalize.** Anyone calls `finalizeDraw(rid)`. The contract computes:
+Neither party can bias the result on its own. The contract verifies the callback comes from the expected entropy contract and provider, stores the random value, and marks the round *drawn*.
 
-```
-winningTicket = uint32(uint256(randomNumber) % uint256(totalTickets))
-```
+**3. Finalize.** Anyone can finalize a drawn round. The contract derives the winning ticket(s) from the stored random value, records the winners and their prize shares on-chain, and settles the round. Winners can then claim; every depositor can then withdraw principal.
 
-Tickets map to buyers in the order purchases were made. The winning ticket, winner address, and the prize shares are recorded on-chain. The round transitions to `Settled`. The winner can now `claimPrize`; every depositor can now `withdrawPrincipal`.
+---
+
+## One winner or many
+
+A vault is configured at creation to pay either a single winner or several winning positions that split the prize by a fixed allocation (for example, a larger first prize and smaller runner-up prizes).
+
+When a vault pays multiple positions, the draw selects that many **distinct** winning tickets from the round using repeated sampling of the single random value — no ticket can win two positions. The prize is then divided across the winning positions according to the vault's allocation. If a round has fewer tickets than prize positions, only the available positions are filled and the unallocated share is returned to depositors, preserving the no-loss guarantee.
+
+A ticket maps to whoever bought it, in purchase order. The same buyer can hold many tickets and can win more than one position; all of their winnings are claimable together.
 
 ---
 
 ## Why this design
 
-**Manipulation resistant.** The randomness combines two independent commitments. The Pyth provider commits to a hash chain before the request, so they cannot pick the value after seeing user state. The user-side seed includes `block.prevrandao` which the producer of the target block cannot easily influence. To bias the outcome, an attacker would need to control both parties — which is the documented trust assumption that breaks if the owner is colluding with the Pyth provider, and is mitigated by the 24-hour timelock on changing the entropy provider (see [ADR-0021](https://github.com/Gmankey/everdraw/blob/staging/decisions/0021-v3-pre-deploy-hardening.md)).
+**Manipulation resistant.** The randomness combines two independent commitments. The provider commits to its value before seeing the request, and the user-side seed includes block-level entropy that the producer of a block cannot easily steer. Biasing the outcome would require controlling both the provider and the operator — a trust assumption that is further mitigated by a time-delay on changing the entropy provider, so any change is visible and cannot take effect instantly.
 
-**Transparent and verifiable.** The randomness source, the calculation, and the result are all public. Anyone can verify the winner deterministically from the on-chain `randomNumber` and the recorded `totalTickets`.
+**Transparent and verifiable.** The randomness source, the calculation, and the result are all public. Anyone can recompute the winners deterministically from the on-chain random value and the round's ticket count.
 
-**Robust to oracle outage.** If a Pyth callback fails to arrive within `VRF_CALLBACK_TIMEOUT = 1 hour`, the owner can call `emergencyForceSettle(rid)` to mark the round Settled with no winner. All depositors recover their full principal in shMON shares. No round can be permanently locked by a Pyth outage.
+**Robust to outages.** If a randomness callback fails to arrive within the timeout, the round can be force-settled with no winner, and all depositors recover their full principal. No round can be permanently locked by a randomness-provider outage.
 
 ---
 
 ## Probability is linear
 
-Tickets divided by total tickets. 1 in 100 is 1%. 50 in 100 is 50%. No bonuses, no tiers, no house edge. The protocol fee on yield (currently 0%) does not change odds — it only affects the size of the prize, not who wins.
-
----
-
-## V2 vault randomness (legacy)
-
-V2 vaults still use the block-hash commit-reveal scheme described above as the prior design. They are being retired in favor of V3 vaults on the same anchor schedule. See [`developers/smart-contract.md`](../developers/smart-contract.md) for the current canonical address list.
+Your odds for any prize position are simply your tickets divided by the total tickets in the round. 1 in 100 is 1%. 50 in 100 is 50%. There are no bonus tiers, no boosted odds, and no house edge. A vault may route a small, capped share of the *yield* to the protocol or to partners, but this only affects the size of the prize pool — never who wins, and never anyone's principal.

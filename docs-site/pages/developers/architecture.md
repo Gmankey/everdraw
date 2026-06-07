@@ -1,53 +1,53 @@
 # Architecture
 
-EverDraw has four components. The smart contract is the source of truth. Everything else reads from it.
+EverDraw has four components. The smart contract is the source of truth; everything else reads from it.
 
 ---
 
 ## Prize vault contract
 
-Solidity contract `TicketPrizePoolShmonV2`. One instance per vault. Two are deployed on Monad mainnet, on offset weekly schedules.
+Solidity contract `TicketPrizePoolV4`. One instance per vault; the protocol runs more than one vault on staggered schedules.
 
 Responsibilities:
 
-- Accepts MON or shMON, issues tickets
-- Holds deposits as shMON shares (no internal unstaking, ever)
-- Manages round state (Open, Committed, Settled, Skipped, Failed)
-- Runs the commit reveal draw using a Monad block hash
-- Tracks per user principal per round
-- Returns shMON on withdraw and pays the prize on claim
-- Exposes a Merkl readable position surface for shMonad's points indexer
+- Accepts deposits (native MON or an ERC-20, per the vault's `depositMode`), issues tickets
+- Holds deposits as ERC-4626 shares in a yield vault (shMON in production) — no internal unstaking
+- Manages round state (Open, AwaitingVRF, Drawn, Settled)
+- Runs a verifiable draw via a pluggable randomness oracle (Pyth Entropy adapter in production), supporting one or multiple winners
+- Accepts sponsor contributions that earn yield alongside the round
+- Routes an optional, capped protocol fee on yield to up to 8 recipients (snapshotted per round)
+- Tracks per-user, per-round principal; returns shares on withdraw and pays prizes on claim
+- Wraps every payout so a failed transfer defers to a retriable pending claim rather than freezing settlement
+- Exposes a Merkl-readable, non-transferable position surface for shMonad's points indexer
 
 Design choices:
 
-- Single contract, no proxy. Smaller attack surface and no upgrade keys.
-- All round state on chain. No off chain indexer needed for correctness.
-- Per round per address principal accounting. No cross round entanglement.
-- Block hash randomness. No oracle dependency.
-- `commit` and `settle` are public. Anyone can advance the lifecycle. The keeper is convenience.
+- Single contract, no proxy — smaller attack surface, no upgrade keys. New generations are fresh deploys.
+- All round state on-chain; no off-chain indexer needed for correctness.
+- Per-round, per-address principal accounting — no cross-round entanglement.
+- Randomness via an external verifiable oracle, swappable behind a 24h timelock.
+- `commitDraw` / `finalizeDraw` / `skipRound` / `executeNext` are public — anyone can advance the lifecycle. The keeper is convenience.
+- Pauser is a role distinct from owner; it can halt new deposits but never claims or withdrawals.
+
+[Contract reference →](smart-contract.md)
 
 ---
 
 ## Keeper
 
-Off chain service that polls `nextExecutable()` and submits the corresponding transaction. Two responsibilities specific to V2:
+Off-chain service that polls `nextExecutable()` and submits the corresponding transaction (commit, finalize, or skip). It services every configured vault. The keeper is **not privileged** — it can only call public functions, and if it goes offline, anyone can advance rounds; funds are never at risk. Randomness has a built-in timeout so no round can stick.
 
-- **Anchor gate.** Even when the contract reports `Commit` is eligible, the keeper waits until the configured weekday and time before firing. This is what keeps each vault's deposit window opening on a fixed weekly anchor.
-- **Multi pool.** One keeper process services every pool address listed in `POOL_ADDRESSES_V2`, each on its own anchor.
-
-The keeper is not privileged. It can only call public functions. If it goes offline, deposits and round progression pause until it recovers or someone else calls in.
-
-[More on the keeper](keeper-bot.md)
+[More on the keeper →](keeper-bot.md)
 
 ---
 
 ## Indexer
 
-A Hono service backed by SQLite. Reads on chain events and exposes HTTP APIs the frontend consumes for participants, history, withdrawal latency metrics, and the EverDraw points system. Pool aware. Multi RPC failover.
+A service backed by SQLite. It follows on-chain events and exposes HTTP APIs the frontend consumes for participation history, aggregate metrics, and the EverDraw points system. Vault-aware, with multi-RPC failover.
 
-The frontend can run without it for live round state (it reads contracts via RPC directly), but historical views, aggregate metrics, and the points page all depend on it.
+The frontend can run without it for live round state (it reads contracts directly via RPC), but historical views, aggregates, and the points page depend on it.
 
-API documented in [Integration](integration.md#indexer-api). Points formula and tier ladder are defined in [Points](../how-it-works/points.md).
+API documented in [Integration](integration.md#indexer-api). Points formula and tiers are in [Points](../how-it-works/points.md).
 
 ---
 
@@ -55,30 +55,29 @@ API documented in [Integration](integration.md#indexer-api). Points formula and 
 
 React app at [everdraw.xyz](https://everdraw.xyz).
 
-- Real time round state per vault (price, TVL, your position, countdown)
-- Buy with MON or shMON
-- Previous draw view per pool
-- Claim and withdraw flows
-- 30 second buy cutoff before deposit windows close
-- Multi pool via `VITE_POOL_ADDRESSES_V2`
-
----
-
-## CampaignManager (Phase 2)
-
-A second contract that lets any Monad protocol fund a branded prize campaign without changes to their own infrastructure. Out of scope for Phase 1. See [Phase 2](../vision/phase-2.md).
+- Real-time round state per vault (price, TVL, your position, countdown)
+- Deposit, sponsor, claim, and withdraw flows
+- Previous-draw view per vault, including multi-winner results
+- Pending-claims retry banner (driven by `hasPendingClaims`)
+- Buy cutoff before deposit windows close; closed-state rendering for paused/stopped vaults
 
 ---
 
 ## Data flow
 
 ```
-User wallet ──► Frontend ──► Vault contract ──► shMON
-                                ▲
-                                │
+User wallet ──► Frontend ──► Vault contract ──► yield vault (shMON)
+                                ▲   │
+                                │   └──► randomness oracle (Pyth)
                             Keeper bot
                                 │
 Indexer ────────────────────────┘ (read events)
 ```
 
-The frontend reads contract state directly via RPC. The indexer follows events independently and is not on the write path.
+The frontend reads contract state directly via RPC. The indexer follows events independently and is never on the write path.
+
+---
+
+## Campaigns and partner prizes (roadmap)
+
+Sponsored prizes are live today via `sponsor()`. Richer partner-campaign tooling (a CampaignManager that lets any protocol fund branded prize campaigns) is on the roadmap — see [Vision](../vision/index.md).
