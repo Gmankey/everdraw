@@ -16,7 +16,7 @@ shMON deposit was stubbed in V3 with **no ADR** and inherited as a gap into V4. 
 
 ## Decision
 
-Ship a bounded **V4.1** that adds a **direct shMON deposit path** alongside the existing native MON path, then redeploy through the standard guardrails.
+Ship a bounded **V4.1** that **adds** a direct shMON deposit path **alongside the existing native MON path** — purely additive — then redeploy through the standard guardrails. The native MON on-ramp is retained unchanged. ("shMON-only" was never a considered design and is explicitly not on the table.)
 
 ### Contract change (builder, cites this ADR)
 
@@ -50,10 +50,11 @@ Nothing else is bundled. Scope is deliberately small to keep the audit/redeploy 
 
 No new oracle, keeper, or off-chain dependency is introduced.
 
-## Open choices (operator to confirm before builder code)
+## Open choice (operator to confirm before builder code)
 
-1. **Deposit assets at launch:** support **both MON + shMON** (recommended — additive, keeps casual MON users, shMON is the primary), or **shMON-only** (forces MON holders to wrap first)?
-2. **Deploy timing under the stagger:** anchors must be 3.5 days apart (ADR-0010, now machine-enforced). Deploy **V4.1-A now and V4.1-B at +3.5 days** (clean stagger, vault B joins mid-ramp), or some other schedule tied to the launch date?
+**Deploy timing under the stagger:** anchors must be 3.5 days apart (ADR-0010, now machine-enforced). Proposed: deploy **V4.1-A now and V4.1-B at +3.5 days** (clean stagger, vault B joins mid-ramp). Alternative schedules can be tied to the launch date if preferred.
+
+(Deposit assets are **not** an open choice: V4.1 keeps native MON and adds shMON — additive. shMON-only was never considered.)
 
 ## Consequences
 
