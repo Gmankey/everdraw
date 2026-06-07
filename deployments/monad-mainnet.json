@@ -281,6 +281,8 @@
       "status": "retired-cadence-error",
       "address": "0x0032c9F6621Ef5d53b48dc602D4d056d7a47c5fF",
       "contractName": "TicketPrizePoolV4",
+      "source": "src/TicketPrizePoolV4.sol",
+      "abi": "abi/TicketPrizePoolV4.json",
       "deployedAt": "2026-06-03T07:05:22.000Z",
       "deployBlock": 78804885,
       "randomnessOracle": "0x1eE7502BD22940523aE504dF9855aBc0c417347d",
