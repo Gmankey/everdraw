@@ -1,14 +1,41 @@
-# ADR-0034 — V5 Architecture Requirements: Flexible Yield, Decoupled Rewards, Rebasing, Mass Winner Distribution
+# ADR-0034 — V5 Architecture Requirements: Continuous Deposits (TWAB), Flexible Yield, Decoupled Rewards, Rebasing, Mass Winner Distribution
 
 **Status:** Proposed (draft — captures operator-surfaced requirements for V5; not yet accepted).
-**Date:** 2026-06 (drafted during a feature-scrutiny session)
-**Parent:** ADR-0024 (V4 spec), ADR-0030 (future-proofing inventory).
+**Date:** 2026-06 (drafted during a feature-scrutiny session; **TWAB / R0 added later** — see note below).
+**Parent:** ADR-0024 (V4 spec), ADR-0030 (future-proofing inventory). **Implements the deferred half of ADR-0007** (Keep Playing / continuous deposits) and the public Phase 2 promise in `docs-site/pages/vision/phase-2.md`.
 
 ## Context
 
 A scrutiny pass over V4's "generic asset support" surfaced three hard architectural limits that block EverDraw's stated product vision. Each is recorded here as a **V5 requirement with a proposed solution**, because V4 cannot do any of them and they were nearly lost as casual "yes it can" answers.
 
 V4's prize model is fixed: deposit asset → staked into **one external ERC-4626 vault** → prize is the **share-price appreciation** of that vault → winners receive **shares** (not the underlying), which they redeem themselves. Three things break against that model.
+
+> **Correction note (added after initial draft).** The first version of this ADR captured R1–R6 (yield/reward/payout mechanics) but **omitted TWAB / continuous deposits entirely** — even though it is a publicly promised Phase 2 feature (`vision/phase-2.md`), explicitly deferred to "Phase 2 alongside TWAB" in ADR-0007, and named as part of the next mandatory redeploy in ADR-0024. This was a material omission: TWAB is not another line item, it is the **foundational model** R1–R6 sit on top of. It is captured below as **R0 (foundational)** and R1–R6 must be read as layered on it.
+
+---
+
+## R0 (foundational) — Continuous deposits / Time-Weighted Average Balance (TWAB)
+
+**This is the V5 core model change; R1–R6 are expressed on top of it.**
+
+**Promise (public, not optional).** Per `vision/phase-2.md`: users deposit MON continuously (no rounds, no sales windows, no tickets); the protocol tracks each wallet's **time-weighted average balance** over a draw period; **P(win) = your TWAB / total pool TWAB**. "Deposit Tuesday, withdraw Friday — you earn chances for every day your MON was in the vault." Timing attacks become impossible (a last-second deposit has negligible average). Draws can run more frequently (e.g. daily). Winners are paid by an **automatic keeper distribution**, not a manual claim.
+
+**What it replaces.** The entire V4/Phase-1 loop: discrete `Open → AwaitingVRF → Drawn → Settled` rounds, the 1-day sales window + ~6-day yield period, ticket purchases, and the ticket-range data structure used for ownership and winner selection. None of that survives unchanged.
+
+**What it requires that V4 deliberately does not have.**
+- **On-chain balance-over-time accounting.** TWAB needs per-account and pool-level time-weighted balance, maintained on every deposit/withdraw (observation/checkpoint ring buffers, à la Uniswap V3 oracles / PoolTogether V4 TWAB). ADR-0006 deliberately **punted time-weighting to Merkl off-chain** for Phase 1 — V5 must bring it on-chain because winner odds now depend on it. This is the central new engineering of V5.
+- **A new winner-selection mechanism.** V4 selects by rejection-sampling over ticket ranges (ADR-0025). Under TWAB there are no tickets — selection samples the random draw across the **time-weighted balance distribution**. The multi-winner logic (and R4 mass distribution) must be redesigned against TWAB weights, not ranges.
+- **A draw scheduler decoupled from deposits.** Draws run on a cadence over the continuous pool, independent of any per-user deposit timing.
+
+**Hard interactions with the rest of this ADR (the part that makes R0 foundational, not additive):**
+- **Payout model collision (with the ADR-0028 deferred-claim substrate).** phase-2.md promises **automatic push distribution** to winners. The V4 substrate I rely on elsewhere is **pull-based** deferred claims. These conflict, and the conflict sharpens under R4 (hundreds/thousands of winners): you cannot naively push thousands of transfers. Resolution direction: **auto-push for small winner counts; merkle-pull for mass distribution (R4)**; whichever path runs, it must preserve the ADR-0028 guarantee (one failing payout never blocks others; nothing is lost) and stay **non-pausable / non-stoppable** so winnings can't be trapped. The unified pull-claim path from the deferred-claim cross-cutting section is the natural home for the mass case.
+- **"Ticket price" dissolves.** The mutable ticket price (V4 feature #9) and its per-round snapshot have no meaning under continuous deposits — you contribute a balance, not a priced ticket. Any "minimum deposit" becomes a balance threshold, not a ticket unit.
+- **Sponsors / fees / reward asset (R2, R5, R6)** must be re-expressed against continuous draws rather than discrete rounds (e.g. a sponsor funds a *draw period* or a campaign, not a "round"; fees are taken from the prize of a draw computed over TWAB).
+- **CampaignManager is the other half of Phase 2.** `vision/phase-2.md` ships TWAB **and** the CampaignManager together. The CampaignManager maps onto R2 (decoupled reward token) + R4 (mass distribution) + R5 (sponsor/funding models). So **V5 ≈ TWAB core (R0) + CampaignManager funding layer (R2/R4/R5)**, with R1/R3/R6 as supporting mechanics. They are one coherent release, not independent bolt-ons.
+
+**What already survives the transition (foresight to keep).** ADR-0006's Merkl-readable surface stays compatible: Merkl consumes `Deposit`/`Withdraw` events and time-weights off-chain, so points integration is unaffected by moving TWAB on-chain for prize odds. Keep emitting those events with the same shape.
+
+**Decision needed in the V5 spec:** whether TWAB replaces the round model outright, or whether round-based and continuous vaults coexist as two modes. The promise in phase-2.md is continuous; the simplest coherent V5 is **continuous-only**, with the round model retired. Confirm during V5 scoping.
 
 ---
 
@@ -150,7 +177,8 @@ R1–R5 are accounting and prize-flow redesigns, not additive functions. They ch
 
 ## Consequences / sequencing
 
-- These should anchor the **V5 spec** when it's scoped. R2 is the highest-value (it unblocks the entire for-protocols revenue narrative); R1+R3 unblock non-MON and non-4626 assets.
+- **R0 (TWAB) is the foundation and should be specced first** — it defines the core loop (continuous deposits, TWAB odds, draw scheduler, payout model) that every other requirement is expressed against. Speccing R1–R6 before R0 risks designing them against the soon-to-be-retired round model.
+- After R0, **R2 is the highest-value** (it unblocks the entire for-protocols revenue narrative); R1+R3 unblock non-MON and non-4626 assets.
 - Until V5, be explicit with partners: EverDraw **cannot** pay a different/partner token as the prize, and **cannot** use yield venues that aren't transferable, fully-price-accruing ERC-4626 vaults (so most lending/LP venues need a custom auto-compounding wrapper, or aren't supported).
 - The `IYieldStrategy` adapter pattern (R1/R3) and the decoupled reward pool (R2) are independent workstreams and can be specced separately.
 
