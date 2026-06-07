@@ -96,7 +96,8 @@ const POOL_V4_ABI = [
 const SHMON_READ_ABI = [
   'function getInternalEpoch() view returns (uint64)',
   'function balanceOf(address) view returns (uint256)',
-  'function convertToAssets(uint256 shares) view returns (uint256 assets)'
+  'function convertToAssets(uint256 shares) view returns (uint256 assets)',
+  'function previewDeposit(uint256 assets) view returns (uint256 shares)',
 ]
 
 const ERC20_ABI = [
@@ -2538,8 +2539,8 @@ export default function App() {
       setError('')
       setStatus('Preparing shMON approval...')
 
-      if (!poolAddress) throw new Error('Missing V2 pool address')
-      if (!isV2Pool) throw new Error('Selected pool is not V2')
+      if (!poolAddress) throw new Error('Missing pool address')
+      if (!isV2Pool && !isV4Pool) throw new Error('Selected pool does not support shMON buys')
       const currentSalesOpen = roundInfo && Number(roundInfo.state) === 0 && Math.max(0, Number(roundInfo.salesEndTime ?? 0) - Math.floor(Date.now() / 1000)) > 0
       if (!currentSalesOpen) throw new Error('Deposits are closed for this round')
       const walletProvider = getWalletProvider()
@@ -2554,19 +2555,31 @@ export default function App() {
       if (!account) throw new Error('No wallet connected')
 
       const readProvider = await getReadProvider()
-      const pool = new ethers.Contract(poolAddress, POOL_V2_ABI, readProvider)
-      const shmonAddress = await _cached(`shmon:${poolAddress}`, 86400_000 * 365, () => pool.shmon())
-      const ticketPriceForShares = await _cached(`ticketPrice:${poolAddress}`, 86400_000 * 365, () => pool.getFunction('ticketPriceMON').staticCall())
-      const sharesOwed = BigInt(ticketPriceForShares) * BigInt(n)
+      const poolAbi = isV4Pool ? POOL_V4_ABI : POOL_V2_ABI
+      const pool = new ethers.Contract(poolAddress, poolAbi, readProvider)
+      const shmonAddress = await _cached(
+        `shmon:${poolAddress}`,
+        86400_000 * 365,
+        () => isV4Pool ? pool.yieldVault() : pool.shmon()
+      )
+      const ticketPriceForAsset = await _cached(
+        `ticketPrice:${poolAddress}:${isV4Pool ? 'asset' : 'mon'}`,
+        86400_000 * 365,
+        () => isV4Pool ? pool.ticketPriceAsset() : pool.getFunction('ticketPriceMON').staticCall()
+      )
+      const monCost = BigInt(ticketPriceForAsset) * BigInt(n)
+      const sharesOwed = isV4Pool
+        ? await new ethers.Contract(shmonAddress, SHMON_READ_ABI, readProvider).previewDeposit(monCost)
+        : monCost
       const nonce = await fetchNonceWithRetry(account)
       const feeData = await readProvider.getFeeData()
       const gasPrice = feeData.gasPrice ?? feeData.maxFeePerGas
 
       const erc20 = new ethers.Interface(ERC20_ABI)
-      const v2 = new ethers.Interface(POOL_V2_ABI)
+      const poolIface = new ethers.Interface(poolAbi)
 
       const approveData = erc20.encodeFunctionData('approve', [poolAddress, sharesOwed])
-      const buyData = v2.encodeFunctionData('buyTicketsShmon', [n])
+      const buyData = poolIface.encodeFunctionData('buyTicketsShmon', [n])
 
       setStatus('Waiting for approve confirmation...')
       const approveTxHash = await provider.send('eth_sendTransaction', [{
@@ -2598,19 +2611,20 @@ export default function App() {
     } finally {
       setLoading(false)
     }
-  }, [account, expectedChainId, isV2Pool, poolAddress, refresh, ticketCountInput, roundInfo])
+  }, [account, expectedChainId, isV2Pool, isV4Pool, poolAddress, refresh, ticketCountInput, roundInfo])
 
 
   const setMaxTickets = useCallback(() => {
     try {
       if (!ticketPrice || ticketPrice <= 0n) return
-      const available = isV2Pool && buyWithShmon ? BigInt(shmonMonBalance || 0n) : ethers.parseEther(String(balance || '0'))
+      const canBuyWithShmon = (isV2Pool || isV4Pool) && buyWithShmon
+      const available = canBuyWithShmon ? BigInt(shmonMonBalance || 0n) : ethers.parseEther(String(balance || '0'))
       const max = available / ticketPrice
       if (max > 0n) setTicketCountInput(max > 1000000n ? '1000000' : max.toString())
     } catch {
       // ignore malformed balance state
     }
-  }, [balance, buyWithShmon, isV2Pool, shmonMonBalance, ticketPrice])
+  }, [balance, buyWithShmon, isV2Pool, isV4Pool, shmonMonBalance, ticketPrice])
 
   const openWinnersWithTransition = useCallback(() => {
     if (winnersTransitioning) return
@@ -2883,7 +2897,7 @@ export default function App() {
                     </div>
                     <div className="balance-info">
                       <span>
-                        Balance: {isV2Pool && buyWithShmon ? `${formatMon(shmonMonBalance)} shMON` : `${Number(balance).toFixed(4)} MON`}
+                        Balance: {(isV2Pool || isV4Pool) && buyWithShmon ? `${formatMon(shmonMonBalance)} shMON` : `${Number(balance).toFixed(4)} MON`}
                       </span>
                       <button className="max-btn" onClick={setMaxTickets}>MAX</button>
                     </div>
@@ -2895,7 +2909,7 @@ export default function App() {
                   </div>
 
                   <div className="deposit-cta-wrap">
-                    {isV2Pool && (
+                    {(isV2Pool || isV4Pool) && (
                       <div className="token-selector-wrap">
                         <div className="token-selector">
                           <button
@@ -2931,21 +2945,21 @@ export default function App() {
                     <button
                       className="btn deposit-btn"
                       disabled={!shownIsCurrentRound || loading || !salesOpen}
-                      onClick={account ? (isV2Pool && buyWithShmon ? buyTicketsShmon : buyTickets) : connectWallet}
+                      onClick={account ? ((isV2Pool || isV4Pool) && buyWithShmon ? buyTicketsShmon : buyTickets) : connectWallet}
                     >
                       {loading
                         ? 'Submitting...'
                         : isDeadRound
                           ? 'Vault Cycling — Next Round Soon'
                           : !shownIsCurrentRound
-                            ? (mainView === 'previous' ? `Buy with ${isV2Pool && buyWithShmon ? 'shMON' : 'MON'}` : 'This Vault is Locked')
+                            ? (mainView === 'previous' ? `Buy with ${(isV2Pool || isV4Pool) && buyWithShmon ? 'shMON' : 'MON'}` : 'This Vault is Locked')
                             : !salesOpen
                               ? 'Deposits closed'
                               : !account
                                 ? 'Connect Wallet to Buy'
                                 : wrongNetwork
                                   ? 'Wrong network — click Buy to switch automatically'
-                                  : isV2Pool
+                                  : (isV2Pool || isV4Pool)
                                     ? `Buy with ${buyWithShmon ? 'shMON' : 'MON'}`
                                     : canBuyTx
                                       ? 'Buy Tickets'
