@@ -145,6 +145,11 @@ const SHMON_ABI = [
   'function previewRedeem(uint256 shares) view returns (uint256 assets)',
 ]
 const SHMON_ADDRESS = import.meta.env.VITE_SHMON_ADDRESS || '0x1B68626dCa36c7fE922fD2d55E4f631d962dE19c'
+const ACTIVE_POOL_REPLACEMENTS = {
+  // V4.1-A supersedes V4-A. Keep the retired address in known-pool scans below
+  // so old-round participants can still find redeemable positions.
+  '0x9263d84a141172d9618f4b08839f595ee03bc7e8': '0x933FF608eaC2b3221088bd9AE19b05F266dBF7DA',
+}
 
 function formatMon(value, digits = 4) {
   try {
@@ -174,8 +179,33 @@ function parseAddressEnv(rawList, single) {
   return out
 }
 
+function applyActivePoolReplacements(addresses) {
+  const active = []
+  const retired = []
+  const seen = new Set()
+  const push = (addr, bucket = active) => {
+    const lc = String(addr || '').toLowerCase()
+    if (!ethers.isAddress(addr) || seen.has(lc)) return
+    seen.add(lc)
+    bucket.push(addr)
+  }
+
+  for (const addr of addresses) {
+    const replacement = ACTIVE_POOL_REPLACEMENTS[String(addr).toLowerCase()]
+    if (replacement) {
+      push(replacement)
+      retired.push(addr)
+    } else {
+      push(addr)
+    }
+  }
+
+  for (const addr of retired) push(addr, active)
+  return active
+}
+
 function parsePoolAddresses() {
-  return parseAddressEnv(import.meta.env.VITE_POOL_ADDRESSES, import.meta.env.VITE_POOL_ADDRESS)
+  return applyActivePoolReplacements(parseAddressEnv(import.meta.env.VITE_POOL_ADDRESSES, import.meta.env.VITE_POOL_ADDRESS))
 }
 
 function parseV2PoolAddresses() {
@@ -187,7 +217,7 @@ function parseV3PoolAddresses() {
 }
 
 function parseV4PoolAddresses() {
-  return parseAddressEnv(
+  return applyActivePoolReplacements(parseAddressEnv(
     [
       import.meta.env.VITE_POOL_ADDRESSES_V4,
       import.meta.env.VITE_POOL_ADDRESS_V4,
@@ -195,7 +225,7 @@ function parseV4PoolAddresses() {
       import.meta.env.VITE_V4_B_ADDRESS,
     ].filter(Boolean).join(','),
     ''
-  )
+  ))
 }
 
 function roundPrincipalWei(info) {

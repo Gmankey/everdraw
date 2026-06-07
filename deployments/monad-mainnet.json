@@ -131,7 +131,7 @@
     },
     {
       "role": "Vault A (V4)",
-      "status": "active",
+      "status": "retired-superseded-by-v4.1",
       "address": "0x9263d84a141172d9618f4b08839f595EE03bC7E8",
       "contractName": "TicketPrizePoolV4",
       "source": "src/TicketPrizePoolV4.sol",
@@ -168,11 +168,22 @@
         "method": "Runtime bytecode fetched via eth_getCode and SHA256-hashed immediately post-deploy. Hash matches Vault B V4 exactly. Constructor args verified against V4 launch config: native MON deposits, shMON yield vault, Pyth randomness adapter, 1 MON ticket, 24h round, 518100s yield period, one winner.",
         "evidence": "decisions/0032-v4-launch-record.md"
       },
+      "retirement": {
+        "reason": "Superseded by V4.1-A with direct shMON ticket deposits.",
+        "replacedBy": "0x933FF608eaC2b3221088bd9AE19b05F266dBF7DA",
+        "operatorActionsPending": [
+          "After the current/last round settles, Ledger withdraws the 9 MON VRF reserve with withdrawVRFReserve(9e18).",
+          "After depositors have withdrawn, Ledger calls stop()."
+        ],
+        "checkedAt": "2026-06-08T00:00:00.000Z",
+        "stoppedAt": 0,
+        "contractBalanceWei": "9000000000000000000"
+      },
       "adrs": ["ADR-0024", "ADR-0029"]
     },
     {
       "role": "Vault A (V4) Pyth oracle",
-      "status": "active",
+      "status": "retired-superseded-by-v4.1",
       "address": "0xB06d11dF2B6b351DFF64f3270e7C7F8cd43fe799",
       "contractName": "PythRandomnessOracle",
       "source": "src/PythRandomnessOracle.sol",
@@ -200,6 +211,83 @@
         "evidence": "decisions/0032-v4-launch-record.md"
       },
       "adrs": ["ADR-0029"]
+    },
+    {
+      "role": "Vault A (V4.1)",
+      "status": "active",
+      "address": "0x933FF608eaC2b3221088bd9AE19b05F266dBF7DA",
+      "contractName": "TicketPrizePoolV4",
+      "source": "src/TicketPrizePoolV4.sol",
+      "abi": "abi/TicketPrizePoolV4.json",
+      "deployedAt": "2026-06-07T15:03:17.000Z",
+      "deployBlock": 79739940,
+      "deployTx": "0x0abd8b1eef5ab16651df44fbbb0b5113fc2cd89f23c2237fe675b8f1d04eba32",
+      "round1SalesEndAt": "2026-06-08T15:03:17.000Z",
+      "anchor": "round-1 sales-end 2026-06-08T15:03:17Z (Mon 15:03 UTC); V4.1-A cadence anchor for V4.1-B stagger guard",
+      "compiler": {
+        "version": "0.8.33+commit.64118f21",
+        "optimizer": true,
+        "optimizerRuns": 200,
+        "viaIR": true,
+        "evmVersion": "paris"
+      },
+      "constructorArgs": {
+        "depositMode": 0,
+        "asset": "0x0000000000000000000000000000000000000000",
+        "yieldVault": "0x1B68626dCa36c7fE922fD2d55E4f631d962dE19c",
+        "ticketPriceAsset": "1000000000000000000",
+        "roundDurationSec": 86400,
+        "yieldPeriodSec": 518100,
+        "numWinners": 1,
+        "winnerAllocationBps": [10000],
+        "randomnessOracle": "0x59fFe0DA7C975F96E2b3ae19f818BAEFc2d4DddF",
+        "randomnessOracleInitData": "0x",
+        "vaultSymbol": "EVRDRAW-A"
+      },
+      "ownership": {
+        "owner": "0xd399d4e24021eA08f2Cd11Fbb78a633e8D9B84A2",
+        "pauser": "0xd399d4e24021eA08f2Cd11Fbb78a633e8D9B84A2",
+        "keeper": "0x80dE4674dEFC68F06F4772B8Ec2F89aBda43DBE9",
+        "note": "Ledger-backed EOA owner per ADR-0031; Fly keeper authorized; deployer keeper disabled."
+      },
+      "runtimeBytecodeSha256": "92a210121791f89c7a6599d38adca12b4490e236e6a6bbabcb835596b40cb23c",
+      "verification": {
+        "status": "verified",
+        "verifiedAt": "2026-06-07T15:05:48.000Z",
+        "method": "Sourcify full match (creationMatch + runtimeMatch) confirmed via https://sourcify-api-monad.blockvision.org/v2/contract/143/0x933FF608eaC2b3221088bd9AE19b05F266dBF7DA. Runtime bytecode SHA256 recorded from eth_getCode. On-chain audit confirmed VERSION 4.1.0, EVRDRAW-A, native MON mode, 1 MON ticket, 24h round, 518100s yield period, one winner, shMON yield vault, Ledger owner/pauser, Fly keeper, round 1 Open, and zero contract balance/reserve at cutover.",
+        "evidence": "logs/v4.1-A-deploy-20260607T150305Z.log"
+      },
+      "adrs": ["ADR-0024", "ADR-0029", "ADR-0031", "ADR-0035"]
+    },
+    {
+      "role": "Vault A (V4.1) Pyth oracle",
+      "status": "active",
+      "address": "0x59fFe0DA7C975F96E2b3ae19f818BAEFc2d4DddF",
+      "contractName": "PythRandomnessOracle",
+      "source": "src/PythRandomnessOracle.sol",
+      "abi": "abi/PythRandomnessOracle.json",
+      "deployedAt": "2026-06-07T15:03:14.000Z",
+      "deployBlock": 79739932,
+      "compiler": {
+        "version": "0.8.33+commit.64118f21",
+        "optimizer": true,
+        "optimizerRuns": 200,
+        "viaIR": true,
+        "evmVersion": "paris"
+      },
+      "constructorArgs": {
+        "entropy": "0xD458261E832415CFd3BAE5E416FdF3230ce6F134",
+        "provider": "0x52DeaA1c84233F7bb8C8A45baeDE41091c616506",
+        "consumer": "0x933FF608eaC2b3221088bd9AE19b05F266dBF7DA"
+      },
+      "runtimeBytecodeSha256": "3b5009d69cf442c4e4115fefcc98acd27ca5e5722dd49a7f03feb5e119209ff2",
+      "verification": {
+        "status": "verified",
+        "verifiedAt": "2026-06-07T15:05:48.000Z",
+        "method": "Sourcify full match (creationMatch + runtimeMatch) confirmed via https://sourcify-api-monad.blockvision.org/v2/contract/143/0x59fFe0DA7C975F96E2b3ae19f818BAEFc2d4DddF. Runtime bytecode SHA256 recorded from eth_getCode; entropy, provider, and consumer verified on-chain.",
+        "evidence": "logs/v4.1-A-deploy-20260607T150305Z.log"
+      },
+      "adrs": ["ADR-0029", "ADR-0035"]
     },
     {
       "role": "Vault B (V4)",
