@@ -113,9 +113,32 @@ The V4 fee router (ADR-0027) is correct and resilient, but the fee logic is **ha
 
 **What does work in V4 (no change needed):** the operator has **full control over fee recipient wallet(s)** and can split across up to 8, each with independent bps (`setFeeAllocations`); there is **no hidden/default fee sink** — empty allocation = zero fee. Recipient-wallet control and splitting are not V5 gaps.
 
-**Proposed solution.** Fold the fee into the same R1/R2 accounting redesign rather than treating it as a standalone module: compute the fee against the **value delta** (6b), expose a **fee-base flag** (all-yield vs participant-only, 6a), and let the fee be denominated in the **reward/yield token** the R1/R2 pipeline already handles (6c). The fee router's recipient/split/cap/snapshot/deferred-claim machinery (ADR-0027/0028) is sound and carries over unchanged.
+**Proposed solution.** Fold the fee into the same R1/R2 accounting redesign rather than treating it as a standalone module: compute the fee against the **value delta** (6b), expose a **fee-base flag** (all-yield vs participant-only, 6a), and let the fee be denominated in the **reward/yield token** the R1/R2 pipeline already handles (6c). The fee router's recipient/split/cap/snapshot logic (ADR-0027) carries over; its **payout/deferred-claim path (ADR-0028) does NOT carry over unchanged** once fees can be a different token — see the cross-cutting note below.
 
 **Pairs with R1/R2/R3:** 6b and 6c are not independent — they are determined by whatever yield-accounting and reward-asset model R1/R2/R3 land on. Spec the fee base **with** that accounting, not after.
+
+---
+
+## Cross-cutting: the deferred-claim layer (ADR-0028) must be generalized
+
+The transfer-failure-resilience / deferred-claim machinery (ADR-0028) is **not an independent feature** — it is the single payout path that every winner, fee, sponsor, and principal disbursement flows through. Its entire design rests on one assumption:
+
+> **every payout is a fixed number of shares of the one `yieldVault` ERC-20**, transferred with a single `yieldVault.transfer(recipient, shares)`, and stored on failure as a fixed `uint256` per `(round, recipient, slot)`.
+
+Checking that assumption against the V5 proposals, **every one of them breaks it:**
+
+| Proposal | How it breaks the ADR-0028 payout assumption |
+|---|---|
+| **R1** (yield-strategy adapter) | If the strategy isn't a transferable ERC-20 share, there is nothing to `.transfer`; payout becomes a redeem/claim *through the strategy* — an external call in the (already failure-sensitive) payout path. |
+| **R2** (decoupled reward token) | Payout is in a **different token**; `pendingClaims[rid][addr][slot] → uint256` records one token's amount with no token field. Needs `(token, amount)` per slot. |
+| **R3** (rebasing) | A deferred claim stores a **fixed** amount; under a rebasing payout token the correct amount drifts between defer-time and claim-time. Must store a proportion/value, not a fixed number. |
+| **R4** (>32 winners, merkle) | Winner slots `0x00–0x1f` cap winners at 32 (slot-namespace limit). And merkle-claim is a **second pull mechanism** that itself needs defer-on-failure — the two pull paths must be unified, not duplicated. |
+| **R5b/5c/5d** (unstaked / principal-retaining sponsor) | 5b pays a **raw, unstaked** token; the current path can only move `yieldVault` shares. 5c/5d add a principal-redeem path that also needs deferral. |
+| **R6c** (different-token fee) | Same multi-token problem as R2, on the fee leg. |
+
+**Conclusion / requirement.** The V5 spec must treat the deferred-claim layer as a **shared component to be re-generalized**, not lifted from V4 unchanged. Concretely it needs: a **per-slot `(token, amount-or-proportion)`** record instead of a bare share count; a **payout abstraction** that can move a raw ERC-20, redeem through a yield strategy, *or* settle a merkle claim — each wrapped in the same defer-on-failure guarantee; and a **single unified pull-claim path** shared with R4's merkle distribution. The slot-namespace byte must also grow (or be replaced) to lift the 32-winner cap. The *guarantee* of ADR-0028 (one failing payout can never freeze a round, nothing is ever lost) is correct and must be preserved — but the *implementation* is coupled to the single-share-token world and is rebuilt alongside R1/R2/R3/R4/R5.
+
+This is the load-bearing dependency that ties the otherwise-independent R-workstreams together: **R1, R2, R3, R4, R5, and R6 all converge on the payout path.** It should be specced first, as the substrate the others build on.
 
 ---
 
