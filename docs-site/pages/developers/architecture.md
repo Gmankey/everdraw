@@ -17,7 +17,7 @@ Responsibilities:
 - Accepts sponsor contributions that earn yield alongside the round
 - Routes an optional, capped protocol fee on yield to up to 8 recipients (snapshotted per round)
 - Tracks per-user, per-round principal; returns shares on withdraw and pays prizes on claim
-- Wraps every payout so a failed transfer defers to a retriable pending claim rather than freezing settlement
+- Wraps every payout so that if the yield-vault share transfer fails (e.g. shMON transiently unavailable), the amount defers to a retriable pending claim rather than freezing settlement. (Payouts are plain ERC-20 share transfers with no recipient hook, so the failure this guards against is a yield-vault dependency outage, not a griefing recipient.)
 - Exposes a Merkl-readable, non-transferable position surface for shMonad's points indexer
 
 Design choices:
@@ -27,7 +27,7 @@ Design choices:
 - Per-round, per-address principal accounting — no cross-round entanglement.
 - Randomness via an external verifiable oracle, swappable behind a 24h timelock.
 - `commitDraw` / `finalizeDraw` / `skipRound` / `executeNext` are public — anyone can advance the lifecycle. The keeper is convenience.
-- Pauser is a role distinct from owner; it can halt new deposits but never claims or withdrawals.
+- Pauser is a role distinct from owner; pausing halts new deposits **and** round progression (buys, `executeNext`, `commitDraw`, `skipRound`), but never claims or withdrawals — depositors can always exit while paused.
 
 [Contract reference →](smart-contract.md)
 

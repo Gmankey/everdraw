@@ -30,9 +30,9 @@ A formal third-party audit is planned **before scaling TVL beyond bootstrapping 
 - Instantly swap the randomness provider (changes are time-delayed)
 - Block claims or withdrawals on already-settled rounds (those calls are not pausable)
 
-Fees are snapshotted per round at open time and never apply retroactively. A separate **pauser** role can temporarily halt new deposits without any power over claims or withdrawals.
+Fees are snapshotted per round at open time and never apply retroactively. A separate **pauser** role can temporarily halt new deposits and round progression, but has no power over claims or withdrawals — depositors can always exit while the protocol is paused.
 
-**Resilient payouts.** Every payout is wrapped so a single failing transfer can never freeze settlement. If a payout can't complete (for example, the underlying yield token is briefly unavailable), it's recorded as a retriable pending claim and is never lost.
+**Resilient payouts.** Every payout is a yield-vault share transfer wrapped so that if it fails — for example, the yield vault (shMON) is briefly unavailable — settlement still completes and the amount is recorded as a retriable pending claim that is never lost. (Payouts carry no recipient hook, so this guards against a yield-vault outage, not a misbehaving recipient.)
 
 The full owner-power inventory and trust model are documented in the project's Architecture Decision Records ([`decisions/`](https://github.com/Gmankey/everdraw/tree/staging/decisions)).
 
