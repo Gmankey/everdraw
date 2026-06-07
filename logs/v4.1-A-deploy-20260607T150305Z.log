@@ -1,0 +1,23 @@
+From https://github.com/Gmankey/everdraw
+ * branch            staging    -> FETCH_HEAD
+[deploy-preflight] OK
+Stagger guard: STAGGER_REFERENCE_VAULT not set — skipping (first vault / testnet).
+Deploying V4 with: 0xFA5862e7093B0030416e5F871F88A0e7A041287A
+{
+  predictedVault: '0x933FF608eaC2b3221088bd9AE19b05F266dBF7DA',
+  yieldVault: '0x1B68626dCa36c7fE922fD2d55E4f631d962dE19c',
+  entropy: '0xD458261E832415CFd3BAE5E416FdF3230ce6F134',
+  entropyProvider: '0x52DeaA1c84233F7bb8C8A45baeDE41091c616506',
+  asset: '0x0000000000000000000000000000000000000000',
+  depositMode: 0,
+  ticketPriceAsset: '1000000000000000000',
+  roundDurationSec: 86400,
+  yieldPeriodSec: 518100,
+  numWinners: 1,
+  winnerAllocationBps: [ 10000 ],
+  vaultSymbol: 'EVRDRAW-A'
+}
+PythRandomnessOracle deployed: 0x59fFe0DA7C975F96E2b3ae19f818BAEFc2d4DddF
+TicketPrizePoolV4 deployed: 0x933FF608eaC2b3221088bd9AE19b05F266dBF7DA
+Seed VRF reserve with 20 MON before production use:
+ cast send 0x933FF608eaC2b3221088bd9AE19b05F266dBF7DA "depositVRFReserve()" --value 20ether --rpc-url $RPC_URL --private-key $PRIVATE_KEY
