@@ -159,6 +159,11 @@
   },
   {
     "inputs": [],
+    "name": "ShmonPathNativeOnly",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "TicketOOB",
     "type": "error"
   },
@@ -1034,6 +1039,19 @@
     "type": "function"
   },
   {
+    "inputs": [
+      {
+        "internalType": "uint32",
+        "name": "ticketCount",
+        "type": "uint32"
+      }
+    ],
+    "name": "buyTicketsShmon",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
     "inputs": [],
     "name": "cancelOracleChange",
     "outputs": [],
@@ -1463,6 +1481,25 @@
         "type": "uint256"
       }
     ],
+    "name": "getRoundTicketPrice",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "rid",
+        "type": "uint256"
+      }
+    ],
     "name": "getRoundTimes",
     "outputs": [
       {
@@ -1532,6 +1569,30 @@
         "internalType": "uint128",
         "name": "principalSharesOut",
         "type": "uint128"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "rid",
+        "type": "uint256"
+      },
+      {
+        "internalType": "address",
+        "name": "user",
+        "type": "address"
+      }
+    ],
+    "name": "getWithdrawableShares",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
       }
     ],
     "stateMutability": "view",

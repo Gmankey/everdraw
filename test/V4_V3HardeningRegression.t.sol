@@ -28,6 +28,6 @@ contract V4_V3HardeningRegression_Test is V4TestBase {
     }
 
     function test_VERSION_is_v4() public {
-        assertEq(pool.VERSION(), "4.0.0");
+        assertEq(pool.VERSION(), "4.1.0");
     }
 }

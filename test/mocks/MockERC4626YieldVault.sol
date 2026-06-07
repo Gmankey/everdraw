@@ -8,6 +8,7 @@ contract MockERC4626YieldVault {
     uint256 public rate = 1e18;
     bool public transfersPaused;
     mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
 
     constructor(address _asset) {
         asset = _asset;
@@ -20,6 +21,15 @@ contract MockERC4626YieldVault {
 
     function setTransfersPaused(bool paused) external {
         transfersPaused = paused;
+    }
+
+    function mintShares(address to, uint256 shares) external {
+        balanceOf[to] += shares;
+    }
+
+    function approve(address spender, uint256 amount) external returns (bool) {
+        allowance[msg.sender][spender] = amount;
+        return true;
     }
 
     function deposit(uint256 assets, address receiver) external payable returns (uint256 shares) {
@@ -46,6 +56,17 @@ contract MockERC4626YieldVault {
         require(!transfersPaused, "paused");
         require(balanceOf[msg.sender] >= amount, "shares");
         balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount;
+        return true;
+    }
+
+    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+        require(!transfersPaused, "paused");
+        uint256 allowed = allowance[from][msg.sender];
+        require(allowed >= amount, "allowance");
+        if (allowed != type(uint256).max) allowance[from][msg.sender] = allowed - amount;
+        require(balanceOf[from] >= amount, "shares");
+        balanceOf[from] -= amount;
         balanceOf[to] += amount;
         return true;
     }

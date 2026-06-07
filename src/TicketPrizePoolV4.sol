@@ -55,7 +55,7 @@ contract TicketPrizePoolV4 is IRandomnessOracleConsumer {
     uint16 public constant MAX_TOTAL_FEE_BPS = 2000;
     uint8 public constant MAX_WINNERS = 32;
     uint8 public constant MAX_FEE_RECIPIENTS = 8;
-    string public constant VERSION = "4.0.0";
+    string public constant VERSION = "4.1.0";
 
     enum DepositMode {
         Native,
@@ -167,6 +167,7 @@ contract TicketPrizePoolV4 is IRandomnessOracleConsumer {
     error TooManyWinners();
     error SelectionExhausted();
     error BadAssetTransfer();
+    error ShmonPathNativeOnly();
 
     // ---------------------------------------------------------------------
     // Immutable config / admin state
@@ -485,6 +486,28 @@ contract TicketPrizePoolV4 is IRandomnessOracleConsumer {
         _buyTickets(ticketCount);
     }
 
+    function buyTicketsShmon(uint32 ticketCount) external whenNotPaused nonReentrant {
+        if (depositMode != DepositMode.Native) revert ShmonPathNativeOnly();
+        if (stoppedAt != 0) revert VaultIsStopped();
+
+        uint256 rid = currentRoundId;
+        RoundData storage r = rounds[rid];
+        if (r.state != RoundState.Open) revert BadState();
+        if (block.timestamp >= r.salesEndTime) revert SalesEnded();
+        if (ticketCount == 0) revert ZeroTickets();
+
+        uint256 cost = uint256(ticketCount) * r.ticketPriceAtRoundOpen;
+        uint256 shares = yieldVault.previewDeposit(cost);
+        if (shares == 0) revert ZeroSharesMinted();
+
+        uint256 beforeBal = yieldVault.balanceOf(address(this));
+        _safeYieldVaultTransferFrom(msg.sender, address(this), shares);
+        uint256 received = yieldVault.balanceOf(address(this)) - beforeBal;
+        if (received != shares) revert BadAssetTransfer();
+
+        _creditTickets(rid, r, msg.sender, ticketCount, cost, shares);
+    }
+
     function _buyTickets(uint32 ticketCount) internal whenNotPaused nonReentrant {
         if (stoppedAt != 0) revert VaultIsStopped();
 
@@ -498,13 +521,24 @@ contract TicketPrizePoolV4 is IRandomnessOracleConsumer {
         uint256 shares = _collectAndDeposit(cost);
         if (shares == 0) revert ZeroSharesMinted();
 
-        principalAsset[rid][msg.sender] += cost;
-        principalShares[rid][msg.sender] += shares;
+        _creditTickets(rid, r, msg.sender, ticketCount, cost, shares);
+    }
+
+    function _creditTickets(
+        uint256 rid,
+        RoundData storage r,
+        address buyer,
+        uint32 ticketCount,
+        uint256 cost,
+        uint256 shares
+    ) internal {
+        principalAsset[rid][buyer] += cost;
+        principalShares[rid][buyer] += shares;
         r.totalPrincipalAsset += cost;
         r.totalPrincipalShares += shares;
         totalUnclaimedShares += shares;
 
-        _activePrincipal[msg.sender] += cost;
+        _activePrincipal[buyer] += cost;
         _totalSupply += cost;
 
         uint32 start = r.totalTickets;
@@ -515,17 +549,17 @@ contract TicketPrizePoolV4 is IRandomnessOracleConsumer {
         uint256 n = r.ranges.length;
         if (n > 0) {
             Range storage last = r.ranges[n - 1];
-            if (last.buyer == msg.sender && last.end == start) {
+            if (last.buyer == buyer && last.end == start) {
                 last.end = end;
-                emit Deposit(msg.sender, cost);
-                emit TicketsBought(rid, msg.sender, ticketCount, cost);
+                emit Deposit(buyer, cost);
+                emit TicketsBought(rid, buyer, ticketCount, cost);
                 return;
             }
         }
 
-        r.ranges.push(Range({start: start, end: end, buyer: msg.sender}));
-        emit Deposit(msg.sender, cost);
-        emit TicketsBought(rid, msg.sender, ticketCount, cost);
+        r.ranges.push(Range({start: start, end: end, buyer: buyer}));
+        emit Deposit(buyer, cost);
+        emit TicketsBought(rid, buyer, ticketCount, cost);
     }
 
     function sponsor(uint256 rid, string calldata memo) external payable nonReentrant {
@@ -824,16 +858,7 @@ contract TicketPrizePoolV4 is IRandomnessOracleConsumer {
         uint256 userAsset = principalAsset[rid][msg.sender];
         if (userAsset == 0) revert NothingToWithdraw();
 
-        uint256 sharesToReturn;
-        if (r.principalSharesAtSettle == 0 || r.principalSharesAtSettle >= r.totalPrincipalShares) {
-            sharesToReturn = principalShares[rid][msg.sender];
-        } else {
-            sharesToReturn = (userAsset * r.principalSharesAtSettle) / r.totalPrincipalAsset;
-        }
-
-        if (r.forfeitPrizeShares > 0) {
-            sharesToReturn += (r.forfeitPrizeShares * userAsset) / r.totalPrincipalAsset;
-        }
+        uint256 sharesToReturn = _withdrawableShares(rid, r, msg.sender, userAsset);
 
         principalAsset[rid][msg.sender] = 0;
         principalShares[rid][msg.sender] = 0;
@@ -970,6 +995,17 @@ contract TicketPrizePoolV4 is IRandomnessOracleConsumer {
         return (uint128(principalAsset[rid][user]), uint128(principalShares[rid][user]));
     }
 
+    function getWithdrawableShares(uint256 rid, address user) external view returns (uint256) {
+        RoundData storage r = rounds[rid];
+        uint256 userAsset = principalAsset[rid][user];
+        if (r.state != RoundState.Settled || userAsset == 0) return 0;
+        return _withdrawableShares(rid, r, user, userAsset);
+    }
+
+    function getRoundTicketPrice(uint256 rid) external view returns (uint256) {
+        return rounds[rid].ticketPriceAtRoundOpen;
+    }
+
     function rangesLength(uint256 rid) external view returns (uint256) {
         return rounds[rid].ranges.length;
     }
@@ -1005,6 +1041,23 @@ contract TicketPrizePoolV4 is IRandomnessOracleConsumer {
     // ---------------------------------------------------------------------
     // Internal helpers
     // ---------------------------------------------------------------------
+
+    function _withdrawableShares(
+        uint256 rid,
+        RoundData storage r,
+        address user,
+        uint256 userAsset
+    ) internal view returns (uint256 sharesToReturn) {
+        if (r.principalSharesAtSettle == 0 || r.principalSharesAtSettle >= r.totalPrincipalShares) {
+            sharesToReturn = principalShares[rid][user];
+        } else {
+            sharesToReturn = (userAsset * r.principalSharesAtSettle) / r.totalPrincipalAsset;
+        }
+
+        if (r.forfeitPrizeShares > 0) {
+            sharesToReturn += (r.forfeitPrizeShares * userAsset) / r.totalPrincipalAsset;
+        }
+    }
 
     function _selectWinners(bytes32 randomNumber, uint32 totalTickets, uint8 desiredWinners)
         internal
@@ -1059,6 +1112,13 @@ contract TicketPrizePoolV4 is IRandomnessOracleConsumer {
     function _safeTransferFrom(address token, address from, address to, uint256 amount) internal {
         (bool success, bytes memory data) = token.call(
             abi.encodeWithSelector(IERC20Minimal.transferFrom.selector, from, to, amount)
+        );
+        if (!success || (data.length != 0 && !abi.decode(data, (bool)))) revert BadAssetTransfer();
+    }
+
+    function _safeYieldVaultTransferFrom(address from, address to, uint256 amount) internal {
+        (bool success, bytes memory data) = address(yieldVault).call(
+            abi.encodeWithSelector(IYieldVault.transferFrom.selector, from, to, amount)
         );
         if (!success || (data.length != 0 && !abi.decode(data, (bool)))) revert BadAssetTransfer();
     }

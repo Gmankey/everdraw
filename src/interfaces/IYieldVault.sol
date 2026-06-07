@@ -6,5 +6,6 @@ interface IYieldVault {
     function previewDeposit(uint256 assets) external view returns (uint256 shares);
     function previewRedeem(uint256 shares) external view returns (uint256 assets);
     function transfer(address to, uint256 amount) external returns (bool);
+    function transferFrom(address from, address to, uint256 amount) external returns (bool);
     function balanceOf(address account) external view returns (uint256);
 }
