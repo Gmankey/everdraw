@@ -79,6 +79,8 @@ This scales to arbitrary winner counts at constant settlement cost, and is the r
 
 ## R5 — Sponsor / reward funding models (V4 has exactly one; partners need several)
 
+> **Operator directive (hard requirement):** ALL of 5a–5d below MUST work in V5 — they are must-haves, not candidates. Sponsorship in V4 is effectively single-purpose and does not serve real partner needs; V5 is not acceptable unless every sponsor model functions. Root cause acknowledged: the V4 sponsor design (ADR-0026) shipped only "drop-in donation" and deferred the rest without surfacing that this left most partner sponsorship scenarios unsupported.
+
 **Problem.** V4 has a single sponsor model — `sponsor()` deposits the full contribution into the yield vault, adds **all** the resulting shares (principal + yield) to the prize, pays winners in **yield-vault shares**, and is **non-refundable** except on a fully-skipped round (`claimSponsorRefund` requires `wasSkipped`). The sponsor keeps nothing and cannot redeem principal on a settled round. Every realistic partner sponsorship pattern other than "donate the vault's asset, staked" is unsupported:
 
 | Model | Sponsor intent | V4 |
