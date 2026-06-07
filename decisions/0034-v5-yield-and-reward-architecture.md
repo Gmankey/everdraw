@@ -75,9 +75,13 @@ This scales to arbitrary winner counts at constant settlement cost, and is the r
 
 **Decision needed:** keep the existing ≤32 discrete-transfer path for jackpot/tiered vaults, and add merkle mode as a separate vault mode for mass distribution — rather than forcing all vaults through merkle (which adds a claim step even for a single winner). Confirm in the V5 spec.
 
+**Constraint (carry from ADR-0028 / pauser review):** the merkle-claim path must be **non-pausable**, exactly like `withdrawPrincipal` / `claimDeferred` / `claimSponsorRefund` are today (V4 gates only buys and progression with `whenNotPaused`, never claims/withdrawals). A pause must never be able to trap winnings. Reuse the unified pull-claim path from the deferred-claim cross-cutting section so merkle claims inherit both the non-pausable property and the defer-on-failure guarantee.
+
 ---
 
 ## R5 — Sponsor / reward funding models (V4 has exactly one; partners need several)
+
+> **Operator directive (hard requirement):** ALL of 5a–5d below MUST work in V5 — they are must-haves, not candidates. Sponsorship in V4 is effectively single-purpose and does not serve real partner needs; V5 is not acceptable unless every sponsor model functions. Root cause acknowledged: the V4 sponsor design (ADR-0026) shipped only "drop-in donation" and deferred the rest without surfacing that this left most partner sponsorship scenarios unsupported.
 
 **Problem.** V4 has a single sponsor model — `sponsor()` deposits the full contribution into the yield vault, adds **all** the resulting shares (principal + yield) to the prize, pays winners in **yield-vault shares**, and is **non-refundable** except on a fully-skipped round (`claimSponsorRefund` requires `wasSkipped`). The sponsor keeps nothing and cannot redeem principal on a settled round. Every realistic partner sponsorship pattern other than "donate the vault's asset, staked" is unsupported:
 
@@ -96,6 +100,47 @@ This scales to arbitrary winner counts at constant settlement cost, and is the r
 Recurrence (5c auto-roll) is the operationally important one: a partner funds a multi-week campaign once and the contract re-enters their principal each round automatically — no weekly manual transaction. This is core to the CampaignManager UX.
 
 **Pairs with R2/R4:** 5a is the sponsor-side of the decoupled reward asset (R2); a reward-token, many-winner campaign is 5a + R4 (merkle) + R2. These should be specced as one coherent **campaign funding** model rather than four bolt-ons.
+
+---
+
+## R6 — Fee-model flexibility (operator directive)
+
+The V4 fee router (ADR-0027) is correct and resilient, but the fee logic is **hardwired to "bps of the deposit-asset's yield-vault shares, on the whole prize."** Three flexibilities are required for V5; surfaced during the V4 feature review.
+
+| # | Capability | V4 today |
+|---|---|---|
+| **6a — Configurable fee base** | Choose whether the fee applies to **all** prize yield (participant **+** sponsored) or to **participant yield only** (sponsored amount exempt). Possibly per-vault or per-sponsorship. | ❌ Hardwired: fee = bps of `totalPrize = participantYield + sponsoredPrize`. Sponsored money is always taxed; no exemption switch. ADR-0026 rejected the participant-only option as "ambiguous" — wrong call given R5. |
+| **6b — Fee under value-based / rebasing accounting** | Fee must be derived from the **value delta** captured by R1/R3, not from a share count. | ❌ Fee is bps of `totalPrizeShares`. Under rebasing (R3) `totalPrizeShares ≈ 0`, so the fee would be **0**. The fee is only as correct as the share-appreciation assumption beneath it. |
+| **6c — Fee-token handling for different-token yield/rewards** | When yield or rewards accrue in a **different token** than the deposit (R1 emissions, R2 reward pool), decide where the fee is taken: in that token, in the deposit asset, or as a **multi-token** fee. | ❌ Fee is always collected in the **same** token as the prize (the deposit asset's yield-vault shares). Separate reward-token yield is not captured by V4, so it is neither prized nor fee'd. |
+
+**What does work in V4 (no change needed):** the operator has **full control over fee recipient wallet(s)** and can split across up to 8, each with independent bps (`setFeeAllocations`); there is **no hidden/default fee sink** — empty allocation = zero fee. Recipient-wallet control and splitting are not V5 gaps.
+
+**Proposed solution.** Fold the fee into the same R1/R2 accounting redesign rather than treating it as a standalone module: compute the fee against the **value delta** (6b), expose a **fee-base flag** (all-yield vs participant-only, 6a), and let the fee be denominated in the **reward/yield token** the R1/R2 pipeline already handles (6c). The fee router's recipient/split/cap/snapshot logic (ADR-0027) carries over; its **payout/deferred-claim path (ADR-0028) does NOT carry over unchanged** once fees can be a different token — see the cross-cutting note below.
+
+**Pairs with R1/R2/R3:** 6b and 6c are not independent — they are determined by whatever yield-accounting and reward-asset model R1/R2/R3 land on. Spec the fee base **with** that accounting, not after.
+
+---
+
+## Cross-cutting: the deferred-claim layer (ADR-0028) must be generalized
+
+The transfer-failure-resilience / deferred-claim machinery (ADR-0028) is **not an independent feature** — it is the single payout path that every winner, fee, sponsor, and principal disbursement flows through. Its entire design rests on one assumption:
+
+> **every payout is a fixed number of shares of the one `yieldVault` ERC-20**, transferred with a single `yieldVault.transfer(recipient, shares)`, and stored on failure as a fixed `uint256` per `(round, recipient, slot)`.
+
+Checking that assumption against the V5 proposals, **every one of them breaks it:**
+
+| Proposal | How it breaks the ADR-0028 payout assumption |
+|---|---|
+| **R1** (yield-strategy adapter) | If the strategy isn't a transferable ERC-20 share, there is nothing to `.transfer`; payout becomes a redeem/claim *through the strategy* — an external call in the (already failure-sensitive) payout path. |
+| **R2** (decoupled reward token) | Payout is in a **different token**; `pendingClaims[rid][addr][slot] → uint256` records one token's amount with no token field. Needs `(token, amount)` per slot. |
+| **R3** (rebasing) | A deferred claim stores a **fixed** amount; under a rebasing payout token the correct amount drifts between defer-time and claim-time. Must store a proportion/value, not a fixed number. |
+| **R4** (>32 winners, merkle) | Winner slots `0x00–0x1f` cap winners at 32 (slot-namespace limit). And merkle-claim is a **second pull mechanism** that itself needs defer-on-failure — the two pull paths must be unified, not duplicated. |
+| **R5b/5c/5d** (unstaked / principal-retaining sponsor) | 5b pays a **raw, unstaked** token; the current path can only move `yieldVault` shares. 5c/5d add a principal-redeem path that also needs deferral. |
+| **R6c** (different-token fee) | Same multi-token problem as R2, on the fee leg. |
+
+**Conclusion / requirement.** The V5 spec must treat the deferred-claim layer as a **shared component to be re-generalized**, not lifted from V4 unchanged. Concretely it needs: a **per-slot `(token, amount-or-proportion)`** record instead of a bare share count; a **payout abstraction** that can move a raw ERC-20, redeem through a yield strategy, *or* settle a merkle claim — each wrapped in the same defer-on-failure guarantee; and a **single unified pull-claim path** shared with R4's merkle distribution. The slot-namespace byte must also grow (or be replaced) to lift the 32-winner cap. The *guarantee* of ADR-0028 (one failing payout can never freeze a round, nothing is ever lost) is correct and must be preserved — but the *implementation* is coupled to the single-share-token world and is rebuilt alongside R1/R2/R3/R4/R5.
+
+This is the load-bearing dependency that ties the otherwise-independent R-workstreams together: **R1, R2, R3, R4, R5, and R6 all converge on the payout path.** It should be specced first, as the substrate the others build on.
 
 ---
 
