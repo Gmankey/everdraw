@@ -75,6 +75,8 @@ This scales to arbitrary winner counts at constant settlement cost, and is the r
 
 **Decision needed:** keep the existing ≤32 discrete-transfer path for jackpot/tiered vaults, and add merkle mode as a separate vault mode for mass distribution — rather than forcing all vaults through merkle (which adds a claim step even for a single winner). Confirm in the V5 spec.
 
+**Constraint (carry from ADR-0028 / pauser review):** the merkle-claim path must be **non-pausable**, exactly like `withdrawPrincipal` / `claimDeferred` / `claimSponsorRefund` are today (V4 gates only buys and progression with `whenNotPaused`, never claims/withdrawals). A pause must never be able to trap winnings. Reuse the unified pull-claim path from the deferred-claim cross-cutting section so merkle claims inherit both the non-pausable property and the defer-on-failure guarantee.
+
 ---
 
 ## R5 — Sponsor / reward funding models (V4 has exactly one; partners need several)
