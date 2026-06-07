@@ -1,6 +1,6 @@
 # ADR-0035 — V4.1: native shMON direct deposit (priority, pre-launch)
 
-- **Status:** Proposed (pending operator confirmation of the two open choices below)
+- **Status:** Accepted (2026-06-07; deploy timing confirmed by operator: V4.1-A now, V4.1-B at +3.5 days)
 - **Date:** 2026-06-07
 - **Deciders:** Operator (PM)
 - **Relates to:** ADR-0032 (V4 launch record), ADR-0033 (cadence re-anchor), ADR-0010 (two-vault stagger), `tasks/feature-parity-checklist.md`
@@ -50,9 +50,9 @@ Nothing else is bundled. Scope is deliberately small to keep the audit/redeploy 
 
 No new oracle, keeper, or off-chain dependency is introduced.
 
-## Open choice (operator to confirm before builder code)
+## Deploy timing (confirmed)
 
-**Deploy timing under the stagger:** anchors must be 3.5 days apart (ADR-0010, now machine-enforced). Proposed: deploy **V4.1-A now and V4.1-B at +3.5 days** (clean stagger, vault B joins mid-ramp). Alternative schedules can be tied to the launch date if preferred.
+**V4.1-A deploys now; V4.1-B deploys at +3.5 days**, satisfying the ADR-0010 stagger (machine-enforced by the deploy guard, which reads V4.1-A's anchor as `STAGGER_REFERENCE_VAULT` for B). Vault A carries shMON deposits from launch; B falls in at the correct cadence mid-ramp.
 
 (Deposit assets are **not** an open choice: V4.1 keeps native MON and adds shMON — additive. shMON-only was never considered.)
 
