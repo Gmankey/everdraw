@@ -25,6 +25,22 @@ const info = await pool.getRoundInfo(roundId)
 const [winners, winningTickets, prizeShares] = await pool.getRoundWinners(roundId)
 ```
 
+### Ticket price: read the live global, and don't assume it's the in-flight round's price
+
+A buy is charged at the price that was in effect **when the round opened** — the contract snapshots it per round and computes `cost = ticketCount × roundOpenPrice` itself. The owner can change the price (`setTicketPrice`, bounded ±10× per call), and that change applies to the **next** round, never the round already in progress.
+
+There is **no getter for a round's snapshotted price** — `getRoundInfo` does not return it, and the round struct is internal. The only price getter is the live global:
+
+```javascript
+const price = await pool.ticketPriceAsset()   // live/global price, in asset units (wei)
+const cost  = BigInt(ticketCount) * price     // correct ONLY if no reprice since the round opened
+```
+
+So `ticketPriceAsset()` equals what the active round charges **only if the price hasn't changed since that round opened.** Two consequences for integrators:
+
+- **Don't compute and display a cost from `ticketPriceAsset()` and assume the contract will charge exactly that** if a reprice could have happened mid-round. (This is the bug we hit on our own frontend — reading the global price while the contract charged the round-open snapshot.) The contract is authoritative; it computes the cost from the snapshot regardless of what you show.
+- **Operationally, change the price only between rounds** (while no round is mid-sale) so the live global and the in-flight round's charged price never diverge. EverDraw's own operations follow this rule.
+
 ## Checking a user position
 
 ```javascript
