@@ -1,69 +1,65 @@
 # Round Lifecycle
 
-Every round runs for one week. The first 24 hours are the deposit window. The next 6 days are the lock, where your deposit earns staking yield. At the end of the lock, a winner is drawn and the previous round opens for claim and withdrawal. The same vault's next deposit window opens at that exact moment.
-
-The UI walks you through 4 stages.
+Every vault runs in repeating rounds. A round opens for deposits, locks while it earns yield, draws its winner(s), and then opens for claims and withdrawals as the next round begins. The app walks you through these stages with a status ring and countdown.
 
 ---
 
 ## 1. Deposit
 
-**Duration: 24 hours.**
+The vault is open and accepting tickets. Buy at any point during the deposit window. Each ticket costs the vault's ticket price in MON, and your deposit is held as shMON inside the vault — yield starts accruing the moment your transaction confirms.
 
-The vault is open. Buy tickets at any point in the window. Each ticket costs 1 MON, and your deposit is held as shMON inside the vault. Yield starts accruing the moment your transaction confirms.
-
-The countdown ring runs green. Buys are disabled in the final 30 seconds before the window closes to avoid transactions reverting on the boundary.
-
-You cannot withdraw mid round. Plan your deposit timing accordingly.
+The status ring runs green while deposits are open. Buys are disabled in the final seconds before the window closes so transactions don't revert on the boundary. You cannot withdraw mid-round, so plan your deposit timing.
 
 ---
 
-## 2. Yield Accruing
+## 2. Yield Accruing (locked)
 
-**Duration: 6 days.**
-
-The deposit window has closed. Your shMON sits in the vault and earns Monad's native staking yield. The countdown ring runs purple. Nothing else happens on chain. There is no internal unstaking, the contract holds shMON the whole time.
-
-The yield earned during these 6 days is the prize. The longer the lock, the bigger the pot.
+The deposit window has closed and the round is locked. Your shMON sits in the vault earning Monad's native staking yield. The status ring runs purple. The yield earned during the lock is the prize — a longer lock and a larger pool mean a bigger prize.
 
 ---
 
-## 3. Winner Revealed
+## 3. The Draw
 
-When the lock countdown reaches zero, the keeper closes the round and records a target block number on chain. Three blocks later (around six seconds on Monad), it reads that block's hash and uses it to compute the winning ticket. The winner's address is written to chain immediately.
+When the lock ends, the round is committed and a verifiable random draw is requested. Within seconds to minutes, the randomness is delivered and the winning ticket(s) are computed and written on-chain. At the same moment the round settles, the vault's next deposit window opens — the cycle restarts with no gap.
 
-At the same moment the round closes, the vault's next deposit window opens. Vault A re-opens every Wednesday at 13:00 UTC. Vault B every Sunday at 01:00 UTC. The cycle restarts with no gap.
+The randomness comes from an external verifiable source and is committed before it can be known, so nobody — including the operator — can predict or influence the outcome in advance. The result is fully reproducible from on-chain data.
 
-The randomness is verifiable. The target block is committed before it is mined, so nobody, including the keeper, can know the winning number in advance.
+[How winners are selected →](winner-selection.md)
 
 ---
 
 ## 4. Claim / Withdraw
 
-The just-finished round becomes available for action.
+The just-settled round becomes available for action:
 
-- **Winners** claim the prize.
-- **Everyone else** withdraws their principal.
+- **Winners** claim their prize.
+- **Everyone else** withdraws their full principal.
 
-Claims and withdrawals stay open indefinitely. Funds sit in the contract until you action them. There is no expiry.
+Claims and withdrawals never expire. Funds stay in the contract until you action them, and you can return at any time to collect.
 
 ---
 
-## Timeline at a glance
+## At a glance
 
-| Stage | Duration | Happening |
+| Stage | What's happening | Status ring |
 |---|---|---|
-| Deposit | 24 hours | Tickets accepted |
-| Yield Accruing | 6 days | shMON earns staking yield |
-| Winner Revealed | seconds | Draw runs, next deposit window opens |
-| Claim / Withdraw | indefinite | Funds available to action |
+| Deposit | Tickets accepted | Green |
+| Yield Accruing | shMON earns staking yield | Purple |
+| Draw | Winner(s) selected, next round opens | — |
+| Claim / Withdraw | Funds available, no expiry | — |
 
 ---
 
 ## Edge cases
 
-**Skipped.** If nobody bought tickets in the round, no draw runs. The next deposit window opens on schedule. No funds are at risk because there were none.
+**No participants.** If nobody buys tickets in a round, no draw runs and the next round simply opens. Any sponsor contributions to that round are refundable.
 
-**Failed.** If the keeper somehow misses the settlement window for more than 255 blocks (Monad's block hash retention limit), the round is finalized without a draw and every depositor can withdraw their original principal. No prize is paid. This has never happened in production and is not a state users should plan around.
+**Randomness timeout.** Randomness has a built-in timeout. If the draw isn't delivered in time, the round can be settled with no winner and every depositor withdraws their full principal. No prize is paid, and no round can be permanently locked.
 
+**Temporary pause.** A vault can be paused, which stops new deposits while leaving existing claims and withdrawals fully available. A paused vault shows a closed status in the app.
 
+**Deferred payouts.** In the rare event a payout transfer can't complete (for example, if the underlying yield token is briefly unavailable), the amount is recorded as a pending claim you can retry later — it is never lost.
+
+## Multiple vaults
+
+EverDraw runs more than one vault, on staggered schedules, so there is regularly a draw approaching across the protocol. Each vault is independent: it has its own ticket price, round timing, and prize structure, and behaves identically to the lifecycle above.

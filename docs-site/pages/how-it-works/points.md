@@ -20,15 +20,15 @@ round_points = (tickets × streak_multiplier) + bonuses
 - **Streak multiplier:** see below.
 - **Bonuses:** additional points for winning, hitting milestones, or playing both vaults in a week.
 
-Example. You bought 5 tickets in a Vault A round, you are on a 6 week streak (×1.10), you did not win and you don't have a deposit in Vault B that week. Round points = `(5 × 1.10) + 0 = 5.5`, rounded.
+Example. You bought 5 tickets in a round, you are on a 6-week streak (×1.10), you did not win, and you don't hold a position in another vault that week. Round points = `(5 × 1.10) + 0 = 5.5`, rounded.
 
 ---
 
 ## Streak
 
-Your streak is the number of consecutive weeks you held an active deposit in any vault. Every Wednesday at 13:00 UTC the system checks. If you have at least one open or locked position in either Vault A or Vault B, your streak goes up by 1. If you don't, it resets to 0.
+Your streak is the number of consecutive weeks you held an active deposit in any vault. The system checks once per weekly cycle: if you have at least one open or locked position in any vault, your streak goes up by 1. If you don't, it resets to 0.
 
-You don't need to deposit in both vaults each week. One is enough. 
+You don't need to deposit in more than one vault each week. One is enough.
 ---
 
 ## Bonuses
