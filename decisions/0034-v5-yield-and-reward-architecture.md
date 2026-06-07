@@ -77,9 +77,31 @@ This scales to arbitrary winner counts at constant settlement cost, and is the r
 
 ---
 
+## R5 — Sponsor / reward funding models (V4 has exactly one; partners need several)
+
+**Problem.** V4 has a single sponsor model — `sponsor()` deposits the full contribution into the yield vault, adds **all** the resulting shares (principal + yield) to the prize, pays winners in **yield-vault shares**, and is **non-refundable** except on a fully-skipped round (`claimSponsorRefund` requires `wasSkipped`). The sponsor keeps nothing and cannot redeem principal on a settled round. Every realistic partner sponsorship pattern other than "donate the vault's asset, staked" is unsupported:
+
+| Model | Sponsor intent | V4 |
+|---|---|---|
+| **5a — Reward-token donation** | Drop in a *different* token (e.g. the protocol's own token); winners receive that token; sponsor accepts non-refundability | ❌ sponsor must use the vault asset (same wall as R2) |
+| **5b — Direct (unstaked) reward** | Add a reward in the *vault's* asset paid to winners **as the raw asset**, not converted to yield-vault shares | ❌ V4 always stakes; winners get shares, not the raw token |
+| **5c — Principal-retaining, yield-only, recurring** | **Keep** the sponsored principal, donate only the **yield** it earns, and **auto-roll** the principal to sponsor subsequent rounds without manual redeem/redeposit | ❌ V4 donates everything; no principal retention, no recurrence (ADR-0026 deferred the "stake-yield sponsor" half to V4.1; auto-roll is new) |
+| **5d — Sponsor principal redemption** | Redeem the retained principal | ❌ only meaningful once 5c exists; today a sponsor can never redeem on a settled round |
+
+**Proposed solution.** A **sponsor-mode** parameter per sponsorship (or per campaign), spanning:
+- **Asset:** vault asset *or* an arbitrary reward token (shares the R2 reward-pool mechanism).
+- **Custody:** staked (current) *or* held raw and paid directly (5b).
+- **Lifecycle:** one-shot donation (current) *or* principal-retaining with yield-only contribution and **auto-roll** to the next N rounds, with an explicit `redeemSponsorPrincipal()` (5c/5d). Principal-retaining sponsors are tracked separately from depositor principal and from one-shot `sponsoredPrize`, with their own refund/redeem accounting.
+
+Recurrence (5c auto-roll) is the operationally important one: a partner funds a multi-week campaign once and the contract re-enters their principal each round automatically — no weekly manual transaction. This is core to the CampaignManager UX.
+
+**Pairs with R2/R4:** 5a is the sponsor-side of the decoupled reward asset (R2); a reward-token, many-winner campaign is 5a + R4 (merkle) + R2. These should be specced as one coherent **campaign funding** model rather than four bolt-ons.
+
+---
+
 ## Why these are V5, not a V4 patch
 
-R1–R3 are accounting and prize-flow redesigns, not additive functions. They change how yield is measured and how prizes are funded — the core of the contract. They cannot be bolted onto the deployed V4 vaults; they define the next contract generation. (The immediate V4.x shMON-deposit fix, ADR-pending, is separate and small.)
+R1–R5 are accounting and prize-flow redesigns, not additive functions. They change how yield is measured, how prizes are funded, and how sponsors retain/redeem capital — the core of the contract. They cannot be bolted onto the deployed V4 vaults; they define the next contract generation. (The immediate V4.x shMON-deposit fix, ADR-pending, is separate and small.)
 
 ## Consequences / sequencing
 
