@@ -1,4 +1,4 @@
-# ADR-0034 — V5 Architecture Requirements: Flexible Yield, Decoupled Rewards, Rebasing
+# ADR-0034 — V5 Architecture Requirements: Flexible Yield, Decoupled Rewards, Rebasing, Mass Winner Distribution
 
 **Status:** Proposed (draft — captures operator-surfaced requirements for V5; not yet accepted).
 **Date:** 2026-06 (drafted during a feature-scrutiny session)
@@ -57,6 +57,23 @@ Design questions to resolve in the V5 spec: reward distribution shape (per winne
 **Problem.** V4's share-count accounting only captures yield delivered as **rising share price with a fixed share count** (shMON-style). A **rebasing** source delivers yield by growing `balanceOf` while price stays ~1:1 → V4 sees **zero yield** and the rebased gains sit stranded. The exact-amount deposit check (`received == amount`) can also misbehave with rebasing balances.
 
 **Proposed solution.** Solved by R1's **value-based accounting**: measuring `totalAssets()` (held value) at deposit and settle captures rebasing naturally, because it measures value rather than shares. So R1 and R3 converge on the same design — the yield-strategy adapter with a value measure handles appreciating-share *and* rebasing sources. No separate mechanism needed beyond R1.
+
+---
+
+## R4 — Large-scale winner distribution (>32 winners)
+
+**Problem.** V4 caps winners at `MAX_WINNERS = 32`, because each winner costs ~25k gas of storage writes at settlement and an O(n) iteration at claim — N discrete on-chain prize transfers don't scale. But a protocol running a community campaign may legitimately want to reward **hundreds or thousands** of winners (e.g. "1,000 community members win a share of the pool"). V4 cannot do this, and simply raising the constant doesn't fix it — it just moves the gas cliff.
+
+**Proposed solution — merkle-claim distribution mode.** For high winner counts, don't pay N transfers at settlement. Instead:
+- The draw / off-chain process computes the winner set and per-winner amounts.
+- The contract stores only a **merkle root** of `(winner, amount)` leaves at settlement — O(1) settlement gas regardless of winner count.
+- Winners **claim against the root** (`claim(amount, proof)`), each paying their own claim gas. Unclaimed funds follow the same no-expiry / deferred semantics as today.
+
+This scales to arbitrary winner counts at constant settlement cost, and is the right primitive past ~32 (the small-N path stays as-is for jackpot/tiered vaults; merkle mode is opt-in for mass-distribution vaults).
+
+**Pairs with R2.** "Many winners of a partner token" is the canonical mass-reward campaign — it needs *both* the decoupled reward asset (R2) *and* merkle distribution (R4). They should be specced together as the **campaign / CampaignManager** feature set: a protocol funds a reward pool in its token (R2), the draw selects a large winner set, and winners claim via merkle (R4). Note that with a verifiable on-chain random seed, the winner-set computation must be reproducible/auditable off-chain so the merkle root can't be gamed by whoever builds it — a design detail to pin in the V5 spec.
+
+**Decision needed:** keep the existing ≤32 discrete-transfer path for jackpot/tiered vaults, and add merkle mode as a separate vault mode for mass distribution — rather than forcing all vaults through merkle (which adds a claim step even for a single winner). Confirm in the V5 spec.
 
 ---
 
