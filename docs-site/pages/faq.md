@@ -40,7 +40,7 @@ They sit in the contract until the winner claims. There is no expiry and no roll
 
 **Is the draw fair?**
 
-Yes, and verifiable on-chain. EverDraw uses Pyth Entropy: an external provider commits to a hashed random value before the request is made, and the contract supplies its own seed. The two are combined so neither party can bias the result, and the winner is reproducible by anyone from the on-chain random value and the round's ticket count. See [Winner Selection](how-it-works/winner-selection.md).
+Yes, and verifiable on-chain. EverDraw uses Pyth Entropy: an external provider commits to a hashed random value before the request is made, and the contract supplies its own seed. The two are combined so neither party can bias the result, and the winner is reproducible by anyone from the on-chain random value and the round's ticket count. See [Winner Selection](/how-it-works/winner-selection).
 
 ---
 
@@ -64,13 +64,13 @@ No. Once you buy a ticket in a vault, your principal stays there until the round
 
 **Is EverDraw audited?**
 
-EverDraw has been through internal security review (manual methodology plus static analysis), with no high- or medium-severity issues at high confidence. A formal external audit is planned. See the [Security](security.md) page for current status and the audit reports.
+EverDraw has been through internal security review, and a formal external audit is planned before TVL scales beyond bootstrapping levels. See the [Security](/security) page for current status and published audit reports.
 
 ---
 
 **Can I buy tickets without the EverDraw UI?**
 
-Yes. The contracts are verified on the Monad explorer and every write function is public. You can call the vault's deposit function directly with any wallet or library that speaks the ABI. The current contract addresses live in the canonical deployment manifest linked from the [Security](security.md) page.
+Yes. The contracts are verified on the Monad explorer and every write function is public. You can call the vault's deposit function directly with any wallet or library that speaks the ABI. The current contract addresses live in the canonical deployment manifest linked from the [Security](/security) page.
 
 ---
 

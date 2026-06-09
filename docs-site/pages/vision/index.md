@@ -22,8 +22,8 @@ The roadmap builds from a single product into ecosystem wide prize infrastructur
 
 ---
 
-[Phase 1: Launch](phase-1.md)
-[Phase 2: Continuous and Campaigns](phase-2.md)
-[Phase 3: Multi Asset and Ecosystem](phase-3.md)
-[Phase 4: Platform](phase-4.md)
-[Phase 5: Infrastructure](phase-5.md)
+[Phase 1: Launch](/vision/phase-1)
+[Phase 2: Continuous and Campaigns](/vision/phase-2)
+[Phase 3: Multi Asset and Ecosystem](/vision/phase-3)
+[Phase 4: Platform](/vision/phase-4)
+[Phase 5: Infrastructure](/vision/phase-5)
