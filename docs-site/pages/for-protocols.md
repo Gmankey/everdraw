@@ -68,4 +68,4 @@ Verification is on chain. No trust assumptions, no self reporting.
 
 The CampaignManager ships in Phase 2. To pre coordinate a campaign or get on the partner list, contact the EverDraw team.
 
-[Contact](#)
+[Contact the EverDraw team](https://x.com/everdrawing)

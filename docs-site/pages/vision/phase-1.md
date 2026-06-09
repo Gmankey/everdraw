@@ -1,6 +1,6 @@
 # Phase 1: Launch
 
-**Timeline: Now**
+**Timeline: Live**
 
 Ship the product. Prove the loop works in the real world.
 
@@ -8,7 +8,7 @@ Phase 1 is deliberately simple. Two MON vaults run on offset weekly schedules so
 
 **What launches:**
 
-- MON prize vault contracts on Monad mainnet (V2)
+- MON prize vault contracts on Monad mainnet
 - Two vault staggered cadence
 - Automated keeper for commit and settle
 - Live winner results on chain and in the UI
@@ -16,7 +16,7 @@ Phase 1 is deliberately simple. Two MON vaults run on offset weekly schedules so
 
 **What we are validating:**
 
-- What gets users to deposit into Everdraw?
+- What gets users to deposit into EverDraw?
 - Do winners share?
 - Does the engagement loop work?
 

@@ -2,9 +2,9 @@
 
 ## Audit status
 
-The current `TicketPrizePoolV4` contract has been through internal security review combining a structured manual methodology (map → hunt → attack → verify, with skeptic-judge conflict resolution) and automated static analysis (Slither). The review found **no critical, high, or medium-severity vulnerabilities at high confidence**; the only items raised were low-severity, defense-in-depth improvements, and the automated pass independently corroborated the manual findings.
+The current `TicketPrizePoolV4` contract has an internal review record combining structured manual review and automated static analysis. The latest published full audit report in the repository is still the V3 internal audit; the V4 review record should be published as a report before the docs present it as the canonical audit artifact.
 
-→ **Latest report: [V4 internal audit (`AUDIT_REPORT_V4_2026-06-05.md`)](https://github.com/Gmankey/everdraw/blob/staging/security_audit/AUDIT_REPORT_V4_2026-06-05.md).** All audit reports live in the [`security_audit/`](https://github.com/Gmankey/everdraw/tree/staging/security_audit) directory.
+→ **Latest published report: [V3 internal audit (`AUDIT_REPORT_V3_2026-05-28.md`)](https://github.com/Gmankey/everdraw/blob/staging/security_audit/AUDIT_REPORT_V3_2026-05-28.md).** The V4 internal review is tracked in [`tasks/v4-internal-audit-2026-06-01.md`](https://github.com/Gmankey/everdraw/blob/staging/tasks/v4-internal-audit-2026-06-01.md). All audit reports live in the [`security_audit/`](https://github.com/Gmankey/everdraw/tree/staging/security_audit) directory.
 
 A formal third-party audit is planned **before scaling TVL beyond bootstrapping levels.**
 
@@ -20,7 +20,7 @@ A formal third-party audit is planned **before scaling TVL beyond bootstrapping 
 
 **Non-upgradeable.** No proxy, no upgrade key — the deployed contract is the contract. This removes upgrade-related attack vectors. New versions require a fresh, separately-deployed contract.
 
-**Verifiable randomness.** Winner selection uses [Pyth Entropy](https://docs.pyth.network/entropy) — a two-party commit-reveal where the provider commits to a value before the request and the contract supplies its own seed. Neither party can bias the outcome, and any change to the entropy provider is gated behind a public time-delay so depositors can observe it in advance. If randomness ever fails to arrive, a round can be force-settled with full principal returned — no round can be permanently stuck. See [Winner Selection](how-it-works/winner-selection.md).
+**Verifiable randomness.** Winner selection uses [Pyth Entropy](https://docs.pyth.network/entropy) — a two-party commit-reveal where the provider commits to a value before the request and the contract supplies its own seed. Neither party can bias the outcome, and any change to the entropy provider is gated behind a public time-delay so depositors can observe it in advance. If randomness ever fails to arrive, a round can be force-settled with full principal returned — no round can be permanently stuck. See [Winner Selection](/how-it-works/winner-selection).
 
 **Bounded admin surface.** The owner's powers are limited and cannot reach user funds. In particular, the owner cannot:
 
@@ -61,7 +61,7 @@ If you build on or audit EverDraw, **read the relevant ADRs first** — contract
 
 Every active contract is verified on the Monad explorer — source, constructor arguments, and compiler settings are public and independently checkable. Because contract addresses change across protocol generations, the **canonical, always-current list of deployed addresses** (with runtime bytecode hashes) lives in the deployment manifest: [`deployments/monad-mainnet.json`](https://github.com/Gmankey/everdraw/blob/staging/deployments/monad-mainnet.json).
 
-To confirm you're interacting with the audited build, match the bytecode hash from `cast code <address>` against the hash recorded in that manifest.
+To confirm you're interacting with the intended production build, match the bytecode hash from `cast code <address>` against the hash recorded in that manifest.
 
 ---
 
