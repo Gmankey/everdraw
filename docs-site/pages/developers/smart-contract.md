@@ -2,7 +2,7 @@
 
 EverDraw's current production contract is **`TicketPrizePoolV4`**. One instance is deployed per vault, and the protocol runs more than one vault on staggered schedules. V4 supports native or ERC-20 deposits, single or multi-winner rounds, sponsor-funded prizes, a multi-recipient protocol-fee router, and verifiable randomness via a pluggable oracle (Pyth Entropy in production).
 
-The trust model is documented in the project's [ADRs](https://github.com/Gmankey/everdraw/tree/staging/decisions); the V4 design spec is ADR-0024 through ADR-0029, and the internal security review is in [`security_audit/`](https://github.com/Gmankey/everdraw/tree/staging/security_audit).
+The trust model is documented in the project's [ADRs](https://github.com/Gmankey/everdraw/tree/staging/decisions); the V4 design spec is ADR-0024 through ADR-0029, the V4.1 shMON-deposit update is ADR-0035, and the internal security review is in [`security_audit/`](https://github.com/Gmankey/everdraw/tree/staging/security_audit).
 
 ---
 
@@ -58,7 +58,7 @@ A round with zero tickets at deposit-window close is **skipped** directly to Set
 ## Read functions
 
 ```solidity
-function VERSION() external view returns (string memory);        // "4.0.0"
+function VERSION() external view returns (string memory);        // "4.1.0" on V4.1 vaults, "4.0.0" on V4.0 vaults
 function currentRoundId() external view returns (uint256);
 function ticketPriceAsset() external view returns (uint256);     // mutable per-vault price
 function numWinners() external view returns (uint8);
@@ -89,6 +89,8 @@ function getRoundWinners(uint256 rid) external view returns (
 );
 function getUserPosition(uint256 rid, address user)
     external view returns (uint128 principalAsset, uint128 principalShares);
+function getWithdrawableShares(uint256 rid, address user) external view returns (uint256);
+function getRoundTicketPrice(uint256 rid) external view returns (uint256);
 function getRoundFeeAllocation(uint256 rid, uint256 index) external view returns (address recipient, uint16 bps);
 function getRoundFeeAllocationLength(uint256 rid) external view returns (uint256);
 function getRoundMetadata(uint256 rid) external view returns (address campaign, bytes32 metadata);
@@ -118,6 +120,9 @@ function pendingClaimsTotal(uint256 rid, address user) external view returns (ui
 // Deposit. Native: msg.value must equal ticketCount × ticketPriceAtRoundOpen.
 function buyTickets(uint32 ticketCount) external payable;
 
+// V4.1 native-mode vaults only. User must approve shMON shares first.
+function buyTicketsShmon(uint32 ticketCount) external;
+
 // Sponsor a round's prize pool (funds earn yield; refundable if the round is skipped).
 function sponsor(uint256 rid, string calldata memo) external payable;        // native vaults
 function sponsorERC20(uint256 rid, uint256 amount, string calldata memo) external payable;  // erc-20 vaults
@@ -140,7 +145,7 @@ function claimDeferred(uint256 rid, uint8 slot) external;
 function claimAllDeferred(uint256 rid, uint8[] calldata slots) external;
 ```
 
-There is no `buyTicketsMON` / `buyTicketsShmon` in V4 — `buyTickets` is the single entry, with the deposit asset fixed by the vault's `depositMode`.
+V4.1 adds `buyTicketsShmon` for native-mode vaults while keeping the existing MON path through `buyTickets`. V4.0 vaults do not expose the shMON entrypoint. Use `VERSION()` and the deployment manifest before calling V4.1-only methods.
 
 ---
 
@@ -264,7 +269,7 @@ function totalSupply()           external view returns (uint256);  // sum across
 
 | Constant | Value | Meaning |
 |---|---|---|
-| `VERSION` | `"4.0.0"` | Contract version, for off-chain detection |
+| `VERSION` | `"4.1.0"` on V4.1 vaults, `"4.0.0"` on V4.0 vaults | Contract version, for off-chain detection |
 | `MAX_TOTAL_FEE_BPS` | `2000` | Protocol fee ceiling (20%), summed across recipients |
 | `MAX_WINNERS` | `32` | Maximum winning positions per vault |
 | `MAX_FEE_RECIPIENTS` | `8` | Maximum fee-allocation recipients |
