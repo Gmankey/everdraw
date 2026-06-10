@@ -75,10 +75,10 @@ The mechanic survives almost intact — it's already weekly — but every input 
 | Win bonus +25, Comeback King +100 | Unchanged (per draw won) | — |
 | Loss-streak bonuses (10/26/52 non-win weeks: +50/+200/+500) | Unchanged (consecutive eligible-but-no-win weeks) | Much more relevant in V5: everyone is in every draw |
 | First Deposit +25 | Unchanged | — |
-| **On the Double +50 (entered both vaults)** | **Retired at V5 launch** (one pool — nothing to double). Replace with **"Mover" +50: completed the V4→V5 migration** (withdrew V4, deposited V5 within 7 days) — keeps a one-shot bonus in the slot and directly incentivizes the migration we need. Re-introduce a two-pool bonus if/when a second V5 pool exists | The migration is the launch campaign; pay points for it |
+| **On the Double +50 (entered both vaults)** | **Retired at V5 launch** (one pool — nothing to double); no replacement bonus (operator decision 2026-06-10 — no Mover/migration bonus). Already-earned On-the-Double points are kept (history is history). Re-introduce a two-pool bonus if/when a second V5 pool exists | — |
 | Points awarded at round settle | **Awarded at draw finalization** (root finalized — not proposal, so a vetoed root never mints points) | Integrity under §4.4 |
 
-**Continuity decision (needs operator OK, flagged in open questions):** lifetime points, streaks, and earned bonuses **carry over** across the migration — a user who migrates within the grace window (propose: 4 weeks) keeps their streak unbroken. Breaking everyone's 8-week streaks as punishment for our redeploy would be hostile; the points DB is ours (indexer-side), so this is free to honor.
+**Continuity — DECIDED (operator, 2026-06-10): points, streaks, and earned bonuses carry over across the migration.** A user who migrates within a 4-week grace window keeps their streak unbroken (indexer-side; the points DB is ours to honor).
 
 **Profile page additions:** current average balance + live win chance mirrored from My Position; streak dots now also show *projected* continuation ("stay deposited to keep your streak" instead of "come back Friday").
 
@@ -87,12 +87,12 @@ The mechanic survives almost intact — it's already weekly — but every input 
 - Hero = this week's prize (live-growing) + countdown to draw + Deposit. No sales-window machinery anywhere: no open/closed badges, no vault A/B selector, no "next window" countdowns — delete, don't hide.
 - Deposit modal: MON and shMON tabs (both V4.1 paths carry over); cap-reached state ("Vault at capacity — cap raises as the protocol matures", per Q6 deposit cap) with a notify-me hook; min-deposit error stays generic (tunable).
 - Withdraw: always-on, shows accrued odds kept this week ("withdrawing now keeps your chances earned so far this week" — §3's exit semantics, true and reassuring).
-- **Move-to-V5 flow (launch banner, two transactions):** Step 1 `withdrawPrincipal` on V4 (returns shMON) → Step 2 approve+`depositShmon` on V5; progress UI handles wallet rejection mid-flow (resume from step 2); "Mover" bonus + streak carry-over shown as the reward. V4 pages stay reachable read-only until retirement.
+- **Move-to-V5 flow (launch banner, two transactions):** Step 1 `withdrawPrincipal` on V4 (returns shMON) → Step 2 approve+`depositShmon` on V5; progress UI handles wallet rejection mid-flow (resume from step 2); streak carry-over shown as the reason to migrate within the grace window. V4 pages stay reachable read-only until retirement.
 - Deferred-claims banner: carried from V4 unchanged (rare path, already designed).
 
-## 7. Open items for the operator (none block the pipeline; all block frontend build)
+## 7. Operator decisions (resolved 2026-06-10)
 
-1. **Points continuity across migration** — carry streaks/points per §5? (PM strongly recommends yes.)
-2. "Mover" migration bonus value (+50 proposed) and grace window (4 weeks proposed).
-3. Draw moment scheduling — period end Saturday 12:00 UTC proposed (pipeline spec §3: the 8h verify window must land in your waking hours).
-4. Whether Stats keeps a public combined V4+V5 "all-time prizes paid" figure (continuity of the headline number) — proposed yes.
+1. **Points continuity across migration: YES** — streaks/points/bonuses carry over (§5).
+2. **No migration ("Mover") bonus** — On-the-Double is retired with no replacement; streak carry-over is the migration incentive.
+3. **Draw moment:** Saturday 12:00 UTC accepted in principle; exact time finalized before M8 testnet soak (must keep the 8h verify window in operator waking hours — pipeline spec §3).
+4. **Stats keeps a combined V4+V5 all-time "total prizes paid" figure: YES** (headline continuity).
