@@ -1,6 +1,6 @@
 # ADR-0036 — V5 Architecture: TWAB Core, Generalized Payouts, Flexible Yield & Sponsorship
 
-**Status:** Proposed (full design; awaiting operator sign-off on the open decisions in §10, then builder review).
+**Status:** Proposed — amended after builder M0 review (Mendel, 2026-06-10; findings accepted: distribution/leaf model generalized, time-weighted sponsor fee attribution, shortfall withdrawal mode, yield-leg settlement at proposal, reward-token acceptance rules, verifiability wording, dependency table extensions, Merkl event semantics, keeper economics). Awaiting builder re-review of the amendments.
 **Date:** 2026-06-10
 **Parent:** ADR-0034 (V5 requirements R0–R6), `tasks/v5-design-handoff-to-builder.md` (scope + failure record), `docs-site/pages/vision/phase-2.md` (public promise).
 **Supersedes on V5:** the round/ticket model of ADR-0024/0025, the two-vault stagger of ADR-0010, the sponsor model of ADR-0026, and the implementation (not the guarantee) of ADR-0028. ADR-0027 (fee router recipients/splits) and ADR-0029 (randomness abstraction) carry forward. ADR-0006's Merkl event surface carries forward unchanged.
@@ -110,12 +110,13 @@ interface IYieldStrategy {
 
 The single payout path for every prize, fee, and reward disbursement. Principal does **not** flow through it (principal exits directly from PrizeVault; this keeps the highest-stakes path on the shortest code).
 
-- **One mechanism for any winner count: merkle claims.** Leaves are `(drawId, account, token, amount)`. A draw with 1 winner and a draw with 10,000 winners use the same path — this removes the V4 32-winner cap (R4), the slot-namespace byte, and the push/pull split in one move.
+- **One mechanism for any payout source or winner count: merkle claims over "distributions"** *(generalized per M0 findings 2–3)*. ClaimManager's unit is a **distribution**: a finalized payout tree registered by an authorized source contract, identified by `distributionId = keccak256(sourceContract, sourceKey)` (for DrawManager, `sourceKey = drawId`; for the V5.1 CampaignManager, `sourceKey = (campaignId, campaignDrawId)` — namespacing makes cross-source collisions impossible without ClaimManager changes). Leaves are `(LEAF_DOMAIN, distributionId, leafIndex, account, token, amount)`: the explicit `leafIndex` makes every leaf unique even when winner selection lands the same account multiple times (with-replacement sampling), when one account appears as both winner and fee recipient, or when one account receives multiple tokens. A distribution with 1 leaf and one with 10,000 use the same path — this removes the V4 32-winner cap (R4), the slot-namespace byte, and the push/pull split in one move. Per-distribution claimed-bitmap is indexed by `leafIndex`. A distribution may carry metadata (e.g. a campaign's eligibility root) for off-chain verification binding; ClaimManager stores it opaquely.
 - **"Automatic distribution" = the keeper executing claims on winners' behalf.** `claim(leaf, proof)` is permissionless and pays the leaf's account, never `msg.sender`. The keeper batch-executes all leaves after finalization (`claimMany`) — winners wake up paid, which is the phase-2.md promise — and any winner can always self-claim if the keeper is dead. Push and pull are the same code path.
-- **Defer-on-failure, per leaf, preserved from ADR-0028:** if a leaf's token transfer reverts or returns false, record `pendingClaims[drawId][account] → (token, amount)` and continue; `claimDeferred` retries later. One failing payout never blocks any other, and nothing is ever lost. Deferred records are `(token, amount)` pairs — multi-token-correct (R2/R6c) — and **never expire**.
+- **Keeper economics, stated honestly** *(added per M0 finding 11)*: in V5.0 the keeper is **protocol-operated** (ours, on Fly), gas funded from the ops wallet — at launch scale (weekly draw, 1 winner + fee leaves) this is trivially cheap and budgeted in ops. phase-2.md's "incentivised keeper network" is **deferred**: third-party keeper incentives (claim fees / gas rebates) are a post-V5.0 design with its own ADR. Until then the permissionless fallbacks (§4.3) are the decentralization story, not economic incentives. Docs must not claim an incentivized network exists before it does.
+- **Defer-on-failure, per leaf, preserved from ADR-0028:** if a leaf's token transfer reverts or returns false, record `pendingClaims[distributionId][leafIndex] → (account, token, amount)` and continue; `claimDeferred(distributionId, leafIndex)` retries later. Keying by leaf (not by account) means duplicate wins, multi-token payouts, and fee+winner combinations each defer and retry independently — partial failures cannot collide *(amended per M0 finding 3)*. One failing payout never blocks any other, and nothing is ever lost. Deferred records **never expire**.
 - **Non-pausable, non-stoppable.** Pause gates deposits and draw progression only; `stop()` (retirement) halts new deposits and new draws; claims and withdrawals work forever in both states. Carried verbatim from the V4 invariant (ADR-0028 / pauser review).
 - Fee recipients are paid as ordinary leaves in the draw's tree (§5.3) — the fee inherits the same resilience instead of having its own transfer path (the V3 fee-freeze bug class is dead by construction).
-- Amounts in leaves are **fixed token amounts settled at proposal time**. For the yield leg the proposal converts value → strategy-underlying amount at snapshot; rebasing drift between proposal and claim is bounded by the claim delay and absorbed by the dust buffer (§5.1). (Storing proportions instead was considered and rejected: it makes leaves non-verifiable against `totalPayout` and complicates the challenge check.)
+- Amounts in leaves are **fixed token amounts, fully settled at proposal time** *(amended per M0 findings 7)*: when a root is proposed, DrawManager **withdraws the yield leg out of the strategy into ClaimManager as the raw deposit asset** (native MON, paid at claim via low-level call — a failing native send defers like any other leaf), and reward legs are already held raw since funding. After proposal, no claim depends on strategy share price, rebasing behavior, or venue liveness — drift between proposal and claim is structurally impossible, not "absorbed." Yield accruing after the snapshot belongs to the next draw. (Storing proportions instead was considered and rejected: it makes leaves non-verifiable against `totalPayout` and complicates the challenge check.)
 
 ## 4. Winner selection (D4): deterministic, reproducible, challengeable
 
@@ -132,6 +133,8 @@ A versioned, published specification (`docs-site/pages/developers/draw-algorithm
 
 The chain cannot enumerate accounts or iterate TWAB history affordably, but it can verify a commitment. Everything the algorithm consumes is on-chain and immutable once the seed lands, so the root is a pure function — "keeper-computed" is a gas optimization, not a trust grant, **provided** the challenge window is real (§4.4).
 
+*(Precision per M0 finding 5: "verifiable" means verifiable **from chain history**, not by the chain itself. Account enumeration needs the event log; reference TWAB reads need archive-state access at the seed block. A verifier therefore needs an archive node or a trustworthy event index — a real operational dependency, named in §7.2. What the chain itself enforces is narrower: root immutability after finalization, `totalPayout` consistency with the snapshotted legs, and the public window in which anyone holding chain history can recompute.)*
+
 ### 4.3 Liveness
 
 `startDraw` permissionless; root proposal permissionless after a grace period; claims permissionless. The keeper is an optimization at every step, a single point of failure at none. (Root-proposal griefing — spamming bad roots to exhaust guardian attention — is rate-limited: one active proposal per draw; a vetoed proposal reopens proposing after a cooldown. A proposer bond is named as an option in §10-Q5.)
@@ -142,6 +145,7 @@ The chain cannot enumerate accounts or iterate TWAB history affordably, but it c
 - During the window, anyone can recompute the root with the reference implementation. The independent **watcher** (existing alert-watcher infra, extended) recomputes every proposal automatically and alarms on mismatch.
 - A mismatch is resolved by the **guardian** (owner; pauser may also hold the veto key) calling `vetoRoot(drawId)` — which discards the proposal and reopens proposing. Veto can never move funds, never touch a finalized root, and never block principal withdrawals.
 - **Limitation, stated plainly:** V5.0's challenge is guardian-veto, not a bonded permissionless fraud proof. If the guardian and the proposer collude (or the guardian sleeps through a bad root's window), a wrong winner set finalizes — bounded to that draw's prize, never principal. This must appear in user-facing docs in this honest form. Bonded challenges are the named upgrade path.
+- **Operational hardening is launch-gating, not best-effort** *(elevated per M0 finding 6, given the deferred audit and single-Ledger launch)*: the independent watcher (separate implementation, separate hosting — pipeline spec §3), dead-man heartbeats on keeper AND watcher, draw timing pinned inside operator waking hours, a written veto runbook, and a successfully executed bad-root veto drill are all **hard M8 gates** — V5.0 does not ship to mainnet without them. The guardian-veto model is only acceptable if the guardian is demonstrably reachable and rehearsed within every window.
 
 ## 5. Prize, fees, sponsors
 
@@ -158,7 +162,7 @@ The **mechanism** (multi-token prize legs, `(token, amount)` leaves, reward fund
 ### 5.3 Fees (R6)
 
 - **6b:** fee = `feeBps × feeBase`, where the base is a **value delta**, never a share count. Correct under rebasing and emissions by construction.
-- **6a:** per-vault `feeBase` flag: `TOTAL_PRIZE` (yield + reward legs) or `PARTICIPANT_YIELD_ONLY` (reward-token legs and sponsor-attributable yield exempt; sponsor-attributable yield = grossYield × sponsorPrincipal / totalPrincipal, computed at snapshot). ADR-0026's rejection of participant-only is explicitly reversed, per ADR-0034.
+- **6a:** per-vault `feeBase` flag: `TOTAL_PRIZE` (yield + reward legs) or `PARTICIPANT_YIELD_ONLY` (reward-token legs and sponsor-attributable yield exempt). *(Amended per M0 finding 4:)* sponsor-attributable yield is **time-weighted, not snapshotted**: `grossYield × sponsorTWAB / totalTWAB`, both measured over the draw period via TwabController (which already tracks delegated sponsor balances separately). A snapshot basis would let a sponsor deposit/withdraw at the draw boundary to distort fee attribution; under TWAB a boundary balance has ~zero weight, so the same property that kills depositor timing attacks kills this one.
 - **6c:** the fee on each leg is taken **in that leg's token** (yield-leg fee in the deposit asset; reward-leg fee in the reward token, when base = TOTAL_PRIZE). No cross-token conversion in the core, ever (a swap in the fee path would import oracle/DEX risk into settlement).
 - Recipients/splits/caps (≤8 recipients, ≤20% total, per-draw snapshot) carry over from ADR-0027 unchanged. Fee payouts are leaves in the draw tree (§3.5).
 
@@ -166,7 +170,7 @@ The **mechanism** (multi-token prize legs, `(token, amount)` leaves, reward fund
 
 | Model | V5.0 mechanism |
 |---|---|
-| **5a** — reward in a different token | `fundPrize(token, amountPerDraw, numDraws)`: schedules reward-token legs across the next N draws. Tokens are **owner-allowlisted in V5.0** (§7.5). Non-refundable once a covered draw starts; unstarted scheduled legs are sponsor-cancellable. |
+| **5a** — reward in a different token | `fundPrize(token, amountPerDraw, numDraws)`: schedules reward-token legs across the next N draws. Tokens are **owner-allowlisted in V5.0** (§7.5) under hard acceptance rules *(amended per M0 finding 7)*: standard ERC-20 transfer semantics only — **no fee-on-transfer** (funding is balance-measured and reverts on shortfall, enforcing this mechanically), **no rebasing/elastic-supply tokens**, no hooks/ERC-777, and blacklisting-capable tokens (USDC-style) are accepted only because per-leaf defer isolates a frozen recipient to their own leaves. Non-refundable once a covered draw starts; unstarted scheduled legs are sponsor-cancellable. |
 | **5b** — same-token, unstaked, direct | `fundPrize(depositAsset, …)` — held raw by ClaimManager, paid as a raw-asset leg, never staked. |
 | **5c** — principal-retaining, yield-only, recurring | `sponsorDeposit()` (§3.2): TWAB-delegated-to-zero, so it earns yield into every draw's prize with zero win odds. **Under a continuous model, "auto-roll" is not a feature — it's the absence of rounds.** One deposit sponsors every draw until withdrawn. |
 | **5d** — redeem retained principal | Sponsor calls the ordinary withdraw. Non-pausable like all withdrawals. |
@@ -175,13 +179,22 @@ The V4 `sponsor()`-donates-everything mode is retired; 5b+5c compose to cover it
 
 ## 6. The V5.1 seam (what V5.0 must expose and freeze)
 
-For D2 to hold, these V5.0 interfaces are **frozen** at V5.0 audit time: `fundPrize` (campaign funding), the leaf encoding `(drawId, account, token, amount)` (campaign distributions), `TwabController` read API (eligibility-by-TWAB), and the draw-record read surface. The CampaignManager becomes a privileged-only-as-funder external contract. **Eligibility** (snapshots/Merkle allowlists) lives entirely in V5.1's winner-algorithm extension (a campaign draw filters the account set by the campaign's eligibility root before sampling) — algorithm-version bump, zero core change. The algorithm spec is versioned for exactly this reason.
+For D2 to hold, these V5.0 interfaces are **frozen** at V5.0 review time *(rewritten per M0 finding 2 — the original draw-keyed encoding was too narrow for real campaigns)*:
+
+- **ClaimManager's distribution registry** (§3.5): `registerDistribution(sourceKey, root, legs, metadata)`, callable by authorized source contracts. `distributionId = keccak256(sourceContract, sourceKey)` gives every future source (DrawManager today, CampaignManager in V5.1, anything later) its own collision-free namespace, its own winner counts, its own token legs, and an opaque `metadata` slot (where a campaign binds its **eligibility root** so verifiers can check the winner set was filtered correctly). Multiple simultaneous campaigns are just multiple distributions — no shared state, no core change.
+- **Leaf encoding** `(LEAF_DOMAIN, distributionId, leafIndex, account, token, amount)` — campaign identity lives inside `distributionId`, so the encoding itself never changes.
+- **`fundPrize`** (campaign funding) and the **TwabController read API** (eligibility-by-TWAB, snapshot reads).
+- The **draw-record read surface** and the **versioned algorithm spec**: a campaign draw is an algorithm-version extension that filters the account set by the campaign's eligibility root before sampling — off-chain change only.
+
+The CampaignManager becomes an external contract that is just another authorized distribution source + prize funder. M0's seam test (builder designs V5.1 on paper against these interfaces) is the proof obligation — repeated against this amended set.
 
 ## 7. Security analysis
 
 ### 7.1 The no-loss invariant under venue loss
 
-If the strategy venue itself loses value (shMON exploit/slash), `totalAssets < totalPrincipal` is possible. Stance (unchanged from V4, now explicit): **EverDraw does not insure venue risk.** Withdrawals become pro-rata against remaining assets via the emergency-shares path; the invariant tested is "no depositor can be made worse off by *EverDraw's* accounting than by holding the strategy shares directly," not "EverDraw survives venue insolvency." Docs must state this.
+If the strategy venue itself loses value (shMON exploit/slash), `totalAssets < totalPrincipal` is possible. Stance (unchanged from V4, now explicit): **EverDraw does not insure venue risk.** The invariant tested is "no depositor can be made worse off by *EverDraw's* accounting than by holding the strategy shares directly," not "EverDraw survives venue insolvency." Docs must state this.
+
+**Shortfall mode (added per M0 finding 8 — without it, early withdrawers drain at face value and late withdrawers eat the whole loss).** Every withdrawal first checks solvency: if `totalAssets < totalPrincipal × (1 − tolerance)` (tolerance covers rounding, e.g. 10 bps), the vault automatically enters **Shortfall mode**: all withdrawals pay `principalOf[account] × totalAssets / totalPrincipal` — pro-rata haircut applied uniformly, enforced by the contract on the normal path, not just the emergency-shares path. Deposits and draws halt while in Shortfall (no new principal into a damaged venue; no prize from phantom yield); withdrawals and claims stay live, as always. The vault exits Shortfall automatically if the ratio recovers above 1 (e.g. venue repeg). Entering/exiting Shortfall emits events the watcher alarms on. The check is O(1) per withdrawal (two storage reads + one strategy `totalAssets()` call already made on every withdrawal).
 
 ### 7.2 External dependencies (working rule #5 — each one, with its failure answer)
 
@@ -194,8 +207,14 @@ If the strategy venue itself loses value (shMON exploit/slash), `totalAssets < t
 | **Keeper** | Malicious root | Determinism + watcher recompute + challenge window + guardian veto (§4.4); exposure bounded to one draw's prize |
 | **Reference implementation / indexer** | Bug → wrong root proposed honestly | Two independent implementations, differential-tested as a release gate; watcher recompute catches divergence in the window |
 | **Reward tokens (5a)** | Fee-on-transfer, rebasing, reentrant, blacklisting tokens | V5.0 allowlist; balance-measured receipt on funding; per-leaf defer-on-failure isolates a blacklisting token to its own leaves |
-| **Monad chain** | Reorg around seed/proposal | Proposal waits for finality on the seed tx (cheap given Monad fast finality; watcher enforces); contracts use timestamps, not block numbers |
-| **Merkl** | (consumer, not dependency) | Event shapes preserved (ADR-0006); points unaffected by the V5 cutover |
+| **Monad chain** | Reorg around seed/proposal | Proposal waits for finality on the seed tx (cheap given Monad fast finality; watcher enforces); contracts use timestamps, not block numbers; pipeline-spec reorg policy applies to event ingestion |
+| **Archive RPC / event log access** *(added per M0 finding 5/12)* | Keeper/watcher/any verifier cannot read historical state or full event history → draws unprovable, watcher blind | Two independent archive-capable RPC providers configured (keeper and watcher each pinned to a different primary); the watcher's events-only data path doubles as a cross-check on state reads; reference implementation works from either |
+| **Indexer infra (Fly)** *(added per M0 finding 12)* | Stats/position API down; points engine stalls | Chain is source of truth; frontend falls back to direct RPC for position basics (V4 pattern); points recomputed from events on recovery — no permanent loss |
+| **Frontend hosting (Vercel/DNS)** *(added per M0 finding 12)* | App unreachable | Contracts fully usable without our frontend (documented direct-interaction guide per V4 runbook pattern); deploy-verification per working rule #6 |
+| **Wallet stack (injected providers)** | Users can't sign | Standard EIP-1193 only, no exotic wallet features required by any flow |
+| **Merkl** | (consumer, not dependency) — registration is a manual process with their team | Event shapes preserved (ADR-0006); §8 event-semantics table is the contract; V5 addresses resubmitted to Merkl ahead of cutover (M9) |
+| **Alerting (Telegram + healthchecks)** *(added per M0 finding 12)* | Operator blind to keeper/watcher death or root mismatch | Dead-man heartbeats on keeper AND watcher via an independent channel (healthchecks.io email); alarm-path drill is part of M8 |
+| **Reference-impl supply chain (npm)** *(added per M0 finding 12)* | Malicious dependency corrupts winner computation | Lockfile-pinned, minimal dependency surface (hashing + RPC client only), both implementations differing in dependency trees — a supply-chain compromise must hit both independently to pass differential checks |
 
 ### 7.3 Smart-contract concerns (audit checklist seeds)
 
@@ -217,6 +236,18 @@ If the strategy venue itself loses value (shMON exploit/slash), `totalAssets < t
 - **Migration UX is two transactions, by design:** V4.1 `withdrawPrincipal` returns shMON shares → V5 `depositShmon` accepts them directly (the V4.1 shMON path was built for Merkl, but it is also exactly the migration rail). Frontend ships a guided "Move to V5" flow; no approval-to-V4, one approval to V5.
 - **V4.1 retirement (only after V5.0 has run ≥4 clean weekly cycles):** stop accepting V4.1 deposits via `stop()`, final rounds settle, withdrawals stay open forever (V4 invariant), frontend marks legacy. Reserve recovery per the existing V4-A retirement runbook.
 - Merkl/shMonad must be notified of the V5 addresses ahead of cutover so points migrate without a gap (same event shapes — ADR-0006).
+
+**Merkl event-semantics table (added per M0 finding 9 — "same shapes" specified, not asserted).** Merkl time-weights `Deposit`/`Withdraw` off-chain to award points; the rule is: **Merkl-shaped events fire only for balances that hold win odds.**
+
+| Action | Event emitted | Merkl-visible? |
+|---|---|---|
+| `deposit` (native MON) | `Deposit(account, assets)` — ADR-0006 shape | Yes |
+| `depositShmon` | `Deposit(account, assetValue)` — valued via `previewRedeem`, same as V4.1 | Yes |
+| `withdraw` (normal or shortfall-mode) | `Withdraw(account, assets)` | Yes |
+| `emergencyRedeemShares` | `Withdraw(account, assetValue)` — it IS a withdrawal | Yes |
+| `sponsorDeposit` / sponsor withdraw | `SponsorDeposit`/`SponsorWithdraw` — **distinct shapes, deliberately NOT the Merkl pair** (zero odds must earn zero points) | No |
+| Strategy swap / venue migration | Admin events only — no user-level Deposit/Withdraw (balances unchanged) | No |
+| Prize claims | ClaimManager events — not vault balance events | No |
 
 ## 9. Rejected alternatives
 
