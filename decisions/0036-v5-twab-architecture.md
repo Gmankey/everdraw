@@ -72,7 +72,8 @@ Standalone time-weighted average balance accounting, deliberately separated from
 
 ### 3.2 PrizeVaultV5 (holds principal — minimum possible surface)
 
-- **Deposits:** native MON (wrapped into the strategy) and **direct shMON** (`depositShmon` — the V4.1 path carries forward; it is also the migration path, §8). Min-deposit threshold (anti-dust, §7.6), owner-tunable with an event.
+- **Deposits:** native MON (wrapped into the strategy) and **direct shMON** (`depositShmon` — the V4.1 path carries forward; it is also the migration path, §8). Min-deposit threshold (anti-dust, §7.6), owner-tunable with an event; launch value 0 (Q3).
+- **Total-deposit cap (launch-gating, per Q6):** owner-tunable `depositCap` on `totalPrincipal`; deposits revert above it, withdrawals are never affected by it. This is the explicit risk bound for running unaudited principal-holding code — raised stepwise as confidence builds, removable if an audit is later funded.
 - **Withdrawals:** continuous, any time, no windows. **Never pausable, never stoppable** (V4 invariant carried forward). Withdrawal burns the account's balance (TwabController updated) and pays out via the strategy.
 - **Principal ledger:** `principalOf[account]` and `totalPrincipal` in underlying-asset terms. The no-loss invariant is expressed against this ledger: the vault must always be able to cover `totalPrincipal` (see §7.1 for the shortfall case).
 - **Emergency exit:** if `strategy.withdraw` fails, the depositor may instead call `emergencyRedeemShares()` to receive their pro-rata strategy shares directly (the V4 "winners get shares" escape hatch, generalized to principal). This is the answer to "the yield venue is paused/broken": users are never trapped behind a failing external call.
@@ -148,6 +149,8 @@ The chain cannot enumerate accounts or iterate TWAB history affordably, but it c
 
 At `startDraw`: `grossYield = strategy.totalAssets() − totalPrincipal − undistributedPrize`, where `undistributedPrize` is the running ledger of finalized-but-unclaimed prize value plus rolled-over skipped prizes. Fee is carved per §5.3; the remainder plus any reward-token legs scheduled for this draw (§5.4) form the draw's **prize legs**, snapshotted into the draw record. Rounding dust and negative-yield periods (possible under a venue loss event): a draw's prize floor is zero — yield deficits reduce nothing for depositors (principal ledger is untouched) and are recovered out of subsequent yield before any new prize accrues.
 
+**Minimum prize threshold (cold-start / late-deposit answer).** An owner-tunable `minPrizeThreshold`: if a period's accrued prize is below it, the draw is skipped and the prize **rolls into the next period** (same mechanism as the zero-prize skip in §3.4). This handles the operator-raised cold-start concern — "if everyone deposits late, the first prize is tiny" — by never paying out an embarrassingly small jackpot; instead the displayed prize grows until it clears the bar. Note the concern is structurally self-limiting under TWAB: deposits persist across draws (no rounds to exit), so a "late" deposit is early for every subsequent draw, and late depositing is privately irrational anyway (near-zero TWAB = near-zero odds). Launch-week prizes can additionally be seeded via sponsor top-ups (§5.4, 5a/5b).
+
 ### 5.2 R2 in V5.0 vs V5.1
 
 The **mechanism** (multi-token prize legs, `(token, amount)` leaves, reward funding) ships in V5.0. The **product** (a protocol self-serving a branded campaign with eligibility) is V5.1's CampaignManager, which composes these primitives externally — `createCampaign` will hold the sponsor's budget and call `fundPrize` per draw. That is the test of D2: if V5.1 needs a core change, V5.0's design failed review.
@@ -206,7 +209,7 @@ If the strategy venue itself loses value (shMON exploit/slash), `totalAssets < t
 
 ### 7.4–7.6 (consolidated)
 
-**Griefing:** dust-account blowup of the off-chain compute → min-deposit + O(n log n) reference implementation, load-tested at 100k accounts (release gate). **Token allowlist:** V5.0 reward tokens owner-allowlisted; permissionless tokens are a V5.1+ decision with its own ADR. **Governance:** ADR-0031's owner→multisig migration should land **before V5.0 mainnet** — V5 adds guardian veto and allowlist powers to the owner key; a single EOA (even a Ledger) holding veto + allowlist + strategy-swap + fee powers is past the comfort line. Recommendation, not yet an operator decision (§10-Q7).
+**Griefing:** dust-account blowup of the off-chain compute → min-deposit + O(n log n) reference implementation, load-tested at 100k accounts (release gate). **Token allowlist:** V5.0 reward tokens owner-allowlisted; permissionless tokens are a V5.1+ decision with its own ADR. **Governance:** PM initially recommended landing ADR-0031's owner→multisig migration before V5.0 mainnet (V5 adds veto + allowlist powers to the owner key). **Operator decided otherwise (Q7, 2026-06-10): single Ledger at V5 launch**, on the grounds that funds at risk are unchanged from V4, the new powers cannot move funds, strategy swap retains its 24h exit window, and the dominant residual risk (key loss) is identical to what was already accepted. Multisig stays on the roadmap (ADR-0031).
 
 ## 8. Migration and coexistence (D3)
 
@@ -228,23 +231,24 @@ If the strategy venue itself loses value (shMON exploit/slash), `totalAssets < t
 
 ## 10. Open decisions, risks, blockers
 
-**Operator decisions needed (before build start):**
-- **Q1 — Draw cadence at launch.** Daily is the phase-2 promise; weekly is operationally gentler (52 vs 365 VRF fees + root cycles/yr, larger per-draw prizes). PM recommendation: **launch weekly, shorten via the tunable once the pipeline proves out.** Cadence is a parameter, not a redesign.
-- **Q2 — Winner structure per draw** (count + tier split; V4 ran small-N jackpot-style). Parameterized; needs a launch value.
-- **Q3 — Min deposit** value.
-- **Q4 — Challenge window** length (proposal: 8h; shorter = faster prizes, longer = more recompute margin).
-- **Q5 — Proposer bond** for permissionless root proposals: ship in V5.0 or accept veto-cooldown-only at launch?
-- **Q6 — Audit budget/firm** — see blockers.
-- **Q7 — Multisig before V5.0 mainnet** (§7.4–7.6 recommendation; ADR-0031).
+**Operator decisions — RESOLVED 2026-06-10:**
+- **Q1 — Draw cadence: weekly at launch**, shorten later via the tunable. (Daily remains the phase-2 promise; weekly is operationally gentler — 52 vs 365 VRF fees + root cycles/yr, larger per-draw prizes.)
+- **Q2 — Winner structure: 1 winner, 100% of the prize at launch.** Count + tier split are per-draw-config parameters, changeable between draws without redeploy.
+- **Q3 — Min deposit: 0 at launch**, owner-tunable so a minimum can be enforced later (the tunable also backs the §7.4 anti-dust mitigation when needed).
+- **Q4 — Challenge window: 8 hours** (PM recommendation accepted by default; operator had no objection once the mechanism was explained).
+- **Q5 — No proposer bond in V5.0** (PM decision). Veto + per-draw single-active-proposal + cooldown is sufficient at launch scale; add a bond only if root-spam griefing actually occurs.
+- **Q6 — External audit DEFERRED (operator decision: no budget).** PM-imposed mitigation, non-negotiable in lieu of the audit: **a configurable total-deposit cap on PrizeVaultV5 at launch** — set to a loss-tolerable level, raised as confidence builds, removable if an audit is later funded. Cheaper paths to pursue in parallel: Monad Foundation ecosystem audit support; competitive platforms (Code4rena/Sherlock) at a fraction of boutique-firm cost. See risk register.
+- **Q7 — Multisig: stays deferred (single Ledger at V5 launch), per operator.** Operator's reasoning accepted: funds at risk are unchanged from V4 and that risk was already accepted; the new owner powers (veto, allowlist) cannot move funds, and strategy swap retains its 24h public exit window. The dominant residual risk is key loss, identical to V4. ADR-0031 remains the roadmap item. (Supersedes the §7.4–7.6 pre-decision recommendation.)
 
 **Builder decisions (flag in design review, no operator input needed):** adapt-vs-greenfield TwabController (§3.1 — recommendation on record); observation packing/capacity; claimed-bitmap layout; native-MON wrapping at the strategy boundary.
 
 **Blockers:**
-- **B1 — External audit before mainnet.** Non-negotiable: V5.0 holds principal under novel accounting. Internal review (V4's process) is insufficient at this complexity. Needs budget + firm + ~scheduling lead time now, not at code-complete.
+- **B1 — ~~External audit before mainnet~~ resolved as: deposit cap in lieu of audit (Q6).** The cap is now a launch-gating feature: V5.0 MUST NOT take uncapped deposits while unaudited.
 - **B2 — The off-chain pipeline is half the system.** Winner computation, watcher recompute, keeper claim execution carry the same correctness weight as the contracts and are in-scope for the same review/test gates (build plan M3/M6).
-- **B3 — Operator decisions Q1–Q7** block the corresponding build milestones.
+- **B3 — ~~Operator decisions Q1–Q7~~ resolved 2026-06-10.** No remaining operator blockers to build start.
 
 **Top risks:**
+- **Unaudited principal-holding code (Q6 deferral)** — now the #1 protocol risk. Mitigated, not removed, by the deposit cap; the cap level is the explicit "amount we can afford to lose to an undiscovered bug." Revisit the deferral if Monad Foundation support or a cheaper competitive audit becomes available.
 - **TwabController correctness** — the central engineering risk; mitigated by §3.1's adapt recommendation + property/differential testing.
 - **Guardian-veto trust model** — honest-docs obligation (§4.4); reputational if discovered rather than disclosed.
 - **Prize latency expectation** — "daily draw" headlines vs seed+proposal+window reality (~9–12h post-period); set expectations in docs/UI from day one.
