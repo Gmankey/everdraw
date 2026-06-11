@@ -149,9 +149,10 @@ const SHMON_ABI = [
 ]
 const SHMON_ADDRESS = import.meta.env.VITE_SHMON_ADDRESS || '0x1B68626dCa36c7fE922fD2d55E4f631d962dE19c'
 const ACTIVE_POOL_REPLACEMENTS = {
-  // V4.1-A supersedes V4-A. Keep the retired address in known-pool scans below
+  // V4.1 supersedes V4. Keep retired addresses in known-pool scans below
   // so old-round participants can still find redeemable positions.
   '0x9263d84a141172d9618f4b08839f595ee03bc7e8': '0x933FF608eaC2b3221088bd9AE19b05F266dBF7DA',
+  '0x08bdd3710abb0616cc29f388867f5625106b2a3e': '0x1886f329e486e934c76028B15a580850e74d404C',
 }
 
 function formatMon(value, digits = 4) {
