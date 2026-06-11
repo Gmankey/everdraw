@@ -1,0 +1,57 @@
+
+> monad-prize@0.1.0 deploy:mainnet:v4
+> npm run deploy:preflight && npm run build && npm run check:abi && npm run check:deploy-source && hardhat run scripts/deploy-ticket-prize-pool-v4.js --network monadMainnet
+
+
+> monad-prize@0.1.0 deploy:preflight
+> node scripts/deploy-preflight.mjs
+
+From https://github.com/Gmankey/everdraw
+ * branch            staging    -> FETCH_HEAD
+[deploy-preflight] OK
+
+> monad-prize@0.1.0 build
+> hardhat compile
+
+Solidity 0.8.33 is not fully supported yet. You can still use Hardhat, but some features, like stack traces, might not work correctly.
+
+Learn more at https://v2.hardhat.org/hardhat-runner/docs/reference/solidity-support
+
+Compiled 2 Solidity files successfully (evm target: paris).
+
+> monad-prize@0.1.0 check:abi
+> node scripts/check-abi-fresh.mjs
+
+[abi] Fresh: abi/TicketPrizePoolShmonV2.json
+[abi] Fresh: abi/TicketPrizePoolShmonV3.json
+[abi] Fresh: abi/TicketPrizePoolV4.json
+[abi] Fresh: abi/PythRandomnessOracle.json
+
+> monad-prize@0.1.0 check:deploy-source
+> node scripts/check-production-source-manifest.mjs
+
+[manifest] OK: deployments/monad-mainnet.json
+From https://github.com/Gmankey/everdraw
+ * branch            staging    -> FETCH_HEAD
+[deploy-preflight] OK
+Stagger guard: sibling anchor 2026-06-08T15:03:17.000Z | this gap 3.51d | target 3.50d | tol ±12h
+✅ Stagger guard passed — cadence offset within tolerance.
+Deploying V4 with: 0x6b66013C02C53Bf884F353F23dDfd58bfDD6FC5a
+{
+  predictedVault: '0x1886f329e486e934c76028B15a580850e74d404C',
+  yieldVault: '0x1B68626dCa36c7fE922fD2d55E4f631d962dE19c',
+  entropy: '0xD458261E832415CFd3BAE5E416FdF3230ce6F134',
+  entropyProvider: '0x52DeaA1c84233F7bb8C8A45baeDE41091c616506',
+  asset: '0x0000000000000000000000000000000000000000',
+  depositMode: 0,
+  ticketPriceAsset: '1000000000000000000',
+  roundDurationSec: 86400,
+  yieldPeriodSec: 518100,
+  numWinners: 1,
+  winnerAllocationBps: [ 10000 ],
+  vaultSymbol: 'EVRDRAW-B'
+}
+PythRandomnessOracle deployed: 0xd5d43554CA158334d5Db4aEA745Ead986fAad5C5
+TicketPrizePoolV4 deployed: 0x1886f329e486e934c76028B15a580850e74d404C
+Seed VRF reserve with 20 MON before production use:
+ cast send 0x1886f329e486e934c76028B15a580850e74d404C "depositVRFReserve()" --value 20ether --rpc-url $RPC_URL --private-key $PRIVATE_KEY
