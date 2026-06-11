@@ -7,6 +7,8 @@
 > **Cadence-defect addendum (resolved 2026-06-07):** post-launch verification found V4-A and V4-B were deployed ~55 minutes apart, violating ADR-0010's required 3.5-day stagger. **This was remediated by redeploying V4-B.** The original V4-B (`0x0032c9F6…`, recorded below) was paused, drained, and `stop()`ed. The **current Vault B (V4) is `0x08bdD3710abB0616Cc29f388867f5625106B2A3E`** (oracle `0xa5D9c8DE8d9b04FEA8a8197dfD3c9D864FfbD95a`), correctly staggered ~3.75 days from Vault A. Full details in **ADR-0033** and the canonical [`deployments/monad-mainnet.json`](../deployments/monad-mainnet.json). The original-V4-B sections below are retained as historical record.
 >
 > **V4.1-A migration addendum (2026-06-08):** Vault A has been superseded by **V4.1-A** at `0x933FF608eaC2b3221088bd9AE19b05F266dBF7DA` (oracle `0x59fFe0DA7C975F96E2b3ae19f818BAEFc2d4DddF`) to add direct shMON ticket deposits while preserving the V4 native-MON configuration. The old V4-A (`0x9263d84…`) still holds its `9 MON` VRF reserve and must be retired by Ledger only after its current round settles and depositors can withdraw. V4-B remains `0x08bdD3710abB0616Cc29f388867f5625106B2A3E` until the V4.1-B staggered redeploy.
+>
+> **V4.1-B migration addendum (2026-06-11):** Vault B has been superseded by **V4.1-B** at `0x1886f329e486e934c76028B15a580850e74d404C` (oracle `0xd5d43554CA158334d5Db4aEA745Ead986fAad5C5`) to complete the direct-shMON V4.1 pair. The stagger guard passed against V4.1-A: V4.1-A round-1 sales end `2026-06-08T15:03:17Z`; V4.1-B round-1 sales end `2026-06-12T03:23:57Z`; gap `~3.51d`, within ADR-0010/0033 tolerance. V4.1-B is seeded with `9 MON`, Fly keeper is authorized, deployer keeper is disabled, Ledger is owner and pauser, and the deployer key was swept and deleted after balance readback.
 
 ## Summary
 
@@ -61,6 +63,43 @@ Operator follow-up:
 - Ledger recovers `9 MON` from old V4-A with `withdrawVRFReserve(9e18)` only after the old round settles.
 - Ledger seeds V4.1-A with `depositVRFReserve()` value `9 MON` after recovery.
 - Ledger calls `stop()` on old V4-A only after last-round settlement and depositor withdrawals.
+
+## Vault B V4.1
+
+- Vault: `0x1886f329e486e934c76028B15a580850e74d404C`
+- Oracle: `0xd5d43554CA158334d5Db4aEA745Ead986fAad5C5`
+- Symbol: `EVRDRAW-B`
+- Version: `4.1.0`
+- Deployer: `0x6b66013C02C53Bf884F353F23dDfd58bfDD6FC5a`
+- Oracle deploy block / tx: `80497348` / `0x53b2d5792cda7f0c0612d5131a958e47bd7a734496da4ddde41e7d59479162ce`
+- Vault deploy block / tx: `80497354` / `0x5c526d3ad613e2f252759432e4fb036945838a2023570369af8fc0c2b3bd3ba5`
+- Vault deploy timestamp: `2026-06-11T03:23:57.000Z`
+- First sales end time: `1781234637` (`2026-06-12T03:23:57.000Z`)
+- Vault runtime bytecode SHA-256: `92a210121791f89c7a6599d38adca12b4490e236e6a6bbabcb835596b40cb23c` (matches V4.1-A)
+- Oracle runtime bytecode SHA-256: `a8b7105415603ac68af589df6d59617350e208bd6d0ea62df193c876947d6b25`
+- Sourcify: full match for pool and oracle (`creationMatch = match`, `runtimeMatch = match`, pool matchId `540669`, oracle matchId `540668`, verified `2026-06-11T03:27Z`)
+
+Post-deploy verification:
+
+- Owner: `0xd399d4e24021eA08f2Cd11Fbb78a633e8D9B84A2`
+- Pending owner: zero address
+- Pauser: `0xd399d4e24021eA08f2Cd11Fbb78a633e8D9B84A2`
+- Fly keeper allowed: true
+- Deployer keeper allowed: false
+- Round 1 state: Open
+- Contract balance / VRF reserve: `9 MON`
+- Config: native MON deposits, direct shMON ticket deposits enabled by V4.1, shMON yield vault, 1 MON ticket, 24h round, 518100s yield period, one winner
+
+Post-deploy role transactions:
+
+- `depositVRFReserve(9 MON)`: `0x799b0f41c20922bf67ade6aa87e3ef71997414a006fcdbf7014e523c19dd2d0d`
+- `setKeeper(0x80dE4674dEFC68F06F4772B8Ec2F89aBda43DBE9, true)`: `0x2b9b8ebb9c26933afc03104a495cb820bcf798b931e299889aee0c90112a05e2`
+- `setKeeper(0x6b66013C02C53Bf884F353F23dDfd58bfDD6FC5a, false)`: `0x95c15ebe69f0d9cf28b004fccfbc47c2be39b96edb2658720f756d5d40f636b4`
+- `setPauser(0xd399d4e24021eA08f2Cd11Fbb78a633e8D9B84A2)`: `0x6a50495450f6b7cf44a707a4ad81a044076d08bc9b06c9883f46c42a1b7024f9`
+- `transferOwnership(0xd399d4e24021eA08f2Cd11Fbb78a633e8D9B84A2)`: `0x39ed2d89893bb59152c5b63208e34b2973ec76cd3dd7d87fc47aca11c3c7d958`
+- `acceptOwnership()`: `0x54d0ab01c2d336b416bf5f44af02602c16ad6ca83313300821b4ca51bf9f2fc0`
+- Deployer sweep to Ledger: `0x30d755cf79068858df7f362ea0ae5dc4b15aed1557051dc39a3d05d9deb6bfb8`
+- Deployer key: deleted after sweep confirmation and balance readback; remaining deployer balance `0.097858 MON`
 
 ## Vault A V4
 
