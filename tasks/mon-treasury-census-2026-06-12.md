@@ -9,8 +9,8 @@ All balances read live from `https://rpc.monad.xyz`. Context: operator asked "wh
 | Ledger (owner) | `0xd399…84A2` | **2.998** | yours, liquid |
 | Root key | `0x8487…91eD` | 0.177 | gas only — **still owner of both V3 vaults** (see below) |
 | Fly keeper | `0x80dE…DBE9` | 3.373 | operational float — leave (target ~2, alarm at 0.5) |
-| V4.1-A deployer | `0xFA5862…287A` | **2.411 — STRANDED** | key reportedly not found; recoverable only if key exists in a backup |
-| V4.1-B deployer | `0x6b6601…FC5a` | 0.098 | dust — sweep to Ledger, then delete key (sweep-confirm-then-delete rule) |
+| V4.1-A deployer | `0xFA5862…287A` | **2.411 — STRANDED, likely unrecoverable** | same filesystem search (2026-06-12) found no trace: `.openclaw/secrets/` empty, no keystore, no env file. Treat as written off unless a backup surfaces |
+| V4.1-B deployer | `0x6b6601…FC5a` | 0.098 | **written off as unrecoverable deleted-key dust (2026-06-12).** Key search: `.openclaw/secrets/` empty (last modified 06-08, before the deploy), no foundry keystore, no `.env`/`/tmp` artifact, no history trace, no file on disk references the address. The key existed only in the deploy-session environment (the 06-11 sweep of 1.2029 MON proves it existed then); the 0.097858 left behind is the standard ~0.1 MON sweep gas buffer. If the key ever surfaces, sweep; do not count this as recoverable. **Process deviation to fix:** the runbook required saving the key to `.openclaw/secrets/` — it never was. Same applies to the V4.1-A deployer below. |
 
 ## Contracts (native MON = VRF reserves)
 
