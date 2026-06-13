@@ -14,10 +14,12 @@ RUN npm ci --omit=dev --ignore-scripts
 COPY scripts/keeper-watchdog.js ./scripts/
 COPY scripts/keeper-alert-watcher.js ./scripts/
 COPY scripts/keeper-execute-next.js ./scripts/
+COPY scripts/keeper-active-pools.mjs ./scripts/
 COPY scripts/keeper-health.sh ./scripts/
 COPY scripts/keeper-env-check.sh ./scripts/
 COPY scripts/keeper/entrypoint.sh ./scripts/keeper/
 COPY abi/ ./abi/
+COPY deployments/ ./deployments/
 
 # keeper-watchdog.js currently supervises the historical absolute repo path.
 # Preserve that path inside the container without changing keeper source logic.
