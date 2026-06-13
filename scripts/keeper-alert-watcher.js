@@ -44,7 +44,9 @@ const ABI = [
 ]
 
 const iface = new Interface(ABI)
-const eventTopics = ABI.map((fragment) => iface.getEvent(fragment.split('(')[0].replace('event ', '')).topicHash)
+const eventTopics = ABI
+  .filter((fragment) => fragment.startsWith('event '))
+  .map((fragment) => iface.getEvent(fragment.split('(')[0].replace('event ', '')).topicHash)
 const provider = makeProvider(RPC_URL, RPC_URL_FALLBACK)
 
 let stopping = false
