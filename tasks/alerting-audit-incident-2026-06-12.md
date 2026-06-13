@@ -51,15 +51,19 @@ Both processes in the one Fly app share the same `POOL_ADDRESSES` secret, so a s
 7. **G7 — Deploy gate missing: vault went live with zero reserve.** The V4.1-A audit log even *recorded* "zero contract balance/reserve at cutover" — recorded but gated nothing. Runbook must make "reserve seeded ≥ N, verified on-chain" a hard pre-cutover gate.
 8. **G8 — `isV3`-flag fragility.** VRF reserve/timeout checks only run for pools listed in `POOL_ADDRESSES_V3`; a V4 pool added only to `POOL_ADDRESSES` silently gets no VRF monitoring. Works today only because ops happen to duplicate the lists. Make VRF checks default-on for V3+ pools.
 9. **G9 — Indexer has no alerting at all** (stalled ingestion, DB errors, API down = silent frontend degradation).
-10. **G10 — Stale records compound confusion:** `deployments/monad-mainnet.json` still lacks the V4.1-B entry and carries a stale V4-A balance; the canonical list in G1 needs this file accurate.
+10. **G10 — CORRECTED 2026-06-12 (see canonical-tree note below):** V4.1-B **is** recorded in canonical `deployments/monad-mainnet.json` — PR #99 (`0506239`) on `origin/staging`, and present in the `everdraw-staging-mainnet` working tree. My earlier claim that the record was "still missing" was wrong: it was based on the `everdraw-clean` reference checkout, which sits on the pre-#99 branch `design/v5-m0-amendments` and is **not canonical**. Remaining real sub-item: the V4-A retired-balance figure in the record is stale (says 9, on-chain 8.23) — fix at V4-A closeout.
+
+## Canonical source-of-truth note (added 2026-06-12 per operator)
+
+`everdraw-clean` is a **historical/reference checkout only** and must not be treated as canonical. Source of truth for committed state is **`origin/staging` on GitHub** (`Gmankey/everdraw`); the operator's production-facing trees are `everdraw-staging-mainnet` / `web`. This audit and the treasury census were authored from `everdraw-clean` on the feature branch `design/v5-m0-amendments` (pre-#99/#100), so any "file X is missing record Y" observation in them must be re-checked against `origin/staging` before being treated as a real gap. The G10 error above is exactly this mistake; G1's canonical-pool-list control should read from `origin/staging`, not from whatever tree an agent happens to be sitting in.
 
 ## Immediate actions (builder ticket — this doc is the ticket)
 
-1. **NOW, before 2026-06-14T15:00Z (hard deadline):** update `everdraw-keeper` Fly secrets for BOTH processes: `POOL_ADDRESSES` = `POOL_ADDRESSES_V3` = `0x933FF608eaC2b3221088bd9AE19b05F266dBF7DA,0x08bdD3710abB0616Cc29f388867f5625106B2A3E,0x1886f329e486e934c76028B15a580850e74d404C,0x9263d84a141172d9618f4b08839f595EE03bC7E8` (V4.1-A, V4-B, V4.1-B, plus retired V4-A kept for `VRFReserveWithdrawn` visibility until closeout). **No `--stage`.** Verify per G2: read back `printenv` AND confirm the keeper boot log line `poolAddresses=` shows the new set AND confirm V4-B's pending round-1 `Skip` executes within minutes (observable proof the keeper acts on live vaults).
-2. Confirm ~06-14T15:00Z that V4.1-A round 1 commits and settles end-to-end (VRF request visible on-chain).
+1. ~~update `everdraw-keeper` Fly secrets…~~ **DONE — verified live 2026-06-12.** `printenv` on the keeper machine now shows `POOL_ADDRESSES` = `POOL_ADDRESSES_V3` = `0x933F…F7DA,0x08bd…2A3E,0x1886…404C,0x9263…C7E8` (V4.1-A, V4-B, V4.1-B, retired V4-A), and the keeper logs show it actively ticking all four live vaults. The blind-spot window (June 7 → June 12) is closed.
+2. **Still pending — confirm ~06-14T15:00Z that V4.1-A round 1 commits and settles end-to-end** (VRF request visible on-chain). As of 2026-06-12 V4.1-A is round 1 / Open with the 9 MON reserve present and `nextExecutable = None` — correct, because the ~6-day yield window hasn't elapsed; commit becomes due ~06-14T15:00Z. Keeper is now watching it, so this should fire automatically; verify it does.
 3. Dead-man heartbeats on keeper + alerts processes via healthchecks.io (independent of Telegram), this week (G4).
 4. Implement G1 (canonical pool list + boot assertion + daily reconcile), G3 (re-alert backoff), G5 (overdue check), G6 (next-commit fee projection) in the keeper/watcher — small diffs, cite this doc.
-5. Record V4.1-B in `deployments/monad-mainnet.json` + ADR-0032 (G10).
+5. ~~Record V4.1-B in `deployments/monad-mainnet.json` + ADR-0032 (G10).~~ **DONE** — PR #99/#100 already merged to `origin/staging`. Only residual: fix the stale V4-A balance figure at closeout.
 6. Indexer minimal alerting: ingestion-lag and process-death to the same TG channel (G9).
 
 ## For V5 (feeds ADR-0036 §7.2 / M8 gates — already partially designed, now evidence-backed)

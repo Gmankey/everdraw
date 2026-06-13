@@ -10,7 +10,7 @@ All balances read live from `https://rpc.monad.xyz`. Context: operator asked "wh
 | Root key | `0x8487…91eD` | 0.177 | gas only — **still owner of both V3 vaults** (see below) |
 | Fly keeper | `0x80dE…DBE9` | 3.373 | operational float — leave (target ~2, alarm at 0.5) |
 | V4.1-A deployer | `0xFA5862…287A` | **2.411 — STRANDED, likely unrecoverable** | same filesystem search (2026-06-12) found no trace: `.openclaw/secrets/` empty, no keystore, no env file. Treat as written off unless a backup surfaces |
-| Test wallet | `0x69b3F8…9EBc` | **10.309 — KEY EXPOSED** | found during key search (2026-06-12): its private key sits in **plaintext in `~/.bash_history`**, readable by any local process/agent/backup. Holds 10.31 MON on mainnet (nonce 43; the points-testing wallet). **Action: operator sweeps to Ledger, then purge the history line and retire the key.** Not previously in this census |
+| Test wallet | `0x69b3F8…9EBc` | 10.309 — intentional burner | found during key search (2026-06-12): its private key was in **plaintext in `~/.bash_history`**. Operator confirms this is a disposable test wallet, kept on purpose; funds are expendable. **Remediation done:** the 64-hex key token was redacted from `~/.bash_history` (0 tokens remain). **Residual:** the key string may still persist in agent session transcript `.jsonl` files and any backups — not rewritten (append-only logs; low stakes for a burner). Operator keeps the wallet |
 | V4.1-B deployer | `0x6b6601…FC5a` | 0.098 | **written off as unrecoverable deleted-key dust (2026-06-12, confirmed by exhaustive derivation).** Key search: `.openclaw/secrets/` empty (last modified 06-08, before the deploy), no foundry keystore, no `.env`/`/tmp` artifact, no file on disk references the address. Additionally, every 64-hex token in `~/.bash_history` and in the builder-agent session transcripts that mention this address was derived to an address — none matches this deployer (or V4.1-A's). The key existed only in the deploy-session environment (the 06-11 sweep of 1.2029 MON proves it existed then); the 0.097858 left behind is the standard ~0.1 MON sweep gas buffer. If the key ever surfaces, sweep; do not count this as recoverable. **Process deviation to fix:** the runbook required saving the key to `.openclaw/secrets/` — it never was. Same applies to the V4.1-A deployer below. |
 
 ## Contracts (native MON = VRF reserves)
@@ -27,18 +27,20 @@ All balances read live from `https://rpc.monad.xyz`. Context: operator asked "wh
 
 **V4.1-B identified on-chain:** vault `0x1886f329e486e934c76028B15a580850e74d404C` (deployer nonce 1), oracle `0xd5d43554CA158334d5Db4aEA745Ead986fAad5C5` (nonce 0). Needs its `deployments/monad-mainnet.json` + ADR-0032 entry.
 
-## INCIDENT — V4.1-A has no VRF reserve and round 1 is stuck
+> **Canonical-tree caveat (2026-06-12):** this census was authored from the `everdraw-clean` reference checkout (feature branch, pre-#99/#100). `everdraw-clean` is **not canonical** — source of truth is `origin/staging` (GitHub `Gmankey/everdraw`); production trees are `everdraw-staging-mainnet` / `web`. On-chain balances below are live and authoritative; any repo-file observation was re-checked against `origin/staging`.
 
-- V4.1-A native balance is **0**: the 9 MON VRF reserve was **never seeded** (the deploy-log verification note even recorded "zero contract balance/reserve at cutover" — recorded but not acted on).
-- `currentRoundId` is still **1**, four days after round-1 sales ended (2026-06-08T15:03Z). The round cannot settle without entropy fees.
-- **1.274 shMON of user deposits** sit in the vault. Funds are not lost (withdrawals work per pool rules), but the product is stuck for those users.
-- Fix: `depositVRFReserve()` is **owner-gated** (live call reverts `not owner` — corrected 2026-06-12; an earlier draft of this doc said permissionless). The **Ledger** must seed the 9 MON. Funding source: recovered V3 reserves (below) cover it without new operator capital, routed root key → Ledger → V4.1-A.
+## INCIDENT — V4.1-A had no VRF reserve and round 1 stalled — RESOLVED
+
+- V4.1-A native balance was **0**: the 9 MON VRF reserve was **never seeded** at deploy (the deploy-log verification note even recorded "zero contract balance/reserve at cutover" — recorded but not acted on).
+- **Compounded by an alerting blind spot:** the keeper/watcher were watching only dead vaults June 7→12, so nothing alarmed. See `tasks/alerting-audit-incident-2026-06-12.md`. Fly secrets now repointed + verified; keeper ticks all live vaults.
+- **1.274 shMON of user deposits** were in the vault throughout. Funds were never at risk (withdrawals work per pool rules); the round simply couldn't settle.
+- **Fixed:** reserve seeded with 9 MON via the **Ledger** (`depositVRFReserve()` is owner-gated; an earlier draft wrongly said permissionless). Round 1 is Open with reserve present; commit becomes due ~2026-06-14T15:00Z once the yield window elapses, and the (now-correctly-pointed) keeper should fire it. **Verify settlement on 06-14.**
 
 ## Action plan (ordered)
 
 1. **Recover V3 reserves (root key, 2 txs):** `withdrawVRFReserve` on both V3 vaults → 38.46 MON → send to Ledger. Then `stop()` both (zero shMON, no principal at risk). Root key has 0.177 MON gas — sufficient.
 2. **Seed V4.1-A reserve (9 MON) — Ledger tx** (`depositVRFReserve()` is owner-gated) from the recovered funds → round 1 settles → product unstuck. This is the urgent one.
-3. **Sweep V4.1-B deployer dust (0.098)** → Ledger; delete key only after sweep confirmed + balance read back.
+3. ~~Sweep V4.1-B deployer dust~~ — **written off** (key never durably stored; see table). No agent-held wallet sweeps going forward per operator directive `memory/feedback_never_create_throwaway_wallets.md`.
 4. **V4-A retired close-out:** after the 0.638 shMON depositor balance is withdrawn/expired per pool rules, Ledger `withdrawVRFReserve` (8.23) + `stop()` — this was already the documented pending action; balance record in deployments.json is stale (says 9, actual 8.23).
 5. **Search backups for the V4.1-A deployer key** (`0xFA5862…287A`, 2.411 MON). If found: sweep → Ledger → delete. If not: write it off explicitly in an incident note so it stops appearing in future censuses as recoverable.
 6. **V4-B (9.0):** no action until V4.1-B frontend/keeper cutover is verified live; then recover + retire per runbook.
