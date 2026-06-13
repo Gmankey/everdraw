@@ -30,7 +30,8 @@
     "keeper:deploy": "flyctl deploy . -c scripts/keeper/fly.toml --ha=false",
     "keeper:logs": "flyctl logs -a everdraw-keeper",
     "keeper:status": "flyctl status -a everdraw-keeper",
-    "keeper:restart": "flyctl machine restart -a everdraw-keeper"
+    "keeper:restart": "flyctl machine restart -a everdraw-keeper",
+    "protocol:monitor": "node scripts/protocol-monitor.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

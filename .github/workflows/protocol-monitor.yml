@@ -1,0 +1,33 @@
+name: protocol-monitor
+
+on:
+  pull_request:
+    branches: [staging]
+    paths:
+      - ".github/workflows/protocol-monitor.yml"
+      - "deployments/monad-mainnet.json"
+      - "scripts/keeper-active-pools.mjs"
+      - "scripts/protocol-monitor.js"
+      - "package.json"
+      - "package-lock.json"
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run read-only protocol monitor
+        env:
+          RPC_URL: ${{ secrets.MONAD_MAINNET_RPC_URL || 'https://rpc.monad.xyz' }}
+          PROTOCOL_MONITOR_HEALTHCHECK_URL: ${{ secrets.PROTOCOL_MONITOR_HEALTHCHECK_URL }}
+          PROTOCOL_MONITOR_HEALTHCHECK_FAIL_URL: ${{ secrets.PROTOCOL_MONITOR_HEALTHCHECK_FAIL_URL }}
+        run: npm run protocol:monitor
