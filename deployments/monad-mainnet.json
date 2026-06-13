@@ -1,6 +1,15 @@
 {
   "network": "monad-mainnet",
   "chainId": 143,
+  "keeper": {
+    "activePoolAddresses": [
+      "0x933FF608eaC2b3221088bd9AE19b05F266dBF7DA",
+      "0x08bdD3710abB0616Cc29f388867f5625106B2A3E",
+      "0x1886f329e486e934c76028B15a580850e74d404C",
+      "0x9263d84a141172d9618f4b08839f595EE03bC7E8"
+    ],
+    "note": "Canonical Fly keeper/watchlist as of V4.1-B cutover: V4.1-A, V4-B, V4.1-B, retired V4-A until close-out."
+  },
   "sourceControlRule": "Production contracts must have committed source, ABI/artifact, constructor args, deployment address, compiler settings, and bytecode verification before they are treated as source of truth.",
   "contracts": [
     {

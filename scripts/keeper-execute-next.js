@@ -4,6 +4,7 @@ import { ethers } from 'ethers'
 import { request as httpsRequest } from 'node:https'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { assertCanonicalKeeperPools } from './keeper-active-pools.mjs'
 
 const REQUIRED = ['RPC_URL', 'PRIVATE_KEY']
 for (const k of REQUIRED) {
@@ -78,6 +79,10 @@ const VRF_LOW_RESERVE_MON = Number(process.env.VRF_LOW_RESERVE_MON || '0.05')
 const ERROR_ALERT_THRESHOLD = Number(process.env.KEEPER_ERROR_ALERT_THRESHOLD || '3')
 const BALANCE_LOG_EVERY_TICKS = Number(process.env.KEEPER_BALANCE_LOG_EVERY_TICKS || '20')
 const HEARTBEAT_LOG_EVERY_TICKS = Number(process.env.KEEPER_HEARTBEAT_LOG_EVERY_TICKS || '10')
+const ALERT_REPEAT_MS = Number(process.env.KEEPER_ALERT_REPEAT_MS || String(60 * 60_000))
+const HEALTHCHECK_URL = process.env.KEEPER_HEALTHCHECK_URL || process.env.HEALTHCHECKS_KEEPER_URL || ''
+const HEALTHCHECK_FAIL_URL = process.env.KEEPER_HEALTHCHECK_FAIL_URL || ''
+const HEALTHCHECK_MS = Number(process.env.KEEPER_HEALTHCHECK_MS || String(5 * 60_000))
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || ''
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || ''
@@ -131,9 +136,13 @@ const pools = POOL_ADDRESSES.map((address) => ({
   isV2: POOL_ADDRESSES_V2.has(address.toLowerCase()),
   isV3: POOL_ADDRESSES_V3.has(address.toLowerCase()),
   consecutiveErrors: 0,
+  lastErrorAlertAt: 0,
   vrfTimeoutAlertedRound: 0,
-  vrfLowReserveAlerted: false,
+  vrfLowReserveRecovered: true,
+  lastVrfLowReserveAlertAt: 0,
 }))
+
+const poolReconcile = assertCanonicalKeeperPools(POOL_ADDRESSES)
 
 for (const pool of pools) {
   if (pool.isV2 && pool.isV3) {
@@ -145,7 +154,9 @@ for (const pool of pools) {
 let running = true
 let inFlight = false
 let tickCount = 0
-let lowBalanceAlerted = false
+let lowBalanceRecovered = true
+let lastLowBalanceAlertAt = 0
+let lastHealthcheckAt = 0
 let startedAtMs = Date.now()
 
 function ts() {
@@ -256,6 +267,42 @@ async function sendTelegram(text) {
   console.error(`${ts()} [keeper] telegram send failed after retries: ${lastErr?.message || lastErr}`)
 }
 
+async function pingHealthcheck(url, label) {
+  if (!url) return
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), Number(process.env.HEALTHCHECK_TIMEOUT_MS || '8000'))
+  try {
+    const res = await fetch(url, { method: 'GET', signal: controller.signal })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  } catch (err) {
+    console.error(`${ts()} [keeper] healthcheck ping failed label=${label}: ${err?.message || err}`)
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+async function maybePingHealthcheck(label = 'tick') {
+  if (!HEALTHCHECK_URL) return
+  const now = Date.now()
+  if (now - lastHealthcheckAt < HEALTHCHECK_MS) return
+  lastHealthcheckAt = now
+  await pingHealthcheck(HEALTHCHECK_URL, label)
+}
+
+async function pingHealthcheckFail(label) {
+  if (HEALTHCHECK_FAIL_URL) {
+    await pingHealthcheck(HEALTHCHECK_FAIL_URL, label)
+    return
+  }
+  if (!HEALTHCHECK_URL) return
+  const failUrl = HEALTHCHECK_URL.endsWith('/fail') ? HEALTHCHECK_URL : `${HEALTHCHECK_URL.replace(/\/$/, '')}/fail`
+  await pingHealthcheck(failUrl, label)
+}
+
+function shouldRepeatAlert(lastAt, repeatMs = ALERT_REPEAT_MS) {
+  return Date.now() - Number(lastAt || 0) >= repeatMs
+}
+
 async function checkBalance(forceLog = false) {
   const bal = await provider.getBalance(wallet.address)
   const balFmt = Number(ethers.formatEther(bal))
@@ -267,12 +314,13 @@ async function checkBalance(forceLog = false) {
   if (balFmt < LOW_BALANCE_MON) {
     const msg = `${ts()} [keeper][ALERT] low balance ${balFmt.toFixed(6)} MON (< ${LOW_BALANCE_MON}) wallet=${wallet.address}`
     console.warn(msg)
-    if (!lowBalanceAlerted) {
+    if (lowBalanceRecovered || shouldRepeatAlert(lastLowBalanceAlertAt)) {
       await sendTelegram(`⚠️ Monad Keeper low balance\n${msg}`)
-      lowBalanceAlerted = true
+      lowBalanceRecovered = false
+      lastLowBalanceAlertAt = Date.now()
     }
   } else {
-    lowBalanceAlerted = false
+    lowBalanceRecovered = true
   }
 }
 
@@ -282,9 +330,12 @@ async function handlePoolError(poolCtx, err) {
   console.error(`${ts()} [keeper][pool=${poolCtx.address}] error #${poolCtx.consecutiveErrors}: ${msg}`)
 
   if (poolCtx.consecutiveErrors >= ERROR_ALERT_THRESHOLD) {
-    await sendTelegram(
-      `🚨 Monad Keeper errors\npool=${poolCtx.address}\nconsecutiveErrors=${poolCtx.consecutiveErrors}\nthreshold=${ERROR_ALERT_THRESHOLD}\nerror=${msg}`,
-    )
+    if (shouldRepeatAlert(poolCtx.lastErrorAlertAt)) {
+      await sendTelegram(
+        `🚨 Monad Keeper errors\npool=${poolCtx.address}\nconsecutiveErrors=${poolCtx.consecutiveErrors}\nthreshold=${ERROR_ALERT_THRESHOLD}\nerror=${msg}`,
+      )
+      poolCtx.lastErrorAlertAt = Date.now()
+    }
   }
 }
 
@@ -327,12 +378,13 @@ async function checkVRFReserve(poolCtx) {
     if (balMON < VRF_LOW_RESERVE_MON) {
       const msg = `⚠️ LOW VRF RESERVE: pool ${address} balance ${balMON.toFixed(6)} MON (< ${VRF_LOW_RESERVE_MON})\nTop up with: cast send ${address} "depositVRFReserve()" --value 0.1ether`
       console.warn(`${ts()} [keeper][pool=${address}] ${msg}`)
-      if (!poolCtx.vrfLowReserveAlerted) {
+      if (poolCtx.vrfLowReserveRecovered || shouldRepeatAlert(poolCtx.lastVrfLowReserveAlertAt)) {
         await sendTelegram(msg)
-        poolCtx.vrfLowReserveAlerted = true
+        poolCtx.vrfLowReserveRecovered = false
+        poolCtx.lastVrfLowReserveAlertAt = Date.now()
       }
     } else {
-      poolCtx.vrfLowReserveAlerted = false
+      poolCtx.vrfLowReserveRecovered = true
     }
   } catch (e) {
     console.error(`${ts()} [keeper][pool=${address}] VRF reserve check error (non-fatal): ${e?.message || e}`)
@@ -361,6 +413,7 @@ async function readPoolLifecycle(poolCtx) {
 
 async function tickPool(poolCtx) {
   const { address, contract, isV2, isV3 } = poolCtx
+  const isVrfPool = !isV2
 
   const lifecycle = await readPoolLifecycle(poolCtx)
   if (lifecycle.paused || lifecycle.stoppedAt > 0) {
@@ -371,14 +424,14 @@ async function tickPool(poolCtx) {
     return
   }
 
-  if (isV3) {
+  if (isVrfPool) {
     await checkVRFTimeout(poolCtx)
     await checkVRFReserve(poolCtx)
   }
 
   const [rid, action] = await contract.nextExecutable()
   const actionNum = Number(action)
-  const actionName = isV3
+  const actionName = isVrfPool
     ? (ACTION_NAMES_V3[actionNum] ?? `Unknown(${actionNum})`)
     : isV2
       ? (ACTION_NAMES_V2[actionNum] ?? `Unknown(${actionNum})`)
@@ -409,7 +462,7 @@ async function tickPool(poolCtx) {
   const opts = txOptions()
 
   const execCall = () => {
-    if (isV3) return contract.executeNext(opts)
+    if (isVrfPool) return contract.executeNext(opts)
     if (!isV2) return contract.executeNext(opts)
     if (actionNum === 1) return contract.commit(rid, opts)
     if (actionNum === 2 || actionNum === 3) return contract.settle(rid, opts)
@@ -417,7 +470,7 @@ async function tickPool(poolCtx) {
   }
 
   const preflightCall = () => {
-    if (isV3) return contract.executeNext.staticCall(opts)
+    if (isVrfPool) return contract.executeNext.staticCall(opts)
     if (!isV2) return contract.executeNext.staticCall(opts)
     if (actionNum === 1) return contract.commit.staticCall(rid, opts)
     if (actionNum === 2 || actionNum === 3) return contract.settle.staticCall(rid, opts)
@@ -449,6 +502,7 @@ async function tickPool(poolCtx) {
 
   if (tickCount % HEARTBEAT_LOG_EVERY_TICKS === 0) keeperHeartbeat(address, rid, actionName)
   poolCtx.consecutiveErrors = 0
+  poolCtx.lastErrorAlertAt = 0
 }
 
 async function tick() {
@@ -474,6 +528,7 @@ async function tick() {
         }
       }
     }
+    await maybePingHealthcheck()
   } finally {
     inFlight = false
   }
@@ -483,10 +538,11 @@ async function main() {
   const net = await provider.getNetwork()
   const addr = await wallet.getAddress()
   console.log(
-    `${ts()} [keeper] start pid=${process.pid} chainId=${net.chainId} wallet=${addr} pools=${POOL_ADDRESSES.length} poolAddresses=${POOL_ADDRESSES.join(',')} v2Pools=${POOL_ADDRESSES_V2.size} v3Pools=${POOL_ADDRESSES_V3.size} intervalMs=${INTERVAL_MS} dryRun=${DRY_RUN} once=${RUN_ONCE} preflight=${KEEPER_PREFLIGHT} telegram=${TELEGRAM_ENABLED} telegramTimeoutMs=${TELEGRAM_TIMEOUT_MS} telegramRetries=${TELEGRAM_RETRIES} lowBalanceMon=${LOW_BALANCE_MON} vrfTimeoutSec=${VRF_TIMEOUT_SEC} vrfLowReserveMon=${VRF_LOW_RESERVE_MON} errorAlertThreshold=${ERROR_ALERT_THRESHOLD}`,
+    `${ts()} [keeper] start pid=${process.pid} chainId=${net.chainId} wallet=${addr} pools=${POOL_ADDRESSES.length} poolAddresses=${POOL_ADDRESSES.join(',')} canonicalPoolReconcile=${poolReconcile.strict} v2Pools=${POOL_ADDRESSES_V2.size} v3Pools=${POOL_ADDRESSES_V3.size} intervalMs=${INTERVAL_MS} dryRun=${DRY_RUN} once=${RUN_ONCE} preflight=${KEEPER_PREFLIGHT} telegram=${TELEGRAM_ENABLED} healthcheck=${Boolean(HEALTHCHECK_URL)} telegramTimeoutMs=${TELEGRAM_TIMEOUT_MS} telegramRetries=${TELEGRAM_RETRIES} lowBalanceMon=${LOW_BALANCE_MON} vrfTimeoutSec=${VRF_TIMEOUT_SEC} vrfLowReserveMon=${VRF_LOW_RESERVE_MON} alertRepeatMs=${ALERT_REPEAT_MS} errorAlertThreshold=${ERROR_ALERT_THRESHOLD}`,
   )
 
   await checkBalance(true)
+  await maybePingHealthcheck('start')
 
   if (RUN_ONCE) {
     await tick()
@@ -514,12 +570,14 @@ async function main() {
     const msg = err?.stack || err?.message || String(err)
     console.error(`${ts()} [keeper] uncaughtException: ${msg}`)
     await sendTelegram(`🚨 Monad Keeper uncaughtException\n${msg.slice(0, 3000)}`)
+    await pingHealthcheckFail('uncaughtException')
     process.exit(1)
   })
   process.on('unhandledRejection', async (reason) => {
     const msg = reason?.stack || reason?.message || String(reason)
     console.error(`${ts()} [keeper] unhandledRejection: ${msg}`)
     await sendTelegram(`🚨 Monad Keeper unhandledRejection\n${msg.slice(0, 3000)}`)
+    await pingHealthcheckFail('unhandledRejection')
     process.exit(1)
   })
 
@@ -540,5 +598,6 @@ main().catch(async (e) => {
   const msg = e?.shortMessage || e?.reason || e?.message || String(e)
   console.error(`${ts()} [keeper] fatal: ${msg}`)
   await sendTelegram(`🚨 Monad Keeper fatal\n${msg}`)
+  await pingHealthcheckFail('fatal')
   process.exit(1)
 })
