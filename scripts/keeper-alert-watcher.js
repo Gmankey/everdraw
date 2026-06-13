@@ -3,7 +3,8 @@ import 'dotenv/config'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { FallbackProvider, Interface, JsonRpcProvider, formatEther, getAddress } from 'ethers'
+import { Contract, FallbackProvider, Interface, JsonRpcProvider, formatEther, getAddress } from 'ethers'
+import { assertCanonicalKeeperPools, parseAddressList } from './keeper-active-pools.mjs'
 
 const MAX_CATCHUP_BLOCKS = Number(process.env.ALERT_WATCHER_MAX_CATCHUP_BLOCKS || '50000')
 const BOOT_LOOKBACK_BLOCKS = Number(process.env.ALERT_WATCHER_BOOT_LOOKBACK_BLOCKS || '5000')
@@ -11,19 +12,20 @@ const POLL_MS = Number(process.env.ALERT_WATCHER_POLL_MS || '15000')
 const LOG_CHUNK_BLOCKS = Number(process.env.ALERT_WATCHER_LOG_CHUNK_BLOCKS || '5000')
 const HEARTBEAT_MS = 15 * 60_000
 const VRF_CHECK_MS = Number(process.env.ALERT_WATCHER_VRF_CHECK_MS || String(60 * 60_000))
+const ACTION_OVERDUE_CHECK_MS = Number(process.env.ALERT_WATCHER_ACTION_OVERDUE_CHECK_MS || String(60 * 1000))
+const ACTION_OVERDUE_MS = Number(process.env.ALERT_WATCHER_ACTION_OVERDUE_MS || String(10 * 60_000))
 const VRF_LOW_THRESHOLD_MON = Number(process.env.VRF_LOW_THRESHOLD_MON || '5')
 const VRF_FEE_ESTIMATE_MON = Number(process.env.VRF_FEE_ESTIMATE_MON || '0.05')
 const STATE_FILE = process.env.KEEPER_ALERT_STATE_FILE || '/data/keeper-alert-watcher-state.json'
+const HEALTHCHECK_URL = process.env.ALERT_WATCHER_HEALTHCHECK_URL || process.env.HEALTHCHECKS_ALERT_WATCHER_URL || ''
+const HEALTHCHECK_FAIL_URL = process.env.ALERT_WATCHER_HEALTHCHECK_FAIL_URL || ''
 
 const RPC_URL = process.env.RPC_URL || ''
 const RPC_URL_FALLBACK = process.env.RPC_URL_FALLBACK || ''
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || ''
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || ''
-const POOLS = (process.env.POOL_ADDRESSES || process.env.POOL_ADDRESS || '')
-  .split(',')
-  .map((address) => address.trim())
-  .filter(Boolean)
-  .map((address) => getAddress(address))
+const POOLS = parseAddressList(process.env.POOL_ADDRESSES || process.env.POOL_ADDRESS)
+const poolReconcile = assertCanonicalKeeperPools(POOLS)
 
 const ABI = [
   'event OwnershipTransferred(address indexed previousOwner, address indexed newOwner)',
@@ -36,6 +38,9 @@ const ABI = [
   'event Unpaused(address indexed by)',
   'event VRFReserveWithdrawn(address indexed to, uint256 amount)',
   'event EmergencyForceSettled(uint256 indexed roundId)',
+  'function nextExecutable() view returns (uint256 rid, uint8 action)',
+  'function currentRoundId() view returns (uint256)',
+  'function getRoundTimes(uint256 rid) view returns (uint64 salesEndTime, uint64 vrfRequestTime)',
 ]
 
 const iface = new Interface(ABI)
@@ -74,16 +79,17 @@ function makeProvider(primaryUrl, fallbackUrl) {
 
 function readState() {
   try {
-    if (!existsSync(STATE_FILE)) return { lastSeenBlock: 0, recentLogKeys: [], reserveLowAlerts: {} }
+    if (!existsSync(STATE_FILE)) return { lastSeenBlock: 0, recentLogKeys: [], reserveLowAlerts: {}, actionDueAlerts: {} }
     const parsed = JSON.parse(readFileSync(STATE_FILE, 'utf8'))
     return {
       lastSeenBlock: Number(parsed.lastSeenBlock || 0),
       recentLogKeys: Array.isArray(parsed.recentLogKeys) ? parsed.recentLogKeys.slice(-500) : [],
       reserveLowAlerts: parsed.reserveLowAlerts && typeof parsed.reserveLowAlerts === 'object' ? parsed.reserveLowAlerts : {},
+      actionDueAlerts: parsed.actionDueAlerts && typeof parsed.actionDueAlerts === 'object' ? parsed.actionDueAlerts : {},
     }
   } catch (error) {
     log(`state read failed; starting with empty state: ${error?.message || error}`)
-    return { lastSeenBlock: 0, recentLogKeys: [], reserveLowAlerts: {} }
+    return { lastSeenBlock: 0, recentLogKeys: [], reserveLowAlerts: {}, actionDueAlerts: {} }
   }
 }
 
@@ -136,6 +142,29 @@ async function sendTelegram(text, attempts = 3) {
 async function alert(text) {
   log(`ALERT ${text.replaceAll('\n', ' | ')}`)
   await sendTelegram(text)
+}
+
+async function pingHealthcheck(url, label) {
+  if (!url) return
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), Number(process.env.HEALTHCHECK_TIMEOUT_MS || '8000'))
+  try {
+    const res = await fetch(url, { method: 'GET', signal: controller.signal })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  } catch (error) {
+    log(`healthcheck ping failed label=${label}: ${error?.message || error}`)
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+async function pingHealthcheckFail(label) {
+  if (HEALTHCHECK_FAIL_URL) {
+    await pingHealthcheck(HEALTHCHECK_FAIL_URL, label)
+    return
+  }
+  if (!HEALTHCHECK_URL) return
+  await pingHealthcheck(`${HEALTHCHECK_URL.replace(/\/$/, '')}/fail`, label)
 }
 
 function formatEventAlert(log, parsed) {
@@ -237,6 +266,49 @@ async function checkVrfReserve() {
   }
 }
 
+function actionName(action) {
+  return {
+    0: 'None',
+    1: 'Skip',
+    2: 'Commit',
+    3: 'Finalize',
+  }[action] || `Unknown(${action})`
+}
+
+async function checkActionOverdue() {
+  const now = Date.now()
+  for (const address of POOLS) {
+    const contract = new Contract(address, ABI, provider)
+    const [ridValue, actionValue] = await contract.nextExecutable()
+    const rid = String(ridValue)
+    const action = Number(actionValue)
+    const key = `${address}:${rid}:${action}`
+
+    if (action === 0) {
+      for (const existing of Object.keys(state.actionDueAlerts)) {
+        if (existing.startsWith(`${address}:`)) delete state.actionDueAlerts[existing]
+      }
+      writeState()
+      continue
+    }
+
+    const record = state.actionDueAlerts[key] || { firstSeenAt: now, lastAlertAt: 0 }
+    state.actionDueAlerts[key] = record
+    if (now - Number(record.firstSeenAt || now) < ACTION_OVERDUE_MS) {
+      writeState()
+      continue
+    }
+    if (now - Number(record.lastAlertAt || 0) < VRF_CHECK_MS) {
+      writeState()
+      continue
+    }
+
+    record.lastAlertAt = now
+    writeState()
+    await alert(`🚨 EverDraw keeper action overdue on ${poolLabel(address)}\nround=${rid}\naction=${actionName(action)}\noverdueMinutes=${Math.floor((now - Number(record.firstSeenAt || now)) / 60000)}\nExpected keeper executeNext() to clear this.`)
+  }
+}
+
 async function loop(name, intervalMs, fn) {
   while (!stopping) {
     try {
@@ -252,24 +324,30 @@ process.on('SIGINT', () => { stopping = true })
 process.on('SIGTERM', () => { stopping = true })
 process.on('uncaughtException', (error) => {
   log(`uncaught exception: ${error?.stack || error?.message || error}`)
+  pingHealthcheckFail('uncaughtException').finally(() => {})
   process.exit(1)
 })
 process.on('unhandledRejection', (error) => {
   log(`unhandled rejection: ${error?.stack || error?.message || error}`)
+  pingHealthcheckFail('unhandledRejection').finally(() => {})
   process.exit(1)
 })
 
 validateEnv()
-log(`start pid=${process.pid} watching ${POOLS.length} pools pollMs=${POLL_MS} stateFile=${STATE_FILE} fallback=${Boolean(RPC_URL_FALLBACK)} vrfThresholdMon=${VRF_LOW_THRESHOLD_MON}`)
+log(`start pid=${process.pid} watching ${POOLS.length} pools canonicalPoolReconcile=${poolReconcile.strict} pollMs=${POLL_MS} stateFile=${STATE_FILE} fallback=${Boolean(RPC_URL_FALLBACK)} vrfThresholdMon=${VRF_LOW_THRESHOLD_MON} actionOverdueMs=${ACTION_OVERDUE_MS} healthcheck=${Boolean(HEALTHCHECK_URL)}`)
 await sendTelegram(`✅ EverDraw governance alert watcher online\npools=${POOLS.length}\ntime=${ts()}`)
+await pingHealthcheck(HEALTHCHECK_URL, 'start')
 await scanOnce()
 await checkVrfReserve()
+await checkActionOverdue()
 
 loop('scan', POLL_MS, async () => {
   const result = await scanOnce()
   if (result.scanned || result.alerts) log(`scan currentBlock=${result.currentBlock} scanned=${result.scanned} alerts=${result.alerts}`)
 })
 loop('vrf-reserve-check', VRF_CHECK_MS, checkVrfReserve)
+loop('action-overdue-check', ACTION_OVERDUE_CHECK_MS, checkActionOverdue)
 loop('heartbeat', HEARTBEAT_MS, async () => {
   log(`heartbeat watching ${POOLS.length} pools lastSeenBlock=${state.lastSeenBlock}`)
+  await pingHealthcheck(HEALTHCHECK_URL, 'heartbeat')
 })
