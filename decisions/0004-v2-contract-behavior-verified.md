@@ -34,8 +34,12 @@ Both are `immutable` — set in constructor, cannot be changed after deploy.
 ### Drift on each cycle
 `_startNextRound()` sets the new salesEndTime based on `block.timestamp` at the moment of the commit tx. If the keeper fires commit 5 minutes late, the new round's salesEndTime is 5 minutes later than ideal. **Drift compounds across cycles** unless the keeper actively re-anchors.
 
-### Zero-ticket rounds: handled cleanly
-`commit()` checks `r.totalTickets == 0`, marks round `Skipped`, opens next round. No revert. No special handling needed elsewhere. Confirms ADR-0001's "fixed schedule self-heals skips."
+### Zero-ticket rounds: handled cleanly, but NOT "self-healing" per ADR-0001 — CORRECTED 2026-06-16
+`commit()` checks `r.totalTickets == 0`, marks round `Skipped`, opens next round via `_startNextRound()`. No revert. No special handling needed elsewhere.
+
+**The "Confirms ADR-0001's fixed schedule self-heals skips" claim below this line (original text) was WRONG and is retracted.** `_startNextRound()` sets `salesEndTime = block.timestamp_at_commit + roundDurationSec` — a rolling offset from *now*, with no calendar anchor. A skipped round does **not** reopen at "the same calendar slot next week" as ADR-0001 requires; it reopens `roundDurationSec` (24h) from whenever `commit()` happens to fire. Combined with the drift noted above (this same section, "Drift on each cycle"), a skip drifts the schedule by a full cycle-length minus 24h — the opposite of self-healing.
+
+This was never empirically exercised on live Vault A (38+ rounds, real deposits every week — skip path never triggered), so the error went undetected until V4.1-B hit empty rounds in June 2026. See **ADR-0037** for the full writeup and the V5 gate this creates.
 
 ### Negative yield: handled cleanly
 `prizeShares = totalShmonShares > principalShares ? totalShmonShares - principalShares : 0;` (line 279). Saturating subtraction. If shMON share rate drops during lock, `prizeShares = 0` — no winner gets a prize, but every depositor still gets back their original shares via `withdrawPrincipal`. No underflow risk.
