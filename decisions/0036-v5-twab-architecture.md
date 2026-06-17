@@ -292,3 +292,13 @@ If the strategy venue itself loses value (shMON exploit/slash), `totalAssets < t
 - Requirements: ADR-0034 · Handoff + failure record: `tasks/v5-design-handoff-to-builder.md`
 - Carried forward: ADR-0006 (Merkl surface), ADR-0027 (fee router recipients), ADR-0028 (payout *guarantee*), ADR-0029 (randomness), ADR-0031 (multisig)
 - Retired in V5: ADR-0010 (stagger), ADR-0024/0025 (rounds/tickets), ADR-0026 (sponsor model)
+
+## 11. Build status log
+
+- **2026-06-17 — M0–M2 closed; M3 active.**
+  - **M0** signed off (design review). **M1** (TwabController) merged via PR #104: differential harness vs pinned upstream PoolTogether V5 in-tree (`test/v5/EverdrawTwabControllerDifferential.t.sol`), gate met, no greenfield deviation. **M2** (PrizeVaultV5 + ShmonStrategy) merged in the same PR.
+  - **M2 fork blocker resolved with no ADR deviation:** the `NotActivated` revert was a Foundry **Paris vs Cancun** EVM-emulation mismatch, not a Monad precompile gap — the `fork` profile (Cancun) passes the pinned Monad fork.
+  - **Solvency-valuation question (raised in PM review) resolved:** shMON has no exit fee (sticker value = realizable value), so the §7.1 shortfall trigger reading gross `convertToAssets` is correct. No change.
+  - **Display denomination decided — see ADR-0038:** V5 user surface is plain **MON** (successor to V4 ticket=MON); no ticket/credit abstraction, no raw shMON share counts, no proactive shMON disclaimers (support-handled). No contract change.
+  - **Cadence defect logged — see ADR-0037:** V4/V4.1 rolling-schedule defect is a hard calendar-anchored gate on M3's DrawManager (drift-simulation test required).
+  - **Next:** M3 (DrawManager + winner pipeline) is unblocked and active — kickoff ticket `tasks/v5-m3-drawmanager-kickoff-builder-ticket.md`.
