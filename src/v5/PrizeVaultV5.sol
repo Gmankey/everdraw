@@ -20,6 +20,7 @@ contract PrizeVaultV5 {
     address public owner;
     address public pendingOwner;
     address public pauser;
+    address public drawManager;
     bool public paused;
     uint64 public stoppedAt;
     uint256 private _locked = 1;
@@ -47,6 +48,8 @@ contract PrizeVaultV5 {
     event Paused(address indexed by);
     event Unpaused(address indexed by);
     event PauserSet(address indexed pauser);
+    event DrawManagerSet(address indexed drawManager);
+    event YieldEscrowed(address indexed claimManager, uint256 amount);
     event VaultStopped(uint64 stoppedAt);
     event OwnershipTransferStarted(address indexed previousOwner, address indexed pendingOwner);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
@@ -69,6 +72,8 @@ contract PrizeVaultV5 {
     error NoPendingStrategyChange();
     error TimelockNotElapsed();
     error StrategyMigrationShortfall(uint256 beforeAssets, uint256 afterAssets);
+    error NotDrawManager();
+    error InsufficientYield(uint256 requested, uint256 available);
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -77,6 +82,11 @@ contract PrizeVaultV5 {
 
     modifier onlyPauser() {
         if (msg.sender != pauser) revert NotPauser();
+        _;
+    }
+
+    modifier onlyDrawManager() {
+        if (msg.sender != drawManager) revert NotDrawManager();
         _;
     }
 
@@ -139,6 +149,12 @@ contract PrizeVaultV5 {
         if (newPauser == address(0)) revert ZeroAddress();
         pauser = newPauser;
         emit PauserSet(newPauser);
+    }
+
+    function setDrawManager(address newDrawManager) external onlyOwner {
+        if (newDrawManager == address(0)) revert ZeroAddress();
+        drawManager = newDrawManager;
+        emit DrawManagerSet(newDrawManager);
     }
 
     function transferOwnership(address newOwner) external onlyOwner {
@@ -222,6 +238,22 @@ contract PrizeVaultV5 {
         assets = strategy.depositSharesFrom(msg.sender, shares);
         _requireDepositAllowed(assets);
         _creditSponsor(msg.sender, assets);
+    }
+
+    function availableYield() public view returns (uint256) {
+        uint256 assets = strategy.totalAssets();
+        if (assets <= totalPrincipal) return 0;
+        return assets - totalPrincipal;
+    }
+
+    function escrowYield(address claimManager, uint256 amount) external onlyDrawManager nonReentrant {
+        if (claimManager == address(0)) revert ZeroAddress();
+        uint256 available = availableYield();
+        if (amount > available) revert InsufficientYield(amount, available);
+        if (amount != 0) {
+            strategy.withdraw(amount, claimManager);
+        }
+        emit YieldEscrowed(claimManager, amount);
     }
 
     function withdraw(uint256 amount) external nonReentrant returns (uint256 assetsPaid) {
