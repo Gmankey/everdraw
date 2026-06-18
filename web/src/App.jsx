@@ -1487,7 +1487,11 @@ export default function App() {
     let targetPoolAddress = ''
     let setter = null
 
-    if (view === 'vaultA') {
+    if (view === 'current') {
+      targetRoundId = currentRidNum
+      targetPoolAddress = poolAddress
+      setter = setParticipants
+    } else if (view === 'vaultA') {
       targetRoundId = vaultARoundIdNum
       targetPoolAddress = activeVaultAddresses[0] || poolAddress
       setter = setParticipants
@@ -2240,6 +2244,7 @@ export default function App() {
           const monPaidWei = BigInt(r.assetPaid || r.monPaid || '0')
           const principalWithdrawnWei = BigInt(r.principalWithdrawn || '0')
           let remainingPrincipalWei = principalWithdrawnWei >= monPaidWei ? 0n : monPaidWei - principalWithdrawnWei
+          let principalReadFromChain = false
           let normalizedState = isV2round
             ? (r.state === 'open' ? 0 : r.state === 'committed' ? 1 : r.state === 'settled' ? 2 : r.state === 'skipped' ? 3 : r.state === 'failed' ? 4 : 0)
             : (r.state === 'settled' || r.state === 'skipped' ? 3 : r.state === 'drawn' || r.state === 'unstaking' ? 2 : r.state === 'committed' ? 1 : 0)
@@ -2261,6 +2266,7 @@ export default function App() {
               prizeClaimed = Boolean(info.prizeClaimed)
               if (userPos) {
                 remainingPrincipalWei = BigInt(userPos[0] || 0n)
+                principalReadFromChain = true
               }
             } catch (err) {
               if (isAbortError(err)) throw err
@@ -2292,6 +2298,7 @@ export default function App() {
 
               if (userPos) {
                 remainingPrincipalWei = BigInt(userPos[0] || 0n)
+                principalReadFromChain = true
               }
             } catch (err) {
               if (isAbortError(err)) throw err
@@ -2310,6 +2317,7 @@ export default function App() {
               prizeWei = roundYieldWei(info, true)
               if (userPos) {
                 remainingPrincipalWei = BigInt(userPos[0] || 0n)
+                principalReadFromChain = true
               }
             } catch (err) {
               if (isAbortError(err)) throw err
@@ -2327,6 +2335,7 @@ export default function App() {
               )
               if (onchainPrincipal !== null) {
                 remainingPrincipalWei = BigInt(onchainPrincipal)
+                principalReadFromChain = true
               }
             } catch (err) {
               if (isAbortError(err)) throw err
@@ -2349,7 +2358,7 @@ export default function App() {
             withdrawableMon: null,
             prizeWei,
             canClaimPrize: r.won === 1 && prizeWei > 0n && !prizeClaimed && isTerminalRound(normalizedState, isV2round),
-            canWithdraw: isTerminalRound(normalizedState, isV2round) && remainingPrincipalWei > 0n,
+            canWithdraw: principalReadFromChain && isTerminalRound(normalizedState, isV2round) && remainingPrincipalWei > 0n,
           })
         }
 
