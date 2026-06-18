@@ -101,6 +101,8 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     mapping(address => bool) public rewardTokenAllowed;
     mapping(uint256 => RewardSchedule) public rewardSchedules;
     mapping(uint256 => RewardLeg[]) internal drawRewardLegs;
+    mapping(uint256 => FeeRecipient[]) internal drawFeeRecipients;
+    mapping(uint256 => uint16) internal drawTotalFeeBps;
     FeeRecipient[] internal feeRecipients;
 
     event OwnershipTransferStarted(address indexed previousOwner, address indexed pendingOwner);
@@ -154,11 +156,7 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     );
     event PrizeFundingCancelled(uint256 indexed scheduleId, address indexed funder, uint256 refunded);
     event DrawEconomicsSnapshot(
-        uint256 indexed drawId,
-        uint256 grossYield,
-        uint256 sponsorYield,
-        uint256 feeAmount,
-        uint256 totalPayout
+        uint256 indexed drawId, uint256 grossYield, uint256 sponsorYield, uint256 feeAmount, uint256 totalPayout
     );
 
     error NotOwner();
@@ -357,6 +355,53 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
         return (leg.token, leg.amount);
     }
 
+    function drawFeeRecipientCount(uint256 drawId) external view returns (uint256) {
+        return drawFeeRecipients[drawId].length;
+    }
+
+    function drawFeeRecipientAt(uint256 drawId, uint256 index) external view returns (address account, uint16 bps) {
+        FeeRecipient memory recipient = drawFeeRecipients[drawId][index];
+        return (recipient.account, recipient.bps);
+    }
+
+    function plannedClaimLeafCount(uint256 drawId) public view returns (uint256) {
+        uint256 legs = 1 + drawRewardLegs[drawId].length;
+        uint256 leavesPerLeg = 1 + (drawTotalFeeBps[drawId] == 0 ? 0 : drawFeeRecipients[drawId].length);
+        return legs * leavesPerLeg;
+    }
+
+    function plannedClaimLeafAt(uint256 drawId, uint256 index, address winner)
+        public
+        view
+        returns (ClaimManagerV5.ClaimLeaf memory)
+    {
+        if (winner == address(0)) revert ZeroAddress();
+        uint256 leavesPerLeg = 1 + (drawTotalFeeBps[drawId] == 0 ? 0 : drawFeeRecipients[drawId].length);
+        uint256 legIndex = index / leavesPerLeg;
+        uint256 slot = index % leavesPerLeg;
+        (address token, uint256 amount, uint256 feeAmount) = _plannedLeg(drawId, legIndex);
+        bytes32 distributionId = claimManager.distributionIdFor(address(this), bytes32(drawId));
+
+        if (slot == 0) {
+            return ClaimManagerV5.ClaimLeaf({
+                distributionId: distributionId,
+                leafIndex: index,
+                account: winner,
+                token: token,
+                amount: amount - _allocatedFeeAmount(drawId, feeAmount)
+            });
+        }
+
+        FeeRecipient memory recipient = drawFeeRecipients[drawId][slot - 1];
+        return ClaimManagerV5.ClaimLeaf({
+            distributionId: distributionId,
+            leafIndex: index,
+            account: recipient.account,
+            token: token,
+            amount: _recipientFeeAmount(drawId, feeAmount, recipient.bps)
+        });
+    }
+
     function queueOracleChange(address newOracle) external onlyOwner {
         if (newOracle == address(0) || newOracle.code.length == 0) revert ZeroAddress();
         pendingOracle = newOracle;
@@ -389,10 +434,10 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
         nextPeriodStart = periodEnd;
 
         uint256 totalTwab = twabController.getTotalTwabBetween(address(vault), periodStart, periodEnd);
-        uint256 totalPrincipalTwab =
-            twabController.getTotalPrincipalTwabBetween(address(vault), periodStart, periodEnd);
-        uint256 sponsorTwab =
-            twabController.getDelegateTwabBetween(address(vault), twabController.SPONSOR_DELEGATE(), periodStart, periodEnd);
+        uint256 totalPrincipalTwab = twabController.getTotalPrincipalTwabBetween(address(vault), periodStart, periodEnd);
+        uint256 sponsorTwab = twabController.getDelegateTwabBetween(
+            address(vault), twabController.SPONSOR_DELEGATE(), periodStart, periodEnd
+        );
         uint256 grossYield = vault.availableYield();
         uint256 sponsorYield = totalPrincipalTwab == 0 ? 0 : (grossYield * sponsorTwab) / totalPrincipalTwab;
         uint256 feeBaseAmount = feeBase == FeeBase.PARTICIPANT_YIELD_ONLY ? grossYield - sponsorYield : grossYield;
@@ -427,6 +472,7 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
         draw.sponsorYield = sponsorYield;
         draw.feeAmount = feeAmount;
         draw.rewardLegCount = uint32(_consumeRewardSchedules(drawId));
+        _snapshotFeeRecipients(drawId);
         draw.status = DrawStatus.AwaitingSeed;
         drawIdByRequestId[requestId] = drawId;
 
@@ -525,6 +571,45 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
             totals[i] = totalsScratch[i];
         }
         claimManager.registerDistribution(bytes32(drawId), draw.root, draw.winnerCount, totals, ALGORITHM_VERSION_HASH);
+    }
+
+    function _plannedLeg(uint256 drawId, uint256 legIndex)
+        internal
+        view
+        returns (address token, uint256 amount, uint256 feeAmount)
+    {
+        Draw storage draw = draws[drawId];
+        if (legIndex == 0) {
+            return (NATIVE_TOKEN, draw.totalPayout, draw.feeAmount);
+        }
+        RewardLeg memory leg = drawRewardLegs[drawId][legIndex - 1];
+        uint256 legFee = (leg.amount * drawTotalFeeBps[drawId]) / 10_000;
+        return (leg.token, leg.amount, legFee);
+    }
+
+    function _recipientFeeAmount(uint256 drawId, uint256 feeAmount, uint16 recipientBps)
+        internal
+        view
+        returns (uint256)
+    {
+        uint16 drawBps = drawTotalFeeBps[drawId];
+        if (drawBps == 0) return 0;
+        return (feeAmount * recipientBps) / drawBps;
+    }
+
+    function _allocatedFeeAmount(uint256 drawId, uint256 feeAmount) internal view returns (uint256 allocated) {
+        uint16 drawBps = drawTotalFeeBps[drawId];
+        if (drawBps == 0) return 0;
+        for (uint256 i = 0; i < drawFeeRecipients[drawId].length; i++) {
+            allocated += (feeAmount * drawFeeRecipients[drawId][i].bps) / drawBps;
+        }
+    }
+
+    function _snapshotFeeRecipients(uint256 drawId) internal {
+        drawTotalFeeBps[drawId] = totalFeeBps;
+        for (uint256 i = 0; i < feeRecipients.length; i++) {
+            drawFeeRecipients[drawId].push(feeRecipients[i]);
+        }
     }
 
     function _addTokenTotal(ClaimManagerV5.TokenTotal[] memory totals, uint256 count, address token, uint256 amount)

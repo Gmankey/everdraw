@@ -11,6 +11,12 @@ import {MockERC20} from "../mocks/MockERC20.sol";
 import {MockERC4626YieldVault} from "../mocks/MockERC4626YieldVault.sol";
 import {MockRandomnessOracle} from "../mocks/MockRandomnessOracle.sol";
 
+contract RejectNativeFeeRecipient {
+    receive() external payable {
+        revert("reject native");
+    }
+}
+
 contract DrawManagerV5Test is Test {
     uint64 constant START = 1_000_000;
     uint64 constant PERIOD = 1 weeks;
@@ -107,7 +113,9 @@ contract DrawManagerV5Test is Test {
         manager.vetoRoot(1);
         assertEq(uint8(_status(1)), uint8(DrawManagerV5.DrawStatus.Seeded));
 
-        vm.expectRevert(abi.encodeWithSelector(DrawManagerV5.VetoCooldownActive.selector, uint64(block.timestamp + 1 hours)));
+        vm.expectRevert(
+            abi.encodeWithSelector(DrawManagerV5.VetoCooldownActive.selector, uint64(block.timestamp + 1 hours))
+        );
         vm.prank(keeper);
         manager.proposeRoot(1, bytes32(uint256(0xdef)), 3, 10 ether);
 
@@ -138,7 +146,7 @@ contract DrawManagerV5Test is Test {
         vm.prank(fallbackProposer);
         manager.proposeRoot(1, bytes32(uint256(0x123)), 1, 10 ether);
 
-        (, , , , , , , , , , address proposer,, , ,) = manager.draws(1);
+        (,,,,,,,,,, address proposer,,,,) = manager.draws(1);
         assertEq(proposer, fallbackProposer);
     }
 
@@ -207,6 +215,64 @@ contract DrawManagerV5Test is Test {
         assertEq(feeAmount, expectedFee);
     }
 
+    function test_feeRecipientLeavesAreDeterministicAndDeferredIfNativeTransferReverts() public {
+        RejectNativeFeeRecipient rejectingRecipient = new RejectNativeFeeRecipient();
+        address[] memory recipients = new address[](1);
+        uint16[] memory bps = new uint16[](1);
+        recipients[0] = address(rejectingRecipient);
+        bps[0] = 1_000;
+        manager.setFeeConfig(DrawManagerV5.FeeBase.TOTAL_PRIZE, recipients, bps);
+
+        _startSeededDraw();
+
+        assertEq(manager.plannedClaimLeafCount(1), 2);
+        ClaimManagerV5.ClaimLeaf[] memory leaves = new ClaimManagerV5.ClaimLeaf[](2);
+        leaves[0] = manager.plannedClaimLeafAt(1, 0, alice);
+        leaves[1] = manager.plannedClaimLeafAt(1, 1, alice);
+        assertEq(leaves[0].account, alice);
+        assertEq(leaves[0].token, address(0));
+        assertEq(leaves[0].amount, 9 ether);
+        assertEq(leaves[1].account, address(rejectingRecipient));
+        assertEq(leaves[1].token, address(0));
+        assertEq(leaves[1].amount, 1 ether);
+
+        bytes32[] memory hashes = _hashLeaves(leaves);
+        vm.prank(keeper);
+        manager.proposeRoot(1, _root2(hashes[0], hashes[1]), 2, 10 ether);
+        vm.warp(block.timestamp + CHALLENGE);
+        manager.finalizeRoot(1);
+
+        bytes32[][] memory proofs = new bytes32[][](2);
+        proofs[0] = _proof1(hashes[1]);
+        proofs[1] = _proof1(hashes[0]);
+        claimManager.claimMany(leaves, proofs);
+
+        assertEq(alice.balance, 9 ether);
+        (address account, address token, uint256 amount) = claimManager.deferredClaims(leaves[1].distributionId, 1);
+        assertEq(account, address(rejectingRecipient));
+        assertEq(token, address(0));
+        assertEq(amount, 1 ether);
+    }
+
+    function test_plannedFeeLeavesSnapshotConfigAtDrawStart() public {
+        address[] memory recipients = new address[](1);
+        uint16[] memory bps = new uint16[](1);
+        recipients[0] = feeRecipient;
+        bps[0] = 1_000;
+        manager.setFeeConfig(DrawManagerV5.FeeBase.TOTAL_PRIZE, recipients, bps);
+
+        _startSeededDraw();
+
+        recipients[0] = makeAddr("newFeeRecipient");
+        bps[0] = 2_000;
+        manager.setFeeConfig(DrawManagerV5.FeeBase.TOTAL_PRIZE, recipients, bps);
+
+        ClaimManagerV5.ClaimLeaf memory feeLeaf = manager.plannedClaimLeafAt(1, 1, alice);
+        assertEq(manager.plannedClaimLeafCount(1), 2);
+        assertEq(feeLeaf.account, feeRecipient);
+        assertEq(feeLeaf.amount, 1 ether);
+    }
+
     function test_fundPrizeCancelUnstartedRefundsUnreservedTokens() public {
         MockERC20 reward = new MockERC20("Reward", "RWD", 18);
         reward.mint(alice, 10 ether);
@@ -270,6 +336,124 @@ contract DrawManagerV5Test is Test {
         assertTrue(cancelled);
     }
 
+    function test_rewardFeeLeavesPayInKindAcrossNativeAndRewardLegs() public {
+        MockERC20 reward = new MockERC20("Reward", "RWD", 18);
+        reward.mint(alice, 10 ether);
+        manager.setRewardTokenAllowed(address(reward), true);
+
+        address[] memory recipients = new address[](1);
+        uint16[] memory bps = new uint16[](1);
+        recipients[0] = feeRecipient;
+        bps[0] = 1_000;
+        manager.setFeeConfig(DrawManagerV5.FeeBase.TOTAL_PRIZE, recipients, bps);
+
+        vm.startPrank(alice);
+        reward.approve(address(manager), 10 ether);
+        manager.fundPrize(address(reward), 10 ether, 1);
+        vm.stopPrank();
+
+        _startSeededDraw();
+
+        assertEq(manager.plannedClaimLeafCount(1), 4);
+        ClaimManagerV5.ClaimLeaf[] memory leaves = new ClaimManagerV5.ClaimLeaf[](4);
+        for (uint256 i = 0; i < leaves.length; i++) {
+            leaves[i] = manager.plannedClaimLeafAt(1, i, alice);
+        }
+        assertEq(leaves[0].account, alice);
+        assertEq(leaves[0].token, address(0));
+        assertEq(leaves[0].amount, 9 ether);
+        assertEq(leaves[1].account, feeRecipient);
+        assertEq(leaves[1].token, address(0));
+        assertEq(leaves[1].amount, 1 ether);
+        assertEq(leaves[2].account, alice);
+        assertEq(leaves[2].token, address(reward));
+        assertEq(leaves[2].amount, 9 ether);
+        assertEq(leaves[3].account, feeRecipient);
+        assertEq(leaves[3].token, address(reward));
+        assertEq(leaves[3].amount, 1 ether);
+
+        bytes32[] memory hashes = _hashLeaves(leaves);
+        vm.prank(keeper);
+        manager.proposeRoot(1, _root4(hashes), 4, 10 ether);
+        vm.warp(block.timestamp + CHALLENGE);
+        manager.finalizeRoot(1);
+        claimManager.claimMany(leaves, _proofs4(hashes));
+
+        assertEq(alice.balance, 9 ether);
+        assertEq(feeRecipient.balance, 1 ether);
+        assertEq(reward.balanceOf(alice), 9 ether);
+        assertEq(reward.balanceOf(feeRecipient), 1 ether);
+    }
+
+    function test_sponsor5a5b5c5dEndToEnd() public {
+        MockERC20 reward = new MockERC20("Reward", "RWD", 18);
+        reward.mint(alice, 3 ether);
+        manager.setRewardTokenAllowed(address(reward), true);
+        manager.setRewardTokenAllowed(address(0), true);
+
+        vm.deal(alice, 12 ether);
+        vm.startPrank(alice);
+        reward.approve(address(manager), 3 ether);
+        manager.fundPrize(address(reward), 3 ether, 1);
+        manager.fundPrize{value: 2 ether}(address(0), 2 ether, 1);
+        vm.stopPrank();
+
+        vm.prank(alice);
+        vault.deposit{value: 10 ether}();
+
+        vm.deal(sponsor, 10 ether);
+        vm.prank(sponsor);
+        vault.sponsorDeposit{value: 10 ether}();
+        assertEq(twab.delegateBalanceOf(address(vault), twab.SPONSOR_DELEGATE()), 10 ether);
+        assertEq(vault.totalSupply(), 10 ether);
+
+        vm.warp(START + PERIOD);
+        shmon.setRate(2 ether);
+        vm.deal(address(shmon), 40 ether);
+        manager.startDraw();
+        oracle.fulfill(1, bytes32(uint256(0xbeef)));
+
+        assertEq(manager.drawRewardLegCount(1), 2);
+        (address rewardToken, uint256 rewardAmount) = manager.drawRewardLegAt(1, 0);
+        (address nativeToken, uint256 nativeAmount) = manager.drawRewardLegAt(1, 1);
+        assertEq(rewardToken, address(reward));
+        assertEq(rewardAmount, 3 ether);
+        assertEq(nativeToken, address(0));
+        assertEq(nativeAmount, 2 ether);
+
+        (,,,, uint256 totalTwab,,,,,,,, uint256 grossYield, uint256 sponsorYield,) = manager.draws(1);
+        assertEq(totalTwab, 10 ether);
+        assertEq(grossYield, 20 ether);
+        assertEq(sponsorYield, 10 ether);
+
+        ClaimManagerV5.ClaimLeaf[] memory leaves = new ClaimManagerV5.ClaimLeaf[](3);
+        for (uint256 i = 0; i < leaves.length; i++) {
+            leaves[i] = manager.plannedClaimLeafAt(1, i, alice);
+        }
+        assertEq(leaves[0].token, address(0));
+        assertEq(leaves[0].amount, 20 ether);
+        assertEq(leaves[1].token, address(reward));
+        assertEq(leaves[1].amount, 3 ether);
+        assertEq(leaves[2].token, address(0));
+        assertEq(leaves[2].amount, 2 ether);
+
+        bytes32[] memory hashes = _hashLeaves(leaves);
+        vm.prank(keeper);
+        manager.proposeRoot(1, _root3(hashes), 3, 20 ether);
+        vm.warp(block.timestamp + CHALLENGE);
+        manager.finalizeRoot(1);
+        claimManager.claimMany(leaves, _proofs3(hashes));
+
+        assertEq(alice.balance, 22 ether);
+        assertEq(reward.balanceOf(alice), 3 ether);
+
+        uint256 sponsorBefore = sponsor.balance;
+        vm.prank(sponsor);
+        vault.withdrawSponsor(10 ether);
+        assertEq(vault.sponsorPrincipalOf(sponsor), 0);
+        assertEq(sponsor.balance, sponsorBefore + 10 ether);
+    }
+
     function _depositAcrossFullPeriod(uint256 amount) internal {
         vm.deal(alice, amount);
         vm.prank(alice);
@@ -285,6 +469,60 @@ contract DrawManagerV5Test is Test {
     }
 
     function _status(uint256 drawId) internal view returns (DrawManagerV5.DrawStatus status) {
-        (, , , , , , , , , , , status, , ,) = manager.draws(drawId);
+        (,,,,,,,,,,, status,,,) = manager.draws(drawId);
+    }
+
+    function _hashLeaves(ClaimManagerV5.ClaimLeaf[] memory leaves) internal view returns (bytes32[] memory hashes) {
+        hashes = new bytes32[](leaves.length);
+        for (uint256 i = 0; i < leaves.length; i++) {
+            hashes[i] = claimManager.hashLeaf(leaves[i]);
+        }
+    }
+
+    function _proof1(bytes32 sibling) internal pure returns (bytes32[] memory proof) {
+        proof = new bytes32[](1);
+        proof[0] = sibling;
+    }
+
+    function _root2(bytes32 a, bytes32 b) internal pure returns (bytes32) {
+        return a < b ? keccak256(abi.encodePacked(a, b)) : keccak256(abi.encodePacked(b, a));
+    }
+
+    function _root3(bytes32[] memory hashes) internal pure returns (bytes32) {
+        return _root2(_root2(hashes[0], hashes[1]), hashes[2]);
+    }
+
+    function _root4(bytes32[] memory hashes) internal pure returns (bytes32) {
+        return _root2(_root2(hashes[0], hashes[1]), _root2(hashes[2], hashes[3]));
+    }
+
+    function _proofs3(bytes32[] memory hashes) internal pure returns (bytes32[][] memory proofs) {
+        proofs = new bytes32[][](3);
+        proofs[0] = new bytes32[](2);
+        proofs[0][0] = hashes[1];
+        proofs[0][1] = hashes[2];
+        proofs[1] = new bytes32[](2);
+        proofs[1][0] = hashes[0];
+        proofs[1][1] = hashes[2];
+        proofs[2] = new bytes32[](1);
+        proofs[2][0] = _root2(hashes[0], hashes[1]);
+    }
+
+    function _proofs4(bytes32[] memory hashes) internal pure returns (bytes32[][] memory proofs) {
+        bytes32 left = _root2(hashes[0], hashes[1]);
+        bytes32 right = _root2(hashes[2], hashes[3]);
+        proofs = new bytes32[][](4);
+        proofs[0] = new bytes32[](2);
+        proofs[0][0] = hashes[1];
+        proofs[0][1] = right;
+        proofs[1] = new bytes32[](2);
+        proofs[1][0] = hashes[0];
+        proofs[1][1] = right;
+        proofs[2] = new bytes32[](2);
+        proofs[2][0] = hashes[3];
+        proofs[2][1] = left;
+        proofs[3] = new bytes32[](2);
+        proofs[3][0] = hashes[2];
+        proofs[3][1] = left;
     }
 }
