@@ -2,16 +2,14 @@
 pragma solidity ^0.8.33;
 
 import {Test} from "forge-std/Test.sol";
+import {ClaimManagerV5} from "../../src/v5/ClaimManagerV5.sol";
 import {DrawManagerV5} from "../../src/v5/DrawManagerV5.sol";
 import {PrizeVaultV5} from "../../src/v5/PrizeVaultV5.sol";
 import {ShmonStrategy} from "../../src/v5/strategies/ShmonStrategy.sol";
 import {EverdrawTwabController} from "../../src/v5/twab/EverdrawTwabController.sol";
+import {MockERC20} from "../mocks/MockERC20.sol";
 import {MockERC4626YieldVault} from "../mocks/MockERC4626YieldVault.sol";
 import {MockRandomnessOracle} from "../mocks/MockRandomnessOracle.sol";
-
-contract MockClaimManagerV5 {
-    receive() external payable {}
-}
 
 contract DrawManagerV5Test is Test {
     uint64 constant START = 1_000_000;
@@ -24,13 +22,15 @@ contract DrawManagerV5Test is Test {
     ShmonStrategy strategy;
     PrizeVaultV5 vault;
     MockRandomnessOracle oracle;
-    MockClaimManagerV5 claimManager;
+    ClaimManagerV5 claimManager;
     DrawManagerV5 manager;
 
     address alice = makeAddr("alice");
     address keeper = makeAddr("keeper");
     address guardian = makeAddr("guardian");
     address fallbackProposer = makeAddr("fallbackProposer");
+    address feeRecipient = makeAddr("feeRecipient");
+    address sponsor = makeAddr("sponsor");
 
     function setUp() public {
         vm.warp(START);
@@ -42,7 +42,7 @@ contract DrawManagerV5Test is Test {
         twab.registerVault(address(vault));
 
         oracle = new MockRandomnessOracle();
-        claimManager = new MockClaimManagerV5();
+        claimManager = new ClaimManagerV5();
         manager = new DrawManagerV5(
             address(vault),
             address(twab),
@@ -55,6 +55,7 @@ contract DrawManagerV5Test is Test {
             GRACE,
             CHALLENGE
         );
+        claimManager.setAuthorizedSource(address(manager), true);
         vault.setDrawManager(address(manager));
     }
 
@@ -137,7 +138,7 @@ contract DrawManagerV5Test is Test {
         vm.prank(fallbackProposer);
         manager.proposeRoot(1, bytes32(uint256(0x123)), 1, 10 ether);
 
-        (, , , , , , , , , address proposer,) = manager.draws(1);
+        (, , , , , , , , , , address proposer,, , ,) = manager.draws(1);
         assertEq(proposer, fallbackProposer);
     }
 
@@ -147,6 +148,126 @@ contract DrawManagerV5Test is Test {
         vm.prank(keeper);
         vm.expectRevert(abi.encodeWithSelector(DrawManagerV5.BadPayout.selector, 10 ether, 9 ether));
         manager.proposeRoot(1, bytes32(uint256(0xabc)), 1, 9 ether);
+    }
+
+    function test_feeConfigEnforcesRecipientCapAndTotalCap() public {
+        address[] memory recipients = new address[](9);
+        uint16[] memory bps = new uint16[](9);
+        for (uint256 i = 0; i < 9; i++) {
+            recipients[i] = address(uint160(i + 10));
+            bps[i] = 100;
+        }
+        vm.expectRevert(DrawManagerV5.BadFeeConfig.selector);
+        manager.setFeeConfig(DrawManagerV5.FeeBase.TOTAL_PRIZE, recipients, bps);
+
+        recipients = new address[](2);
+        bps = new uint16[](2);
+        recipients[0] = feeRecipient;
+        recipients[1] = makeAddr("fee2");
+        bps[0] = 1_500;
+        bps[1] = 600;
+        vm.expectRevert(DrawManagerV5.BadFeeConfig.selector);
+        manager.setFeeConfig(DrawManagerV5.FeeBase.TOTAL_PRIZE, recipients, bps);
+
+        bps[1] = 500;
+        manager.setFeeConfig(DrawManagerV5.FeeBase.PARTICIPANT_YIELD_ONLY, recipients, bps);
+        assertEq(uint8(manager.feeBase()), uint8(DrawManagerV5.FeeBase.PARTICIPANT_YIELD_ONLY));
+        assertEq(manager.totalFeeBps(), 2_000);
+        assertEq(manager.feeRecipientCount(), 2);
+    }
+
+    function test_feeBaseParticipantYieldOnlyUsesTimeWeightedSponsorTwab() public {
+        address[] memory recipients = new address[](1);
+        uint16[] memory bps = new uint16[](1);
+        recipients[0] = feeRecipient;
+        bps[0] = 1_000;
+        manager.setFeeConfig(DrawManagerV5.FeeBase.PARTICIPANT_YIELD_ONLY, recipients, bps);
+
+        vm.deal(alice, 10 ether);
+        vm.prank(alice);
+        vault.deposit{value: 10 ether}();
+
+        vm.warp(START + PERIOD / 2);
+        vm.deal(sponsor, 10 ether);
+        vm.prank(sponsor);
+        vault.sponsorDeposit{value: 10 ether}();
+
+        vm.warp(START + PERIOD);
+        shmon.setRate(2 ether);
+
+        manager.startDraw();
+
+        (,,,,,,,,,,,, uint256 grossYield, uint256 sponsorYield, uint256 feeAmount) = manager.draws(1);
+        uint256 halfPeriod = uint256(PERIOD) / 2;
+        uint256 expectedSponsorYield =
+            (grossYield * (10 ether * halfPeriod)) / (10 ether * uint256(PERIOD) + 10 ether * halfPeriod);
+        uint256 expectedFee = ((grossYield - expectedSponsorYield) * 1_000) / 10_000;
+        assertEq(grossYield, 20 ether);
+        assertEq(sponsorYield, expectedSponsorYield);
+        assertEq(feeAmount, expectedFee);
+    }
+
+    function test_fundPrizeCancelUnstartedRefundsUnreservedTokens() public {
+        MockERC20 reward = new MockERC20("Reward", "RWD", 18);
+        reward.mint(alice, 10 ether);
+        manager.setRewardTokenAllowed(address(reward), true);
+
+        vm.startPrank(alice);
+        reward.approve(address(manager), 10 ether);
+        uint256 scheduleId = manager.fundPrize(address(reward), 5 ether, 2);
+        manager.cancelPrizeFunding(scheduleId);
+        vm.stopPrank();
+
+        assertEq(reward.balanceOf(alice), 10 ether);
+        assertEq(reward.balanceOf(address(claimManager)), 0);
+    }
+
+    function test_rewardLegRegisteredWithClaimManagerOnFinalize() public {
+        MockERC20 reward = new MockERC20("Reward", "RWD", 18);
+        reward.mint(alice, 10 ether);
+        manager.setRewardTokenAllowed(address(reward), true);
+        vm.startPrank(alice);
+        reward.approve(address(manager), 10 ether);
+        manager.fundPrize(address(reward), 5 ether, 2);
+        vm.stopPrank();
+
+        _startSeededDraw();
+
+        assertEq(manager.drawRewardLegCount(1), 1);
+        (address token, uint256 amount) = manager.drawRewardLegAt(1, 0);
+        assertEq(token, address(reward));
+        assertEq(amount, 5 ether);
+
+        vm.prank(keeper);
+        manager.proposeRoot(1, bytes32(uint256(0xabc)), 2, 10 ether);
+        vm.warp(block.timestamp + CHALLENGE);
+        manager.finalizeRoot(1);
+
+        bytes32 distributionId = claimManager.distributionIdFor(address(manager), bytes32(uint256(1)));
+        assertEq(claimManager.distributionTokenTotal(distributionId, address(0)), 10 ether);
+        assertEq(claimManager.distributionTokenTotal(distributionId, address(reward)), 5 ether);
+    }
+
+    function test_fundPrizeCancelAfterOneDrawRefundsOnlyRemainingDraws() public {
+        MockERC20 reward = new MockERC20("Reward", "RWD", 18);
+        reward.mint(alice, 15 ether);
+        manager.setRewardTokenAllowed(address(reward), true);
+        vm.startPrank(alice);
+        reward.approve(address(manager), 15 ether);
+        uint256 scheduleId = manager.fundPrize(address(reward), 5 ether, 3);
+        vm.stopPrank();
+
+        _startSeededDraw();
+        assertEq(manager.drawRewardLegCount(1), 1);
+
+        vm.prank(alice);
+        manager.cancelPrizeFunding(scheduleId);
+
+        assertEq(reward.balanceOf(alice), 10 ether);
+        assertEq(reward.balanceOf(address(claimManager)), 5 ether);
+        (,,,, uint32 remainingDraws, bool cancelled) = manager.rewardSchedules(scheduleId);
+        assertEq(remainingDraws, 0);
+        assertTrue(cancelled);
     }
 
     function _depositAcrossFullPeriod(uint256 amount) internal {
@@ -164,6 +285,6 @@ contract DrawManagerV5Test is Test {
     }
 
     function _status(uint256 drawId) internal view returns (DrawManagerV5.DrawStatus status) {
-        (, , , , , , , , , , status) = manager.draws(drawId);
+        (, , , , , , , , , , , status, , ,) = manager.draws(drawId);
     }
 }

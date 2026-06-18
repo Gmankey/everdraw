@@ -236,6 +236,14 @@ contract ClaimManagerV5 {
         }
     }
 
+    function releaseUnreserved(address token, address to, uint256 amount) external nonReentrant {
+        if (!authorizedSource[msg.sender]) revert NotAuthorizedSource();
+        if (to == address(0)) revert ZeroAddress();
+        uint256 available = _escrowBalance(token) - reservedByToken[token];
+        if (amount > available) revert InsufficientEscrow(token, amount, available);
+        require(_tryPay(token, to, amount), "release failed");
+    }
+
     function _claim(ClaimLeaf calldata leaf, bytes32[] calldata proof) internal {
         Distribution memory distribution = distributions[leaf.distributionId];
         if (distribution.registeredAt == 0) revert DistributionNotFound();
