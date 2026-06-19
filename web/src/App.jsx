@@ -148,6 +148,7 @@ const SHMON_ABI = [
   'function previewRedeem(uint256 shares) view returns (uint256 assets)',
 ]
 const SHMON_ADDRESS = import.meta.env.VITE_SHMON_ADDRESS || '0x1B68626dCa36c7fE922fD2d55E4f631d962dE19c'
+const FRONTEND_TICKET_CAP = 100000
 const ACTIVE_POOL_REPLACEMENTS = {
   // V4.1 supersedes V4. Keep retired addresses in known-pool scans below
   // so old-round participants can still find redeemable positions.
@@ -161,6 +162,16 @@ function formatMon(value, digits = 4) {
   } catch {
     return '0.0000'
   }
+}
+
+function formatWholeNumber(value) {
+  return Number(value || 0).toLocaleString()
+}
+
+function trackEvent(name, params = {}) {
+  if (typeof window === 'undefined') return
+  if (typeof window.gtag === 'function') window.gtag('event', name, params)
+  if (window.posthog && typeof window.posthog.capture === 'function') window.posthog.capture(name, params)
 }
 
 function parseAddressEnv(rawList, single) {
@@ -663,9 +674,12 @@ function Header({ account, onConnect, currentPage, points }) {
         </a>
       </nav>
       <PointsHeaderWidget account={account} points={points} />
-      <button className="btn" onClick={onConnect}>
-        {account ? shortAddr(account) : 'Connect Wallet'}
-      </button>
+      <div className="header-actions">
+        <span className="beta-pill" title="beta phase. Please size deposits accordingly.">Beta</span>
+        <button className="btn" onClick={onConnect}>
+          {account ? shortAddr(account) : 'Connect Wallet'}
+        </button>
+      </div>
     </header>
   )
 }
@@ -1584,9 +1598,13 @@ export default function App() {
         setBalance(ethers.formatEther(bal))
         const network = await provider.getNetwork()
         setConnectedChainId(Number(network.chainId))
+        trackEvent('wallet_connect_success', {
+          chain_id: Number(network.chainId),
+        })
         setError('')
       } catch (e) {
         const msg = normalizeError(e)
+        if (msg) trackEvent('wallet_connect_error', { reason: msg })
         if (msg) setError(msg)
       }
     })
@@ -1635,15 +1653,41 @@ export default function App() {
 
       const currentSalesOpen = roundInfo && Number(roundInfo.state) === 0 && Math.max(0, Number(roundInfo.salesEndTime ?? 0) - Math.floor(Date.now() / 1000)) > 0
       if (!currentSalesOpen) throw new Error('Deposits are closed for this round')
+      if (n > remainingTicketAllowance) {
+        trackEvent('deposit_cap_hit', {
+          vault: shownVaultLabel,
+          requested_tickets: n,
+          remaining_tickets: remainingTicketAllowance,
+          cap_tickets: FRONTEND_TICKET_CAP,
+        })
+        throw new Error(`limit reached. remaining tickets you can purchase is ${formatWholeNumber(remainingTicketAllowance)}`)
+      }
 
       const value = ticketPrice * BigInt(n)
       if (value === 0n) throw new Error('Ticket price not loaded yet — please wait a moment and try again')
 
       const readProvider = await getReadProvider()
+      const nativeBalance = await readProvider.getBalance(account)
+      if (nativeBalance < value) {
+        throw new Error(`Insufficient MON balance: need ${ethers.formatEther(value)} MON plus gas, wallet has ${Number(ethers.formatEther(nativeBalance)).toFixed(4)} MON`)
+      }
+      const feeData = await readProvider.getFeeData()
+      const gasPrice = feeData.gasPrice ?? feeData.maxFeePerGas
+      if (!gasPrice) throw new Error('Gas price not available — please try again in a moment')
+      const gasReserve = 650000n * gasPrice
+      if (nativeBalance < value + gasReserve) {
+        throw new Error(`Insufficient MON for deposit gas: need about ${Number(ethers.formatEther(value + gasReserve)).toFixed(4)} MON total, wallet has ${Number(ethers.formatEther(nativeBalance)).toFixed(4)} MON`)
+      }
+
       const callData = new ethers.Interface(activePoolAbi).encodeFunctionData(
         isV2Pool && !isV4Pool ? 'buyTicketsMON' : 'buyTickets',
         [n]
       )
+      trackEvent('deposit_start', {
+        vault: shownVaultLabel,
+        ticket_count: n,
+        entry_mode: 'mon',
+      })
 
       setStatus('Estimating gas...')
       let gasLimit
@@ -1657,8 +1701,6 @@ export default function App() {
 
       setStatus('Waiting for wallet confirmation...')
       const nonce = await fetchNonceWithRetry(account)
-      const feeData = await readProvider.getFeeData()
-      const gasPrice = feeData.gasPrice ?? feeData.maxFeePerGas
 
       const txHash = await provider.send('eth_sendTransaction', [{
         from: account,
@@ -1673,16 +1715,26 @@ export default function App() {
       setStatus(`Submitted: ${String(txHash).slice(0, 10)}... waiting for confirmation...`)
       await readProvider.waitForTransaction(txHash)
       setStatus('Buy successful')
+      trackEvent('deposit_success', {
+        vault: shownVaultLabel,
+        ticket_count: n,
+        entry_mode: 'mon',
+      })
       setLoading(false)
       refresh().catch(() => {})
       return
     } catch (e) {
       setStatus('')
+      trackEvent('deposit_error', {
+        vault: shownVaultLabel,
+        reason: normalizeError(e) || 'unknown',
+        entry_mode: 'mon',
+      })
       setError(normalizeError(e) || 'buyTickets failed')
     } finally {
       setLoading(false)
     }
-  }, [account, expectedChainId, poolAddress, refresh, ticketCountInput, ticketPrice, activePoolAbi, isV2Pool, isV4Pool, roundInfo])
+  }, [account, expectedChainId, poolAddress, refresh, ticketCountInput, ticketPrice, activePoolAbi, isV2Pool, isV4Pool, roundInfo, remainingTicketAllowance, shownVaultLabel])
 
   const secondsRemaining = useMemo(() => {
     if (!roundInfo) return 0
@@ -1768,6 +1820,20 @@ export default function App() {
   const salesOpen = shownIsCurrentRound ? shownSalesOpen : isOpenState && secondsRemaining > 0
   const buyFormOpen = shownIsCurrentRound && shownSalesOpen && !vaultPaused
   const canBuyTx = !!account && buyFormOpen && !loading
+  const currentWalletTickets = useMemo(() => {
+    if (!account || !shownIsCurrentRound) return 0
+    const row = shownParticipants.find((p) => String(p.wallet || '').toLowerCase() === account.toLowerCase())
+    return Math.max(0, Number(row?.tickets || 0))
+  }, [account, shownIsCurrentRound, shownParticipants])
+  const remainingTicketAllowance = Math.max(0, FRONTEND_TICKET_CAP - currentWalletTickets)
+  const requestedTicketCount = Number(ticketCountInput)
+  const ticketLimitExceeded = !!account &&
+    buyFormOpen &&
+    Number.isInteger(requestedTicketCount) &&
+    requestedTicketCount > remainingTicketAllowance
+  const ticketLimitMessage = ticketLimitExceeded
+    ? `limit reached. remaining tickets you can purchase is ${formatWholeNumber(remainingTicketAllowance)}`
+    : ''
 
   const buyDisabledReason = useMemo(() => {
     if (loading) return 'Transaction in progress'
@@ -2565,6 +2631,16 @@ export default function App() {
       await provider.send('eth_requestAccounts', [])
       await ensureCorrectNetwork(provider, expectedChainId)
       if (!account) throw new Error('No wallet connected')
+      if (n > remainingTicketAllowance) {
+        trackEvent('deposit_cap_hit', {
+          vault: shownVaultLabel,
+          requested_tickets: n,
+          remaining_tickets: remainingTicketAllowance,
+          cap_tickets: FRONTEND_TICKET_CAP,
+          entry_mode: 'shmon',
+        })
+        throw new Error(`limit reached. remaining tickets you can purchase is ${formatWholeNumber(remainingTicketAllowance)}`)
+      }
 
       const readProvider = await getReadProvider()
       const poolAbi = isV4Pool ? POOL_V4_ABI : POOL_V2_ABI
@@ -2593,6 +2669,11 @@ export default function App() {
 
       const approveData = erc20.encodeFunctionData('approve', [poolAddress, sharesOwed])
       const buyData = poolIface.encodeFunctionData('buyTicketsShmon', [n])
+      trackEvent('deposit_start', {
+        vault: shownVaultLabel,
+        ticket_count: n,
+        entry_mode: 'shmon',
+      })
 
       setStatus('Waiting for approve confirmation...')
       const approveTxHash = await provider.send('eth_sendTransaction', [{
@@ -2617,14 +2698,24 @@ export default function App() {
       await readProvider.waitForTransaction(buyTxHash)
 
       setStatus('Buy with shMON successful')
+      trackEvent('deposit_success', {
+        vault: shownVaultLabel,
+        ticket_count: n,
+        entry_mode: 'shmon',
+      })
       refresh().catch(() => {})
     } catch (e) {
       setStatus('')
+      trackEvent('deposit_error', {
+        vault: shownVaultLabel,
+        reason: normalizeError(e) || 'unknown',
+        entry_mode: 'shmon',
+      })
       setError(normalizeError(e) || 'buyTicketsShmon failed')
     } finally {
       setLoading(false)
     }
-  }, [account, expectedChainId, isV2Pool, isV4Pool, poolAddress, refresh, ticketCountInput, roundInfo])
+  }, [account, expectedChainId, isV2Pool, isV4Pool, poolAddress, refresh, ticketCountInput, roundInfo, remainingTicketAllowance, shownVaultLabel])
 
 
   const setMaxTickets = useCallback(() => {
@@ -2633,11 +2724,12 @@ export default function App() {
       const canBuyWithShmon = (isV2Pool || isV4Pool) && buyWithShmon
       const available = canBuyWithShmon ? BigInt(shmonMonBalance || 0n) : ethers.parseEther(String(balance || '0'))
       const max = available / ticketPrice
-      if (max > 0n) setTicketCountInput(max > 1000000n ? '1000000' : max.toString())
+      const cappedMax = max > BigInt(remainingTicketAllowance) ? BigInt(remainingTicketAllowance) : max
+      if (cappedMax > 0n) setTicketCountInput(cappedMax.toString())
     } catch {
       // ignore malformed balance state
     }
-  }, [balance, buyWithShmon, isV2Pool, isV4Pool, shmonMonBalance, ticketPrice])
+  }, [balance, buyWithShmon, isV2Pool, isV4Pool, remainingTicketAllowance, shmonMonBalance, ticketPrice])
 
   const openWinnersWithTransition = useCallback(() => {
     if (winnersTransitioning) return
@@ -2901,6 +2993,7 @@ export default function App() {
                       <input
                         type="number"
                         min="1"
+                        max={remainingTicketAllowance || FRONTEND_TICKET_CAP}
                         step="1"
                         value={ticketCountInput}
                         onChange={(e) => setTicketCountInput(e.target.value)}
@@ -2920,6 +3013,12 @@ export default function App() {
                     <span>Price / ticket</span>
                     <span>{ethers.formatEther(ticketPrice || 0n)} MON</span>
                   </div>
+                  {account && buyFormOpen ? (
+                    <div className="balance-info beta-limit-info">
+                      <span>Beta frontend limit</span>
+                      <span>{formatWholeNumber(remainingTicketAllowance)} remaining / {formatWholeNumber(FRONTEND_TICKET_CAP)}</span>
+                    </div>
+                  ) : null}
 
                   <div className="deposit-cta-wrap">
                     {(isV2Pool || isV4Pool) && (
@@ -2957,7 +3056,7 @@ export default function App() {
                     )}
                     <button
                       className="btn deposit-btn"
-                      disabled={!shownIsCurrentRound || loading || !salesOpen}
+                      disabled={!shownIsCurrentRound || loading || !salesOpen || ticketLimitExceeded}
                       onClick={account ? ((isV2Pool || isV4Pool) && buyWithShmon ? buyTicketsShmon : buyTickets) : connectWallet}
                     >
                       {loading
@@ -2978,6 +3077,7 @@ export default function App() {
                                       ? 'Buy Tickets'
                                       : 'Buy Unavailable'}
                     </button>
+                    {ticketLimitMessage ? <p className="deposit-caption">{ticketLimitMessage}</p> : null}
                     {(loading || wrongNetwork || !salesOpen || !account || !shownIsCurrentRound) && buyDisabledReason ? <p className="deposit-caption">{buyDisabledReason}</p> : null}
                   </div>
 
@@ -3123,6 +3223,9 @@ export default function App() {
           onConfirmRedirect={handleConfirmRedeemAndConvert}
           isV2={claimFlowIsV2}
         />
+        <footer className="site-footer">
+          EverDraw is currently in beta and is awaiting a formal third-party audit.
+        </footer>
       </div>
     </div>
   )
