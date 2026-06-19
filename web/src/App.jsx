@@ -1633,6 +1633,14 @@ export default function App() {
     }
   }, [])
 
+  const activeCurrentWalletTickets = useMemo(() => {
+    if (!account) return 0
+    const row = participants.find((p) => String(p.wallet || '').toLowerCase() === account.toLowerCase())
+    return Math.max(0, Number(row?.tickets || 0))
+  }, [account, participants])
+  const activeRemainingTicketAllowance = Math.max(0, FRONTEND_TICKET_CAP - activeCurrentWalletTickets)
+  const activeBuyVaultLabel = selectedPoolAddress.toLowerCase() === activeVaultAddresses[1]?.toLowerCase() || vaultBPending ? 'Vault B' : 'Vault A'
+
   const buyTickets = useCallback(async () => {
     try {
       setLoading(true)
@@ -1653,14 +1661,14 @@ export default function App() {
 
       const currentSalesOpen = roundInfo && Number(roundInfo.state) === 0 && Math.max(0, Number(roundInfo.salesEndTime ?? 0) - Math.floor(Date.now() / 1000)) > 0
       if (!currentSalesOpen) throw new Error('Deposits are closed for this round')
-      if (n > remainingTicketAllowance) {
+      if (n > activeRemainingTicketAllowance) {
         trackEvent('deposit_cap_hit', {
-          vault: shownVaultLabel,
+          vault: activeBuyVaultLabel,
           requested_tickets: n,
-          remaining_tickets: remainingTicketAllowance,
+          remaining_tickets: activeRemainingTicketAllowance,
           cap_tickets: FRONTEND_TICKET_CAP,
         })
-        throw new Error(`limit reached. remaining tickets you can purchase is ${formatWholeNumber(remainingTicketAllowance)}`)
+        throw new Error(`limit reached. remaining tickets you can purchase is ${formatWholeNumber(activeRemainingTicketAllowance)}`)
       }
 
       const value = ticketPrice * BigInt(n)
@@ -1684,7 +1692,7 @@ export default function App() {
         [n]
       )
       trackEvent('deposit_start', {
-        vault: shownVaultLabel,
+        vault: activeBuyVaultLabel,
         ticket_count: n,
         entry_mode: 'mon',
       })
@@ -1716,7 +1724,7 @@ export default function App() {
       await readProvider.waitForTransaction(txHash)
       setStatus('Buy successful')
       trackEvent('deposit_success', {
-        vault: shownVaultLabel,
+        vault: activeBuyVaultLabel,
         ticket_count: n,
         entry_mode: 'mon',
       })
@@ -1726,7 +1734,7 @@ export default function App() {
     } catch (e) {
       setStatus('')
       trackEvent('deposit_error', {
-        vault: shownVaultLabel,
+        vault: activeBuyVaultLabel,
         reason: normalizeError(e) || 'unknown',
         entry_mode: 'mon',
       })
@@ -1734,7 +1742,7 @@ export default function App() {
     } finally {
       setLoading(false)
     }
-  }, [account, expectedChainId, poolAddress, refresh, ticketCountInput, ticketPrice, activePoolAbi, isV2Pool, isV4Pool, roundInfo, remainingTicketAllowance, shownVaultLabel])
+  }, [account, expectedChainId, poolAddress, refresh, ticketCountInput, ticketPrice, activePoolAbi, isV2Pool, isV4Pool, roundInfo, activeRemainingTicketAllowance, activeBuyVaultLabel])
 
   const secondsRemaining = useMemo(() => {
     if (!roundInfo) return 0
