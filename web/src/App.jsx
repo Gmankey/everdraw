@@ -2775,7 +2775,7 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <div className="beta-corner-ribbon" title="beta phase. Please size deposits accordingly." aria-label="beta phase. Please size deposits accordingly.">BETA</div>
+      <div className="beta-corner-ribbon" title="beta phase. Please size deposits accordingly." aria-label="beta phase. Please size deposits accordingly." />
       <div className="app-container">
         {showWinnersView ? (
           <WinnersView
@@ -3235,7 +3235,7 @@ export default function App() {
           <div className="disclaimer-box">
             <div className="disclaimer-title">Disclaimer</div>
             <p>
-              EverDraw is currently in beta and is awaiting a formal third-party audit. By accessing or using EverDraw, you acknowledge that the frontend, smart contracts, vaults, prize mechanics, yield integrations, indexer data, wallet connections, and related infrastructure are experimental software made available for testing and evaluation. EverDraw does not guarantee deposits, yield, prize outcomes, uptime, transaction execution, settlement timing, wallet compatibility, or fitness for any purpose. You buy tickets, approve tokens, deposit assets, interact with third-party protocols, and secure your wallet entirely at your own risk. Transactions may fail, revert, be delayed, incur fees, expose approvals, or result in partial or total loss. You are solely responsible for reviewing all risks, permissions, transaction details, applicable laws, and tax treatment before participating. EverDraw is not investment, tax, accounting, or legal advice, and all liability is disclaimed to the maximum extent permitted by law.
+              EverDraw is currently in beta and is awaiting a formal third-party audit. By accessing or using EverDraw, you acknowledge that the protocol, yield integrations, indexer data, wallet connections, and related infrastructure are experimental software. You buy tickets, approve tokens, deposit assets, interact with third-party protocols, and secure your wallet entirely at your own risk. You are solely responsible for reviewing all risks, permissions, transaction details, applicable laws, and tax treatment before participating. EverDraw is not investment, tax, accounting, or legal advice, and all liability is disclaimed to the maximum extent permitted by law.
             </p>
           </div>
         </footer>
