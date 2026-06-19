@@ -675,7 +675,6 @@ function Header({ account, onConnect, currentPage, points }) {
       </nav>
       <PointsHeaderWidget account={account} points={points} />
       <div className="header-actions">
-        <span className="beta-pill" title="beta phase. Please size deposits accordingly.">Beta</span>
         <button className="btn" onClick={onConnect}>
           {account ? shortAddr(account) : 'Connect Wallet'}
         </button>
@@ -2776,6 +2775,7 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      <div className="beta-corner-ribbon" title="beta phase. Please size deposits accordingly." aria-label="beta phase. Please size deposits accordingly.">BETA</div>
       <div className="app-container">
         {showWinnersView ? (
           <WinnersView
@@ -3231,8 +3231,13 @@ export default function App() {
           onConfirmRedirect={handleConfirmRedeemAndConvert}
           isV2={claimFlowIsV2}
         />
-        <footer className="site-footer">
-          EverDraw is currently in beta and is awaiting a formal third-party audit.
+        <footer className="site-footer" id="disclaimer">
+          <div className="disclaimer-box">
+            <div className="disclaimer-title">Disclaimer</div>
+            <p>
+              EverDraw is currently in beta and is awaiting a formal third-party audit. By accessing or using EverDraw, you acknowledge that the frontend, smart contracts, vaults, prize mechanics, yield integrations, indexer data, wallet connections, and related infrastructure are experimental software made available for testing and evaluation. EverDraw does not guarantee deposits, yield, prize outcomes, uptime, transaction execution, settlement timing, wallet compatibility, or fitness for any purpose. You buy tickets, approve tokens, deposit assets, interact with third-party protocols, and secure your wallet entirely at your own risk. Transactions may fail, revert, be delayed, incur fees, expose approvals, or result in partial or total loss. You are solely responsible for reviewing all risks, permissions, transaction details, applicable laws, and tax treatment before participating. EverDraw is not investment, tax, accounting, or legal advice, and all liability is disclaimed to the maximum extent permitted by law.
+            </p>
+          </div>
         </footer>
       </div>
     </div>
