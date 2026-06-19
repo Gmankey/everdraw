@@ -1640,6 +1640,18 @@ export default function App() {
       if (value === 0n) throw new Error('Ticket price not loaded yet — please wait a moment and try again')
 
       const readProvider = await getReadProvider()
+      const nativeBalance = await readProvider.getBalance(account)
+      if (nativeBalance < value) {
+        throw new Error(`Insufficient MON balance: need ${ethers.formatEther(value)} MON plus gas, wallet has ${Number(ethers.formatEther(nativeBalance)).toFixed(4)} MON`)
+      }
+      const feeData = await readProvider.getFeeData()
+      const gasPrice = feeData.gasPrice ?? feeData.maxFeePerGas
+      if (!gasPrice) throw new Error('Gas price not available — please try again in a moment')
+      const gasReserve = 650000n * gasPrice
+      if (nativeBalance < value + gasReserve) {
+        throw new Error(`Insufficient MON for deposit gas: need about ${Number(ethers.formatEther(value + gasReserve)).toFixed(4)} MON total, wallet has ${Number(ethers.formatEther(nativeBalance)).toFixed(4)} MON`)
+      }
+
       const callData = new ethers.Interface(activePoolAbi).encodeFunctionData(
         isV2Pool && !isV4Pool ? 'buyTicketsMON' : 'buyTickets',
         [n]
@@ -1657,8 +1669,6 @@ export default function App() {
 
       setStatus('Waiting for wallet confirmation...')
       const nonce = await fetchNonceWithRetry(account)
-      const feeData = await readProvider.getFeeData()
-      const gasPrice = feeData.gasPrice ?? feeData.maxFeePerGas
 
       const txHash = await provider.send('eth_sendTransaction', [{
         from: account,
