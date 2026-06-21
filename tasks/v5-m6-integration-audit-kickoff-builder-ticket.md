@@ -15,10 +15,17 @@
 3. **Internal audit doc (in-repo):** per the V4 process, **explicitly enumerating every external-dependency assumption and its failure answer** (§7.2 is the seed, not a substitute — rule #5). Cover the §7.3 checklist (reentrancy, TWAB wraparound/overflow, 4626 inflation/donation, draw-boundary gaming, root/claim arithmetic, pause×function matrix).
 
 ## Gate (all required)
-- [ ] E2E fork test green across the full lifecycle (both deposit assets).
-- [ ] Each failure-injection scenario has a passing test.
-- [ ] **Audit doc lands in-repo**; every finding **fixed or accepted-with-rationale** (no silent open findings).
-- [ ] §7.3 checklist each addressed with a test or a documented rationale.
+- [ ] E2E fork test green across the full lifecycle (both deposit assets). Test added in `test/v5/PrizeVaultV5Fork.t.sol`; local run skipped because `MONAD_MAINNET_RPC_URL` is unset.
+- [x] Each failure-injection scenario has a passing test.
+- [x] **Audit doc lands in-repo**; every finding **fixed or accepted-with-rationale** (no silent open findings).
+- [x] §7.3 checklist each addressed with a test or a documented rationale.
+
+## M6 execution note (2026-06-22)
+
+- Added `test/v5/V5M6IntegrationAudit.t.sol` for deterministic full lifecycle and failure-injection coverage.
+- Added seed re-request support to `DrawManagerV5` so oracle death has the ADR-0036 timeout recovery path.
+- Added `security_audit/AUDIT_REPORT_V5_M6_2026-06-22.md` with explicit external-dependency assumptions and failure answers.
+- Extended `test/v5/PrizeVaultV5Fork.t.sol` with a full lifecycle fork test using real shMON. This compiles locally but requires `MONAD_MAINNET_RPC_URL` to execute.
 
 ## Standing rules
 - No agent-held keys (keeper/watcher = operator custody; self-claim works keeperless).
