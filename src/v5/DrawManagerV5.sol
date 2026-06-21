@@ -89,6 +89,7 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     uint64 public proposerGracePeriod;
     uint64 public challengeWindow;
     uint64 public vetoCooldown;
+    uint64 public seedRequestTimeout;
     uint256 public minPrizeThreshold;
     uint256 public currentDrawId;
     FeeBase public feeBase;
@@ -97,6 +98,7 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
 
     mapping(uint256 => Draw) public draws;
     mapping(uint64 => uint256) public drawIdByRequestId;
+    mapping(uint256 => uint64) public seedRequestedAt;
     mapping(uint256 => uint64) public vetoedUntil;
     mapping(address => bool) public rewardTokenAllowed;
     mapping(uint256 => RewardSchedule) public rewardSchedules;
@@ -143,6 +145,8 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     );
     event RootVetoed(uint256 indexed drawId, bytes32 indexed root, address indexed guardian, uint64 proposeAfter);
     event RootFinalized(uint256 indexed drawId, bytes32 indexed root, uint32 winnerCount, uint256 totalPayout);
+    event SeedRequestTimeoutUpdated(uint64 seedRequestTimeout);
+    event SeedRerequested(uint256 indexed drawId, uint64 oldRequestId, uint64 newRequestId);
     event FeeConfigUpdated(FeeBase feeBase, uint16 totalFeeBps);
     event FeeRecipientsUpdated(uint16 totalFeeBps);
     event RewardTokenAllowedSet(address indexed token, bool allowed);
@@ -168,6 +172,7 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     error DrawNotProposed();
     error DrawAlreadyFinalized();
     error ActiveProposal();
+    error SeedRequestStillActive(uint64 retryAfter);
     error ProposerGraceActive();
     error ChallengeWindowActive();
     error VetoCooldownActive(uint64 proposeAfter);
@@ -222,11 +227,13 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
         proposerGracePeriod = _proposerGracePeriod;
         challengeWindow = _challengeWindow;
         vetoCooldown = 1 hours;
+        seedRequestTimeout = 1 hours;
 
         emit OwnershipTransferred(address(0), msg.sender);
         emit GuardianSet(_guardian);
         emit PrimaryProposerSet(_primaryProposer);
         emit TimingUpdated(_proposerGracePeriod, _challengeWindow, vetoCooldown);
+        emit SeedRequestTimeoutUpdated(seedRequestTimeout);
     }
 
     receive() external payable {}
@@ -270,6 +277,12 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     function setMinPrizeThreshold(uint256 newMinPrizeThreshold) external onlyOwner {
         minPrizeThreshold = newMinPrizeThreshold;
         emit MinPrizeThresholdUpdated(newMinPrizeThreshold);
+    }
+
+    function setSeedRequestTimeout(uint64 newSeedRequestTimeout) external onlyOwner {
+        if (newSeedRequestTimeout == 0) revert BadConfig();
+        seedRequestTimeout = newSeedRequestTimeout;
+        emit SeedRequestTimeoutUpdated(newSeedRequestTimeout);
     }
 
     function setFeeConfig(FeeBase newFeeBase, address[] calldata recipients, uint16[] calldata bps) external onlyOwner {
@@ -475,9 +488,35 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
         _snapshotFeeRecipients(drawId);
         draw.status = DrawStatus.AwaitingSeed;
         drawIdByRequestId[requestId] = drawId;
+        seedRequestedAt[drawId] = uint64(block.timestamp);
 
         emit DrawStarted(drawId, periodStart, periodEnd, totalTwab, availablePrize, requestId);
         emit DrawEconomicsSnapshot(drawId, grossYield, sponsorYield, feeAmount, availablePrize);
+    }
+
+    function rerequestSeed(uint256 drawId) external payable {
+        Draw storage draw = draws[drawId];
+        if (draw.status != DrawStatus.AwaitingSeed) revert BadConfig();
+        uint64 requestedAt = seedRequestedAt[drawId];
+        uint64 retryAfter = requestedAt + seedRequestTimeout;
+        if (block.timestamp < retryAfter) revert SeedRequestStillActive(retryAfter);
+
+        uint64 oldRequestId = draw.randomnessRequestId;
+        delete drawIdByRequestId[oldRequestId];
+
+        uint128 fee = randomnessOracle.getFee();
+        require(msg.value >= fee, "insufficient oracle fee");
+        uint64 newRequestId = randomnessOracle.requestRandomness{value: fee}(abi.encode(bytes32(drawId)));
+
+        draw.randomnessRequestId = newRequestId;
+        drawIdByRequestId[newRequestId] = drawId;
+        seedRequestedAt[drawId] = uint64(block.timestamp);
+        emit SeedRerequested(drawId, oldRequestId, newRequestId);
+
+        if (msg.value > fee) {
+            (bool ok,) = msg.sender.call{value: msg.value - fee}("");
+            require(ok, "refund failed");
+        }
     }
 
     function onRandomnessReceived(uint64 requestId, bytes32 randomNumber) external {

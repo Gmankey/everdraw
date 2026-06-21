@@ -2,9 +2,12 @@
 pragma solidity ^0.8.33;
 
 import {Test, console2} from "forge-std/Test.sol";
+import {ClaimManagerV5} from "../../src/v5/ClaimManagerV5.sol";
+import {DrawManagerV5} from "../../src/v5/DrawManagerV5.sol";
 import {PrizeVaultV5} from "../../src/v5/PrizeVaultV5.sol";
 import {ShmonStrategy} from "../../src/v5/strategies/ShmonStrategy.sol";
 import {EverdrawTwabController} from "../../src/v5/twab/EverdrawTwabController.sol";
+import {MockRandomnessOracle} from "../mocks/MockRandomnessOracle.sol";
 
 interface IShmonRead {
     function balanceOf(address account) external view returns (uint256);
@@ -12,6 +15,7 @@ interface IShmonRead {
     function previewDeposit(uint256 assets) external view returns (uint256);
     function deposit(uint256 assets, address receiver) external payable returns (uint256 shares);
     function approve(address spender, uint256 amount) external returns (bool);
+    function transfer(address to, uint256 amount) external returns (bool);
 }
 
 interface ILiveV4Pool {
@@ -28,8 +32,14 @@ contract PrizeVaultV5ForkTest is Test {
     EverdrawTwabController twab;
     ShmonStrategy strategy;
     PrizeVaultV5 vault;
+    MockRandomnessOracle oracle;
+    ClaimManagerV5 claimManager;
+    DrawManagerV5 manager;
 
     address alice = makeAddr("alice");
+    address bob = makeAddr("bob");
+    address keeper = makeAddr("keeper");
+    address guardian = makeAddr("guardian");
 
     function setUp() public {
         string memory rpcUrl = vm.envOr("MONAD_MAINNET_RPC_URL", string(""));
@@ -46,6 +56,23 @@ contract PrizeVaultV5ForkTest is Test {
         vault = new PrizeVaultV5(address(twab), address(strategy), 10 ether, "EVRDRAW-V5-MON");
         strategy.setVault(address(vault));
         twab.registerVault(address(vault));
+
+        oracle = new MockRandomnessOracle();
+        claimManager = new ClaimManagerV5();
+        manager = new DrawManagerV5(
+            address(vault),
+            address(twab),
+            address(claimManager),
+            address(oracle),
+            guardian,
+            keeper,
+            uint64(block.timestamp),
+            1 weeks,
+            12 hours,
+            8 hours
+        );
+        claimManager.setAuthorizedSource(address(manager), true);
+        vault.setDrawManager(address(manager));
     }
 
     function test_fork_nativeDepositAndWithdrawAgainstRealShmon() public {
@@ -113,5 +140,48 @@ contract PrizeVaultV5ForkTest is Test {
         vault.withdraw(0.25 ether);
 
         assertEq(alice.balance - before, 0.25 ether);
+    }
+
+    function test_fork_fullLifecycleMixedAssetsDrawClaimManyWithdrawAgainstRealShmon() public {
+        vm.deal(alice, 3 ether);
+        vm.deal(bob, 3 ether);
+
+        vm.prank(alice, alice);
+        vault.deposit{value: 1 ether}();
+
+        vm.startPrank(bob, bob);
+        uint256 shares = IShmonRead(MAINNET_SHMON).deposit{value: 1 ether}(1 ether, bob);
+        IShmonRead(MAINNET_SHMON).approve(address(strategy), shares);
+        vault.depositShmon(shares);
+
+        uint256 donatedShares = IShmonRead(MAINNET_SHMON).deposit{value: 0.2 ether}(0.2 ether, bob);
+        IShmonRead(MAINNET_SHMON).transfer(address(strategy), donatedShares);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 1 weeks);
+        manager.startDraw();
+        oracle.fulfill(1, bytes32(uint256(0xbeef)));
+
+        ClaimManagerV5.ClaimLeaf memory leaf = manager.plannedClaimLeafAt(1, 0, alice);
+        bytes32 root = claimManager.hashLeaf(leaf);
+
+        vm.prank(keeper);
+        manager.proposeRoot(1, root, 1, leaf.amount);
+        vm.warp(block.timestamp + 8 hours);
+        manager.finalizeRoot(1);
+
+        ClaimManagerV5.ClaimLeaf[] memory leaves = new ClaimManagerV5.ClaimLeaf[](1);
+        leaves[0] = leaf;
+        bytes32[][] memory proofs = new bytes32[][](1);
+        proofs[0] = new bytes32[](0);
+
+        uint256 beforeClaim = alice.balance;
+        claimManager.claimMany(leaves, proofs);
+        assertEq(alice.balance - beforeClaim, leaf.amount);
+
+        uint256 beforeWithdraw = alice.balance;
+        vm.prank(alice);
+        vault.withdraw(0.5 ether);
+        assertEq(alice.balance - beforeWithdraw, 0.5 ether);
     }
 }
