@@ -108,6 +108,46 @@ contract PrizeVaultV5Test is Test {
         vault.deposit{value: 1 ether}();
     }
 
+    function test_depositCapAppliesToDirectShmonAndSponsorDeposits() public {
+        vault.setDepositCap(3 ether);
+
+        shmon.mintShares(alice, 5 ether);
+        vm.startPrank(alice);
+        shmon.approve(address(strategy), 5 ether);
+        vault.depositShmon(2 ether);
+        vm.expectRevert(PrizeVaultV5.DepositCapExceeded.selector);
+        vault.depositShmon(2 ether);
+        assertEq(shmon.balanceOf(alice), 3 ether);
+        vm.stopPrank();
+
+        vm.deal(sponsor, 10 ether);
+        vm.prank(sponsor);
+        vm.expectRevert(PrizeVaultV5.DepositCapExceeded.selector);
+        vault.sponsorDeposit{value: 2 ether}();
+    }
+
+    function test_loweringDepositCapBelowCurrentPrincipalDoesNotBlockWithdrawals() public {
+        vault.setDepositCap(10 ether);
+
+        vm.deal(alice, 10 ether);
+        vm.prank(alice);
+        vault.deposit{value: 4 ether}();
+
+        vault.setDepositCap(2 ether);
+
+        vm.deal(bob, 10 ether);
+        vm.prank(bob);
+        vm.expectRevert(PrizeVaultV5.DepositCapExceeded.selector);
+        vault.deposit{value: 1 ether}();
+
+        uint256 before = alice.balance;
+        vm.prank(alice);
+        vault.withdraw(1 ether);
+
+        assertEq(alice.balance - before, 1 ether);
+        assertEq(vault.principalOf(alice), 3 ether);
+    }
+
     function test_directShmonDepositCreditsAssetValue() public {
         shmon.mintShares(alice, 5 ether);
 
