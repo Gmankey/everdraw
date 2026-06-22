@@ -1682,6 +1682,16 @@ export default function App() {
 
       const n = Number(ticketCountInput)
       if (!Number.isInteger(n) || n <= 0) throw new Error('Ticket count must be a positive integer')
+      if (n > activeRemainingTicketAllowance) {
+        trackEvent('deposit_cap_hit', {
+          vault: activeBuyVaultLabel,
+          requested_tickets: n,
+          remaining_tickets: activeRemainingTicketAllowance,
+          cap_tickets: FRONTEND_TICKET_CAP,
+          entry_mode: 'mon',
+        })
+        throw new Error(`limit reached. remaining tickets you can purchase is ${formatWholeNumber(activeRemainingTicketAllowance)}`)
+      }
 
       const provider = new ethers.BrowserProvider(walletProvider)
       await provider.send('eth_requestAccounts', [])
@@ -1690,15 +1700,6 @@ export default function App() {
 
       const currentSalesOpen = roundInfo && Number(roundInfo.state) === 0 && Math.max(0, Number(roundInfo.salesEndTime ?? 0) - Math.floor(Date.now() / 1000)) > 0
       if (!currentSalesOpen) throw new Error('Deposits are closed for this round')
-      if (n > activeRemainingTicketAllowance) {
-        trackEvent('deposit_cap_hit', {
-          vault: activeBuyVaultLabel,
-          requested_tickets: n,
-          remaining_tickets: activeRemainingTicketAllowance,
-          cap_tickets: FRONTEND_TICKET_CAP,
-        })
-        throw new Error(`limit reached. remaining tickets you can purchase is ${formatWholeNumber(activeRemainingTicketAllowance)}`)
-      }
 
       const value = ticketPrice * BigInt(n)
       if (value === 0n) throw new Error('Ticket price not loaded yet — please wait a moment and try again')
@@ -2663,11 +2664,6 @@ export default function App() {
 
       const n = Number(ticketCountInput)
       if (!Number.isInteger(n) || n <= 0) throw new Error('Ticket count must be a positive integer')
-
-      const provider = new ethers.BrowserProvider(walletProvider)
-      await provider.send('eth_requestAccounts', [])
-      await ensureCorrectNetwork(provider, expectedChainId)
-      if (!account) throw new Error('No wallet connected')
       if (n > remainingTicketAllowance) {
         trackEvent('deposit_cap_hit', {
           vault: shownVaultLabel,
@@ -2678,6 +2674,11 @@ export default function App() {
         })
         throw new Error(`limit reached. remaining tickets you can purchase is ${formatWholeNumber(remainingTicketAllowance)}`)
       }
+
+      const provider = new ethers.BrowserProvider(walletProvider)
+      await provider.send('eth_requestAccounts', [])
+      await ensureCorrectNetwork(provider, expectedChainId)
+      if (!account) throw new Error('No wallet connected')
 
       const readProvider = await getReadProvider()
       const poolAbi = isV4Pool ? POOL_V4_ABI : POOL_V2_ABI
@@ -3053,7 +3054,7 @@ export default function App() {
                   </div>
                   {account && buyFormOpen ? (
                     <div className="balance-info beta-limit-info">
-                      <span>Beta frontend limit</span>
+                      <span>BETA frontend limit</span>
                       <span>{formatWholeNumber(remainingTicketAllowance)} remaining / {formatWholeNumber(FRONTEND_TICKET_CAP)}</span>
                     </div>
                   ) : null}
@@ -3094,7 +3095,7 @@ export default function App() {
                     )}
                     <button
                       className="btn deposit-btn"
-                      disabled={!shownIsCurrentRound || loading || !salesOpen || ticketLimitExceeded}
+                      disabled={!shownIsCurrentRound || loading || !salesOpen}
                       onClick={account ? ((isV2Pool || isV4Pool) && buyWithShmon ? buyTicketsShmon : buyTickets) : connectWallet}
                     >
                       {loading
