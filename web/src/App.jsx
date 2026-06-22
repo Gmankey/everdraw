@@ -148,7 +148,7 @@ const SHMON_ABI = [
   'function previewRedeem(uint256 shares) view returns (uint256 assets)',
 ]
 const SHMON_ADDRESS = import.meta.env.VITE_SHMON_ADDRESS || '0x1B68626dCa36c7fE922fD2d55E4f631d962dE19c'
-const FRONTEND_TICKET_CAP = 100000
+const FRONTEND_TICKET_CAP = 25000
 const ACTIVE_POOL_REPLACEMENTS = {
   // V4.1 supersedes V4. Keep retired addresses in known-pool scans below
   // so old-round participants can still find redeemable positions.
@@ -172,6 +172,29 @@ function trackEvent(name, params = {}) {
   if (typeof window === 'undefined') return
   if (typeof window.gtag === 'function') window.gtag('event', name, params)
   if (window.posthog && typeof window.posthog.capture === 'function') window.posthog.capture(name, params)
+}
+
+function initPosthog() {
+  if (typeof window === 'undefined' || window.__everdrawPosthogInitialized) return
+  const key = import.meta.env.VITE_POSTHOG_KEY
+  if (!key) return
+  const host = import.meta.env.VITE_POSTHOG_HOST || 'https://us.i.posthog.com'
+  window.__everdrawPosthogInitialized = true
+  !function(t,e){var o,n,p,r;e.__SV||(window.posthog&&window.posthog.__loaded)||(window.posthog=e,e._i=[],e.init=function(i,s,a){function g(t,e){var o=e.split('.');2==o.length&&(t=t[o[0]],e=o[1]),t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}}(p=t.createElement('script')).type='text/javascript',p.crossOrigin='anonymous',p.async=!0,p.src=s.api_host.replace('.i.posthog.com','-assets.i.posthog.com')+'/static/array.js',(r=t.getElementsByTagName('script')[0]).parentNode.insertBefore(p,r);var u=e;for(void 0!==a?u=e[a]=[]:a='posthog',u.people=u.people||[],u.toString=function(t){var e='posthog';return'posthog'!==a&&(e+='.'+a),t||(e+=' (stub)'),e},u.people.toString=function(){return u.toString(1)+'.people (stub)'},o='init capture identify reset get_distinct_id get_session_id captureException debug'.split(' '),n=0;n<o.length;n++)g(u,o[n]);e._i.push([i,s,a])},e.__SV=1)}(document,window.posthog||[]);
+  window.posthog.init(key, {
+    api_host: host,
+    capture_pageview: false,
+    autocapture: true,
+    person_profiles: 'identified_only',
+  })
+}
+
+function trackPageView(pagePath, pageTitle = document.title) {
+  trackEvent('$pageview', {
+    page_path: pagePath,
+    page_location: `${window.location.origin}${pagePath}`,
+    page_title: pageTitle,
+  })
 }
 
 function parseAddressEnv(rawList, single) {
@@ -1046,6 +1069,7 @@ function RoundProgressSteps({ state, settlementSecs, secondsRemaining, isV3 = fa
 }
 
 export default function App() {
+  initPosthog()
   // Hash-based page routing
   const [currentPage, setCurrentPage] = useState(() => {
     if (window.location.pathname === '/blog/drawn-back-to-defi' || window.location.pathname === '/articles/drawn-back-to-defi') return 'article'
@@ -1067,6 +1091,12 @@ export default function App() {
     window.addEventListener('hashchange', onHashChange)
     return () => window.removeEventListener('hashchange', onHashChange)
   }, [])
+  useEffect(() => {
+    const pagePath = currentPage === 'vault'
+      ? `${window.location.pathname || '/'}${window.location.hash || '#vault'}`
+      : `${window.location.pathname || '/'}${window.location.hash || ''}`
+    trackPageView(pagePath, `EverDraw - ${currentPage}`)
+  }, [currentPage])
 
   const poolAddresses = useMemo(() => parsePoolAddresses(), [])
   const poolAddressesV2 = useMemo(() => parseV2PoolAddresses(), [])
