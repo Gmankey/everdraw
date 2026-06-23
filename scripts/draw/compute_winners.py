@@ -109,7 +109,8 @@ def abi_hash(parts):
     return keccak256(bytes(data))
 
 
-LEAF_DOMAIN = hx(keccak256(b"EverDraw.V5.ClaimLeaf"))
+LEAF_DOMAIN = hx(keccak256(b"everdraw-v5-claim-leaf/1"))
+NATIVE_TOKEN = "0x0000000000000000000000000000000000000000"
 
 
 def merkle_root(leaves):
@@ -128,6 +129,33 @@ def merkle_root(leaves):
     return level[0]
 
 
+def merkle_proofs(leaves):
+    if not leaves:
+        return []
+    level = sorted([{"leaf": leaf.lower(), "index": i} for i, leaf in enumerate(leaves)], key=lambda x: x["leaf"])
+    proofs = [[] for _ in leaves]
+    while len(level) > 1:
+        nxt = []
+        for i in range(0, len(level), 2):
+            if i + 1 == len(level):
+                nxt.append(level[i])
+                continue
+            left = level[i]
+            right = level[i + 1]
+            proofs[left["index"]].append(right["leaf"])
+            proofs[right["index"]].append(left["leaf"])
+            a, b = sorted([left["leaf"], right["leaf"]])
+            nxt.append({"leaf": hx(keccak256(bytes.fromhex(a[2:] + b[2:]))), "index": left["index"]})
+        level = sorted(nxt, key=lambda x: x["leaf"])
+    return proofs
+
+
+def allocated_fee_amount(fee_amount, fee_bps, fee_recipients):
+    if fee_amount == 0 or fee_bps == 0:
+        return 0
+    return sum((fee_amount * r["bps"]) // fee_bps for r in fee_recipients)
+
+
 def compute(raw):
     draw_id = int(raw["drawId"])
     draw_manager = norm_addr(raw["drawManager"])
@@ -136,11 +164,16 @@ def compute(raw):
         [{"address": norm_addr(a["address"]), "twab": int(a["twab"])} for a in raw["accounts"] if int(a["twab"]) > 0],
         key=lambda a: a["address"],
     )
-    prize_legs = [{"token": norm_addr(l["token"]), "amount": int(l["amount"])} for l in raw["prizeLegs"]]
-    tier_bps = [int(x) for x in raw["tierBps"]]
+    prize_legs = [{"token": norm_addr(l["token"]), "amount": int(l["amount"]), "feeAmount": int(l.get("feeAmount", 0))} for l in raw["prizeLegs"]]
+    tier_bps = [int(x) for x in raw.get("tierBps", [10000])]
+    if sum(tier_bps) != 10000:
+        raise ValueError("tierBps must sum to 10000")
+    fee_recipients = [{"account": norm_addr(r["account"]), "bps": int(r["bps"])} for r in raw.get("feeRecipients", [])]
+    fee_bps = sum(r["bps"] for r in fee_recipients)
     total_twab = sum(a["twab"] for a in accounts)
     if total_twab == 0:
-        return {"algoVersion": ALGO_VERSION, "root": ZERO_ROOT, "totalTwab": "0", "totalPayout": str(sum(l["amount"] for l in prize_legs)), "winnerCount": len(tier_bps), "winners": [], "leaves": []}
+        native = next((l["amount"] for l in prize_legs if l["token"] == NATIVE_TOKEN), 0)
+        return {"algoVersion": ALGO_VERSION, "root": ZERO_ROOT, "totalTwab": "0", "totalPayout": str(native), "leafCount": 0, "winnerCount": 0, "winners": [], "leaves": []}
 
     winners = []
     for pos in range(len(tier_bps)):
@@ -157,10 +190,13 @@ def compute(raw):
     leaf_index = 0
     for pos, winner in enumerate(winners):
         for leg in prize_legs:
-            floor_sum = sum((leg["amount"] * bps) // 10000 for bps in tier_bps)
-            amount = (leg["amount"] * tier_bps[pos]) // 10000
+            winner_pool = leg["amount"] - allocated_fee_amount(leg["feeAmount"], fee_bps, fee_recipients)
+            floor_sum = sum((winner_pool * bps) // 10000 for bps in tier_bps)
+            amount = (winner_pool * tier_bps[pos]) // 10000
             if pos == 0:
-                amount += leg["amount"] - floor_sum
+                amount += winner_pool - floor_sum
+            if amount == 0:
+                continue
             leaf = hx(abi_hash([
                 ("bytes32", LEAF_DOMAIN),
                 ("bytes32", distribution_id),
@@ -172,12 +208,35 @@ def compute(raw):
             leaves.append({"leafIndex": str(leaf_index), "position": pos, "account": winner, "token": leg["token"], "amount": str(amount), "leaf": leaf})
             leaf_index += 1
 
+    for leg in prize_legs:
+        if fee_bps == 0 or leg["feeAmount"] == 0:
+            continue
+        for recipient in fee_recipients:
+            amount = (leg["feeAmount"] * recipient["bps"]) // fee_bps
+            if amount == 0:
+                continue
+            leaf = hx(abi_hash([
+                ("bytes32", LEAF_DOMAIN),
+                ("bytes32", distribution_id),
+                ("uint256", leaf_index),
+                ("address", recipient["account"]),
+                ("address", leg["token"]),
+                ("uint256", amount),
+            ]))
+            leaves.append({"leafIndex": str(leaf_index), "position": "fee", "account": recipient["account"], "token": leg["token"], "amount": str(amount), "leaf": leaf})
+            leaf_index += 1
+
+    proofs = merkle_proofs([l["leaf"] for l in leaves])
+    for i, proof in enumerate(proofs):
+        leaves[i]["proof"] = proof
+    native = next((l["amount"] for l in prize_legs if l["token"] == NATIVE_TOKEN), 0)
     return {
         "algoVersion": ALGO_VERSION,
         "root": merkle_root([l["leaf"] for l in leaves]),
         "totalTwab": str(total_twab),
-        "totalPayout": str(sum(l["amount"] for l in prize_legs)),
-        "winnerCount": len(tier_bps),
+        "totalPayout": str(native),
+        "leafCount": len(leaves),
+        "winnerCount": len(leaves),
         "winners": winners,
         "leaves": leaves,
     }
