@@ -30,6 +30,54 @@
         "completedAt": "2026-05-23T00:12:00.000Z",
         "notes": "Full round verified on Monad testnet: RoundSkipped, TicketsBought/shMON deposit, VRFRequested sequence 3150, Pyth callback to Drawn, WinnerDrawn/RoundSettled with prizeShares > 0, claimPrize, and withdrawPrincipal."
       }
+    },
+    {
+      "role": "V5 M8 testnet soak",
+      "status": "deployed-pending-soak",
+      "deployedAt": "2026-06-23T13:48:46.509Z",
+      "deployedBy": "0xd5cc1f1D7b78943bDF09541A2ace41B5c6D83431",
+      "source": "src/v5",
+      "deployCommit": "record-git-commit",
+      "addresses": {
+        "twabController": "0xa8C05BAC957C5413ea4A0c0D101Aff84BA553afd",
+        "shmonStrategy": "0xA3e037641825B17586cC9B5D4d9473A76f25c44b",
+        "prizeVault": "0x97D9CA6DDD80869A32C951cc75b75D20e1300eDa",
+        "claimManager": "0xEC41F68FF6079603ea94b7e2b85B9AC12F490671",
+        "pythRandomnessOracle": "0xDf4c50B8C2C1a9922c067472311824153FFb01c0",
+        "drawManager": "0x266ab124480baDDB4af8Dfe578dDAb9F1Ed7610c"
+      },
+      "deployTxs": {
+        "twabController": "0x520eb4379f0d21b3b53fc93c2a3ae3eabc1ceec178eb37981f05ba9b6ab284ae",
+        "shmonStrategy": "0xe8640320977a608ba39b0fc4ead4e16c36f73df69290c3cc573afceb49e30bd7",
+        "prizeVault": "0x45691712e116e5bbd92d178a48585bea600d4c7ed8d541cff1ac05df4527aea4",
+        "claimManager": "0x61ea94f0ff9c3ea18a7e8209041cdb670742786e93167208aa957eb006a1d1f6",
+        "pythRandomnessOracle": "0x9438579ccb867e8d31c1e37007238cd1e1ec9f1f9264b7b6e581dc0297ab28e7",
+        "drawManager": "0xbd71b2aadd11eca5e315f021df4dd62b987fe65153721f2d296e4942c77445b9",
+        "strategySetVault": "0x116ad73419c72b564b13bb144ab1c064373d4940953a2d827b2685370f3f94e7",
+        "twabRegisterVault": "0xeed449d134b482e0c7354ef9d4240f301e33d8f7a6a45cb7c69b031a54e03ae3",
+        "claimAuthorizeManager": "0xa90bc501391692db0366090eaceb2386875ac0bce7d6456bbe97bc7ce35745e9",
+        "vaultSetDrawManager": "0xa916c68167d2bbed3905a9b9a598410c55d8b8989a56687454f7dcf49e9da5fc"
+      },
+      "startBlock": 40087123,
+      "constructorArgs": {
+        "shmon": "0x282BdDFF5e58793AcAb65438b257Dbd15A8745C9",
+        "entropy": "0x825c0390f379c631f3cf11a82a37d20bddf93c07",
+        "entropyProvider": "0x6CC14824Ea2918f5De5C2f75A9Da968ad4BD6344",
+        "guardian": "0xd5cc1f1D7b78943bDF09541A2ace41B5c6D83431",
+        "keeper": "0x629Bd7f323fD29E3dF75855C9BC542889c6c1268",
+        "firstPeriodStart": 1782222805,
+        "twabPeriodLength": 3600,
+        "twabPeriodOffset": 1782222505,
+        "drawPeriod": 3600,
+        "proposerGrace": 300,
+        "challengeWindow": 900,
+        "depositCap": "25000000000000000000000",
+        "symbol": "EVRDRAW-V5-MON"
+      },
+      "watcherSecrets": {
+        "drawManagerAddressSecret": "DRAW_MANAGER_ADDRESS",
+        "fromBlockSecret": "V5_WATCHER_FROM_BLOCK"
+      }
     }
   ]
 }
