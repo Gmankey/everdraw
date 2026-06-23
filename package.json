@@ -43,7 +43,7 @@
     "ethers": "^6.13.4"
   },
   "devDependencies": {
-    "@nomicfoundation/hardhat-ethers": "^3.0.8",
-    "hardhat": "^2.22.16"
+    "@nomicfoundation/hardhat-ethers": "^4.0.12",
+    "hardhat": "^3.6.0"
   }
 }
