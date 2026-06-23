@@ -18,6 +18,7 @@
     "deploy:testnet:v3": "npm run build && npm run check:abi && npm run check:deploy-source && hardhat run scripts/deploy-ticket-prize-pool-shmon-v3.js --network monadTestnet",
     "deploy:mainnet:v3": "npm run deploy:preflight && npm run build && npm run check:abi && npm run check:deploy-source && hardhat run scripts/deploy-ticket-prize-pool-shmon-v3.js --network monadMainnet",
     "deploy:mainnet:v4": "npm run deploy:preflight && npm run build && npm run check:abi && npm run check:deploy-source && hardhat run scripts/deploy-ticket-prize-pool-v4.js --network monadMainnet",
+    "deploy:testnet:v5": "npm run build && hardhat run scripts/deploy-v5-testnet.js --network monadTestnet",
     "smoke:testnet:v3": "hardhat run scripts/smoke-ticket-prize-pool-shmon-v3.js --network monadTestnet",
     "deploy:forge:mainnet": "scripts/forge-deploy-mainnet.sh",
     "keeper:dry": "KEEPER_DRY_RUN=true node scripts/keeper-execute-next.js",
@@ -34,7 +35,8 @@
     "protocol:monitor": "node scripts/protocol-monitor.js",
     "draw:fuzz": "node scripts/draw/differential-fuzz.mjs",
     "draw:load100k": "node scripts/draw/load-100k.mjs",
-    "draw:watch": "node scripts/draw/watch-root-proposals.mjs"
+    "draw:watch": "node scripts/draw/watch-root-proposals.mjs",
+    "draw:watch:inputs": "node scripts/draw/write-watch-inputs.mjs"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
