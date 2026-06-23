@@ -4,8 +4,9 @@ import { AbiCoder, getAddress, keccak256, solidityPacked } from "ethers";
 
 const abi = AbiCoder.defaultAbiCoder();
 export const ALGO_VERSION = "everdraw-v5-draw-algorithm/1";
-export const LEAF_DOMAIN = keccak256(Buffer.from("EverDraw.V5.ClaimLeaf", "utf8"));
+export const LEAF_DOMAIN = keccak256(Buffer.from("everdraw-v5-claim-leaf/1", "utf8"));
 const ZERO_ROOT = "0x" + "00".repeat(32);
+const NATIVE_TOKEN = "0x0000000000000000000000000000000000000000";
 
 function hex32(value) {
   if (!/^0x[0-9a-fA-F]{64}$/.test(value)) throw new Error(`expected bytes32: ${value}`);
@@ -26,9 +27,20 @@ function normalize(input) {
     .map((account) => ({ address: getAddress(account.address), twab: uint(account.twab) }))
     .filter((account) => account.twab > 0n)
     .sort((a, b) => a.address.toLowerCase().localeCompare(b.address.toLowerCase()));
-  const prizeLegs = input.prizeLegs.map((leg) => ({ token: getAddress(leg.token), amount: uint(leg.amount) }));
-  const tierBps = input.tierBps.map((bps) => uint(bps));
-  return { drawId, drawManager, seed, accounts, prizeLegs, tierBps };
+  const prizeLegs = input.prizeLegs.map((leg) => ({
+    token: getAddress(leg.token),
+    amount: uint(leg.amount),
+    feeAmount: uint(leg.feeAmount || 0),
+  }));
+  const tierBps = (input.tierBps || [10000]).map((bps) => uint(bps));
+  const feeRecipients = (input.feeRecipients || []).map((recipient) => ({
+    account: getAddress(recipient.account),
+    bps: uint(recipient.bps),
+  }));
+  const tierSum = tierBps.reduce((sum, bps) => sum + bps, 0n);
+  if (tierBps.length === 0 || tierSum !== 10000n) throw new Error(`tierBps must sum to 10000, got ${tierSum}`);
+  const feeBps = feeRecipients.reduce((sum, recipient) => sum + recipient.bps, 0n);
+  return { drawId, drawManager, seed, accounts, prizeLegs, tierBps, feeRecipients, feeBps };
 }
 
 function encodedHash(types, values) {
@@ -58,10 +70,12 @@ function buildLeaves(input) {
 
   for (let position = 0; position < winners.length; position++) {
     for (const leg of input.prizeLegs) {
-      const base = (leg.amount * input.tierBps[position]) / 10000n;
-      const floorSum = input.tierBps.reduce((sum, bps) => sum + (leg.amount * bps) / 10000n, 0n);
-      const dust = position === 0 ? leg.amount - floorSum : 0n;
+      const winnerPool = leg.amount - allocatedFeeAmount(input, leg.feeAmount);
+      const base = (winnerPool * input.tierBps[position]) / 10000n;
+      const floorSum = input.tierBps.reduce((sum, bps) => sum + (winnerPool * bps) / 10000n, 0n);
+      const dust = position === 0 ? winnerPool - floorSum : 0n;
       const amount = base + dust;
+      if (amount === 0n) continue;
       const leaf = encodedHash(
         ["bytes32", "bytes32", "uint256", "address", "address", "uint256"],
         [LEAF_DOMAIN, distributionId, leafIndex, winners[position], leg.token, amount]
@@ -78,7 +92,33 @@ function buildLeaves(input) {
     }
   }
 
+  for (const leg of input.prizeLegs) {
+    if (input.feeBps === 0n || leg.feeAmount === 0n) continue;
+    for (const recipient of input.feeRecipients) {
+      const amount = (leg.feeAmount * recipient.bps) / input.feeBps;
+      if (amount === 0n) continue;
+      const leaf = encodedHash(
+        ["bytes32", "bytes32", "uint256", "address", "address", "uint256"],
+        [LEAF_DOMAIN, distributionId, leafIndex, recipient.account, leg.token, amount]
+      );
+      leaves.push({
+        leafIndex: leafIndex.toString(),
+        position: "fee",
+        account: recipient.account,
+        token: leg.token,
+        amount: amount.toString(),
+        leaf,
+      });
+      leafIndex++;
+    }
+  }
+
   return { totalTwab, winners, leaves, root: merkleRoot(leaves.map((leaf) => leaf.leaf)) };
+}
+
+function allocatedFeeAmount(input, feeAmount) {
+  if (input.feeBps === 0n || feeAmount === 0n) return 0n;
+  return input.feeRecipients.reduce((sum, recipient) => sum + (feeAmount * recipient.bps) / input.feeBps, 0n);
 }
 
 export function merkleRoot(leaves) {
@@ -99,17 +139,43 @@ export function merkleRoot(leaves) {
   return level[0];
 }
 
+export function merkleProofs(leaves) {
+  if (leaves.length === 0) return [];
+  const normalized = leaves.map((leaf, index) => ({ leaf: leaf.toLowerCase(), index })).sort((a, b) => a.leaf.localeCompare(b.leaf));
+  const proofs = leaves.map(() => []);
+  let level = normalized;
+  while (level.length > 1) {
+    const next = [];
+    for (let i = 0; i < level.length; i += 2) {
+      if (i + 1 === level.length) {
+        next.push(level[i]);
+        continue;
+      }
+      const left = level[i];
+      const right = level[i + 1];
+      proofs[left.index].push(right.leaf);
+      proofs[right.index].push(left.leaf);
+      const [a, b] = left.leaf < right.leaf ? [left.leaf, right.leaf] : [right.leaf, left.leaf];
+      next.push({ leaf: keccak256(solidityPacked(["bytes32", "bytes32"], [a, b])), index: left.index });
+    }
+    level = next.sort((a, b) => a.leaf.localeCompare(b.leaf));
+  }
+  return proofs;
+}
+
 export function compute(inputJson) {
   const input = normalize(inputJson);
   const result = buildLeaves(input);
+  const proofs = merkleProofs(result.leaves.map((leaf) => leaf.leaf));
   return {
     algoVersion: ALGO_VERSION,
     root: result.root,
     totalTwab: result.totalTwab.toString(),
-    totalPayout: input.prizeLegs.reduce((sum, leg) => sum + leg.amount, 0n).toString(),
-    winnerCount: input.tierBps.length,
+    totalPayout: input.prizeLegs.find((leg) => leg.token === NATIVE_TOKEN)?.amount.toString() || "0",
+    leafCount: result.leaves.length,
+    winnerCount: result.leaves.length,
     winners: result.winners,
-    leaves: result.leaves,
+    leaves: result.leaves.map((leaf, index) => ({ ...leaf, proof: proofs[index] })),
   };
 }
 

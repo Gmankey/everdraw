@@ -28,6 +28,8 @@
     "keeper:ops-check": "bash scripts/keeper-ops-check.sh",
     "keeper:env-check": "bash scripts/keeper-env-check.sh",
     "keeper:install-systemd": "bash scripts/keeper-install-systemd.sh",
+    "keeper:v5": "KEEPER_LOOP=true node scripts/keeper-v5.js",
+    "keeper:v5:once": "node scripts/keeper-v5.js",
     "keeper:deploy": "flyctl deploy . -c scripts/keeper/fly.toml --ha=false",
     "keeper:logs": "flyctl logs -a everdraw-keeper",
     "keeper:status": "flyctl status -a everdraw-keeper",
