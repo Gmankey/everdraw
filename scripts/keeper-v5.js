@@ -72,6 +72,24 @@ function statusName(status) {
   return ["None", "AwaitingSeed", "Seeded", "Proposed", "Finalized", "Skipped"][Number(status)] || `Unknown(${status})`;
 }
 
+// EverdrawTwabController.TimestampNotFinalized(uint256,uint256): the queried period is still
+// inside the current overwrite window and not finalized. Transient — the keeper should wait
+// and retry, not crash. Match the revert-data selector wherever ethers surfaces it.
+const TWAB_NOT_FINALIZED_SELECTOR = "0x947ad913";
+function isTwabNotFinalized(err) {
+  const candidates = [
+    err?.data,
+    err?.info?.error?.data,
+    err?.error?.data,
+    err?.revert?.signature,
+    err?.shortMessage,
+    err?.message,
+  ];
+  return candidates.some(
+    (c) => typeof c === "string" && c.toLowerCase().includes(TWAB_NOT_FINALIZED_SELECTOR)
+  );
+}
+
 async function send(label, txPromise) {
   const tx = await txPromise;
   console.log(`${label} sent ${tx.hash}`);
@@ -138,14 +156,21 @@ async function maybeStartDraw({ manager, provider, signer, fromBlock }) {
     manager.minPrizeThreshold(),
   ]);
 
-  // getTotalTwabBetween reverts when the vault has no TWAB observations for the period
-  // (an empty / never-deposited period). That is a valid state: startDraw skips the empty
-  // period cleanly on-chain (ADR-0036 §3.4). Treat the revert as zero TWAB and proceed to
-  // startDraw rather than crashing the keeper loop on the backlog of empty periods.
+  // getTotalTwabBetween can revert for two very different reasons:
+  //  1. Empty / never-deposited period: no TWAB observations -> bare require(false), data "0x".
+  //     Valid state — startDraw skips the empty period cleanly on-chain (ADR-0036 §3.4).
+  //     Treat as zero TWAB and proceed to startDraw.
+  //  2. TimestampNotFinalized (selector 0x947ad913): the period's TWAB is not finalized yet
+  //     (still inside the current overwrite window). This is transient — wait and retry next
+  //     loop. Do NOT call startDraw; it would revert with the same error and crash the keeper.
   let totalTwab = 0n;
   try {
     totalTwab = await twab.getTotalTwabBetween(vaultAddress, nextPeriodStart, nextPeriodStart + drawPeriod);
   } catch (err) {
+    if (isTwabNotFinalized(err)) {
+      console.log(`startDraw deferred: TWAB period not finalized yet — will retry next loop`);
+      return false;
+    }
     console.log(`getTotalTwabBetween reverted (empty/no-observation period) — treating as zero TWAB: ${err.shortMessage || err.message}`);
     totalTwab = 0n;
   }
@@ -154,7 +179,17 @@ async function maybeStartDraw({ manager, provider, signer, fromBlock }) {
   if (totalTwab !== 0n && availableYield !== 0n && availableYield >= minPrizeThreshold) {
     value = await oracle.getFee();
   }
-  await send("startDraw", manager.connect(signer).startDraw({ value }));
+  // Belt-and-suspenders: the period can roll into the not-finalized window between the read
+  // above and tx submission. Tolerate that here too — retry next loop instead of crashing.
+  try {
+    await send("startDraw", manager.connect(signer).startDraw({ value }));
+  } catch (err) {
+    if (isTwabNotFinalized(err)) {
+      console.log(`startDraw deferred: TWAB period not finalized yet (at submit) — will retry next loop`);
+      return false;
+    }
+    throw err;
+  }
   console.log(`startDraw completed using fromBlock=${fromBlock}`);
   return true;
 }
