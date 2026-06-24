@@ -133,11 +133,22 @@ async function maybeStartDraw({ manager, provider, signer, fromBlock }) {
   const twab = new Contract(twabAddress, TWAB_ABI, provider);
   const vault = new Contract(vaultAddress, VAULT_ABI, provider);
   const oracle = new Contract(oracleAddress, ORACLE_ABI, provider);
-  const [totalTwab, availableYield, minPrizeThreshold] = await Promise.all([
-    twab.getTotalTwabBetween(vaultAddress, nextPeriodStart, nextPeriodStart + drawPeriod),
+  const [availableYield, minPrizeThreshold] = await Promise.all([
     vault.availableYield(),
     manager.minPrizeThreshold(),
   ]);
+
+  // getTotalTwabBetween reverts when the vault has no TWAB observations for the period
+  // (an empty / never-deposited period). That is a valid state: startDraw skips the empty
+  // period cleanly on-chain (ADR-0036 §3.4). Treat the revert as zero TWAB and proceed to
+  // startDraw rather than crashing the keeper loop on the backlog of empty periods.
+  let totalTwab = 0n;
+  try {
+    totalTwab = await twab.getTotalTwabBetween(vaultAddress, nextPeriodStart, nextPeriodStart + drawPeriod);
+  } catch (err) {
+    console.log(`getTotalTwabBetween reverted (empty/no-observation period) — treating as zero TWAB: ${err.shortMessage || err.message}`);
+    totalTwab = 0n;
+  }
 
   let value = 0n;
   if (totalTwab !== 0n && availableYield !== 0n && availableYield >= minPrizeThreshold) {
