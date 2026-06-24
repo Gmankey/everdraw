@@ -90,6 +90,21 @@ function isTwabNotFinalized(err) {
   );
 }
 
+// startDraw reverts with Error("insufficient oracle fee") when msg.value < the live Pyth fee.
+function isInsufficientOracleFee(err) {
+  const text = [err?.reason, err?.shortMessage, err?.message, err?.revert?.args?.[0]]
+    .filter((c) => typeof c === "string")
+    .join(" ")
+    .toLowerCase();
+  return text.includes("insufficient oracle fee");
+}
+
+// Pad the oracle fee to absorb the dynamic (per-block) Pyth component. The contract refunds
+// any excess on the real-draw path, so over-paying is safe; under-paying reverts.
+function bufferedOracleFee(fee) {
+  return (BigInt(fee) * 3n) / 2n; // +50%
+}
+
 async function send(label, txPromise) {
   const tx = await txPromise;
   console.log(`${label} sent ${tx.hash}`);
@@ -175,12 +190,13 @@ async function maybeStartDraw({ manager, provider, signer, fromBlock }) {
     totalTwab = 0n;
   }
 
+  // Off-chain prediction of "is this a real draw" can disagree with the contract's on-chain
+  // computation (finalization timing / boundary cases). So we predict a fee here, but also
+  // self-correct below if the contract says the fee is insufficient.
   let value = 0n;
   if (totalTwab !== 0n && availableYield !== 0n && availableYield >= minPrizeThreshold) {
-    value = await oracle.getFee();
+    value = bufferedOracleFee(await oracle.getFee());
   }
-  // Belt-and-suspenders: the period can roll into the not-finalized window between the read
-  // above and tx submission. Tolerate that here too — retry next loop instead of crashing.
   try {
     await send("startDraw", manager.connect(signer).startDraw({ value }));
   } catch (err) {
@@ -188,7 +204,17 @@ async function maybeStartDraw({ manager, provider, signer, fromBlock }) {
       console.log(`startDraw deferred: TWAB period not finalized yet (at submit) — will retry next loop`);
       return false;
     }
-    throw err;
+    if (isInsufficientOracleFee(err)) {
+      // The contract committed to a REAL draw (it only checks the fee after passing the skip
+      // guards) but our predicted value was too low (we guessed skip, or the dynamic Pyth fee
+      // ticked up). Retry with a buffered fee. Excess is refunded on the real-draw path, and a
+      // skip can never reach the fee check, so no value is ever stranded on a skip.
+      const buffered = bufferedOracleFee(await oracle.getFee());
+      console.log(`startDraw: insufficient oracle fee — retrying with buffered fee ${buffered}`);
+      await send("startDraw", manager.connect(signer).startDraw({ value: buffered }));
+    } else {
+      throw err;
+    }
   }
   console.log(`startDraw completed using fromBlock=${fromBlock}`);
   return true;
