@@ -22,9 +22,14 @@ const metadata = {
 export const modal = createWeb3Modal({
   ethersConfig: defaultConfig({
     metadata,
+    enableEIP6963: true,
+    enableInjected: true,
+    enableCoinbase: false,
     auth: {
       email: false,
       socials: [],
+      showWallets: true,
+      walletFeatures: false,
     },
   }),
   chains: [monadChain],
@@ -33,4 +38,3 @@ export const modal = createWeb3Modal({
   enableSwaps: false,
   enableOnramp: false,
 })
-

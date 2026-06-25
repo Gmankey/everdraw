@@ -17,6 +17,33 @@ function getWalletProvider() {
   return modal.getWalletProvider() || window.ethereum || null
 }
 
+function getInjectedWalletProviders() {
+  const injected = window.ethereum
+  if (!injected) return []
+  const providers = Array.isArray(injected.providers) ? injected.providers : [injected]
+  return providers
+    .filter((provider) => provider && typeof provider.request === 'function')
+    .sort((a, b) => Number(Boolean(b.isMetaMask)) - Number(Boolean(a.isMetaMask)))
+}
+
+async function getProviderAccounts(provider) {
+  try {
+    const accounts = await provider.request({ method: 'eth_accounts' })
+    return Array.isArray(accounts) ? accounts.map((addr) => String(addr).toLowerCase()) : []
+  } catch {
+    return []
+  }
+}
+
+async function getDepositWalletProvider(connectedAccount) {
+  const lcAccount = String(connectedAccount || '').toLowerCase()
+  for (const provider of getInjectedWalletProviders()) {
+    const accounts = await getProviderAccounts(provider)
+    if (!lcAccount || accounts.includes(lcAccount)) return provider
+  }
+  return getWalletProvider()
+}
+
 const POOL_ABI = [
   'function currentRoundId() view returns (uint256)',
   'function getRoundInfo(uint256 rid) view returns (uint8 state,uint64 salesEndTime,uint32 totalTickets,uint256 totalPrincipalMON,uint256 totalShmonShares,uint256 targetBlockNumber,address winner,uint32 winningTicket,uint64 unstakeCompletionEpoch,uint256 monReceived,uint256 yieldMON,uint256 lossRatio,bool prizeClaimed)',
@@ -1677,7 +1704,7 @@ export default function App() {
       setStatus('Preparing transaction...')
 
       if (!poolAddress) throw new Error('Missing VITE_POOL_ADDRESS in web/.env')
-      const walletProvider = getWalletProvider()
+      const walletProvider = await getDepositWalletProvider(account)
       if (!walletProvider) throw new Error('Wallet required for buyTickets')
 
       const n = Number(ticketCountInput)
