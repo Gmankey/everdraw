@@ -188,11 +188,13 @@ input[type='number'] { width: 100%; background: transparent; border: none; font-
 input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .currency-label { font-size: 1.5rem; font-weight: 700; margin-left: var(--space-sm); }
 .balance-info { display: flex; justify-content: space-between; font-size: 0.9rem; color: var(--color-text-muted); margin-top: 8px; font-weight: 500; }
+.balance-max-info { justify-content: flex-end; align-items: center; gap: 12px; }
 .beta-limit-info { color: rgba(196, 181, 253, 0.76); }
 .max-btn { background: none; border: none; color: var(--color-primary); font-weight: 700; cursor: pointer; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.05em; }
 .deposit-cta-wrap { margin-top: 24px; }
 .deposit-btn { width: 100%; padding: 20px; font-size: 1.1rem; }
 .deposit-caption { font-size: 0.85rem; color: var(--color-text-muted); margin-top: 12px; text-align: center; }
+.deposit-total-line { color: #c4b5fd; font-weight: 700; }
 .site-footer {
   width: 100%;
   padding: 4px 0 0;

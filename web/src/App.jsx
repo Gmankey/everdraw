@@ -195,6 +195,17 @@ function formatWholeNumber(value) {
   return Number(value || 0).toLocaleString()
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function formatDepositMon(wei) {
+  const formatted = ethers.formatEther(BigInt(wei || 0n))
+  const [whole, decimals = ''] = formatted.split('.')
+  const trimmed = decimals.slice(0, 4).replace(/0+$/, '')
+  return trimmed ? `${whole}.${trimmed}` : whole
+}
+
 function trackEvent(name, params = {}) {
   if (typeof window === 'undefined') return
   if (typeof window.gtag === 'function') window.gtag('event', name, params)
@@ -1222,6 +1233,7 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
+  const [depositTotalLine, setDepositTotalLine] = useState(null)
   const [connectedChainId, setConnectedChainId] = useState(null)
 
   const [roundId, setRoundId] = useState('0')
@@ -1705,6 +1717,68 @@ export default function App() {
   const activeRemainingTicketAllowance = Math.max(0, FRONTEND_TICKET_CAP - activeCurrentWalletTickets)
   const activeBuyVaultLabel = selectedPoolAddress.toLowerCase() === activeVaultAddresses[1]?.toLowerCase() || vaultBPending ? 'Vault B' : 'Vault A'
 
+  useEffect(() => {
+    setDepositTotalLine(null)
+  }, [account, poolAddress, roundId])
+
+  const readUserRoundDepositWei = useCallback(async ({
+    targetAccount = account,
+    targetPoolAddress = poolAddress,
+    targetRoundId = roundId,
+  } = {}) => {
+    if (!targetAccount || !ethers.isAddress(targetAccount) || !targetPoolAddress || !ethers.isAddress(targetPoolAddress) || !targetRoundId) return 0n
+
+    const provider = await getReadProvider()
+    const pool = new ethers.Contract(targetPoolAddress, activePoolAbi, provider)
+
+    try {
+      const position = await pool.getUserPosition(BigInt(targetRoundId), targetAccount)
+      return BigInt(position?.[0] ?? 0n)
+    } catch {
+      try {
+        return BigInt(await pool.principalMON(BigInt(targetRoundId), targetAccount))
+      } catch {
+        return 0n
+      }
+    }
+  }, [account, activePoolAbi, poolAddress, roundId])
+
+  const pollUserDepositTotal = useCallback(async ({
+    expectedMinWei = 0n,
+    targetAccount = account,
+    targetPoolAddress = poolAddress,
+    targetRoundId = roundId,
+  } = {}) => {
+    const context = {
+      account: targetAccount,
+      poolAddress: targetPoolAddress,
+      roundId: String(targetRoundId || ''),
+    }
+    setDepositTotalLine({ ...context, text: 'updating your deposit total...' })
+    await delay(1500)
+
+    let lastTotal = 0n
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      lastTotal = await readUserRoundDepositWei({ targetAccount, targetPoolAddress, targetRoundId })
+      if (lastTotal > 0n && (!expectedMinWei || lastTotal >= expectedMinWei)) {
+        setDepositTotalLine({
+          ...context,
+          text: `you have deposited ${formatDepositMon(lastTotal)} MON this round`,
+        })
+        return lastTotal
+      }
+      await delay(700)
+    }
+
+    setDepositTotalLine({
+      ...context,
+      text: lastTotal > 0n
+        ? `you have deposited ${formatDepositMon(lastTotal)} MON this round`
+        : 'deposit submitted. total update delayed.',
+    })
+    return lastTotal
+  }, [account, poolAddress, readUserRoundDepositWei, roundId])
+
   const buyTickets = useCallback(async () => {
     try {
       setLoading(true)
@@ -1751,6 +1825,9 @@ export default function App() {
       if (nativeBalance < value + gasReserve) {
         throw new Error(`Insufficient MON for deposit gas: need about ${Number(ethers.formatEther(value + gasReserve)).toFixed(4)} MON total, wallet has ${Number(ethers.formatEther(nativeBalance)).toFixed(4)} MON`)
       }
+      const targetRoundId = roundId
+      const previousDepositWei = await readUserRoundDepositWei({ targetRoundId }).catch(() => 0n)
+      const expectedDepositWei = previousDepositWei + value
 
       const callData = new ethers.Interface(activePoolAbi).encodeFunctionData(
         isV2Pool && !isV4Pool ? 'buyTicketsMON' : 'buyTickets',
@@ -1778,6 +1855,15 @@ export default function App() {
         value: ethers.toBeHex(value),
       }])
 
+      setTicketCountInput('')
+      pollUserDepositTotal({ expectedMinWei: expectedDepositWei, targetRoundId }).catch(() => {
+        setDepositTotalLine({
+          account,
+          poolAddress,
+          roundId: String(targetRoundId || ''),
+          text: 'deposit submitted. total update delayed.',
+        })
+      })
       setStatus(`Submitted: ${String(txHash).slice(0, 10)}... waiting for confirmation...`)
       await readProvider.waitForTransaction(txHash)
       setStatus('Buy successful')
@@ -1800,7 +1886,7 @@ export default function App() {
     } finally {
       setLoading(false)
     }
-  }, [account, expectedChainId, poolAddress, refresh, ticketCountInput, ticketPrice, activePoolAbi, isV2Pool, isV4Pool, roundInfo, activeRemainingTicketAllowance, activeBuyVaultLabel])
+  }, [account, expectedChainId, poolAddress, pollUserDepositTotal, readUserRoundDepositWei, refresh, roundId, ticketCountInput, ticketPrice, activePoolAbi, isV2Pool, isV4Pool, roundInfo, activeRemainingTicketAllowance, activeBuyVaultLabel])
 
   const secondsRemaining = useMemo(() => {
     if (!roundInfo) return 0
@@ -2726,6 +2812,9 @@ export default function App() {
       const sharesOwed = isV4Pool
         ? await shmonRead.previewDeposit(monCost)
         : (await shmonRead.previewWithdraw(monCost)) + 1n
+      const targetRoundId = roundId
+      const previousDepositWei = await readUserRoundDepositWei({ targetRoundId }).catch(() => 0n)
+      const expectedDepositWei = previousDepositWei + monCost
       const nonce = await fetchNonceWithRetry(account)
       const feeData = await readProvider.getFeeData()
       const gasPrice = feeData.gasPrice ?? feeData.maxFeePerGas
@@ -2761,6 +2850,15 @@ export default function App() {
         nonce: ethers.toBeHex(nonce + 1),
         gasPrice: ethers.toBeHex(gasPrice),
       }])
+      setTicketCountInput('')
+      pollUserDepositTotal({ expectedMinWei: expectedDepositWei, targetRoundId }).catch(() => {
+        setDepositTotalLine({
+          account,
+          poolAddress,
+          roundId: String(targetRoundId || ''),
+          text: 'deposit submitted. total update delayed.',
+        })
+      })
       await readProvider.waitForTransaction(buyTxHash)
 
       setStatus('Buy with shMON successful')
@@ -2781,7 +2879,7 @@ export default function App() {
     } finally {
       setLoading(false)
     }
-  }, [account, expectedChainId, isV2Pool, isV4Pool, poolAddress, refresh, ticketCountInput, roundInfo, remainingTicketAllowance, shownVaultLabel])
+  }, [account, expectedChainId, isV2Pool, isV4Pool, poolAddress, pollUserDepositTotal, readUserRoundDepositWei, refresh, roundId, ticketCountInput, roundInfo, remainingTicketAllowance, shownVaultLabel])
 
 
   const setMaxTickets = useCallback(() => {
@@ -3068,7 +3166,7 @@ export default function App() {
                       />
                       <span className="currency-label">tickets</span>
                     </div>
-                    <div className="balance-info">
+                    <div className="balance-info balance-max-info">
                       <span>
                         Balance: {(isV2Pool || isV4Pool) && buyWithShmon ? `${formatMon(shmonMonBalance)} shMON` : `${Number(balance).toFixed(4)} MON`}
                       </span>
@@ -3150,6 +3248,12 @@ export default function App() {
                   </div>
 
                   {status ? <p className="deposit-caption">{status}</p> : null}
+                  {depositTotalLine &&
+                    depositTotalLine.account === account &&
+                    depositTotalLine.poolAddress === poolAddress &&
+                    depositTotalLine.roundId === String(roundId || '')
+                    ? <p className="deposit-caption deposit-total-line">{depositTotalLine.text}</p>
+                    : null}
                   {error ? <p className="deposit-caption" style={{ color: '#ff8ea1' }}>{error}</p> : null}
                 </div>
               </div>
