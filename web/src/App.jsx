@@ -3188,7 +3188,7 @@ export default function App() {
                     depositTotalLine.account === account &&
                     depositTotalLine.poolAddress === poolAddress &&
                     depositTotalLine.roundId === String(roundId || '')
-                    ? <p className="deposit-caption deposit-total-line">{depositTotalLine.text}</p>
+                    ? <div className="deposit-total-line">{depositTotalLine.text}</div>
                     : null}
 
                   <div className="deposit-cta-wrap">
