@@ -1755,26 +1755,19 @@ export default function App() {
       })
 
       setStatus('Estimating gas...')
-      let gasLimit
       try {
-        const estimate = await readProvider.estimateGas({ from: account, to: poolAddress, data: callData, value })
-        gasLimit = (estimate * 3n) / 2n
+        await readProvider.estimateGas({ from: account, to: poolAddress, data: callData, value })
       } catch (estErr) {
         const reason = estErr?.reason || estErr?.shortMessage || estErr?.message || 'unknown'
         throw new Error(`Transaction would fail: ${reason}`)
       }
 
       setStatus('Waiting for wallet confirmation...')
-      const nonce = await fetchNonceWithRetry(account)
-
       const txHash = await provider.send('eth_sendTransaction', [{
         from: account,
         to: poolAddress,
         data: callData,
         value: ethers.toBeHex(value),
-        gas: ethers.toBeHex(gasLimit),
-        nonce: ethers.toBeHex(nonce),
-        gasPrice: ethers.toBeHex(gasPrice),
       }])
 
       setStatus(`Submitted: ${String(txHash).slice(0, 10)}... waiting for confirmation...`)
