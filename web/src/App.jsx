@@ -3184,6 +3184,12 @@ export default function App() {
                       <span>{formatWholeNumber(remainingTicketAllowance)} remaining / {formatWholeNumber(FRONTEND_TICKET_CAP)}</span>
                     </div>
                   ) : null}
+                  {depositTotalLine &&
+                    depositTotalLine.account === account &&
+                    depositTotalLine.poolAddress === poolAddress &&
+                    depositTotalLine.roundId === String(roundId || '')
+                    ? <p className="deposit-caption deposit-total-line">{depositTotalLine.text}</p>
+                    : null}
 
                   <div className="deposit-cta-wrap">
                     {(isV2Pool || isV4Pool) && (
@@ -3248,12 +3254,6 @@ export default function App() {
                   </div>
 
                   {status ? <p className="deposit-caption">{status}</p> : null}
-                  {depositTotalLine &&
-                    depositTotalLine.account === account &&
-                    depositTotalLine.poolAddress === poolAddress &&
-                    depositTotalLine.roundId === String(roundId || '')
-                    ? <p className="deposit-caption deposit-total-line">{depositTotalLine.text}</p>
-                    : null}
                   {error ? <p className="deposit-caption" style={{ color: '#ff8ea1' }}>{error}</p> : null}
                 </div>
               </div>
