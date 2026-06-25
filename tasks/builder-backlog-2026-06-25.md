@@ -56,3 +56,17 @@ Everything accumulated for the builder, prioritized. P0 = affects the live V4.1 
 ## Notes for whoever picks this up
 - The P0 indexer hotfix is live but it's a **hand-set Fly secret** — treat P0-1 (reconciliation control) as the durable fix so it can't silently drift again.
 - The V5 soak is **paused** pending P1-1 (phantom-TWAB). M3–M5 contracts are merged; M6/M7 docs landed; M8 was in progress when the soak surfaced P1-1.
+
+---
+
+## ADDENDUM (2026-06-25 PM) — MetaMask "Malicious token" on deposit (live)
+
+Confirmed root cause of the live MetaMask **"Malicious token — may result in loss of funds"** warning on V4.1 deposits: the vault advertises ERC-20 metadata (`name`/`symbol`/`decimals`/`balanceOf`/`totalSupply` — the ADR-0006 Merkl surface) but has **no `transfer`/`approve`/`transferFrom`** → **honeypot signature** → MetaMask/Blockaid token scanner flags it. (Rabby's scanner doesn't, so Rabby deposits clean.) Secondary heuristic: a deposit returns **no token to the user** (shMON minted to the vault), reading as a one-way drain. Unrelated to the indexer and to the (now-fixed) EIP-5792 delegation routing.
+
+### P0 — V4.1 interim (live now; every MetaMask user hits this)
+- **Blockaid/MetaMask TOKEN allowlisting** of `0x933FF608…F7DA` and `0x1886f329…404C` — report framed as a **token** false-positive (non-transferable position-accounting for Merkl, not a tradeable token; funds withdrawable via `withdrawPrincipal`). Fast-track via **FastLane/Monad → Blockaid/MetaMask**. V4.1 is immutable — allowlisting + the in-app Smart Account note are the only levers until V5.
+
+### P1 — V5 real fix (LAUNCH-RELEVANT, not nice-to-have): ADR-0039
+- Implement `decisions/0039-v5-transferable-share-token.md`: the V5 position becomes a **real, standard, transferable ERC-4626 share** minted to the depositor. Removes the honeypot flag AND the drain heuristic at the source; re-enables TWAB-on-transfer (reverses the M1 transferability removal); supersedes the ADR-0006 fake-ERC-20 surface.
+- **Merkl event-shape MUST be re-confirmed against the real token** (ADR-0006 event-semantics): Merkl now reads the genuine `balanceOf`/`totalSupply`/`Transfer` of the share token instead of the retired fake surface — verify indexing still works before V5 launch.
+- Audit (M6/M7): transfer mid-round updates TWAB correctly; transfer can't raise current-period odds; post-deploy verify a deposit no longer triggers the "malicious token" warning (working rule #6). Legal review: positions become tradeable (no-loss savings, not gambling).
