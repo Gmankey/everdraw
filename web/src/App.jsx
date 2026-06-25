@@ -3146,7 +3146,7 @@ export default function App() {
                     </button>
                     {ticketLimitMessage ? <p className="deposit-caption">{ticketLimitMessage}</p> : null}
                     {(loading || wrongNetwork || !salesOpen || !account || !shownIsCurrentRound) && buyDisabledReason ? <p className="deposit-caption">{buyDisabledReason}</p> : null}
-                    {account ? <p className="deposit-caption">MetaMask Smart Account warning? Disable Smart Account for this account or use a standard account; EverDraw sends deposits as one direct transaction.</p> : null}
+                    {account ? <p className="deposit-caption">MetaMask may wrongly flag brand-new Monad contracts as "malicious" — a known false positive we've reported to MetaMask. Other wallets aren't affected.</p> : null}
                   </div>
 
                   {status ? <p className="deposit-caption">{status}</p> : null}
