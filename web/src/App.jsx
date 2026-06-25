@@ -703,7 +703,7 @@ function FounderLaunchArticle() {
   )
 }
 
-function Header({ account, onConnect, currentPage, points }) {
+function Header({ account, onConnect, onDisconnect, currentPage, points }) {
   return (
     <header>
       <div className="logo">
@@ -725,9 +725,20 @@ function Header({ account, onConnect, currentPage, points }) {
       </nav>
       <PointsHeaderWidget account={account} points={points} />
       <div className="header-actions">
-        <button className="btn" onClick={onConnect}>
-          {account ? shortAddr(account) : 'Connect Wallet'}
-        </button>
+        {account ? (
+          <>
+            <button className="btn" onClick={onConnect} title="Switch wallet or account">
+              {shortAddr(account)}
+            </button>
+            <button className="btn wallet-disconnect-btn" onClick={onDisconnect}>
+              Disconnect
+            </button>
+          </>
+        ) : (
+          <button className="btn" onClick={onConnect}>
+            Connect Wallet
+          </button>
+        )}
       </div>
     </header>
   )
@@ -1637,11 +1648,26 @@ export default function App() {
     }
   }, [])
 
+  const disconnectWallet = useCallback(async () => {
+    try {
+      await modal.disconnect?.()
+    } catch (e) {
+      const msg = normalizeError(e)
+      if (msg) console.warn('[EverDraw] wallet disconnect failed:', msg)
+    } finally {
+      setAccount('')
+      setBalance('0')
+      setConnectedChainId(null)
+    }
+  }, [])
+
   // Reactively handle wallet connect/disconnect via web3modal
   useEffect(() => {
     const unsubscribe = modal.subscribeProvider(async (state) => {
       if (!state.isConnected || !state.provider) {
-        // Wallet disconnected via modal
+        setAccount('')
+        setBalance('0')
+        setConnectedChainId(null)
         return
       }
       try {
@@ -2868,7 +2894,7 @@ export default function App() {
           />
         ) : (
           <>
-            <Header account={account} onConnect={connectWallet} currentPage={currentPage} points={pointsProfile} />
+            <Header account={account} onConnect={connectWallet} onDisconnect={disconnectWallet} currentPage={currentPage} points={pointsProfile} />
             {currentPage === 'article' ? <FounderLaunchArticle /> : null}
             {currentPage !== 'article' && pointsBanner ? <div className="points-banner"><span>{pointsBanner}</span><button onClick={() => setPointsBanner(null)}>×</button></div> : null}
         {currentPage === 'stats' ? <StatsPage /> : null}
@@ -3138,6 +3164,7 @@ export default function App() {
                     </button>
                     {ticketLimitMessage ? <p className="deposit-caption">{ticketLimitMessage}</p> : null}
                     {(loading || wrongNetwork || !salesOpen || !account || !shownIsCurrentRound) && buyDisabledReason ? <p className="deposit-caption">{buyDisabledReason}</p> : null}
+                    {account ? <p className="deposit-caption">MetaMask Smart Account warning? Disable Smart Account for this account or use a standard account; EverDraw sends deposits as one direct transaction.</p> : null}
                   </div>
 
                   {status ? <p className="deposit-caption">{status}</p> : null}
