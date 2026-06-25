@@ -54,7 +54,7 @@ header { display: flex; justify-content: space-between; align-items: center; pad
 .nav-links { display: flex; gap: var(--space-md); }
 .nav-link { text-decoration: none; color: var(--color-text-muted); font-weight: 500; font-size: 0.95rem; transition: color 0.2s; }
 .nav-link:hover,.nav-link.active { color: var(--color-text-main); }
-.header-actions { display: flex; align-items: center; gap: 10px; }
+.header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
 
 .beta-corner-ribbon {
   position: fixed;
@@ -116,6 +116,15 @@ header { display: flex; justify-content: space-between; align-items: center; pad
 }
 .btn:disabled:hover {
   background-color: var(--color-primary);
+}
+.wallet-disconnect-btn {
+  background: transparent;
+  border: 1px solid rgba(155, 109, 255, 0.35);
+  color: #d6cfff;
+  padding-inline: 18px;
+}
+.wallet-disconnect-btn:hover {
+  background: rgba(155, 109, 255, 0.14);
 }
 
 h1 { font-size: clamp(3rem, 6vw, 5.5rem); font-weight: 800; letter-spacing: -0.04em; line-height: 0.9; margin-bottom: var(--space-md); max-width: 800px; }

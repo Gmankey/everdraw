@@ -1,51 +1,40 @@
-function getInjectedProvider() {
-  if (typeof window === 'undefined') return null
-  return window.ethereum || null
+// mainnet config - chain 143
+import { createWeb3Modal, defaultConfig } from '@web3modal/ethers'
+
+const chainId = Number(import.meta.env.VITE_CHAIN_ID) || 143
+const isMainnet = chainId === 143
+
+const monadChain = {
+  chainId,
+  name: isMainnet ? 'Monad' : 'Monad Testnet',
+  currency: 'MON',
+  explorerUrl: isMainnet ? 'https://monadexplorer.com' : 'https://testnet.monadexplorer.com',
+  rpcUrl: import.meta.env.VITE_RPC_URL || (isMainnet ? 'https://rpc.monad.xyz' : 'https://testnet-rpc.monad.xyz'),
 }
 
-async function getAccounts(provider) {
-  try {
-    const accounts = await provider.request({ method: 'eth_accounts' })
-    return Array.isArray(accounts) ? accounts : []
-  } catch {
-    return []
-  }
+const metadata = {
+  name: 'EverDraw',
+  description: 'No-loss lottery on Monad. Win the pot or keep your lot.',
+  url: 'https://everdraw.xyz',
+  icons: ['https://everdraw.xyz/favicon.png'],
 }
 
-export const modal = {
-  getWalletProvider() {
-    return getInjectedProvider() || undefined
-  },
-
-  async open() {
-    const provider = getInjectedProvider()
-    if (!provider) throw new Error('No injected wallet found. Install MetaMask or Rabby.')
-    await provider.request({ method: 'eth_requestAccounts' })
-  },
-
-  subscribeProvider(callback) {
-    const provider = getInjectedProvider()
-    if (!provider) return () => {}
-
-    const emit = async () => {
-      const accounts = await getAccounts(provider)
-      callback({
-        isConnected: accounts.length > 0,
-        provider,
-        address: accounts[0],
-      })
-    }
-
-    const onAccountsChanged = () => { emit().catch(() => {}) }
-    const onChainChanged = () => { emit().catch(() => {}) }
-
-    provider.on?.('accountsChanged', onAccountsChanged)
-    provider.on?.('chainChanged', onChainChanged)
-    emit().catch(() => {})
-
-    return () => {
-      provider.removeListener?.('accountsChanged', onAccountsChanged)
-      provider.removeListener?.('chainChanged', onChainChanged)
-    }
-  },
-}
+export const modal = createWeb3Modal({
+  ethersConfig: defaultConfig({
+    metadata,
+    enableEIP6963: true,
+    enableInjected: true,
+    enableCoinbase: false,
+    auth: {
+      email: false,
+      socials: [],
+      showWallets: true,
+      walletFeatures: false,
+    },
+  }),
+  chains: [monadChain],
+  projectId: import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || 'demo-project-id',
+  enableAnalytics: false,
+  enableSwaps: false,
+  enableOnramp: false,
+})
