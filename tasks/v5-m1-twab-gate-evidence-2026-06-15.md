@@ -47,3 +47,48 @@ Branch/worktree: `feat/v5-twab-m1` at `/home/c/.openclaw/workspace/everdraw-v5-t
 ## M1 Gate Status
 
 Closed. The shared PoolTogether-derived TWAB paths now have direct differential coverage against the pinned upstream commit. EverDraw-only sponsor accounting remains covered by local sponsor/unit/invariant tests, with the zero-delegate shared path compared to upstream.
+
+---
+
+## TWAB-1 Closure Addendum — 2026-06-26
+
+Branch/worktree: `fix/twab-empty-period-skip-20260626` at
+`/home/c/.openclaw/workspace/.worktrees/twab-empty-period-skip`
+
+### Root Cause
+
+The phantom empty-period TWAB was caused by a boundary mismatch between DrawManager cadence and the PoolTogether-derived TWAB read grid, not by the M1 participant-total/full-principal split.
+
+- `EverdrawTwabController._getTwabBetween` snaps `startTime` and `endTime` through `_periodEndOnOrAfter` before reading observations (`src/v5/twab/EverdrawTwabController.sol:401-402`). This matches the pinned PoolTogether reference behavior.
+- If a DrawManager period end is not exactly aligned to the TWAB period grid, a stored draw period `[periodStart, periodEnd)` can be measured as `[snappedStart, snappedEnd)`, where `snappedEnd > periodEnd`. A deposit after the stored draw end but before `snappedEnd` can then leak into the draw's total TWAB read.
+- The participant-total/full-principal split was ruled out by the new aligned pre-history tests: participant total, principal total, and account reads all return zero for an aligned empty period before the first observation.
+
+### Fix
+
+`DrawManagerV5` now rejects any deployment whose `_firstPeriodStart` is not on the TWAB period boundary or whose `_drawPeriod` is not an integer multiple of `twab.periodLength()`.
+
+This makes `startDraw`'s stored `[periodStart, periodEnd)` exactly match the period that `getTotalTwabBetween`, `getTotalPrincipalTwabBetween`, and `getDelegateTwabBetween` measure.
+
+### New Coverage
+
+- `test_emptyAlignedPeriodBeforeFirstObservationReturnsZeroForAccountAndTotal`
+  - Single deposit lands in period `N+1`; querying aligned period `N` returns zero for account, participant-total, and principal-total TWAB.
+- `test_differential_emptyAlignedPeriodBeforeFirstObservationMatchesUpstream`
+  - Confirms the aligned empty-period behavior matches PoolTogether commit `29926961b2ecfa89e0f61a6d874c71b6f8e29112`.
+- `test_constructorRejectsDrawPeriodsNotAlignedToTwabGrid`
+  - Prevents the cadence/TWAB-grid mismatch that caused the phantom read.
+- `test_zeroParticipantTwabSkipInvariantHoldsWithSponsorYield`
+  - Sponsor principal can create available yield, but zero participant TWAB records a `Skipped` draw with `totalPayout == 0`, no ClaimManager escrow, and no VRF request.
+- Existing `test_driftSimulationEmptyPeriodsAdvanceExactlyNPeriods`
+  - Confirms consecutive skipped periods still consume exactly one draw slot each.
+
+### Verification
+
+- `forge test --match-path test/v5/EverdrawTwabController.t.sol -vv`
+  - 16 tests passed, 0 failed, 0 skipped.
+- `forge test --match-path test/v5/EverdrawTwabControllerDifferential.t.sol -vv`
+  - 6 tests passed, 0 failed, 0 skipped.
+- `forge test --match-path test/v5/DrawManagerV5.t.sol -vv`
+  - 17 tests passed, 0 failed, 0 skipped.
+- `forge test --match-path 'test/v5/*.t.sol' --no-match-contract '.*Invariant.*' -vv`
+  - 70 tests passed, 0 failed, 1 skipped.

@@ -76,6 +76,48 @@ contract DrawManagerV5Test is Test {
         }
     }
 
+    function test_constructorRejectsDrawPeriodsNotAlignedToTwabGrid() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DrawManagerV5.BadTwabPeriodAlignment.selector, uint64(START + 1), PERIOD, uint32(1 hours), uint32(START)
+            )
+        );
+        new DrawManagerV5(
+            address(vault),
+            address(twab),
+            address(claimManager),
+            address(oracle),
+            guardian,
+            keeper,
+            START + 1,
+            PERIOD,
+            GRACE,
+            CHALLENGE
+        );
+    }
+
+    function test_zeroParticipantTwabSkipInvariantHoldsWithSponsorYield() public {
+        vm.deal(sponsor, 10 ether);
+        vm.prank(sponsor);
+        vault.sponsorDeposit{value: 10 ether}();
+
+        vm.warp(START + PERIOD);
+        shmon.setRate(2 ether);
+
+        uint256 drawId = manager.startDraw();
+
+        assertEq(drawId, 1);
+        assertEq(oracle.nextRequestId(), 1);
+        assertEq(uint8(_status(1)), uint8(DrawManagerV5.DrawStatus.Skipped));
+        assertEq(manager.nextPeriodStart(), START + PERIOD);
+
+        (,,,, uint256 totalTwab, uint256 totalPayout,,,,,,,,,) = manager.draws(1);
+        assertEq(totalTwab, 0);
+        assertEq(totalPayout, 0);
+        assertEq(address(claimManager).balance, 0);
+        assertEq(vault.availableYield(), 10 ether);
+    }
+
     function test_zeroPrizeSkipsWithoutVrfSpend() public {
         _depositAcrossFullPeriod(10 ether);
 

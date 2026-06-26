@@ -186,6 +186,9 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     error TokenNotAllowed();
     error BadFunding();
     error NotFunder();
+    error BadTwabPeriodAlignment(
+        uint64 firstPeriodStart, uint64 drawPeriod, uint32 twabPeriodLength, uint32 twabPeriodOffset
+    );
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -215,11 +218,17 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
         ) revert ZeroAddress();
         if (_drawPeriod == 0 || _challengeWindow == 0) revert BadConfig();
 
+        EverdrawTwabController twab = EverdrawTwabController(_twabController);
+        uint32 twabPeriodLength = twab.periodLength();
+        if (_drawPeriod % twabPeriodLength != 0 || twab.periodEndOnOrAfter(_firstPeriodStart) != _firstPeriodStart) {
+            revert BadTwabPeriodAlignment(_firstPeriodStart, _drawPeriod, twabPeriodLength, twab.periodOffset());
+        }
+
         owner = msg.sender;
         guardian = _guardian;
         primaryProposer = _primaryProposer;
         vault = PrizeVaultV5(payable(_vault));
-        twabController = EverdrawTwabController(_twabController);
+        twabController = twab;
         claimManager = ClaimManagerV5(payable(_claimManager));
         randomnessOracle = IRandomnessOracle(_randomnessOracle);
         nextPeriodStart = _firstPeriodStart;

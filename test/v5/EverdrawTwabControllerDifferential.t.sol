@@ -116,6 +116,25 @@ contract EverdrawTwabControllerDifferentialTest is Test {
         );
     }
 
+    function test_differential_emptyAlignedPeriodBeforeFirstObservationMatchesUpstream() public {
+        vm.warp(OFFSET + PERIOD + 760);
+        _deposit(alice, 100 ether);
+        vm.warp(OFFSET + 3 * PERIOD);
+
+        uint256 periodStart = OFFSET;
+        uint256 periodEnd = OFFSET + PERIOD;
+
+        assertEq(
+            everdraw.getTwabBetween(address(vault), alice, periodStart, periodEnd),
+            upstream.getTwabBetween(address(vault), alice, periodStart, periodEnd)
+        );
+        assertEq(
+            everdraw.getTotalTwabBetween(address(vault), periodStart, periodEnd),
+            upstream.getTotalSupplyTwabBetween(address(vault), periodStart, periodEnd)
+        );
+        assertEq(everdraw.getTotalTwabBetween(address(vault), periodStart, periodEnd), 0);
+    }
+
     function test_differential_sponsorZeroDelegateSkipsAccountObservationLikeUpstream() public {
         vault.sponsorDeposit(sponsor, 300 ether);
         upstream.increaseBalances(address(vault), sponsor, 300 ether, 0);
