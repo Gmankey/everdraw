@@ -27,6 +27,10 @@ contract EverdrawTwabVaultHarness {
         controller.decreaseBalance(account, amount);
     }
 
+    function transfer(address from, address to, uint256 amount) external {
+        controller.transferBalance(from, to, amount);
+    }
+
     function sponsorDeposit(address account, uint256 amount) external {
         controller.increaseSponsorBalance(account, amount);
     }
@@ -132,6 +136,31 @@ contract EverdrawTwabControllerTest is Test {
         assertEq(aliceTwab, 100 ether);
         assertEq(bobTwab, 200 ether);
         assertEq(totalTwab, aliceTwab + bobTwab);
+    }
+
+    function test_transferUpdatesSenderAndReceiverTwabWithoutChangingTotal() public {
+        vault.deposit(alice, 100 ether);
+        vm.warp(OFFSET + 1 hours);
+        vault.transfer(alice, bob, 40 ether);
+        vm.warp(OFFSET + 3 hours);
+
+        assertEq(controller.balanceOf(address(vault), alice), 60 ether);
+        assertEq(controller.balanceOf(address(vault), bob), 40 ether);
+        assertEq(controller.totalParticipantSupply(address(vault)), 100 ether);
+        assertEq(controller.totalPrincipalSupply(address(vault)), 100 ether);
+        assertEq(controller.getTwabBetween(address(vault), alice, OFFSET, OFFSET + 3 hours), 73_333_333_333_333_333_333);
+        assertEq(controller.getTwabBetween(address(vault), bob, OFFSET, OFFSET + 3 hours), 26_666_666_666_666_666_666);
+        assertEq(controller.getTotalTwabBetween(address(vault), OFFSET, OFFSET + 3 hours), 100 ether);
+    }
+
+    function test_transferAtPeriodBoundaryDoesNotBuyPreviousPeriodOdds() public {
+        vault.deposit(alice, 100 ether);
+        vm.warp(OFFSET + PERIOD);
+        vault.transfer(alice, bob, 100 ether);
+        vm.warp(OFFSET + 2 * PERIOD);
+
+        assertEq(controller.getTwabBetween(address(vault), bob, OFFSET, OFFSET + PERIOD), 0);
+        assertEq(controller.getTwabBetween(address(vault), bob, OFFSET + PERIOD, OFFSET + 2 * PERIOD), 100 ether);
     }
 
     function test_emptyAlignedPeriodBeforeFirstObservationReturnsZeroForAccountAndTotal() public {

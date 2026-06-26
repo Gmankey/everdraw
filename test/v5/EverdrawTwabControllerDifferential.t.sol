@@ -31,6 +31,14 @@ contract DifferentialTwabVaultHarness {
         controller.decreaseBalance(account, amount);
     }
 
+    function transfer(address from, address to, uint256 amount) external {
+        controller.transferBalance(from, to, amount);
+    }
+
+    function transferFrom(address from, address to, uint256 amount) external {
+        controller.transferBalance(from, to, amount);
+    }
+
     function sponsorDeposit(address account, uint256 amount) external {
         controller.increaseSponsorBalance(account, amount);
     }
@@ -113,6 +121,42 @@ contract EverdrawTwabControllerDifferentialTest is Test {
         assertEq(
             everdraw.totalParticipantSupply(address(vault)),
             upstream.getTotalSupplyDetails(address(vault)).delegateBalance
+        );
+    }
+
+    function test_differential_transferMatchesUpstreamAccountPaths() public {
+        _deposit(alice, 100 ether);
+        vm.warp(OFFSET + 1 hours);
+        _transfer(alice, bob, 40 ether);
+        vm.warp(OFFSET + 3 hours);
+
+        assertEq(
+            everdraw.getTwabBetween(address(vault), alice, OFFSET, OFFSET + 3 hours),
+            upstream.getTwabBetween(address(vault), alice, OFFSET, OFFSET + 3 hours)
+        );
+        assertEq(
+            everdraw.getTwabBetween(address(vault), bob, OFFSET, OFFSET + 3 hours),
+            upstream.getTwabBetween(address(vault), bob, OFFSET, OFFSET + 3 hours)
+        );
+        assertEq(
+            everdraw.getTotalTwabBetween(address(vault), OFFSET, OFFSET + 3 hours),
+            upstream.getTotalSupplyTwabBetween(address(vault), OFFSET, OFFSET + 3 hours)
+        );
+    }
+
+    function test_differential_transferFromMatchesUpstreamAccountPaths() public {
+        _deposit(alice, 100 ether);
+        vm.warp(OFFSET + 2 hours);
+        _transferFrom(alice, bob, 25 ether);
+        vm.warp(OFFSET + 4 hours);
+
+        assertEq(
+            everdraw.getTwabBetween(address(vault), alice, OFFSET, OFFSET + 4 hours),
+            upstream.getTwabBetween(address(vault), alice, OFFSET, OFFSET + 4 hours)
+        );
+        assertEq(
+            everdraw.getTwabBetween(address(vault), bob, OFFSET, OFFSET + 4 hours),
+            upstream.getTwabBetween(address(vault), bob, OFFSET, OFFSET + 4 hours)
         );
     }
 
@@ -204,6 +248,21 @@ contract EverdrawTwabControllerDifferentialTest is Test {
         vault.withdraw(account, amount);
         upstream.decreaseBalances(address(vault), account, amount, amount);
         upstream.decreaseTotalSupplyBalances(address(vault), amount, amount);
+    }
+
+    function _transfer(address from, address to, uint96 amount) internal {
+        vault.transfer(from, to, amount);
+        _upstreamTransfer(from, to, amount);
+    }
+
+    function _transferFrom(address from, address to, uint96 amount) internal {
+        vault.transferFrom(from, to, amount);
+        _upstreamTransfer(from, to, amount);
+    }
+
+    function _upstreamTransfer(address from, address to, uint96 amount) internal {
+        upstream.decreaseBalances(address(vault), from, amount, amount);
+        upstream.increaseBalances(address(vault), to, amount, amount);
     }
 
     function _assertAccountDetailsMatch(address account) internal view {
