@@ -134,6 +134,19 @@ contract EverdrawTwabControllerTest is Test {
         assertEq(totalTwab, aliceTwab + bobTwab);
     }
 
+    function test_emptyAlignedPeriodBeforeFirstObservationReturnsZeroForAccountAndTotal() public {
+        vm.warp(OFFSET + PERIOD + 760);
+        vault.deposit(alice, 100 ether);
+        vm.warp(OFFSET + 3 * PERIOD);
+
+        uint256 periodStart = OFFSET;
+        uint256 periodEnd = OFFSET + PERIOD;
+
+        assertEq(controller.getTwabBetween(address(vault), alice, periodStart, periodEnd), 0);
+        assertEq(controller.getTotalTwabBetween(address(vault), periodStart, periodEnd), 0);
+        assertEq(controller.getTotalPrincipalTwabBetween(address(vault), periodStart, periodEnd), 0);
+    }
+
     function test_sponsorBalanceHasZeroParticipantOddsButReadableDelegateTwab() public {
         vault.deposit(alice, 100 ether);
         vault.sponsorDeposit(sponsor, 300 ether);
