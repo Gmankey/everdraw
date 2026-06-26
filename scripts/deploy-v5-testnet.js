@@ -75,10 +75,40 @@ async function main() {
   const pauser = optionalAddress("PAUSER");
 
   const latest = await ethers.provider.getBlock("latest");
-  const firstPeriodStart = numberEnv("FIRST_PERIOD_START", Number(latest.timestamp) + numberEnv("FIRST_PERIOD_DELAY_SEC", 300));
+  const now = Number(latest.timestamp);
   const twabPeriodLength = numberEnv("TWAB_PERIOD_LENGTH_SEC", 3600);
-  const twabPeriodOffset = numberEnv("TWAB_PERIOD_OFFSET", Number(latest.timestamp));
+  const twabPeriodOffset = numberEnv("TWAB_PERIOD_OFFSET", now);
   const drawPeriod = numberEnv("DRAW_PERIOD_SEC", 3600);
+
+  // Draw periods must tile the TWAB period grid exactly: drawPeriod a whole
+  // multiple of the TWAB period length, and firstPeriodStart on a TWAB boundary.
+  // An unaligned firstPeriodStart was the root cause of the draw-11 phantom-TWAB
+  // defect — a draw end snapped past its stored [periodStart, periodEnd) and
+  // measured a later-period deposit (see ADR-0036 §3.4, TWAB-1 fix in #152).
+  // DrawManagerV5's constructor now rejects misalignment; we snap + assert here
+  // so a deploy can never even attempt a misaligned stack.
+  if (twabPeriodOffset > now) {
+    throw new Error(`TWAB_PERIOD_OFFSET (${twabPeriodOffset}) is in the future; must be <= ${now} (TwabController requires it).`);
+  }
+  if (drawPeriod % twabPeriodLength !== 0) {
+    throw new Error(`DRAW_PERIOD_SEC (${drawPeriod}) must be a whole multiple of TWAB_PERIOD_LENGTH_SEC (${twabPeriodLength}).`);
+  }
+  let firstPeriodStart;
+  if (process.env.FIRST_PERIOD_START) {
+    // Explicit override: validate, never silently re-snap.
+    firstPeriodStart = Number(process.env.FIRST_PERIOD_START);
+  } else {
+    // Default: snap the requested start (now + delay) up to the next TWAB boundary.
+    const minStart = now + numberEnv("FIRST_PERIOD_DELAY_SEC", 300);
+    const periodsFromOffset = Math.ceil((minStart - twabPeriodOffset) / twabPeriodLength);
+    firstPeriodStart = twabPeriodOffset + periodsFromOffset * twabPeriodLength;
+  }
+  if ((firstPeriodStart - twabPeriodOffset) % twabPeriodLength !== 0) {
+    throw new Error(
+      `FIRST_PERIOD_START (${firstPeriodStart}) is not on the TWAB grid ` +
+        `(offset ${twabPeriodOffset}, length ${twabPeriodLength}); set it to offset + N*length.`
+    );
+  }
   const proposerGrace = numberEnv("PROPOSER_GRACE_PERIOD_SEC", 300);
   const challengeWindow = numberEnv("CHALLENGE_WINDOW_SEC", 900);
   const depositCap = ethers.parseEther(process.env.DEPOSIT_CAP_MON || "25000");
