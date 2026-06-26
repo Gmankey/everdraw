@@ -123,6 +123,16 @@ contract EverdrawTwabController {
         _decreasePrincipalTotal(msg.sender, castAmount);
     }
 
+    /// @notice Records an odds-bearing principal transfer between two accounts.
+    function transferBalance(address from, address to, uint256 amount) external onlyRegisteredVault {
+        if (from == address(0) || to == address(0)) revert ZeroAddress();
+        if (from == to || amount == 0) return;
+
+        uint96 castAmount = _toUint96(amount);
+        _decreaseAccount(msg.sender, from, castAmount, castAmount);
+        _increaseAccount(msg.sender, to, castAmount, castAmount);
+    }
+
     /// @notice Records principal whose yield sponsors prizes but has zero win odds.
     function increaseSponsorBalance(address sponsor, uint256 amount) external onlyRegisteredVault {
         uint96 castAmount = _toUint96(amount);

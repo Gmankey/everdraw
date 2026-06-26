@@ -23,6 +23,15 @@ contract DrawManagerV5Test is Test {
     uint64 constant GRACE = 12 hours;
     uint64 constant CHALLENGE = 8 hours;
 
+    event DrawSkipped(
+        uint256 indexed drawId,
+        uint64 periodStart,
+        uint64 periodEnd,
+        uint256 totalTwab,
+        uint256 availablePrize,
+        string reason
+    );
+
     EverdrawTwabController twab;
     MockERC4626YieldVault shmon;
     ShmonStrategy strategy;
@@ -70,8 +79,26 @@ contract DrawManagerV5Test is Test {
         vm.warp(START + PERIOD);
 
         for (uint256 i = 1; i <= n; i++) {
+            uint64 expectedStart = START + uint64(i - 1) * PERIOD;
+            uint64 expectedEnd = START + uint64(i) * PERIOD;
+
+            vm.expectEmit(true, false, false, true, address(manager));
+            emit DrawSkipped(i, expectedStart, expectedEnd, 0, 0, "ZERO_TWAB");
             manager.startDraw();
-            assertEq(manager.nextPeriodStart(), START + uint64(i) * PERIOD);
+            assertEq(manager.nextPeriodStart(), expectedEnd);
+            assertEq(oracle.nextRequestId(), 1);
+            (
+                uint64 periodStart,
+                uint64 periodEnd,,,
+                uint256 totalTwab,
+                uint256 totalPayout,,,,,,
+                DrawManagerV5.DrawStatus status,,,
+            ) = manager.draws(i);
+            assertEq(periodStart, expectedStart);
+            assertEq(periodEnd, expectedEnd);
+            assertEq(totalTwab, 0);
+            assertEq(totalPayout, 0);
+            assertEq(uint8(status), uint8(DrawManagerV5.DrawStatus.Skipped));
             vm.warp(START + uint64(i + 1) * PERIOD);
         }
     }

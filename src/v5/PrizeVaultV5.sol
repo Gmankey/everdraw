@@ -37,9 +37,12 @@ contract PrizeVaultV5 {
 
     mapping(address => uint256) public principalOf;
     mapping(address => uint256) public sponsorPrincipalOf;
+    mapping(address => mapping(address => uint256)) public allowance;
 
     event Deposit(address indexed recipient, uint256 amount);
     event Withdraw(address indexed recipient, uint256 amount);
+    event Transfer(address indexed from, address indexed to, uint256 amount);
+    event Approval(address indexed owner, address indexed spender, uint256 amount);
     event SponsorDeposit(address indexed sponsor, uint256 amount);
     event SponsorWithdraw(address indexed sponsor, uint256 amount);
     event EmergencySharesRedeemed(address indexed account, uint256 principalAmount, uint256 shares);
@@ -68,6 +71,7 @@ contract PrizeVaultV5 {
     error VaultIsStopped();
     error NothingToWithdraw();
     error InsufficientBalance();
+    error InsufficientAllowance();
     error AlreadyStopped();
     error NoPendingStrategyChange();
     error TimelockNotElapsed();
@@ -123,6 +127,24 @@ contract PrizeVaultV5 {
 
     function totalSupply() external view returns (uint256) {
         return totalParticipantPrincipal;
+    }
+
+    function approve(address spender, uint256 amount) external returns (bool) {
+        if (spender == address(0)) revert ZeroAddress();
+        allowance[msg.sender][spender] = amount;
+        emit Approval(msg.sender, spender, amount);
+        return true;
+    }
+
+    function transfer(address to, uint256 amount) external returns (bool) {
+        _transferParticipant(msg.sender, to, amount);
+        return true;
+    }
+
+    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+        _spendAllowance(from, msg.sender, amount);
+        _transferParticipant(from, to, amount);
+        return true;
     }
 
     function setDepositCap(uint256 newCap) external onlyOwner {
@@ -315,6 +337,7 @@ contract PrizeVaultV5 {
         totalPrincipal += assets;
         twabController.increaseBalance(account, assets);
         emit Deposit(account, assets);
+        emit Transfer(address(0), account, assets);
     }
 
     function _creditSponsor(address sponsor, uint256 assets) internal {
@@ -342,6 +365,7 @@ contract PrizeVaultV5 {
         totalParticipantPrincipal -= principalAmount;
         totalPrincipal -= principalAmount;
         twabController.decreaseBalance(account, principalAmount);
+        emit Transfer(account, address(0), principalAmount);
     }
 
     function _debitSponsor(address sponsor, uint256 principalAmount) internal {
@@ -356,6 +380,26 @@ contract PrizeVaultV5 {
         uint256 principal = totalPrincipal;
         if (principal == 0) return 0;
         return (principalAmount * strategy.totalAssets()) / principal;
+    }
+
+    function _transferParticipant(address from, address to, uint256 amount) internal {
+        if (from == address(0) || to == address(0)) revert ZeroAddress();
+        if (principalOf[from] < amount) revert InsufficientBalance();
+        if (from != to && amount != 0) {
+            principalOf[from] -= amount;
+            principalOf[to] += amount;
+            twabController.transferBalance(from, to, amount);
+        }
+        emit Transfer(from, to, amount);
+    }
+
+    function _spendAllowance(address owner_, address spender, uint256 amount) internal {
+        uint256 currentAllowance = allowance[owner_][spender];
+        if (currentAllowance != type(uint256).max) {
+            if (currentAllowance < amount) revert InsufficientAllowance();
+            allowance[owner_][spender] = currentAllowance - amount;
+            emit Approval(owner_, spender, currentAllowance - amount);
+        }
     }
 
     function _refreshShortfallMode() internal {

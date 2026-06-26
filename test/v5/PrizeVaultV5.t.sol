@@ -40,6 +40,74 @@ contract PrizeVaultV5Test is Test {
         assertEq(twab.totalParticipantSupply(address(vault)), 3 ether);
     }
 
+    function test_transferMovesParticipantSharesAndUpdatesTwab() public {
+        vm.deal(alice, 10 ether);
+        vm.prank(alice);
+        vault.deposit{value: 5 ether}();
+
+        vm.warp(block.timestamp + 1 hours);
+        vm.prank(alice);
+        assertTrue(vault.transfer(bob, 2 ether));
+        vm.warp(block.timestamp + 2 hours);
+
+        assertEq(vault.balanceOf(alice), 3 ether);
+        assertEq(vault.balanceOf(bob), 2 ether);
+        assertEq(vault.totalSupply(), 5 ether);
+        assertEq(vault.totalParticipantPrincipal(), 5 ether);
+        assertEq(vault.totalPrincipal(), 5 ether);
+        assertEq(twab.totalParticipantSupply(address(vault)), 5 ether);
+        assertEq(twab.totalPrincipalSupply(address(vault)), 5 ether);
+        assertEq(twab.getTwabBetween(address(vault), bob, 1_000_000, 1_000_000 + 3 hours), 1_333_333_333_333_333_333);
+    }
+
+    function test_transferFromSpendsAllowanceAndUpdatesTwab() public {
+        vm.deal(alice, 10 ether);
+        vm.prank(alice);
+        vault.deposit{value: 5 ether}();
+
+        vm.prank(alice);
+        assertTrue(vault.approve(bob, 3 ether));
+
+        vm.prank(bob);
+        assertTrue(vault.transferFrom(alice, bob, 2 ether));
+
+        assertEq(vault.allowance(alice, bob), 1 ether);
+        assertEq(vault.balanceOf(alice), 3 ether);
+        assertEq(vault.balanceOf(bob), 2 ether);
+        assertEq(twab.balanceOf(address(vault), alice), 3 ether);
+        assertEq(twab.balanceOf(address(vault), bob), 2 ether);
+    }
+
+    function test_transferAtPeriodBoundaryDoesNotBuyPreviousPeriodOdds() public {
+        vm.deal(alice, 10 ether);
+        vm.prank(alice);
+        vault.deposit{value: 5 ether}();
+
+        vm.warp(1_000_000 + 1 hours);
+        vm.prank(alice);
+        vault.transfer(bob, 5 ether);
+        vm.warp(1_000_000 + 2 hours);
+
+        assertEq(twab.getTwabBetween(address(vault), bob, 1_000_000, 1_000_000 + 1 hours), 0);
+        assertEq(twab.getTwabBetween(address(vault), bob, 1_000_000 + 1 hours, 1_000_000 + 2 hours), 5 ether);
+    }
+
+    function test_sponsorPrincipalCannotTransferAndStaysExcludedFromParticipantOdds() public {
+        vm.deal(sponsor, 10 ether);
+        vm.prank(sponsor);
+        vault.sponsorDeposit{value: 5 ether}();
+
+        vm.prank(sponsor);
+        vm.expectRevert(PrizeVaultV5.InsufficientBalance.selector);
+        vault.transfer(bob, 1 ether);
+
+        assertEq(vault.balanceOf(sponsor), 0);
+        assertEq(vault.sponsorPrincipalOf(sponsor), 5 ether);
+        assertEq(twab.totalParticipantSupply(address(vault)), 0);
+        assertEq(twab.totalPrincipalSupply(address(vault)), 5 ether);
+        assertEq(twab.delegateBalanceOf(address(vault), twab.SPONSOR_DELEGATE()), 5 ether);
+    }
+
     function test_withdrawPaysPrincipalAndKeepsWithdrawalLiveWhenPaused() public {
         vm.deal(alice, 10 ether);
         vm.prank(alice);
