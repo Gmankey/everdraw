@@ -50,7 +50,7 @@ const VAULT_ABI = [
 ];
 
 const TWAB_ABI = [
-  "function getTwabBetween(address vault,address account,uint64 startTime,uint64 endTime) view returns (uint256)",
+  "function getTwabBetween(address vault,address account,uint256 startTime,uint256 endTime) view returns (uint256)",
 ];
 
 function readDeployment() {

@@ -155,6 +155,37 @@ contract DrawManagerV5Test is Test {
         assertEq(uint8(_status(1)), uint8(DrawManagerV5.DrawStatus.Skipped));
     }
 
+    function test_previewStartDrawReportsNotDue() public view {
+        (bool due, bool willSkip, uint256 requiredFee) = manager.previewStartDraw();
+
+        assertFalse(due);
+        assertFalse(willSkip);
+        assertEq(requiredFee, 0);
+    }
+
+    function test_previewStartDrawReportsSkipWithoutOracleFee() public {
+        oracle.setFee(0.01 ether);
+        vm.warp(START + PERIOD);
+
+        (bool due, bool willSkip, uint256 requiredFee) = manager.previewStartDraw();
+
+        assertTrue(due);
+        assertTrue(willSkip);
+        assertEq(requiredFee, 0);
+    }
+
+    function test_previewStartDrawReportsRequiredFeeForRealDraw() public {
+        _depositAcrossFullPeriod(10 ether);
+        shmon.setRate(2 ether);
+        oracle.setFee(0.01 ether);
+
+        (bool due, bool willSkip, uint256 requiredFee) = manager.previewStartDraw();
+
+        assertTrue(due);
+        assertFalse(willSkip);
+        assertEq(requiredFee, 0.01 ether);
+    }
+
     function test_startDrawEscrowsYieldBeforeSeedAndProposal() public {
         _depositAcrossFullPeriod(10 ether);
         shmon.setRate(2 ether);
