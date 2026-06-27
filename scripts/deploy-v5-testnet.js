@@ -25,6 +25,19 @@ function numberEnv(name, fallback) {
   return value;
 }
 
+function hasEnv(name) {
+  return process.env[name] !== undefined && process.env[name] !== "";
+}
+
+function alignmentRemainder(timestamp, offset, periodLength) {
+  return (timestamp - offset) % periodLength;
+}
+
+function snapToTwabGrid(timestamp, offset, periodLength) {
+  const remainder = alignmentRemainder(timestamp, offset, periodLength);
+  return remainder === 0 ? timestamp : timestamp + (periodLength - remainder);
+}
+
 async function deploy(name, args = []) {
   const factory = await ethers.getContractFactory(name);
   const contract = await factory.deploy(...args);
@@ -75,10 +88,33 @@ async function main() {
   const pauser = optionalAddress("PAUSER");
 
   const latest = await ethers.provider.getBlock("latest");
-  const firstPeriodStart = numberEnv("FIRST_PERIOD_START", Number(latest.timestamp) + numberEnv("FIRST_PERIOD_DELAY_SEC", 300));
   const twabPeriodLength = numberEnv("TWAB_PERIOD_LENGTH_SEC", 3600);
   const twabPeriodOffset = numberEnv("TWAB_PERIOD_OFFSET", Number(latest.timestamp));
   const drawPeriod = numberEnv("DRAW_PERIOD_SEC", 3600);
+  if (twabPeriodOffset > Number(latest.timestamp)) {
+    throw new Error(`TWAB_PERIOD_OFFSET must be <= latest timestamp: offset=${twabPeriodOffset} now=${latest.timestamp}`);
+  }
+  if (drawPeriod % twabPeriodLength !== 0) {
+    throw new Error(`DRAW_PERIOD_SEC must be a multiple of TWAB_PERIOD_LENGTH_SEC: drawPeriod=${drawPeriod}, twabPeriodLength=${twabPeriodLength}`);
+  }
+
+  const firstPeriodStartExplicit = hasEnv("FIRST_PERIOD_START");
+  const firstPeriodCandidate = firstPeriodStartExplicit
+    ? numberEnv("FIRST_PERIOD_START", 0)
+    : Number(latest.timestamp) + numberEnv("FIRST_PERIOD_DELAY_SEC", 300);
+  const firstPeriodStart = firstPeriodStartExplicit
+    ? firstPeriodCandidate
+    : snapToTwabGrid(firstPeriodCandidate, twabPeriodOffset, twabPeriodLength);
+  if (firstPeriodStart < twabPeriodOffset) {
+    throw new Error(`FIRST_PERIOD_START must be >= TWAB_PERIOD_OFFSET: firstPeriodStart=${firstPeriodStart}, offset=${twabPeriodOffset}`);
+  }
+  const firstPeriodStartRemainder = alignmentRemainder(firstPeriodStart, twabPeriodOffset, twabPeriodLength);
+  if (firstPeriodStartRemainder !== 0) {
+    throw new Error(
+      `FIRST_PERIOD_START must align to TWAB grid: firstPeriodStart=${firstPeriodStart}, offset=${twabPeriodOffset}, periodLength=${twabPeriodLength}, remainder=${firstPeriodStartRemainder}`,
+    );
+  }
+
   const proposerGrace = numberEnv("PROPOSER_GRACE_PERIOD_SEC", 300);
   const challengeWindow = numberEnv("CHALLENGE_WINDOW_SEC", 900);
   const depositCap = ethers.parseEther(process.env.DEPOSIT_CAP_MON || "25000");
@@ -94,9 +130,13 @@ async function main() {
     keeper,
     pauser: pauser || deployer.address,
     firstPeriodStart,
+    firstPeriodStartExplicit,
+    firstPeriodStartRemainder,
     twabPeriodLength,
     twabPeriodOffset,
+    twabOffsetAgeSec: Number(latest.timestamp) - twabPeriodOffset,
     drawPeriod,
+    drawPeriodRemainder: drawPeriod % twabPeriodLength,
     proposerGrace,
     challengeWindow,
     depositCap: depositCap.toString(),

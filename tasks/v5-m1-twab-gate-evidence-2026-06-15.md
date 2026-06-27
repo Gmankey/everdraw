@@ -92,3 +92,62 @@ This makes `startDraw`'s stored `[periodStart, periodEnd)` exactly match the per
   - 17 tests passed, 0 failed, 0 skipped.
 - `forge test --match-path 'test/v5/*.t.sol' --no-match-contract '.*Invariant.*' -vv`
   - 70 tests passed, 0 failed, 1 skipped.
+
+---
+
+## TWAB-D/2/3 Closure Addendum — 2026-06-26
+
+Branch/worktree: `fix/twab-empty-period-skip-20260626` at
+`/home/c/.openclaw/workspace/.worktrees/twab-empty-period-skip`
+
+### TWAB-D — Testnet Deploy Grid Guard
+
+- `scripts/deploy-v5-testnet.js` now validates:
+  - `DRAW_PERIOD_SEC % TWAB_PERIOD_LENGTH_SEC == 0`.
+  - `TWAB_PERIOD_OFFSET <= latest.timestamp`.
+  - `FIRST_PERIOD_START` is exactly on the TWAB grid when explicitly supplied.
+- The default `firstPeriodStart` is snapped forward to the next TWAB grid boundary from `latest.timestamp + FIRST_PERIOD_DELAY_SEC`.
+- Deploy logs include the resolved `firstPeriodStart`, whether it was explicit, the alignment remainder, offset age, and draw-period remainder.
+
+### TWAB-2 — Transferable Share / TWAB-on-Transfer
+
+- `PrizeVaultV5` now exposes the ADR-0039 ERC-20 share surface: `allowance`, `approve`, `transfer`, `transferFrom`, `Transfer`, and `Approval`.
+- Participant share transfers move `principalOf` between accounts without changing `totalParticipantPrincipal` or `totalPrincipal`.
+- `EverdrawTwabController.transferBalance` updates sender and receiver observations atomically while leaving participant/full-principal totals unchanged.
+- Sponsor principal remains non-transferable and excluded from participant odds.
+- Differential coverage now includes transfer and transferFrom-equivalent paths against the pinned PoolTogether commit `29926961b2ecfa89e0f61a6d874c71b6f8e29112`.
+
+### TWAB-3 — Empty-Period Drift Closure
+
+- The empty-period drift test now asserts every empty draw:
+  - emits `DrawSkipped(..., "ZERO_TWAB")`;
+  - stores the exact half-open `[periodStart, periodEnd)` slot;
+  - advances `nextPeriodStart` by exactly one `drawPeriod`;
+  - records zero `totalTwab` and zero `totalPayout`;
+  - makes no VRF request.
+
+### Added/Updated Tests
+
+- `test_transferUpdatesSenderAndReceiverTwabWithoutChangingTotal`
+- `test_transferAtPeriodBoundaryDoesNotBuyPreviousPeriodOdds`
+- `test_differential_transferMatchesUpstreamAccountPaths`
+- `test_differential_transferFromMatchesUpstreamAccountPaths`
+- `test_transferMovesParticipantSharesAndUpdatesTwab`
+- `test_transferFromSpendsAllowanceAndUpdatesTwab`
+- `test_sponsorPrincipalCannotTransferAndStaysExcludedFromParticipantOdds`
+- Updated `test_driftSimulationEmptyPeriodsAdvanceExactlyNPeriods`
+
+### Verification
+
+- `node --check scripts/deploy-v5-testnet.js`
+  - Passed.
+- `forge test --match-path test/v5/EverdrawTwabController.t.sol -vv`
+  - 18 tests passed, 0 failed, 0 skipped.
+- `forge test --match-path test/v5/EverdrawTwabControllerDifferential.t.sol -vv`
+  - 8 tests passed, 0 failed, 0 skipped.
+- `forge test --match-path test/v5/PrizeVaultV5.t.sol -vv`
+  - 22 tests passed, 0 failed, 0 skipped.
+- `forge test --match-path test/v5/DrawManagerV5.t.sol -vv`
+  - 17 tests passed, 0 failed, 0 skipped.
+- `forge test --match-path 'test/v5/*.t.sol' -vv`
+  - 86 tests passed, 0 failed, 1 skipped.
