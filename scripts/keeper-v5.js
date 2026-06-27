@@ -9,6 +9,7 @@ import { compute } from "./draw/compute-winners.js";
 
 const DEPLOYMENT_FILE = process.env.DEPLOYMENT_FILE || "deployments/monad-testnet.json";
 const RPC_URL = process.env.KEEPER_RPC_URL || process.env.RPC_URL || process.env.MONAD_TESTNET_RPC_URL;
+const READ_RPC_URL = process.env.KEEPER_READ_RPC_URL || RPC_URL;
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const DRAW_INPUT_DIR = process.env.DRAW_INPUT_DIR || process.env.WATCHER_DRAW_INPUT_DIR || "draw-inputs";
 const LOOP = process.env.KEEPER_LOOP === "true";
@@ -16,6 +17,11 @@ const INTERVAL_MS = Number(process.env.KEEPER_INTERVAL_MS || 60_000);
 const CLAIM_BATCH_SIZE = Number(process.env.CLAIM_BATCH_SIZE || 50);
 const HEALTHCHECK_URL = process.env.KEEPER_HEALTHCHECK_URL;
 const LOW_BALANCE_WEI = BigInt(process.env.KEEPER_LOW_BALANCE_WEI || "500000000000000000");
+const RPC_TIMEOUT_MS = Number(process.env.KEEPER_RPC_TIMEOUT_MS || 15_000);
+const TX_TIMEOUT_MS = Number(process.env.KEEPER_TX_TIMEOUT_MS || 180_000);
+const RPC_RETRIES = Number(process.env.KEEPER_RPC_RETRIES || 2);
+const RPC_BACKOFF_MS = Number(process.env.KEEPER_RPC_BACKOFF_MS || 1_000);
+const HEALTHCHECK_TIMEOUT_MS = Number(process.env.KEEPER_HEALTHCHECK_TIMEOUT_MS || 5_000);
 const abi = AbiCoder.defaultAbiCoder();
 
 const DRAW_MANAGER_ABI = [
@@ -32,6 +38,7 @@ const DRAW_MANAGER_ABI = [
   "function seedRequestTimeout() view returns (uint64)",
   "function seedRequestedAt(uint256) view returns (uint64)",
   "function draws(uint256) view returns (uint64 periodStart,uint64 periodEnd,uint64 randomnessRequestId,bytes32 seed,uint256 totalTwab,uint256 totalPayout,uint32 winnerCount,uint32 rewardLegCount,bytes32 root,uint64 proposedAt,address proposer,uint8 status,uint256 grossYield,uint256 sponsorYield,uint256 feeAmount)",
+  "function previewStartDraw() view returns (bool due,bool willSkip,uint256 requiredFee)",
   "function startDraw() payable returns (uint256)",
   "function rerequestSeed(uint256) payable",
   "function proposeRoot(uint256 drawId, bytes32 root, uint32 winnerCount, uint256 totalPayout)",
@@ -39,7 +46,7 @@ const DRAW_MANAGER_ABI = [
 ];
 
 const TWAB_ABI = [
-  "function getTotalTwabBetween(address vault,uint64 startTime,uint64 endTime) view returns (uint256)",
+  "function getTotalTwabBetween(address vault,uint256 startTime,uint256 endTime) view returns (uint256)",
 ];
 
 const VAULT_ABI = [
@@ -70,6 +77,39 @@ function requiredAddress(name, fallback) {
 
 function statusName(status) {
   return ["None", "AwaitingSeed", "Seeded", "Proposed", "Finalized", "Skipped"][Number(status)] || `Unknown(${status})`;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function withTimeout(promise, label, timeoutMs = RPC_TIMEOUT_MS) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+function errorMessage(err) {
+  return err?.shortMessage || err?.reason || err?.message || String(err);
+}
+
+async function rpcRead(label, fn, { retries = RPC_RETRIES, timeoutMs = RPC_TIMEOUT_MS } = {}) {
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await withTimeout(Promise.resolve().then(fn), label, timeoutMs);
+    } catch (err) {
+      lastErr = err;
+      if (isTwabNotFinalized(err)) throw err;
+      if (attempt >= retries) break;
+      const delay = RPC_BACKOFF_MS * 2 ** attempt;
+      console.warn(`${label} failed (attempt ${attempt + 1}/${retries + 1}): ${errorMessage(err)}; retrying in ${delay}ms`);
+      await sleep(delay);
+    }
+  }
+  throw new Error(`${label} failed after ${retries + 1} attempts: ${errorMessage(lastErr)}`);
 }
 
 // EverdrawTwabController.TimestampNotFinalized(uint256,uint256): the queried period is still
@@ -106,9 +146,9 @@ function bufferedOracleFee(fee) {
 }
 
 async function send(label, txPromise) {
-  const tx = await txPromise;
+  const tx = await withTimeout(txPromise, `${label} submit`);
   console.log(`${label} sent ${tx.hash}`);
-  const receipt = await tx.wait();
+  const receipt = await withTimeout(tx.wait(), `${label} wait`, TX_TIMEOUT_MS);
   if (receipt.status !== 1) throw new Error(`${label} reverted: ${tx.hash}`);
   console.log(`${label} mined ${receipt.hash} gas=${receipt.gasUsed}`);
   return receipt;
@@ -117,7 +157,8 @@ async function send(label, txPromise) {
 async function ping(ok, message = "") {
   if (!HEALTHCHECK_URL) return;
   const url = ok ? HEALTHCHECK_URL : `${HEALTHCHECK_URL}/fail`;
-  await fetch(url, { method: "POST", body: message }).catch(() => {});
+  const signal = AbortSignal.timeout(HEALTHCHECK_TIMEOUT_MS);
+  await fetch(url, { method: "POST", body: message, signal }).catch(() => {});
 }
 
 function distributionIdFor(drawManagerAddress, drawId) {
@@ -142,7 +183,7 @@ function computeWithPythonParity(input) {
 }
 
 async function buildAndPersistInput(provider, drawManagerAddress, drawId, fromBlock) {
-  const toBlock = await provider.getBlockNumber();
+  const toBlock = await rpcRead("provider.getBlockNumber", () => provider.getBlockNumber());
   const input = await buildDrawInput({ provider, drawManagerAddress, drawId: BigInt(drawId), fromBlock, toBlock });
   fs.mkdirSync(DRAW_INPUT_DIR, { recursive: true });
   const inputFile = path.join(DRAW_INPUT_DIR, `${drawId}.json`);
@@ -151,52 +192,31 @@ async function buildAndPersistInput(provider, drawManagerAddress, drawId, fromBl
 }
 
 async function maybeStartDraw({ manager, provider, signer, fromBlock }) {
-  const latest = await provider.getBlock("latest");
-  const nextPeriodStart = await manager.nextPeriodStart();
-  const drawPeriod = await manager.drawPeriod();
+  const latest = await rpcRead("provider.getBlock(latest)", () => provider.getBlock("latest"));
+  const nextPeriodStart = await rpcRead("manager.nextPeriodStart", () => manager.nextPeriodStart());
+  const drawPeriod = await rpcRead("manager.drawPeriod", () => manager.drawPeriod());
   const periodEnd = Number(nextPeriodStart + drawPeriod);
   if (latest.timestamp < periodEnd) {
     console.log(`startDraw not due: now=${latest.timestamp} periodEnd=${periodEnd}`);
     return false;
   }
 
-  const vaultAddress = getAddress(await manager.vault());
-  const twabAddress = getAddress(await manager.twabController());
-  const oracleAddress = getAddress(await manager.randomnessOracle());
-  const twab = new Contract(twabAddress, TWAB_ABI, provider);
-  const vault = new Contract(vaultAddress, VAULT_ABI, provider);
-  const oracle = new Contract(oracleAddress, ORACLE_ABI, provider);
-  const [availableYield, minPrizeThreshold] = await Promise.all([
-    vault.availableYield(),
-    manager.minPrizeThreshold(),
-  ]);
-
-  // getTotalTwabBetween can revert for two very different reasons:
-  //  1. Empty / never-deposited period: no TWAB observations -> bare require(false), data "0x".
-  //     Valid state — startDraw skips the empty period cleanly on-chain (ADR-0036 §3.4).
-  //     Treat as zero TWAB and proceed to startDraw.
-  //  2. TimestampNotFinalized (selector 0x947ad913): the period's TWAB is not finalized yet
-  //     (still inside the current overwrite window). This is transient — wait and retry next
-  //     loop. Do NOT call startDraw; it would revert with the same error and crash the keeper.
-  let totalTwab = 0n;
+  let preview;
   try {
-    totalTwab = await twab.getTotalTwabBetween(vaultAddress, nextPeriodStart, nextPeriodStart + drawPeriod);
+    preview = await rpcRead("manager.previewStartDraw", () => manager.previewStartDraw());
   } catch (err) {
     if (isTwabNotFinalized(err)) {
       console.log(`startDraw deferred: TWAB period not finalized yet — will retry next loop`);
       return false;
     }
-    console.log(`getTotalTwabBetween reverted (empty/no-observation period) — treating as zero TWAB: ${err.shortMessage || err.message}`);
-    totalTwab = 0n;
+    throw err;
+  }
+  if (!preview.due) {
+    console.log(`startDraw not due: preview returned due=false`);
+    return false;
   }
 
-  // Off-chain prediction of "is this a real draw" can disagree with the contract's on-chain
-  // computation (finalization timing / boundary cases). So we predict a fee here, but also
-  // self-correct below if the contract says the fee is insufficient.
-  let value = 0n;
-  if (totalTwab !== 0n && availableYield !== 0n && availableYield >= minPrizeThreshold) {
-    value = bufferedOracleFee(await oracle.getFee());
-  }
+  let value = preview.willSkip ? 0n : bufferedOracleFee(preview.requiredFee);
   try {
     await send("startDraw", manager.connect(signer).startDraw({ value }));
   } catch (err) {
@@ -209,7 +229,8 @@ async function maybeStartDraw({ manager, provider, signer, fromBlock }) {
       // guards) but our predicted value was too low (we guessed skip, or the dynamic Pyth fee
       // ticked up). Retry with a buffered fee. Excess is refunded on the real-draw path, and a
       // skip can never reach the fee check, so no value is ever stranded on a skip.
-      const buffered = bufferedOracleFee(await oracle.getFee());
+      const oracle = new Contract(await rpcRead("manager.randomnessOracle", () => manager.randomnessOracle()), ORACLE_ABI, provider);
+      const buffered = bufferedOracleFee(await rpcRead("oracle.getFee", () => oracle.getFee()));
       console.log(`startDraw: insufficient oracle fee — retrying with buffered fee ${buffered}`);
       await send("startDraw", manager.connect(signer).startDraw({ value: buffered }));
     } else {
@@ -222,23 +243,23 @@ async function maybeStartDraw({ manager, provider, signer, fromBlock }) {
 
 async function maybeRerequestSeed({ manager, signer, provider, drawId, draw }) {
   if (Number(draw.status) !== 1) return false;
-  const latest = await provider.getBlock("latest");
-  const requestedAt = await manager.seedRequestedAt(drawId);
-  const timeout = await manager.seedRequestTimeout();
+  const latest = await rpcRead("provider.getBlock(latest)", () => provider.getBlock("latest"));
+  const requestedAt = await rpcRead(`manager.seedRequestedAt(${drawId})`, () => manager.seedRequestedAt(drawId));
+  const timeout = await rpcRead("manager.seedRequestTimeout", () => manager.seedRequestTimeout());
   if (requestedAt === 0n || BigInt(latest.timestamp) < requestedAt + timeout) {
     console.log(`draw ${drawId} awaiting seed`);
     return false;
   }
-  const oracle = new Contract(await manager.randomnessOracle(), ORACLE_ABI, provider);
-  const fee = await oracle.getFee();
+  const oracle = new Contract(await rpcRead("manager.randomnessOracle", () => manager.randomnessOracle()), ORACLE_ABI, provider);
+  const fee = await rpcRead("oracle.getFee", () => oracle.getFee());
   await send(`rerequestSeed(${drawId})`, manager.connect(signer).rerequestSeed(drawId, { value: fee }));
   return true;
 }
 
 async function maybePropose({ manager, signer, provider, drawManagerAddress, drawId, fromBlock }) {
-  const draw = await manager.draws(drawId);
+  const draw = await rpcRead(`manager.draws(${drawId})`, () => manager.draws(drawId));
   if (Number(draw.status) !== 2) return false;
-  const primaryProposer = getAddress(await manager.primaryProposer());
+  const primaryProposer = getAddress(await rpcRead("manager.primaryProposer", () => manager.primaryProposer()));
   if (primaryProposer !== ZeroAddress && primaryProposer.toLowerCase() !== signer.address.toLowerCase()) {
     console.log(`not primary proposer: signer=${signer.address} primary=${primaryProposer}`);
     return false;
@@ -256,10 +277,10 @@ async function maybePropose({ manager, signer, provider, drawManagerAddress, dra
 }
 
 async function maybeFinalize({ manager, signer, provider, drawId }) {
-  const draw = await manager.draws(drawId);
+  const draw = await rpcRead(`manager.draws(${drawId})`, () => manager.draws(drawId));
   if (Number(draw.status) !== 3) return false;
-  const latest = await provider.getBlock("latest");
-  const challengeWindow = await manager.challengeWindow();
+  const latest = await rpcRead("provider.getBlock(latest)", () => provider.getBlock("latest"));
+  const challengeWindow = await rpcRead("manager.challengeWindow", () => manager.challengeWindow());
   const finalizeAfter = Number(draw.proposedAt + challengeWindow);
   if (latest.timestamp < finalizeAfter) {
     console.log(`draw ${drawId} challenge window active until ${finalizeAfter}`);
@@ -270,7 +291,7 @@ async function maybeFinalize({ manager, signer, provider, drawId }) {
 }
 
 async function maybeClaim({ manager, signer, provider, drawManagerAddress, claimManagerAddress, drawId, fromBlock }) {
-  const draw = await manager.draws(drawId);
+  const draw = await rpcRead(`manager.draws(${drawId})`, () => manager.draws(drawId));
   if (Number(draw.status) !== 4) return false;
   const { input, inputFile } = await buildAndPersistInput(provider, drawManagerAddress, drawId, fromBlock);
   const result = computeWithPythonParity(input);
@@ -279,7 +300,7 @@ async function maybeClaim({ manager, signer, provider, drawManagerAddress, claim
   const pending = [];
   const proofs = [];
   for (const leaf of result.leaves) {
-    const claimed = await claimManager.isClaimed(distributionId, leaf.leafIndex);
+    const claimed = await rpcRead(`claimManager.isClaimed(${drawId},${leaf.leafIndex})`, () => claimManager.isClaimed(distributionId, leaf.leafIndex));
     if (claimed) continue;
     pending.push({
       distributionId,
@@ -309,28 +330,31 @@ async function runOnce() {
   const drawManagerAddress = requiredAddress("DRAW_MANAGER_ADDRESS", deployment.addresses.drawManager);
   const claimManagerAddress = requiredAddress("CLAIM_MANAGER_ADDRESS", deployment.addresses.claimManager);
   const fromBlock = Number(process.env.V5_WATCHER_FROM_BLOCK || process.env.V5_KEEPER_FROM_BLOCK || deployment.startBlock || 0);
-  const provider = new JsonRpcProvider(RPC_URL);
-  const signer = new Wallet(PRIVATE_KEY, provider);
-  const manager = new Contract(drawManagerAddress, DRAW_MANAGER_ABI, provider);
-  const network = await provider.getNetwork();
+  const writeProvider = new JsonRpcProvider(RPC_URL);
+  const readProvider = new JsonRpcProvider(READ_RPC_URL);
+  const signer = new Wallet(PRIVATE_KEY, writeProvider);
+  const manager = new Contract(drawManagerAddress, DRAW_MANAGER_ABI, readProvider);
+  const network = await rpcRead("readProvider.getNetwork", () => readProvider.getNetwork());
   if (network.chainId !== 10143n) throw new Error(`wrong chain id ${network.chainId}; expected Monad testnet 10143`);
-  const balance = await provider.getBalance(signer.address);
+  const writeNetwork = await rpcRead("writeProvider.getNetwork", () => writeProvider.getNetwork());
+  if (writeNetwork.chainId !== 10143n) throw new Error(`wrong write chain id ${writeNetwork.chainId}; expected Monad testnet 10143`);
+  const balance = await rpcRead(`writeProvider.getBalance(${signer.address})`, () => writeProvider.getBalance(signer.address));
   if (balance < LOW_BALANCE_WEI) throw new Error(`keeper balance low: ${signer.address} balance=${balance}`);
 
-  let acted = await maybeStartDraw({ manager, provider, signer, fromBlock });
-  const currentDrawId = await manager.currentDrawId();
+  let acted = await maybeStartDraw({ manager, provider: readProvider, signer, fromBlock });
+  const currentDrawId = await rpcRead("manager.currentDrawId", () => manager.currentDrawId());
   if (currentDrawId === 0n) {
     console.log("no draw exists yet");
     return acted;
   }
   const firstDrawToReconcile = currentDrawId > 5n ? currentDrawId - 5n : 1n;
   for (let drawId = firstDrawToReconcile; drawId <= currentDrawId; drawId++) {
-    const draw = await manager.draws(drawId);
+    const draw = await rpcRead(`manager.draws(${drawId})`, () => manager.draws(drawId));
     console.log(`draw ${drawId} status=${statusName(draw.status)}`);
-    acted = await maybeRerequestSeed({ manager, signer, provider, drawId, draw }) || acted;
-    acted = await maybePropose({ manager, signer, provider, drawManagerAddress, drawId, fromBlock }) || acted;
-    acted = await maybeFinalize({ manager, signer, provider, drawId }) || acted;
-    acted = await maybeClaim({ manager, signer, provider, drawManagerAddress, claimManagerAddress, drawId, fromBlock }) || acted;
+    acted = await maybeRerequestSeed({ manager, signer, provider: readProvider, drawId, draw }) || acted;
+    acted = await maybePropose({ manager, signer, provider: readProvider, drawManagerAddress, drawId, fromBlock }) || acted;
+    acted = await maybeFinalize({ manager, signer, provider: readProvider, drawId }) || acted;
+    acted = await maybeClaim({ manager, signer, provider: readProvider, drawManagerAddress, claimManagerAddress, drawId, fromBlock }) || acted;
   }
   await ping(true);
   return acted;

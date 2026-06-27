@@ -386,6 +386,20 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
         return (recipient.account, recipient.bps);
     }
 
+    function previewStartDraw() external view returns (bool due, bool willSkip, uint256 requiredFee) {
+        uint64 periodStart = nextPeriodStart;
+        uint64 periodEnd = periodStart + drawPeriod;
+        if (block.timestamp < periodEnd) return (false, false, 0);
+
+        uint256 totalTwab = twabController.getTotalTwabBetween(address(vault), periodStart, periodEnd);
+        uint256 availablePrize = vault.availableYield();
+        if (totalTwab == 0 || availablePrize == 0 || availablePrize < minPrizeThreshold) {
+            return (true, true, 0);
+        }
+
+        return (true, false, randomnessOracle.getFee());
+    }
+
     function plannedClaimLeafCount(uint256 drawId) public view returns (uint256) {
         uint256 legs = 1 + drawRewardLegs[drawId].length;
         uint256 leavesPerLeg = 1 + (drawTotalFeeBps[drawId] == 0 ? 0 : drawFeeRecipients[drawId].length);
