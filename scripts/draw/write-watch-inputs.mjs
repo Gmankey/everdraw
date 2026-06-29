@@ -19,19 +19,26 @@ function logsProvider() {
   if (!_logsProvider) _logsProvider = new JsonRpcProvider(LOGS_RPC_URL);
   return _logsProvider;
 }
+function positiveIntEnv(name, fallback) {
+  const raw = process.env[name] || String(fallback);
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 1) throw new Error(`Invalid ${name}: ${raw}`);
+  return value;
+}
 // Many public RPCs cap eth_getLogs block ranges (Monad testnet: 100). Default to a safe
 // window; queryLogsChunked also adaptively halves on a range-limit error so a stricter RPC
 // (or a smaller mainnet limit) can't break log collection.
-const CHUNK_SIZE = Number(process.env.WATCHER_LOG_CHUNK_SIZE || 1000);
-const LOG_CONCURRENCY = Number(process.env.WATCHER_LOG_CONCURRENCY || 8);
+const CHUNK_SIZE = positiveIntEnv("WATCHER_LOG_CHUNK_SIZE", 1000);
+const LOG_CONCURRENCY = positiveIntEnv("WATCHER_LOG_CONCURRENCY", 1);
+const LOG_TIMEOUT_MS = positiveIntEnv("WATCHER_LOG_TIMEOUT_MS", 30_000);
 // Cap how far back log scans reach. Scanning from the deploy block (100k+ blocks) is both slow
 // and unnecessary here — deposits relevant to a draw are recent. Bound the window for speed;
 // widen via env (or use an event indexer) if very old positions must be discovered. A proper
 // indexer is the mainnet path (see tasks/v5-keeper-prediction-fragility-rootcause.md).
 // Full history by default (correctness): a depositor from any past period must be discovered.
-// With a reliable RPC + 1000-block chunks + parallelism this stays fast; an indexer is the
-// long-term path. Override to bound the scan only if you understand the correctness tradeoff.
-const MAX_LOG_LOOKBACK = Number(process.env.WATCHER_LOG_MAX_LOOKBACK || 50_000_000);
+// With a reliable RPC + 1000-block chunks this stays tolerable; an indexer is the long-term
+// path. Override to bound the scan only if you understand the correctness tradeoff.
+const MAX_LOG_LOOKBACK = positiveIntEnv("WATCHER_LOG_MAX_LOOKBACK", 50_000_000);
 
 const DRAW_MANAGER_ABI = [
   "function vault() view returns (address)",
@@ -73,6 +80,9 @@ function drawStatusName(status) {
 function errText(err) {
   return (err?.error?.message || err?.info?.error?.message || err?.message || "").toLowerCase();
 }
+function errMessage(err) {
+  return err?.shortMessage || err?.error?.message || err?.info?.error?.message || err?.message || String(err);
+}
 function errCode(err) {
   return err?.error?.code ?? err?.info?.error?.code;
 }
@@ -93,6 +103,18 @@ function isTransientError(err) {
     || code === 19 || code === 429 || code === -32005 || code === -32601;
 }
 
+function withTimeout(promise, label, timeoutMs = LOG_TIMEOUT_MS) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+function getLogsWithTimeout(provider, filter, from, to, label) {
+  return withTimeout(provider.getLogs({ ...filter, fromBlock: from, toBlock: to }), label);
+}
+
 // Fetch logs across [from, to]:
 //  - adaptively bisect any sub-range the RPC rejects as too wide,
 //  - retry transient RPC errors with backoff (drpc is fast but intermittently flaky),
@@ -103,7 +125,7 @@ async function getLogsRange(provider, filter, from, to) {
   let lastErr;
   for (let attempt = 0; attempt < 6; attempt++) {
     try {
-      return await logsProvider().getLogs({ ...filter, fromBlock: from, toBlock: to });
+      return await getLogsWithTimeout(logsProvider(), filter, from, to, `logs fast ${from}-${to}`);
     } catch (err) {
       lastErr = err;
       if (isRangeLimitError(err) && to > from) {
@@ -113,15 +135,18 @@ async function getLogsRange(provider, filter, from, to) {
         return [...left, ...right];
       }
       if (isTransientError(err) && attempt < 5) {
-        await new Promise((r) => setTimeout(r, 250 * (attempt + 1)));
+        const delay = 250 * (attempt + 1);
+        console.warn(`[logs ${from}-${to}] fast RPC failed attempt ${attempt + 1}/6: ${errMessage(err)}; retrying in ${delay}ms`);
+        await new Promise((r) => setTimeout(r, delay));
         continue;
       }
       break;
     }
   }
   // Fast logs RPC exhausted retries for this window — fall back to the caller's reliable provider.
+  console.warn(`[logs ${from}-${to}] falling back to caller RPC after fast RPC failure: ${errMessage(lastErr)}`);
   try {
-    return await provider.getLogs({ ...filter, fromBlock: from, toBlock: to });
+    return await getLogsWithTimeout(provider, filter, from, to, `logs fallback ${from}-${to}`);
   } catch (fallbackErr) {
     if (isRangeLimitError(fallbackErr) && to > from) {
       const mid = Math.floor((from + to) / 2);
@@ -134,7 +159,8 @@ async function getLogsRange(provider, filter, from, to) {
 }
 
 async function queryLogsChunked(provider, filter, fromBlock, toBlock, label = "logs") {
-  // Build all [from,to] windows, then fetch them in parallel batches.
+  // Build all [from,to] windows, then fetch them in bounded batches. Default to sequential:
+  // Tenderly has hung under concurrent getLogs during live keeper proposeRoot.
   const effectiveFrom = Math.max(Number(fromBlock), Number(toBlock) - MAX_LOG_LOOKBACK);
   const windows = [];
   for (let from = effectiveFrom; from <= Number(toBlock); from += CHUNK_SIZE) {
