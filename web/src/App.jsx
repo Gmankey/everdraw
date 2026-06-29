@@ -1114,6 +1114,7 @@ function RoundProgressSteps({ state, settlementSecs, secondsRemaining, isV3 = fa
 
 export default function App() {
   initPosthog()
+
   // Hash-based page routing
   const [currentPage, setCurrentPage] = useState(() => {
     if (window.location.pathname === '/blog/drawn-back-to-defi' || window.location.pathname === '/articles/drawn-back-to-defi') return 'article'
