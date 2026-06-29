@@ -27,6 +27,14 @@ contract InvariantTwabVaultHarness {
     function sponsorWithdraw(address account, uint256 amount) external {
         controller.decreaseSponsorBalance(account, amount);
     }
+
+    function boostDeposit(address account, uint256 amount) external {
+        controller.increaseBoosterBalance(account, amount);
+    }
+
+    function boostWithdraw(address account, uint256 amount) external {
+        controller.decreaseBoosterBalance(account, amount);
+    }
 }
 
 contract EverdrawTwabInvariantHandler is Test {
@@ -36,11 +44,14 @@ contract EverdrawTwabInvariantHandler is Test {
     address internal constant ALICE = address(0xA11CE);
     address internal constant BOB = address(0xB0B);
     address internal constant SPONSOR = address(0x5A0);
+    address internal constant BOOSTER = address(0xB0057);
 
     mapping(address => uint256) public participantBalance;
     mapping(address => uint256) public sponsorBalance;
+    mapping(address => uint256) public boosterBalance;
     uint256 public participantTotal;
     uint256 public sponsorTotal;
+    uint256 public boosterTotal;
 
     constructor(EverdrawTwabController _controller, InvariantTwabVaultHarness _vault) {
         controller = _controller;
@@ -87,6 +98,25 @@ contract EverdrawTwabInvariantHandler is Test {
         vault.sponsorWithdraw(SPONSOR, bounded);
     }
 
+    function boostDeposit(uint96 amount) external {
+        amount = uint96(bound(amount, 0, 1000 ether));
+        if (amount == 0) return;
+
+        boosterBalance[BOOSTER] += amount;
+        boosterTotal += amount;
+        vault.boostDeposit(BOOSTER, amount);
+    }
+
+    function boostWithdraw(uint96 amount) external {
+        uint256 balance = boosterBalance[BOOSTER];
+        if (balance == 0) return;
+
+        uint256 bounded = bound(amount, 1, balance);
+        boosterBalance[BOOSTER] -= bounded;
+        boosterTotal -= bounded;
+        vault.boostWithdraw(BOOSTER, bounded);
+    }
+
     function alice() external pure returns (address) {
         return ALICE;
     }
@@ -99,8 +129,12 @@ contract EverdrawTwabInvariantHandler is Test {
         return SPONSOR;
     }
 
+    function booster() external pure returns (address) {
+        return BOOSTER;
+    }
+
     function principalTotal() external view returns (uint256) {
-        return participantTotal + sponsorTotal;
+        return participantTotal + sponsorTotal + boosterTotal;
     }
 
     function _participant(uint8 seed) internal pure returns (address) {
@@ -134,6 +168,7 @@ contract EverdrawTwabControllerInvariantTest is StdInvariant, Test {
         address alice = handler.alice();
         address bob = handler.bob();
         address sponsor = handler.sponsor();
+        address booster = handler.booster();
 
         assertEq(controller.balanceOf(address(vault), alice), handler.participantBalance(alice));
         assertEq(controller.delegateBalanceOf(address(vault), alice), handler.participantBalance(alice));
@@ -141,9 +176,15 @@ contract EverdrawTwabControllerInvariantTest is StdInvariant, Test {
         assertEq(controller.delegateBalanceOf(address(vault), bob), handler.participantBalance(bob));
         assertEq(controller.balanceOf(address(vault), sponsor), handler.sponsorBalance(sponsor));
         assertEq(controller.delegateBalanceOf(address(vault), sponsor), 0);
+        assertEq(controller.balanceOf(address(vault), booster), handler.boosterBalance(booster));
+        assertEq(controller.delegateBalanceOf(address(vault), booster), 0);
     }
 
     function invariant_sponsorDelegateMatchesSponsorTotal() public view {
         assertEq(controller.delegateBalanceOf(address(vault), controller.SPONSOR_DELEGATE()), handler.sponsorTotal());
+    }
+
+    function invariant_boosterDelegateMatchesBoosterTotal() public view {
+        assertEq(controller.delegateBalanceOf(address(vault), controller.BOOSTER_DELEGATE()), handler.boosterTotal());
     }
 }

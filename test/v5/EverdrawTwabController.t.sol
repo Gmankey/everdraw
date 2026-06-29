@@ -38,6 +38,14 @@ contract EverdrawTwabVaultHarness {
     function sponsorWithdraw(address account, uint256 amount) external {
         controller.decreaseSponsorBalance(account, amount);
     }
+
+    function boostDeposit(address account, uint256 amount) external {
+        controller.increaseBoosterBalance(account, amount);
+    }
+
+    function boostWithdraw(address account, uint256 amount) external {
+        controller.decreaseBoosterBalance(account, amount);
+    }
 }
 
 contract EverdrawTwabControllerTest is Test {
@@ -47,6 +55,7 @@ contract EverdrawTwabControllerTest is Test {
     address alice = address(0xA11CE);
     address bob = address(0xB0B);
     address sponsor = address(0x5A0);
+    address booster = address(0xB0057);
 
     uint32 constant PERIOD = 1 hours;
     uint32 constant OFFSET = 100 hours;
@@ -192,6 +201,60 @@ contract EverdrawTwabControllerTest is Test {
         assertEq(
             controller.getDelegateTwabBetween(address(vault), controller.SPONSOR_DELEGATE(), OFFSET, OFFSET + 2 hours),
             300 ether
+        );
+    }
+
+    function test_boosterBalanceHasZeroParticipantOddsButReadableDelegateTwab() public {
+        vault.deposit(alice, 100 ether);
+        vault.boostDeposit(booster, 300 ether);
+        vm.warp(OFFSET + 2 hours);
+
+        assertEq(controller.balanceOf(address(vault), booster), 300 ether);
+        assertEq(controller.delegateBalanceOf(address(vault), booster), 0);
+        assertEq(controller.totalPrincipalSupply(address(vault)), 400 ether);
+        assertEq(controller.totalParticipantSupply(address(vault)), 100 ether);
+
+        assertEq(controller.getTwabBetween(address(vault), booster, OFFSET, OFFSET + 2 hours), 0);
+        assertEq(controller.getTotalTwabBetween(address(vault), OFFSET, OFFSET + 2 hours), 100 ether);
+        assertEq(controller.getTotalPrincipalTwabBetween(address(vault), OFFSET, OFFSET + 2 hours), 400 ether);
+        assertEq(
+            controller.getDelegateTwabBetween(address(vault), controller.BOOSTER_DELEGATE(), OFFSET, OFFSET + 2 hours),
+            300 ether
+        );
+    }
+
+    function test_totalParticipantTwabExcludesSponsorAndBoosterDelegates() public {
+        vault.deposit(alice, 100 ether);
+        vault.sponsorDeposit(sponsor, 200 ether);
+        vault.boostDeposit(booster, 300 ether);
+        vm.warp(OFFSET + 2 hours);
+
+        uint256 participantTwab = controller.getTotalTwabBetween(address(vault), OFFSET, OFFSET + 2 hours);
+        uint256 principalTwab = controller.getTotalPrincipalTwabBetween(address(vault), OFFSET, OFFSET + 2 hours);
+        uint256 sponsorTwab =
+            controller.getDelegateTwabBetween(address(vault), controller.SPONSOR_DELEGATE(), OFFSET, OFFSET + 2 hours);
+        uint256 boosterTwab =
+            controller.getDelegateTwabBetween(address(vault), controller.BOOSTER_DELEGATE(), OFFSET, OFFSET + 2 hours);
+
+        assertEq(participantTwab, 100 ether);
+        assertEq(principalTwab - sponsorTwab - boosterTwab, participantTwab);
+    }
+
+    function test_lateBoosterDepositCannotBuyCurrentPeriodOdds() public {
+        vault.deposit(alice, 100 ether);
+        vm.warp(OFFSET + PERIOD);
+        vault.boostDeposit(booster, 100 ether);
+        vm.warp(OFFSET + 2 * PERIOD);
+
+        assertEq(controller.getTotalTwabBetween(address(vault), OFFSET, OFFSET + PERIOD), 100 ether);
+        assertEq(
+            controller.getDelegateTwabBetween(address(vault), controller.BOOSTER_DELEGATE(), OFFSET, OFFSET + PERIOD), 0
+        );
+        assertEq(
+            controller.getDelegateTwabBetween(
+                address(vault), controller.BOOSTER_DELEGATE(), OFFSET + PERIOD, OFFSET + 2 * PERIOD
+            ),
+            100 ether
         );
     }
 

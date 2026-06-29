@@ -30,6 +30,7 @@ contract PrizeVaultV5 {
     uint256 public totalPrincipal;
     uint256 public totalParticipantPrincipal;
     uint256 public totalSponsorPrincipal;
+    uint256 public totalBoosterPrincipal;
     bool public shortfallMode;
 
     address public pendingStrategy;
@@ -37,6 +38,7 @@ contract PrizeVaultV5 {
 
     mapping(address => uint256) public principalOf;
     mapping(address => uint256) public sponsorPrincipalOf;
+    mapping(address => uint256) public boosterPrincipalOf;
     mapping(address => mapping(address => uint256)) public allowance;
 
     event Deposit(address indexed recipient, uint256 amount);
@@ -45,6 +47,8 @@ contract PrizeVaultV5 {
     event Approval(address indexed owner, address indexed spender, uint256 amount);
     event SponsorDeposit(address indexed sponsor, uint256 amount);
     event SponsorWithdraw(address indexed sponsor, uint256 amount);
+    event BoostDeposit(address indexed booster, uint256 amount, uint256 balance, uint64 timestamp);
+    event BoostWithdraw(address indexed booster, uint256 amount, uint256 balance, uint64 timestamp);
     event EmergencySharesRedeemed(address indexed account, uint256 principalAmount, uint256 shares);
     event DepositCapUpdated(uint256 depositCap);
     event MinDepositUpdated(uint256 minDeposit);
@@ -262,6 +266,20 @@ contract PrizeVaultV5 {
         _creditSponsor(msg.sender, assets);
     }
 
+    function boostDeposit() external payable whenNotPaused nonReentrant returns (uint256 shares) {
+        uint256 assets = msg.value;
+        _requireDepositAllowed(assets);
+        shares = strategy.deposit{value: assets}(assets);
+        _creditBooster(msg.sender, assets);
+    }
+
+    function boostDepositShmon(uint256 shares) external whenNotPaused nonReentrant returns (uint256 assets) {
+        if (stoppedAt != 0) revert VaultIsStopped();
+        assets = strategy.depositSharesFrom(msg.sender, shares);
+        _requireDepositAllowed(assets);
+        _creditBooster(msg.sender, assets);
+    }
+
     function availableYield() public view returns (uint256) {
         uint256 assets = strategy.totalAssets();
         if (assets <= totalPrincipal) return 0;
@@ -292,6 +310,14 @@ contract PrizeVaultV5 {
         _refreshShortfallMode();
         assetsPaid = _withdrawSponsor(msg.sender, amount);
         emit SponsorWithdraw(msg.sender, assetsPaid);
+    }
+
+    function boostWithdraw(uint256 amount) external nonReentrant returns (uint256 assetsPaid) {
+        if (amount == 0) revert ZeroAmount();
+        if (boosterPrincipalOf[msg.sender] < amount) revert InsufficientBalance();
+        _refreshShortfallMode();
+        assetsPaid = _withdrawBooster(msg.sender, amount);
+        emit BoostWithdraw(msg.sender, amount, boosterPrincipalOf[msg.sender], uint64(block.timestamp));
     }
 
     function emergencyRedeemShares(uint256 principalAmount) external nonReentrant returns (uint256 shares) {
@@ -348,6 +374,14 @@ contract PrizeVaultV5 {
         emit SponsorDeposit(sponsor, assets);
     }
 
+    function _creditBooster(address booster, uint256 assets) internal {
+        boosterPrincipalOf[booster] += assets;
+        totalBoosterPrincipal += assets;
+        totalPrincipal += assets;
+        twabController.increaseBoosterBalance(booster, assets);
+        emit BoostDeposit(booster, assets, boosterPrincipalOf[booster], uint64(block.timestamp));
+    }
+
     function _withdrawParticipant(address account, uint256 principalAmount) internal returns (uint256 assetsPaid) {
         assetsPaid = _payoutAmount(principalAmount);
         _debitParticipant(account, principalAmount);
@@ -358,6 +392,12 @@ contract PrizeVaultV5 {
         assetsPaid = _payoutAmount(principalAmount);
         _debitSponsor(sponsor, principalAmount);
         strategy.withdraw(assetsPaid, sponsor);
+    }
+
+    function _withdrawBooster(address booster, uint256 principalAmount) internal returns (uint256 assetsPaid) {
+        assetsPaid = _payoutAmount(principalAmount);
+        _debitBooster(booster, principalAmount);
+        strategy.withdraw(assetsPaid, booster);
     }
 
     function _debitParticipant(address account, uint256 principalAmount) internal {
@@ -373,6 +413,13 @@ contract PrizeVaultV5 {
         totalSponsorPrincipal -= principalAmount;
         totalPrincipal -= principalAmount;
         twabController.decreaseSponsorBalance(sponsor, principalAmount);
+    }
+
+    function _debitBooster(address booster, uint256 principalAmount) internal {
+        boosterPrincipalOf[booster] -= principalAmount;
+        totalBoosterPrincipal -= principalAmount;
+        totalPrincipal -= principalAmount;
+        twabController.decreaseBoosterBalance(booster, principalAmount);
     }
 
     function _payoutAmount(uint256 principalAmount) internal view returns (uint256) {

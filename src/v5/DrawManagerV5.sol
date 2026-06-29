@@ -474,9 +474,14 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
         uint256 sponsorTwab = twabController.getDelegateTwabBetween(
             address(vault), twabController.SPONSOR_DELEGATE(), periodStart, periodEnd
         );
+        uint256 boosterTwab = twabController.getDelegateTwabBetween(
+            address(vault), twabController.BOOSTER_DELEGATE(), periodStart, periodEnd
+        );
         uint256 grossYield = vault.availableYield();
         uint256 sponsorYield = totalPrincipalTwab == 0 ? 0 : (grossYield * sponsorTwab) / totalPrincipalTwab;
-        uint256 feeBaseAmount = feeBase == FeeBase.PARTICIPANT_YIELD_ONLY ? grossYield - sponsorYield : grossYield;
+        uint256 boosterYield = totalPrincipalTwab == 0 ? 0 : (grossYield * boosterTwab) / totalPrincipalTwab;
+        uint256 feeExemptYield = sponsorYield + boosterYield;
+        uint256 feeBaseAmount = feeBase == FeeBase.PARTICIPANT_YIELD_ONLY ? grossYield - feeExemptYield : grossYield;
         uint256 feeAmount = (feeBaseAmount * totalFeeBps) / 10_000;
         uint256 availablePrize = grossYield;
 

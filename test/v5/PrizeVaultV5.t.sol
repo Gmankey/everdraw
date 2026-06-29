@@ -16,6 +16,10 @@ contract PrizeVaultV5Test is Test {
     address alice = makeAddr("alice");
     address bob = makeAddr("bob");
     address sponsor = makeAddr("sponsor");
+    address booster = makeAddr("booster");
+
+    event BoostDeposit(address indexed booster, uint256 amount, uint256 balance, uint64 timestamp);
+    event BoostWithdraw(address indexed booster, uint256 amount, uint256 balance, uint64 timestamp);
 
     function setUp() public {
         vm.warp(1_000_000);
@@ -106,6 +110,76 @@ contract PrizeVaultV5Test is Test {
         assertEq(twab.totalParticipantSupply(address(vault)), 0);
         assertEq(twab.totalPrincipalSupply(address(vault)), 5 ether);
         assertEq(twab.delegateBalanceOf(address(vault), twab.SPONSOR_DELEGATE()), 5 ether);
+    }
+
+    function test_boostDepositCreditsBoosterLedgerAndZeroOdds() public {
+        vm.deal(booster, 10 ether);
+
+        vm.prank(booster);
+        vm.expectEmit(true, false, false, true, address(vault));
+        emit BoostDeposit(booster, 5 ether, 5 ether, uint64(block.timestamp));
+        vault.boostDeposit{value: 5 ether}();
+
+        assertEq(vault.boosterPrincipalOf(booster), 5 ether);
+        assertEq(vault.principalOf(booster), 0);
+        assertEq(vault.sponsorPrincipalOf(booster), 0);
+        assertEq(vault.totalBoosterPrincipal(), 5 ether);
+        assertEq(vault.totalPrincipal(), 5 ether);
+        assertEq(vault.totalSupply(), 0);
+        assertEq(twab.balanceOf(address(vault), booster), 5 ether);
+        assertEq(twab.delegateBalanceOf(address(vault), booster), 0);
+        assertEq(twab.totalParticipantSupply(address(vault)), 0);
+        assertEq(twab.totalPrincipalSupply(address(vault)), 5 ether);
+        assertEq(twab.delegateBalanceOf(address(vault), twab.BOOSTER_DELEGATE()), 5 ether);
+    }
+
+    function test_boostDepositShmonCreditsAssetValue() public {
+        shmon.mintShares(booster, 5 ether);
+
+        vm.startPrank(booster);
+        shmon.approve(address(strategy), 5 ether);
+        vault.boostDepositShmon(2 ether);
+        vm.stopPrank();
+
+        assertEq(vault.boosterPrincipalOf(booster), 2 ether);
+        assertEq(strategy.sharesHeld(), 2 ether);
+        assertEq(twab.balanceOf(address(vault), booster), 2 ether);
+        assertEq(twab.delegateBalanceOf(address(vault), twab.BOOSTER_DELEGATE()), 2 ether);
+    }
+
+    function test_boostWithdrawPaysPrincipalAndKeepsWithdrawalLiveWhenPaused() public {
+        vm.deal(booster, 10 ether);
+        vm.prank(booster);
+        vault.boostDeposit{value: 4 ether}();
+
+        vault.pause();
+
+        uint256 before = booster.balance;
+        vm.prank(booster);
+        vm.expectEmit(true, false, false, true, address(vault));
+        emit BoostWithdraw(booster, 1.5 ether, 2.5 ether, uint64(block.timestamp));
+        vault.boostWithdraw(1.5 ether);
+
+        assertEq(booster.balance - before, 1.5 ether);
+        assertEq(vault.boosterPrincipalOf(booster), 2.5 ether);
+        assertEq(vault.totalBoosterPrincipal(), 2.5 ether);
+        assertEq(vault.totalPrincipal(), 2.5 ether);
+        assertEq(twab.balanceOf(address(vault), booster), 2.5 ether);
+        assertEq(twab.delegateBalanceOf(address(vault), twab.BOOSTER_DELEGATE()), 2.5 ether);
+    }
+
+    function test_boosterPrincipalCannotTransfer() public {
+        vm.deal(booster, 10 ether);
+        vm.prank(booster);
+        vault.boostDeposit{value: 5 ether}();
+
+        vm.prank(booster);
+        vm.expectRevert(PrizeVaultV5.InsufficientBalance.selector);
+        vault.transfer(bob, 1 ether);
+
+        assertEq(vault.balanceOf(booster), 0);
+        assertEq(vault.boosterPrincipalOf(booster), 5 ether);
+        assertEq(vault.balanceOf(bob), 0);
     }
 
     function test_withdrawPaysPrincipalAndKeepsWithdrawalLiveWhenPaused() public {
