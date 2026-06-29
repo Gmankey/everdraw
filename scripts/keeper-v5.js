@@ -22,6 +22,7 @@ const TX_TIMEOUT_MS = Number(process.env.KEEPER_TX_TIMEOUT_MS || 180_000);
 const RPC_RETRIES = Number(process.env.KEEPER_RPC_RETRIES || 2);
 const RPC_BACKOFF_MS = Number(process.env.KEEPER_RPC_BACKOFF_MS || 1_000);
 const HEALTHCHECK_TIMEOUT_MS = Number(process.env.KEEPER_HEALTHCHECK_TIMEOUT_MS || 5_000);
+const RECENT_CLAIM_WINDOW = Number(process.env.KEEPER_RECENT_CLAIM_WINDOW || 5);
 const abi = AbiCoder.defaultAbiCoder();
 
 const DRAW_MANAGER_ABI = [
@@ -77,6 +78,13 @@ function requiredAddress(name, fallback) {
 
 function statusName(status) {
   return ["None", "AwaitingSeed", "Seeded", "Proposed", "Finalized", "Skipped"][Number(status)] || `Unknown(${status})`;
+}
+
+export function firstRecentDrawId(currentDrawId, window = RECENT_CLAIM_WINDOW) {
+  const current = BigInt(currentDrawId);
+  const size = BigInt(window);
+  if (size <= 0n) throw new Error(`Invalid recent draw window: ${window}`);
+  return current > size ? current - size + 1n : 1n;
 }
 
 function sleep(ms) {
@@ -323,6 +331,23 @@ async function maybeClaim({ manager, signer, provider, drawManagerAddress, claim
   return true;
 }
 
+async function reconcileLifecycleDraw({ manager, signer, provider, drawManagerAddress, claimManagerAddress, drawId, draw, fromBlock }) {
+  const status = Number(draw.status);
+  if (status === 1) {
+    return await maybeRerequestSeed({ manager, signer, provider, drawId, draw });
+  }
+  if (status === 2) {
+    return await maybePropose({ manager, signer, provider, drawManagerAddress, drawId, fromBlock });
+  }
+  if (status === 3) {
+    const finalized = await maybeFinalize({ manager, signer, provider, drawId });
+    if (!finalized) return false;
+    await maybeClaim({ manager, signer, provider, drawManagerAddress, claimManagerAddress, drawId, fromBlock });
+    return true;
+  }
+  return false;
+}
+
 async function runOnce() {
   if (!RPC_URL) throw new Error("Missing KEEPER_RPC_URL/RPC_URL/MONAD_TESTNET_RPC_URL");
   if (!PRIVATE_KEY) throw new Error("Missing PRIVATE_KEY for keeper signer");
@@ -347,14 +372,37 @@ async function runOnce() {
     console.log("no draw exists yet");
     return acted;
   }
-  const firstDrawToReconcile = currentDrawId > 5n ? currentDrawId - 5n : 1n;
-  for (let drawId = firstDrawToReconcile; drawId <= currentDrawId; drawId++) {
+  for (let drawId = 1n; drawId <= currentDrawId; drawId++) {
     const draw = await rpcRead(`manager.draws(${drawId})`, () => manager.draws(drawId));
-    console.log(`draw ${drawId} status=${statusName(draw.status)}`);
-    acted = await maybeRerequestSeed({ manager, signer, provider: readProvider, drawId, draw }) || acted;
-    acted = await maybePropose({ manager, signer, provider: readProvider, drawManagerAddress, drawId, fromBlock }) || acted;
-    acted = await maybeFinalize({ manager, signer, provider: readProvider, drawId }) || acted;
-    acted = await maybeClaim({ manager, signer, provider: readProvider, drawManagerAddress, claimManagerAddress, drawId, fromBlock }) || acted;
+    if (![1, 2, 3].includes(Number(draw.status))) continue;
+    console.log(`outstanding draw ${drawId} status=${statusName(draw.status)}`);
+    acted = await reconcileLifecycleDraw({
+      manager,
+      signer,
+      provider: readProvider,
+      drawManagerAddress,
+      claimManagerAddress,
+      drawId,
+      draw,
+      fromBlock,
+    }) || acted;
+  }
+
+  const firstDrawToClaim = firstRecentDrawId(currentDrawId);
+  for (let drawId = firstDrawToClaim; drawId <= currentDrawId; drawId++) {
+    const draw = await rpcRead(`manager.draws(${drawId})`, () => manager.draws(drawId));
+    console.log(`recent draw ${drawId} status=${statusName(draw.status)}`);
+    if (Number(draw.status) === 4) {
+      acted = await maybeClaim({
+        manager,
+        signer,
+        provider: readProvider,
+        drawManagerAddress,
+        claimManagerAddress,
+        drawId,
+        fromBlock,
+      }) || acted;
+    }
   }
   await ping(true);
   return acted;
@@ -373,7 +421,9 @@ async function main() {
   } while (LOOP);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
