@@ -1,6 +1,6 @@
 # ADR-0040 — V5 Prize Booster door (retail yield-sponsorship), distinct from the sponsor primitive
 
-**Status:** Accepted (design) — operator confirmed 2026-06-27: payoff = dual points (EverDraw + shMonad), **no** fee on booster yield (100%-to-pot), transferable receipt deferred to Phase 2. Builder ticket to follow. shMonad points-multiplier ask to Alex is the one open external item.
+**Status:** Accepted (design) — operator confirmed 2026-06-27: payoff = dual points (EverDraw + shMonad), **no** fee on booster yield (100%-to-pot), transferable receipt deferred to Phase 2. Builder ticket to follow. shMonad points-multiplier: **Alex agreed in principle 2026-06-30; multiplier value TBD** (§5).
 **Date:** 2026-06-26 (amended 2026-06-27)
 **Deciders:** User (operator) + Claude (PM)
 **Parent / context:** ADR-0036 (V5 TWAB architecture — sponsor primitive §3.1/§5.3/§5.4, fee flag §6a), ADR-0006 (Merkl-readable position surface), ADR-0008 (points), ADR-0039 (transferable share / honeypot lessons), ADR-0027 (fee router). Beta driver: "prize pot doesn't feel big enough yet."
@@ -57,7 +57,7 @@ A separate `BOOSTER_DELEGATE` (rather than reusing the sponsor sink) is what let
 ## 5. External dependencies (working rule 5)
 
 - **shMON yield** — the booster's contribution source; if yield is zero/negative, boost contributes nothing (degrades gracefully — pot just doesn't grow).
-- **shMonad points multiplier (Alex ask)** — the second farm in the stack. This is a *lightweight* ask: a points multiplier costs shMonad nothing real (same as their own degen pool), so it's a likely yes — frame it as boosters growing shMON TVL via an official channel. If declined, the booster still earns boosted EverDraw points (single-farm); weaker, but the feature stands. So this is **important but not a hard blocker** (corrected from the prior draft, which wrongly assumed funded tokens).
+- **shMonad points multiplier (Alex ask)** — the second farm in the stack. **Status (2026-06-30): Alex/shMonad has AGREED in principle to the booster points multiplier; the exact multiplier value is still TBD.** So this external dependency is largely de-risked — only the number remains (feeds the cap/window decision here and the Merkl campaign config). This was a lightweight ask (a points multiplier costs shMonad nothing real, same as their own degen pool). If the number ends up low it's still additive; the feature also stands on EverDraw points alone.
 - **Merkl** — must index the new boost event stream and run the booster points campaign; re-confirm event shape against Merkl before launch (same discipline as ADR-0006/0039).
 
 ## 6. Rejected
