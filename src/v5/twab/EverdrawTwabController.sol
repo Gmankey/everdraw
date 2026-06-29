@@ -10,6 +10,7 @@ contract EverdrawTwabController {
     uint16 public constant MAX_CARDINALITY = 17_520;
     uint32 public constant MINIMUM_PERIOD_LENGTH = 1 hours;
     address public constant SPONSOR_DELEGATE = address(1);
+    address public constant BOOSTER_DELEGATE = address(2);
 
     uint32 public immutable periodLength;
     uint32 public immutable periodOffset;
@@ -146,6 +147,22 @@ contract EverdrawTwabController {
         uint96 castAmount = _toUint96(amount);
         _decreaseAccount(msg.sender, sponsor, castAmount, 0);
         _decreaseAccount(msg.sender, SPONSOR_DELEGATE, 0, castAmount);
+        _decreasePrincipalTotal(msg.sender, castAmount);
+    }
+
+    /// @notice Records booster principal whose yield sponsors prizes but has zero win odds.
+    function increaseBoosterBalance(address booster, uint256 amount) external onlyRegisteredVault {
+        uint96 castAmount = _toUint96(amount);
+        _increaseAccount(msg.sender, booster, castAmount, 0);
+        _increaseAccount(msg.sender, BOOSTER_DELEGATE, 0, castAmount);
+        _increasePrincipalTotal(msg.sender, castAmount);
+    }
+
+    /// @notice Decreases booster principal and its booster-delegate TWAB.
+    function decreaseBoosterBalance(address booster, uint256 amount) external onlyRegisteredVault {
+        uint96 castAmount = _toUint96(amount);
+        _decreaseAccount(msg.sender, booster, castAmount, 0);
+        _decreaseAccount(msg.sender, BOOSTER_DELEGATE, 0, castAmount);
         _decreasePrincipalTotal(msg.sender, castAmount);
     }
 

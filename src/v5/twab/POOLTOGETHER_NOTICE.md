@@ -13,6 +13,6 @@ EverDraw changes for V5.0 M1:
 
 - removed transferable-ticket and user-facing delegation APIs;
 - restricted writes to owner-registered vaults;
-- added explicit sponsor-delegate accounting through `SPONSOR_DELEGATE`;
-- exposed separate participant-total TWAB and sponsor-delegate TWAB reads;
+- added explicit zero-odds delegate accounting through `SPONSOR_DELEGATE` and `BOOSTER_DELEGATE`;
+- exposed separate participant-total TWAB and delegate TWAB reads;
 - inlined minimal ring-buffer helpers instead of adding new vendored dependencies.

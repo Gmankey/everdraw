@@ -151,3 +151,54 @@ Branch/worktree: `fix/twab-empty-period-skip-20260626` at
   - 17 tests passed, 0 failed, 0 skipped.
 - `forge test --match-path 'test/v5/*.t.sol' -vv`
   - 86 tests passed, 0 failed, 1 skipped.
+
+---
+
+## ADR-0040 Prize Booster Addendum — 2026-06-30
+
+Branch/worktree: `feat/v5-prize-booster-door` at
+`/home/c/.openclaw/workspace/.worktrees/v5-prize-booster-door`
+
+### Scope Landed
+
+- `PrizeVaultV5` now exposes the Phase 1 booster door:
+  - `boostDeposit()` for native MON/shMON-strategy custody.
+  - `boostDepositShmon(uint256 shares)` for direct shMON-share entry.
+  - `boostWithdraw(uint256)` for non-pausable principal withdrawal.
+- Booster balances are tracked in `boosterPrincipalOf` / `totalBoosterPrincipal`; they do not touch participant `principalOf` or sponsor ledgers.
+- `EverdrawTwabController` now has a distinct `BOOSTER_DELEGATE` zero-odds sink with readable delegate TWAB.
+- `DrawManagerV5` fee attribution excludes both sponsor yield and booster yield when `feeBase == PARTICIPANT_YIELD_ONLY`, so booster yield is 100% prize-pot yield.
+- Dedicated `BoostDeposit` / `BoostWithdraw` events emit amount, post-action balance, and timestamp for a Merkl-readable boost-seconds campaign. They are separate from the participant `Deposit`/`Withdraw` surface and sponsor events.
+- No transferable booster receipt token was added; Phase 2 remains out of scope.
+
+### Added/Updated Tests
+
+- `test_boostDepositCreditsBoosterLedgerAndZeroOdds`
+- `test_boostDepositShmonCreditsAssetValue`
+- `test_boostWithdrawPaysPrincipalAndKeepsWithdrawalLiveWhenPaused`
+- `test_boosterPrincipalCannotTransfer`
+- `test_boosterBalanceHasZeroParticipantOddsButReadableDelegateTwab`
+- `test_totalParticipantTwabExcludesSponsorAndBoosterDelegates`
+- `test_lateBoosterDepositCannotBuyCurrentPeriodOdds`
+- `test_boostOnlyTwabSkipsWithZeroOddsAndPreservesYieldInPot`
+- `test_feeBaseParticipantYieldOnlyExemptsBoosterYield`
+- Booster actions and delegate accounting added to the TWAB and vault invariant handlers.
+
+### Verification
+
+- `forge test --match-path test/v5/PrizeVaultV5.t.sol -vv`
+  - 26 tests passed, 0 failed, 0 skipped.
+- `forge test --match-path test/v5/EverdrawTwabController.t.sol -vv`
+  - 21 tests passed, 0 failed, 0 skipped.
+- `forge test --match-path test/v5/DrawManagerV5.t.sol -vv`
+  - 22 tests passed, 0 failed, 0 skipped.
+- `FOUNDRY_INVARIANT_RUNS=64 forge test --match-path test/v5/EverdrawTwabControllerInvariant.t.sol -vv`
+  - 4 invariants passed, 0 failed, 0 skipped; booster deposit/withdraw paths exercised.
+- `FOUNDRY_INVARIANT_RUNS=64 forge test --match-path test/v5/PrizeVaultV5Invariant.t.sol -vv`
+  - 3 invariants passed, 0 failed, 0 skipped; booster deposit/withdraw paths exercised.
+- `FOUNDRY_INVARIANT_RUNS=64 forge test --match-path test/v5/PrizeVaultV5VenueInvariant.t.sol -vv`
+  - 2 invariants passed, 0 failed, 0 skipped; booster deposit/withdraw paths exercised.
+- `forge test --match-path 'test/v5/*.t.sol' --no-match-contract '.*Invariant.*' -vv`
+  - 90 tests passed, 0 failed, 1 skipped.
+- `npm run build`
+  - Hardhat compiled successfully.

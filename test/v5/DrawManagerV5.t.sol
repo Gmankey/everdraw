@@ -46,6 +46,7 @@ contract DrawManagerV5Test is Test {
     address fallbackProposer = makeAddr("fallbackProposer");
     address feeRecipient = makeAddr("feeRecipient");
     address sponsor = makeAddr("sponsor");
+    address booster = makeAddr("booster");
 
     function setUp() public {
         vm.warp(START);
@@ -143,6 +144,29 @@ contract DrawManagerV5Test is Test {
         assertEq(totalPayout, 0);
         assertEq(address(claimManager).balance, 0);
         assertEq(vault.availableYield(), 10 ether);
+    }
+
+    function test_boostOnlyTwabSkipsWithZeroOddsAndPreservesYieldInPot() public {
+        vm.deal(booster, 10 ether);
+        vm.prank(booster);
+        vault.boostDeposit{value: 10 ether}();
+
+        vm.warp(START + PERIOD);
+        shmon.setRate(2 ether);
+
+        uint256 drawId = manager.startDraw();
+
+        assertEq(drawId, 1);
+        assertEq(oracle.nextRequestId(), 1);
+        assertEq(uint8(_status(1)), uint8(DrawManagerV5.DrawStatus.Skipped));
+        assertEq(manager.nextPeriodStart(), START + PERIOD);
+
+        (,,,, uint256 totalTwab, uint256 totalPayout,,,,,,,,,) = manager.draws(1);
+        assertEq(totalTwab, 0);
+        assertEq(totalPayout, 0);
+        assertEq(vault.availableYield(), 10 ether);
+        assertEq(twab.getTotalTwabBetween(address(vault), START, START + PERIOD), 0);
+        assertEq(twab.getDelegateTwabBetween(address(vault), twab.BOOSTER_DELEGATE(), START, START + PERIOD), 10 ether);
     }
 
     function test_zeroPrizeSkipsWithoutVrfSpend() public {
@@ -313,6 +337,33 @@ contract DrawManagerV5Test is Test {
         assertEq(grossYield, 20 ether);
         assertEq(sponsorYield, expectedSponsorYield);
         assertEq(feeAmount, expectedFee);
+    }
+
+    function test_feeBaseParticipantYieldOnlyExemptsBoosterYield() public {
+        address[] memory recipients = new address[](1);
+        uint16[] memory bps = new uint16[](1);
+        recipients[0] = feeRecipient;
+        bps[0] = 1_000;
+        manager.setFeeConfig(DrawManagerV5.FeeBase.PARTICIPANT_YIELD_ONLY, recipients, bps);
+
+        vm.deal(alice, 10 ether);
+        vm.prank(alice);
+        vault.deposit{value: 10 ether}();
+
+        vm.deal(booster, 10 ether);
+        vm.prank(booster);
+        vault.boostDeposit{value: 10 ether}();
+
+        vm.warp(START + PERIOD);
+        shmon.setRate(2 ether);
+
+        manager.startDraw();
+
+        (,,,, uint256 totalTwab,,,,,,,, uint256 grossYield, uint256 sponsorYield, uint256 feeAmount) = manager.draws(1);
+        assertEq(totalTwab, 10 ether);
+        assertEq(grossYield, 20 ether);
+        assertEq(sponsorYield, 0);
+        assertEq(feeAmount, 1 ether);
     }
 
     function test_feeRecipientLeavesAreDeterministicAndDeferredIfNativeTransferReverts() public {
