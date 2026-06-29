@@ -30,6 +30,10 @@ The keeper stalled indefinitely with no log line before its first action, on an 
 
 ---
 
+## Round 2 — RESOLVED (#164, verified live 2026-06-30)
+
+**Status: closed.** Both Round-2 defects fixed in #164 (`WATCHER_LOG_CONCURRENCY` default 1 + per-window timeout; lifecycle scan over all draws 1…currentDrawId). **Verified live by re-soak** on deploy `0x58502275…`: on default settings (no concurrency override) the keeper finalized every previously-stranded `Proposed` draw (3–11, incl. the real 1.9985 MON prize on draw 3) with **no input-builder hang**. Keeper reliability is production-grade for the draw cycle. Details of the original findings below for the record.
+
 ## Round 2 — found in the live unattended soak (2026-06-29, deploy `0x58502275…`)
 
 #161 fixed the startup hang + ABI + added `previewStartDraw`, and the keeper then drove the **full cycle live** unattended — `startDraw` → Pyth seed → `proposeRoot` → `finalizeRoot` → `claim` (draws 7 & 8 fully finalized + claimed; Pyth oracle integration verified live, draw 3 reqId 3155). Two **new** defects surfaced, both of which strand prizes in production:
