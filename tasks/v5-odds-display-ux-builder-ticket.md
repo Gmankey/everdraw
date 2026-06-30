@@ -26,6 +26,13 @@ On the participant vault view, add a **"Your chance in the next draw"** element:
 - Do not show a "tickets" counter or a cumulative "odds keep rising the longer you stay" meter — that's factually wrong for TWAB and will mislead.
 - Do not present the draw countdown as a deposit deadline (see the UAT countdown fix).
 
+## LOCKED PARAMETERS (operator, 2026-07-01)
+- **Accrual rate: 0.005 tickets per MON per minute** (continuous). `tickets_so_far = 0.005 × (sum of balance × minutes held this draw)`. Equivalent live rate = `balance × 0.005` per minute (e.g. 500 MON → 2.5/min ≈ 0.042/sec).
+- **Draw cadence: weekly** (period = 10,080 min). So a steady holder reaches **`balance × 50.4` tickets** by the draw (0.005 × 10,080). 500 MON → ~25,200; 1,000 → ~50,400; 5,000 → ~252,000.
+- **Two UI elements:** (1) live **tickets counter** ticking up in real time at `balance × 0.005/min`; (2) a **progress-to-draw bar** — fill = elapsed-time ÷ draw-period, labelled **"X of ~Y by the draw"**, where Y = projected tickets if they hold current balance (`balance × 50.4`). Y **re-targets** when they deposit (rises, accrual steepens) or withdraw (falls).
+- Per-draw: tickets **reset/rebuild each draw**, framed positively. **No %, no 1-in-N, no competitor comparison.**
+- **Dependency:** the projection assumes the on-chain `drawPeriod` is **1 week**. Testnet used 1h; the mainnet draw cadence must be set to weekly at deploy (ADR-0036 §10-Q1) for these numbers to hold. If the soak/UAT runs a shorter period, scale the display to that period (tickets/draw = `balance × 0.005 × periodMinutes`).
+
 ## FINAL UI MODEL — show TICKETS only, NO percentage (operator decision, 2026-06-30)
 **Build this. Everything below about a "% to win" is SUPERSEDED — do not display any win-probability % anywhere in the UI.** Show the user only their **tickets** growing.
 
