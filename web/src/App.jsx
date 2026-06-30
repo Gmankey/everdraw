@@ -1448,7 +1448,7 @@ function V5ActionCard({ mode, amount, setAmount, principal, walletBalance, actio
   )
 }
 
-function V5PreviousRound({ state, onBack, onClaim, busy, status, error }) {
+function V5PreviousRound({ state, onBack, onClaim, canClaimPrize, busy, status, error }) {
   const draw = state?.draw
   const drawId = state?.currentDrawId?.toString?.() || '0'
   const winnerCount = Number(draw?.winnerCount ?? draw?.[6] ?? 0)
@@ -1478,7 +1478,7 @@ function V5PreviousRound({ state, onBack, onClaim, busy, status, error }) {
             <strong>{statusLabel}</strong>
           </div>
         </div>
-        <button className="btn" onClick={onClaim} disabled={Boolean(busy)}>Claim Prize</button>
+        <button className="btn" onClick={onClaim} disabled={Boolean(busy) || !canClaimPrize}>Claim Prize</button>
       </div>
 
       <div className="participants-card">
@@ -1636,6 +1636,7 @@ export function V5UatExperience() {
       const browserProvider = new ethers.BrowserProvider(provider)
       const signer = await browserProvider.getSigner()
       const tx = await fn(signer)
+      options.afterSubmit?.()
       setStatus(`${label} submitted. Waiting for confirmation...`)
       const receipt = await tx.wait()
       const nextAccount = await signer.getAddress()
@@ -1694,6 +1695,9 @@ export function V5UatExperience() {
     const deposited = await vault.principalOf(nextAccount).catch(() => 0n)
     setPlayNotice(`Total currently deposited: ${formatV5Mon(deposited)} MON`)
   }
+  const clearPlayAmount = () => setPlayAmount('')
+  const drawPayout = BigInt(state?.draw?.totalPayout ?? state?.draw?.[5] ?? 0n)
+  const canClaimPrize = Boolean(account && cfg.claimProofUrl && drawPayout > 0n)
 
   return (
     <div className="app-shell v5-uat-mode">
@@ -1734,9 +1738,10 @@ export function V5UatExperience() {
             state={state}
             onBack={openPreviousRound}
             onClaim={claimButton}
+            canClaimPrize={canClaimPrize}
             busy={busy}
             status=""
-            error={error}
+            error=""
           />
         ) : v5Page === 'history' ? (
           <V5HistoryTable account={account} rows={state?.historyRows || []} />
@@ -1756,8 +1761,8 @@ export function V5UatExperience() {
             account={account}
             boosterSupported
             onConnect={connect}
-            onDeposit={() => transact('Deposit', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).deposit({ value: parseV5Mon(playAmount) }), { afterConfirm: afterPlayAction })}
-            onWithdraw={() => transact('Withdraw', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).withdraw(parseV5Mon(playAmount)), { afterConfirm: afterPlayAction })}
+            onDeposit={() => transact('Deposit', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).deposit({ value: parseV5Mon(playAmount) }), { afterSubmit: clearPlayAmount, afterConfirm: afterPlayAction })}
+            onWithdraw={() => transact('Withdraw', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).withdraw(parseV5Mon(playAmount)), { afterSubmit: clearPlayAmount, afterConfirm: afterPlayAction })}
           />
 
           {v5Page === 'previous' ? (
@@ -1788,7 +1793,7 @@ export function V5UatExperience() {
         </>
         )}
 
-        {error ? <p className="deposit-caption" style={{ color: '#ff8ea1' }}>{error}</p> : null}
+        {error && v5Page !== 'winners' ? <p className="deposit-caption" style={{ color: '#ff8ea1' }}>{error}</p> : null}
 
         <footer className="site-footer" id="disclaimer">
           <div className="disclaimer-box">
