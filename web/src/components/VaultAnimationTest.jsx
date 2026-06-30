@@ -163,7 +163,6 @@ export default function VaultAnimationTest({ onComplete }) {
 
       <div className="draw-ended-overlay" id="overlay-content" ref={overlayRef}>
         <button className="btn btn-winners" id="btn-winners" onClick={openVault}>SEE WINNERS</button>
-        <div className="countdown">00:00:00</div>
       </div>
     </div>
   )

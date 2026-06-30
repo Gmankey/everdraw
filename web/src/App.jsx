@@ -1330,7 +1330,7 @@ async function v5BuildHistoryRows({ account, block, vault, manager }) {
   return rows.sort((a, b) => b.blockNumber - a.blockNumber).slice(0, 24)
 }
 
-function V5ActionCard({ mode, amount, setAmount, principal, walletBalance, actionMode = 'deposit', setActionMode, busy, account, boosterSupported, onDeposit, onWithdraw, onConnect }) {
+function V5ActionCard({ mode, amount, setAmount, principal, walletBalance, actionMode = 'deposit', setActionMode, notice, busy, account, boosterSupported, onDeposit, onWithdraw, onConnect }) {
   const isDegen = mode === 'degen'
   if (!isDegen) {
     const isDeposit = actionMode === 'deposit'
@@ -1347,7 +1347,14 @@ function V5ActionCard({ mode, amount, setAmount, principal, walletBalance, actio
         <section className="v5-action-pill" aria-label="Deposit or withdraw">
           <button className={`v5-action-pill-btn ${isDeposit ? 'active' : ''}`} onClick={() => setActionMode('deposit')}>Deposit</button>
           <div className="v5-action-pill-track">
-            <div className={`v5-action-pill-knob ${!isDeposit ? 'right' : ''}`}>{isDeposit ? '+' : '-'}</div>
+            <button
+              type="button"
+              className={`v5-action-pill-knob ${!isDeposit ? 'right' : ''}`}
+              onClick={() => setActionMode(isDeposit ? 'withdraw' : 'deposit')}
+              aria-label={isDeposit ? 'Switch to withdraw' : 'Switch to deposit'}
+            >
+              {isDeposit ? '+' : '-'}
+            </button>
           </div>
           <button className={`v5-action-pill-btn ${!isDeposit ? 'active' : ''}`} onClick={() => setActionMode('withdraw')}>Withdraw</button>
         </section>
@@ -1365,8 +1372,11 @@ function V5ActionCard({ mode, amount, setAmount, principal, walletBalance, actio
               <span className="currency-label">MON</span>
             </div>
             <div className="balance-info">
-              <span>{balanceLabel}: {formatV5Mon(balanceValue)} MON</span>
-              <button className="max-btn" onClick={() => setAmount(formatDepositMon(balanceValue || 0n))}>Max</button>
+              <span>{balanceLabel}</span>
+              <span className="v5-balance-actions">
+                <span>{formatV5Mon(balanceValue)} MON</span>
+                <button className="max-btn" onClick={() => setAmount(formatDepositMon(balanceValue || 0n))}>Max</button>
+              </span>
             </div>
           </div>
 
@@ -1378,6 +1388,7 @@ function V5ActionCard({ mode, amount, setAmount, principal, walletBalance, actio
             >
               {submitLabel}
             </button>
+            {notice ? <p className="deposit-caption">{notice}</p> : null}
           </div>
         </div>
       </div>
@@ -1526,6 +1537,7 @@ export function V5UatExperience() {
   const [state, setState] = useState(null)
   const [v5Page, setV5Page] = useState('vault')
   const [playActionMode, setPlayActionMode] = useState('deposit')
+  const [playNotice, setPlayNotice] = useState('')
   const [busy, setBusy] = useState('')
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
@@ -1613,7 +1625,7 @@ export function V5UatExperience() {
     await refresh(next)
   }, [cfg.chainId, cfg.rpcUrl, refresh])
 
-  const transact = useCallback(async (label, fn) => {
+  const transact = useCallback(async (label, fn, options = {}) => {
     setBusy(label)
     setStatus('')
     setError('')
@@ -1628,8 +1640,9 @@ export function V5UatExperience() {
       const receipt = await tx.wait()
       const nextAccount = await signer.getAddress()
       setAccount(nextAccount)
-      setStatus(`${label} confirmed: ${receipt.hash}`)
+      setStatus('')
       await refresh(nextAccount)
+      await options.afterConfirm?.({ signer, account: nextAccount, receipt })
     } catch (err) {
       setError(err?.shortMessage || err?.message || String(err))
     } finally {
@@ -1660,14 +1673,26 @@ export function V5UatExperience() {
   const claimButton = () => transact('Claim prize', claim)
   const openVaultPage = (event) => {
     event?.preventDefault?.()
+    setStatus('')
     setV5Page('vault')
   }
   const openDegenPage = (event) => {
     event?.preventDefault?.()
+    setStatus('')
     setV5Page('degen')
   }
   const openPreviousRound = () => {
+    setStatus('')
     setV5Page('previous')
+  }
+  const openHistoryPage = () => {
+    setStatus('')
+    setV5Page('history')
+  }
+  const afterPlayAction = async ({ account: nextAccount }) => {
+    setPlayAmount('')
+    const deposited = await vault.principalOf(nextAccount).catch(() => 0n)
+    setPlayNotice(`Total currently deposited: ${formatV5Mon(deposited)} MON`)
   }
 
   return (
@@ -1686,7 +1711,7 @@ export function V5UatExperience() {
         <section className="vault-bar">
           <button className={`vault-aux-btn ${v5Page === 'vault' ? 'active' : ''}`} onClick={openVaultPage}>Vault</button>
           <button className={`vault-aux-btn ${v5Page === 'previous' || v5Page === 'winners' ? 'active' : ''}`} onClick={openPreviousRound}>Previous Round</button>
-          <button className={`vault-aux-btn ${v5Page === 'history' ? 'active' : ''}`} onClick={() => setV5Page('history')}>My History</button>
+          <button className={`vault-aux-btn ${v5Page === 'history' ? 'active' : ''}`} onClick={openHistoryPage}>My History</button>
         </section>
 
         {v5Page === 'degen' ? (
@@ -1710,7 +1735,7 @@ export function V5UatExperience() {
             onBack={openPreviousRound}
             onClaim={claimButton}
             busy={busy}
-            status={status}
+            status=""
             error={error}
           />
         ) : v5Page === 'history' ? (
@@ -1726,12 +1751,13 @@ export function V5UatExperience() {
             walletBalance={state?.balance || 0n}
             actionMode={playActionMode}
             setActionMode={setPlayActionMode}
+            notice={playNotice}
             busy={busy}
             account={account}
             boosterSupported
             onConnect={connect}
-            onDeposit={() => transact('Deposit', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).deposit({ value: parseV5Mon(playAmount) }))}
-            onWithdraw={() => transact('Withdraw', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).withdraw(parseV5Mon(playAmount)))}
+            onDeposit={() => transact('Deposit', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).deposit({ value: parseV5Mon(playAmount) }), { afterConfirm: afterPlayAction })}
+            onWithdraw={() => transact('Withdraw', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).withdraw(parseV5Mon(playAmount)), { afterConfirm: afterPlayAction })}
           />
 
           {v5Page === 'previous' ? (
@@ -1762,7 +1788,6 @@ export function V5UatExperience() {
         </>
         )}
 
-        {status ? <p className="deposit-caption">{status}</p> : null}
         {error ? <p className="deposit-caption" style={{ color: '#ff8ea1' }}>{error}</p> : null}
 
         <footer className="site-footer" id="disclaimer">

@@ -1516,6 +1516,7 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
   gap: 4px;
   margin: 0 0 var(--space-md);
   padding: 6px 10px;
+  border: 1px solid rgba(155, 109, 255, 0.34);
   border-radius: 999px;
   background: #16122a;
 }
@@ -1558,10 +1559,13 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
   justify-content: center;
   width: 26px;
   height: 26px;
+  padding: 0;
+  border: 0;
   transform: translateY(-50%);
   border-radius: 50%;
   background: #7c3aed;
   color: #fff;
+  cursor: pointer;
   font-size: 15px;
   font-weight: 900;
   line-height: 1;
@@ -1570,6 +1574,12 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
 
 .v5-action-pill-knob.right {
   left: calc(100% - 29px);
+}
+
+.v5-balance-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .v5-vault-stage {
