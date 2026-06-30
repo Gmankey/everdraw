@@ -26,5 +26,18 @@ On the participant vault view, add a **"Your chance in the next draw"** element:
 - Do not show a "tickets" counter or a cumulative "odds keep rising the longer you stay" meter — that's factually wrong for TWAB and will mislead.
 - Do not present the draw countdown as a deposit deadline (see the UAT countdown fix).
 
+## Visual spec — draw-period timeline (PM-designed, build this)
+Make time-weighting legible by drawing the **draw period as a horizontal timeline (start → draw)** and **shading the slice of it the user's balance is counted for**. That shaded slice *is* their chance. This is the required presentation.
+
+- **Headline:** "Your chance · this draw" = projected final share **if they hold their current balance to the draw** (`yourTWAB_projected / totalTWAB_projected`). Project, don't tick per-second — it should only move when the user or others act. Show it's an estimate.
+- **Timeline bar:** track = the current draw period; shade (accent) the portion their balance counts; leave the rest muted; mark "now".
+  - **Held all period:** full bar → full % (steady state). Copy: entered at full odds every draw until withdraw.
+  - **Joined mid-period:** only the post-join slice shaded → reduced % "this draw"; copy: full odds (~steady %) from the next draw.
+  - **Withdraw preview:** when the user opens withdraw, show the slice they'd keep (start → now) and the % they **keep this draw**, with copy "you keep the odds you've earned; out of future draws." Show this BEFORE they confirm.
+- **Secondary line:** "ongoing draws: ~Y%" = steady-state share once held a full period, so the mid-join case isn't mistaken for their permanent odds.
+- One-line explainer + tooltip: "The shaded slice is the part of this draw your balance counts — that's your chance. Deposit early to fill more; withdraw anytime and keep what you've earned."
+- Reuse production card/stat styling; no new component system (UAT rule).
+- Reference mockups: held-all / joined-halfway / withdraw-halfway timeline cards (shared by PM 2026-06-30).
+
 ## Acceptance
-- A user sees a correct, plain-language "your chance in the next draw" with the build-up/steady-state behavior, matching production styling. PM to review against the mechanic above before merge.
+- A user sees a correct, plain-language "your chance" built on the **draw-period timeline / shaded-slice** model above, with correct behavior for: held-full (full+steady), joined-mid (reduced this draw, full next), and withdraw-mid (keep earned slice, out of future). Matches production styling. PM reviews against the mechanic + the mockups before merge.
