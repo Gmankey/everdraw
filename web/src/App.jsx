@@ -1255,6 +1255,53 @@ function v5ExplorerTx(hash) {
   return hash ? `https://testnet.monadexplorer.com/tx/${hash}` : '#'
 }
 
+function formatV5Percent(value) {
+  if (!Number.isFinite(value) || value <= 0) return '0.00%'
+  if (value < 0.01) return '<0.01%'
+  return `${value.toFixed(value >= 10 ? 1 : 2)}%`
+}
+
+function buildV5OddsProjection({ state, account, mode }) {
+  const blockTime = Number(state?.block?.timestamp || 0)
+  const periodStart = Number(state?.nextPeriodStart || 0n)
+  const drawPeriod = Number(state?.drawPeriod || 0n)
+  const periodEnd = periodStart + drawPeriod
+  const principal = BigInt(state?.principal || 0n)
+  const total = BigInt(state?.totalParticipantPrincipal || 0n)
+  const events = Array.isArray(state?.periodAccountEvents) ? state.periodAccountEvents : []
+  const now = Math.max(periodStart, Math.min(blockTime || periodStart, periodEnd || periodStart))
+  const firstDeposit = events.find((event) => event.type === 'deposit')
+  const hasCurrentPeriodActivity = events.length > 0
+  const joinedAt = firstDeposit?.timestamp ? Math.max(periodStart, Math.min(firstDeposit.timestamp, periodEnd)) : periodStart
+  const isWithdrawPreview = mode === 'withdraw' && principal > 0n
+  const shadeStart = isWithdrawPreview ? periodStart : (hasCurrentPeriodActivity ? joinedAt : periodStart)
+  const shadeEnd = isWithdrawPreview ? now : periodEnd
+  const shadedSeconds = Math.max(0, Math.min(periodEnd, shadeEnd) - Math.max(periodStart, shadeStart))
+  const elapsedSeconds = Math.max(0, now - periodStart)
+  const totalSeconds = Math.max(1, drawPeriod)
+  const projectedNumerator = Number(ethers.formatEther(principal)) * shadedSeconds
+  const projectedDenominator = Math.max(Number(ethers.formatEther(total)) * totalSeconds, projectedNumerator)
+  const steadyDenominator = Math.max(Number(ethers.formatEther(total)), Number(ethers.formatEther(principal)))
+  const projectedPct = projectedDenominator > 0 ? (projectedNumerator / projectedDenominator) * 100 : 0
+  const steadyPct = steadyDenominator > 0 ? (Number(ethers.formatEther(principal)) / steadyDenominator) * 100 : 0
+  const shadeLeftPct = ((Math.max(0, shadeStart - periodStart) / totalSeconds) * 100)
+  const shadeWidthPct = ((shadedSeconds / totalSeconds) * 100)
+  const nowPct = Math.max(0, Math.min(100, (elapsedSeconds / totalSeconds) * 100))
+  const joinedMidPeriod = !isWithdrawPreview && hasCurrentPeriodActivity && joinedAt > periodStart
+
+  return {
+    hasAccount: Boolean(account),
+    hasPrincipal: principal > 0n,
+    projectedPct,
+    steadyPct,
+    shadeLeftPct,
+    shadeWidthPct,
+    nowPct,
+    isWithdrawPreview,
+    joinedMidPeriod,
+  }
+}
+
 async function v5BuildHistoryRows({ account, block, vault, manager }) {
   if (!block?.number) return []
   const fromBlock = Math.max(0, Number(block.number) - 200000)
@@ -1330,7 +1377,7 @@ async function v5BuildHistoryRows({ account, block, vault, manager }) {
   return rows.sort((a, b) => b.blockNumber - a.blockNumber).slice(0, 24)
 }
 
-function V5ActionCard({ mode, amount, setAmount, principal, walletBalance, actionMode = 'deposit', setActionMode, notice, busy, account, boosterSupported, onDeposit, onWithdraw, onConnect }) {
+function V5ActionCard({ mode, amount, setAmount, principal, walletBalance, odds, actionMode = 'deposit', setActionMode, notice, busy, account, boosterSupported, onDeposit, onWithdraw, onConnect }) {
   const isDegen = mode === 'degen'
   if (!isDegen) {
     const isDeposit = actionMode === 'deposit'
@@ -1389,6 +1436,36 @@ function V5ActionCard({ mode, amount, setAmount, principal, walletBalance, actio
               {submitLabel}
             </button>
             {notice ? <p className="deposit-caption">{notice}</p> : null}
+          </div>
+
+          <div className="v5-odds-panel">
+            <div className="participants-head v5-odds-head">
+              <span>Your chance · this draw</span>
+              <span title="The shaded slice is the part of this draw your balance counts — that's your chance. Deposit early to fill more; withdraw anytime and keep what you've earned.">Estimate</span>
+            </div>
+            <div className="v5-odds-value">{formatV5Percent(odds?.projectedPct || 0)}</div>
+            <div className="v5-odds-timeline" aria-label="Current draw odds timeline">
+              <div
+                className="v5-odds-shade"
+                style={{ left: `${odds?.shadeLeftPct || 0}%`, width: `${odds?.shadeWidthPct || 0}%` }}
+              />
+              <div className="v5-odds-now" style={{ left: `${odds?.nowPct || 0}%` }} />
+            </div>
+            <div className="v5-odds-scale">
+              <span>Start</span>
+              <span>Now</span>
+              <span>Draw</span>
+            </div>
+            <p className="deposit-caption v5-odds-copy">
+              {odds?.isWithdrawPreview
+                ? "Withdraw preview: you keep the odds you've earned this draw; out of future draws."
+                : odds?.joinedMidPeriod
+                  ? `Joined mid-draw: full odds from the next draw, about ${formatV5Percent(odds?.steadyPct || 0)} if balances hold.`
+                  : odds?.hasPrincipal
+                    ? 'Held for the full draw window: this draw is near your steady ongoing chance.'
+                    : 'Deposit to start filling this draw. Earlier deposits fill more of the bar.'}
+            </p>
+            <div className="stat-sub">Ongoing draws: ~{formatV5Percent(odds?.steadyPct || 0)}</div>
           </div>
         </div>
       </div>
@@ -1584,6 +1661,30 @@ export function V5UatExperience() {
       readProvider.getBalance(user).catch(() => 0n),
     ]) : [0n, 0n, 0n]
     const historyRows = await v5BuildHistoryRows({ account: user, block, vault, manager })
+    const periodStart = Number(nextPeriodStart || 0n)
+    const periodLogs = user && periodStart > 0 && block?.number ? await Promise.all([
+      vault.queryFilter(vault.filters.Deposit(user), Math.max(0, Number(block.number) - 200000), block.number).catch(() => []),
+      vault.queryFilter(vault.filters.Withdraw(user), Math.max(0, Number(block.number) - 200000), block.number).catch(() => []),
+    ]).then(async ([deposits, withdrawals]) => {
+      const logs = [
+        ...deposits.map((log) => ({ log, type: 'deposit' })),
+        ...withdrawals.map((log) => ({ log, type: 'withdraw' })),
+      ]
+      const blocks = new Map(await Promise.all([...new Set(logs.map((item) => item.log.blockNumber))].map(async (blockNumber) => [
+        blockNumber,
+        await readProvider.getBlock(blockNumber).catch(() => null),
+      ])))
+      return logs
+        .map((item) => ({
+          type: item.type,
+          blockNumber: item.log.blockNumber,
+          transactionIndex: item.log.transactionIndex || 0,
+          index: item.log.index || 0,
+          timestamp: Number(blocks.get(item.log.blockNumber)?.timestamp || 0),
+        }))
+        .filter((item) => item.timestamp >= periodStart)
+        .sort((a, b) => a.timestamp - b.timestamp || a.blockNumber - b.blockNumber || a.transactionIndex - b.transactionIndex || a.index - b.index)
+    }) : []
 
     setState({
       block,
@@ -1602,6 +1703,7 @@ export function V5UatExperience() {
       boosterPrincipal,
       balance,
       historyRows,
+      periodAccountEvents: periodLogs,
       boosterSupported: vaultCode !== '0x' && totalBoosterPrincipal !== null && boosterPrincipal !== null,
     })
   }, [account, cfg.prizeVault, manager, readProvider, vault])
@@ -1671,6 +1773,7 @@ export function V5UatExperience() {
   const previewCopy = state?.preview
     ? state.preview.due ? (state.preview.willSkip ? 'Draw ready, no odds yet' : 'Draw ready for keeper') : 'Next draw building'
     : 'Keeper preview unavailable'
+  const oddsProjection = buildV5OddsProjection({ state, account, mode: playActionMode })
   const claimButton = () => transact('Claim prize', claim)
   const openVaultPage = (event) => {
     event?.preventDefault?.()
@@ -1754,6 +1857,7 @@ export function V5UatExperience() {
             setAmount={setPlayAmount}
             principal={state?.principal || 0n}
             walletBalance={state?.balance || 0n}
+            odds={oddsProjection}
             actionMode={playActionMode}
             setActionMode={setPlayActionMode}
             notice={playNotice}
