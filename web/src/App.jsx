@@ -1268,6 +1268,7 @@ function buildV5OddsProjection({ state, account, mode }) {
   const periodEnd = periodStart + drawPeriod
   const principal = BigInt(state?.principal || 0n)
   const total = BigInt(state?.totalParticipantPrincipal || 0n)
+  const hasPrincipal = principal > 0n
   const events = Array.isArray(state?.periodAccountEvents) ? state.periodAccountEvents : []
   const now = Math.max(periodStart, Math.min(blockTime || periodStart, periodEnd || periodStart))
   const firstDeposit = events.find((event) => event.type === 'deposit')
@@ -1276,7 +1277,7 @@ function buildV5OddsProjection({ state, account, mode }) {
   const isWithdrawPreview = mode === 'withdraw' && principal > 0n
   const shadeStart = isWithdrawPreview ? periodStart : (hasCurrentPeriodActivity ? joinedAt : periodStart)
   const shadeEnd = isWithdrawPreview ? now : periodEnd
-  const shadedSeconds = Math.max(0, Math.min(periodEnd, shadeEnd) - Math.max(periodStart, shadeStart))
+  const shadedSeconds = hasPrincipal ? Math.max(0, Math.min(periodEnd, shadeEnd) - Math.max(periodStart, shadeStart)) : 0
   const elapsedSeconds = Math.max(0, now - periodStart)
   const totalSeconds = Math.max(1, drawPeriod)
   const projectedNumerator = Number(ethers.formatEther(principal)) * shadedSeconds
@@ -1291,7 +1292,7 @@ function buildV5OddsProjection({ state, account, mode }) {
 
   return {
     hasAccount: Boolean(account),
-    hasPrincipal: principal > 0n,
+    hasPrincipal,
     projectedPct,
     steadyPct,
     shadeLeftPct,
