@@ -26,6 +26,24 @@ On the participant vault view, add a **"Your chance in the next draw"** element:
 - Do not show a "tickets" counter or a cumulative "odds keep rising the longer you stay" meter — that's factually wrong for TWAB and will mislead.
 - Do not present the draw countdown as a deposit deadline (see the UAT countdown fix).
 
+## FINAL UI MODEL — show TICKETS only, NO percentage (operator decision, 2026-06-30)
+**Build this. Everything below about a "% to win" is SUPERSEDED — do not display any win-probability % anywhere in the UI.** Show the user only their **tickets** growing.
+
+- **"Your tickets · this draw"** — a prominent counter that **ticks up live** as their MON sits. Tickets accrue at the **rate of their current balance** (tickets = your MON × time it's been in this draw).
+- **A line/area** of tickets over the current draw period: it **climbs**, and **kicks steeper the moment they add more MON** (rate = new, larger balance). On withdraw, accrual flattens.
+- **No % to win, no "1 in N", no competitor comparison.** Just the user's own tickets — which only they affect, so there's none of the "my % dropped because someone else joined" confusion.
+- **Each draw is a fresh start:** tickets reset and rebuild for the next draw — frame this positively ("new draw, your tickets rebuild"), not as a loss. (Implementation: tickets for a draw = the user's TWAB contribution for that period; it's per-draw, not a lifetime pile.)
+- Plain copy: "Your tickets grow the longer your MON sits — add more and they pile up faster. More tickets = a bigger shot at the prize."
+- Reference mockup (PM, 2026-06-30): "your tickets growing this draw" — live counter + climbing line with a steeper kink after +5.
+- Reuse production card/stat styling; no new components (UAT rule); the draw countdown is not a deposit deadline.
+
+> One honest caveat to keep the build truthful: tickets are **per-draw** (they rebuild each draw) and a draw winner is drawn in proportion to tickets — so "more tickets = better shot" is true, but tickets do **not** pile up forever across draws. Don't animate an ever-growing lifetime counter that implies guaranteed/forever-rising odds.
+
+---
+
+## (Superseded background — the underlying mechanic, NOT shown to users)
+The sections below describe the TWAB share math and a "% to win" display. **The % is intentionally NOT shown** per the decision above; this is kept only as the mechanic rationale so the builder computes tickets correctly (tickets = the user's time-weighted balance over the draw).
+
 ## Visual spec — balance-over-the-draw AREA model (PM-designed, build this)
 **(Supersedes the earlier "binary shaded-slice" idea — that can't represent multiple deposits/withdrawals.)** The truth is **time-weighted average balance**: plot the user's **balance over the current draw period (start → draw)** as a step area — it steps **up** at each deposit (only from when it's added) and **down** at each withdraw — and the user's weight is the **average height (the shaded area ÷ the period width)**. That average is what counts; the % is their share of it across all players.
 
@@ -56,5 +74,5 @@ The % is a **share relative to the whole pool**, so it moves on others' actions 
 - **Lead with "your entries"** (your money × time in) as the prominent, stable thing the user controls and can watch climb; show the **% to win as the secondary live estimate** with the caveat. Don't make a user feel cheated by a % that dropped because someone else joined.
 - Reference mockup (PM, 2026-06-30): "entries join/leave dynamics" — three players each deposit 5; in-all-draw → 50%, joins-midweek → 25%, leaves-midweek → 25%.
 
-## Acceptance
-- A user sees "Your chance to win this draw = X%" with an explicit "of what" (your time-weighted deposit ÷ everyone's) and a "≈ 1 in N" intuition, backed by the **balance-over-the-draw area chart** that correctly renders: held-full, joined-mid, **multiple deposits at different times (average between them)**, and withdraw-mid (keep earned, out of future). Matches production styling. PM reviews against the mechanic + mockups before merge.
+## Acceptance (per the FINAL tickets-only model)
+- The user sees **"Your tickets · this draw"** as a live-climbing counter + a line that **steepens when they add MON** and flattens on withdraw. **No win-% is shown anywhere.** Tickets are per-draw and rebuild each draw (framed positively). Tickets = the user's time-weighted balance over the draw (computed correctly even though the % isn't displayed). Matches production styling. PM reviews against the tickets mockup before merge.
