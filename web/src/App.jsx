@@ -1888,7 +1888,7 @@ export function V5UatExperience() {
         </section>
 
         <section className="stats-grid two-col">
-          <StatCard label="Total Tickets" value={`${formatV5Mon(state?.totalParticipantPrincipal)} MON`} sub={`Draw #${state?.currentDrawId?.toString() || '0'}`} icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 7a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v2a2 2 0 0 0 0 4v2a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3v-2a2 2 0 0 0 0-4V7z"/></svg>} />
+          <StatCard label="Total Entered" value={`${formatV5Mon(state?.totalParticipantPrincipal)} MON`} sub={`Draw #${state?.currentDrawId?.toString() || '0'}`} icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 7a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v2a2 2 0 0 0 0 4v2a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3v-2a2 2 0 0 0 0-4V7z"/></svg>} />
           <StatCard label="Total TVL" value={`${formatV5Mon(state?.totalPrincipal)} MON`} sub="SHMON Deposited" icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>} />
           <StatCard label="Winner" value="—" sub="Revealed after draw" icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M6 4h12v3a4 4 0 0 1-4 4h-1v2.08A4 4 0 0 1 16 17v2H8v-2a4 4 0 0 1 3-3.87V11h-1a4 4 0 0 1-4-4V4z"/></svg>} />
           <StatCard label="Total Prize Pool" value={`${formatV5Mon(state?.availableYield)} MON`} sub="Estimated current yield" icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 17h2.59l3.7-3.71 3 3L17.59 11H20v2h-1.59l-6.12 6.12-3-3L7 18.41V21H3v-4zM14 3h7v7h-2V6.41l-5.29 5.3-1.42-1.42 5.3-5.29H14V3z"/></svg>} />
