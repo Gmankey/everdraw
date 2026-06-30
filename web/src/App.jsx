@@ -1255,51 +1255,78 @@ function v5ExplorerTx(hash) {
   return hash ? `https://testnet.monadexplorer.com/tx/${hash}` : '#'
 }
 
-function formatV5Percent(value) {
-  if (!Number.isFinite(value) || value <= 0) return '0.00%'
-  if (value < 0.01) return '<0.01%'
-  return `${value.toFixed(value >= 10 ? 1 : 2)}%`
+const V5_TICKETS_PER_MON_PER_MINUTE = 0.005
+
+function formatV5Tickets(value) {
+  const n = Number(value || 0)
+  if (!Number.isFinite(n) || n <= 0) return '0.00'
+  return n.toLocaleString(undefined, {
+    minimumFractionDigits: n >= 1000 ? 0 : 2,
+    maximumFractionDigits: n >= 1000 ? 2 : 2,
+  })
 }
 
-function buildV5OddsProjection({ state, account, mode }) {
+function v5MonNumber(value) {
+  try {
+    return Number(ethers.formatEther(BigInt(value || 0n)))
+  } catch {
+    return 0
+  }
+}
+
+function buildV5TicketModel({ state, account, nowMs }) {
   const blockTime = Number(state?.block?.timestamp || 0)
   const periodStart = Number(state?.nextPeriodStart || 0n)
   const drawPeriod = Number(state?.drawPeriod || 0n)
   const periodEnd = periodStart + drawPeriod
   const principal = BigInt(state?.principal || 0n)
-  const total = BigInt(state?.totalParticipantPrincipal || 0n)
-  const hasPrincipal = principal > 0n
   const events = Array.isArray(state?.periodAccountEvents) ? state.periodAccountEvents : []
-  const now = Math.max(periodStart, Math.min(blockTime || periodStart, periodEnd || periodStart))
-  const firstDeposit = events.find((event) => event.type === 'deposit')
-  const hasCurrentPeriodActivity = events.length > 0
-  const joinedAt = firstDeposit?.timestamp ? Math.max(periodStart, Math.min(firstDeposit.timestamp, periodEnd)) : periodStart
-  const isWithdrawPreview = mode === 'withdraw' && principal > 0n
-  const shadeStart = isWithdrawPreview ? periodStart : (hasCurrentPeriodActivity ? joinedAt : periodStart)
-  const shadeEnd = isWithdrawPreview ? now : periodEnd
-  const shadedSeconds = hasPrincipal ? Math.max(0, Math.min(periodEnd, shadeEnd) - Math.max(periodStart, shadeStart)) : 0
+  const readAtMs = Number(state?.readAtMs || 0)
+  const liveDriftSeconds = readAtMs > 0 ? Math.max(0, (Number(nowMs || Date.now()) - readAtMs) / 1000) : 0
+  const now = Math.max(periodStart, Math.min((blockTime || periodStart) + liveDriftSeconds, periodEnd || periodStart))
   const elapsedSeconds = Math.max(0, now - periodStart)
   const totalSeconds = Math.max(1, drawPeriod)
-  const projectedNumerator = Number(ethers.formatEther(principal)) * shadedSeconds
-  const projectedDenominator = Math.max(Number(ethers.formatEther(total)) * totalSeconds, projectedNumerator)
-  const steadyDenominator = Math.max(Number(ethers.formatEther(total)), Number(ethers.formatEther(principal)))
-  const projectedPct = projectedDenominator > 0 ? (projectedNumerator / projectedDenominator) * 100 : 0
-  const steadyPct = steadyDenominator > 0 ? (Number(ethers.formatEther(principal)) / steadyDenominator) * 100 : 0
-  const shadeLeftPct = ((Math.max(0, shadeStart - periodStart) / totalSeconds) * 100)
-  const shadeWidthPct = ((shadedSeconds / totalSeconds) * 100)
-  const nowPct = Math.max(0, Math.min(100, (elapsedSeconds / totalSeconds) * 100))
-  const joinedMidPeriod = !isWithdrawPreview && hasCurrentPeriodActivity && joinedAt > periodStart
+  const sortedEvents = events
+    .filter((event) => event.timestamp >= periodStart && event.timestamp <= now)
+    .sort((a, b) => a.timestamp - b.timestamp || a.blockNumber - b.blockNumber || a.transactionIndex - b.transactionIndex || a.index - b.index)
+  const netDelta = sortedEvents.reduce((sum, event) => {
+    const amount = BigInt(event.amount || 0n)
+    return event.type === 'deposit' ? sum + amount : sum - amount
+  }, 0n)
+  let balance = principal - netDelta
+  if (balance < 0n) balance = 0n
+  let cursor = periodStart
+  let balanceMinutes = 0
+
+  for (const event of sortedEvents) {
+    const eventTime = Math.max(periodStart, Math.min(Number(event.timestamp || periodStart), now))
+    if (eventTime > cursor) {
+      balanceMinutes += v5MonNumber(balance) * ((eventTime - cursor) / 60)
+      cursor = eventTime
+    }
+    const amount = BigInt(event.amount || 0n)
+    balance = event.type === 'deposit' ? balance + amount : balance - amount
+    if (balance < 0n) balance = 0n
+  }
+
+  if (now > cursor) {
+    balanceMinutes += v5MonNumber(principal) * ((now - cursor) / 60)
+  }
+
+  const balanceMon = v5MonNumber(principal)
+  const ticketsSoFar = balanceMinutes * V5_TICKETS_PER_MON_PER_MINUTE
+  const drawPeriodMinutes = totalSeconds / 60
+  const projectedTickets = balanceMon * V5_TICKETS_PER_MON_PER_MINUTE * drawPeriodMinutes
+  const liveTicketsPerMinute = balanceMon * V5_TICKETS_PER_MON_PER_MINUTE
+  const drawProgressPct = Math.max(0, Math.min(100, (elapsedSeconds / totalSeconds) * 100))
 
   return {
     hasAccount: Boolean(account),
-    hasPrincipal,
-    projectedPct,
-    steadyPct,
-    shadeLeftPct,
-    shadeWidthPct,
-    nowPct,
-    isWithdrawPreview,
-    joinedMidPeriod,
+    hasPrincipal: principal > 0n,
+    ticketsSoFar,
+    projectedTickets,
+    liveTicketsPerMinute,
+    drawProgressPct,
   }
 }
 
@@ -1348,7 +1375,7 @@ async function v5BuildHistoryRows({ account, block, vault, manager }) {
       blockNumber: log.blockNumber,
       date: v5EventDate(blockMap.get(log.blockNumber)),
       transaction: 'Degen pool deposit',
-      result: 'No odds',
+      result: 'Prize excluded',
       principal: `+${formatV5Mon(log.args?.amount)} MON`,
       prize: '—',
       tx: log.transactionHash,
@@ -1358,7 +1385,7 @@ async function v5BuildHistoryRows({ account, block, vault, manager }) {
       blockNumber: log.blockNumber,
       date: v5EventDate(blockMap.get(log.blockNumber)),
       transaction: 'Degen pool withdraw',
-      result: 'No odds',
+      result: 'Prize excluded',
       principal: `-${formatV5Mon(log.args?.amount)} MON`,
       prize: '—',
       tx: log.transactionHash,
@@ -1378,7 +1405,7 @@ async function v5BuildHistoryRows({ account, block, vault, manager }) {
   return rows.sort((a, b) => b.blockNumber - a.blockNumber).slice(0, 24)
 }
 
-function V5ActionCard({ mode, amount, setAmount, principal, walletBalance, odds, actionMode = 'deposit', setActionMode, notice, busy, account, boosterSupported, onDeposit, onWithdraw, onConnect }) {
+function V5ActionCard({ mode, amount, setAmount, principal, walletBalance, tickets, actionMode = 'deposit', setActionMode, notice, busy, account, boosterSupported, onDeposit, onWithdraw, onConnect }) {
   const isDegen = mode === 'degen'
   if (!isDegen) {
     const isDeposit = actionMode === 'deposit'
@@ -1439,34 +1466,30 @@ function V5ActionCard({ mode, amount, setAmount, principal, walletBalance, odds,
             {notice ? <p className="deposit-caption">{notice}</p> : null}
           </div>
 
-          <div className="v5-odds-panel">
-            <div className="participants-head v5-odds-head">
-              <span>Your chance · this draw</span>
-              <span title="The shaded slice is the part of this draw your balance counts — that's your chance. Deposit early to fill more; withdraw anytime and keep what you've earned.">Estimate</span>
+          <div className="v5-tickets-panel">
+            <div className="participants-head v5-tickets-head">
+              <span>Your tickets · this draw</span>
+              <span title="Tickets are rebuilt each draw from your MON balance over time. Add more MON and they pile up faster; withdraw anytime.">Live</span>
             </div>
-            <div className="v5-odds-value">{formatV5Percent(odds?.projectedPct || 0)}</div>
-            <div className="v5-odds-timeline" aria-label="Current draw odds timeline">
-              <div
-                className="v5-odds-shade"
-                style={{ left: `${odds?.shadeLeftPct || 0}%`, width: `${odds?.shadeWidthPct || 0}%` }}
-              />
-              <div className="v5-odds-now" style={{ left: `${odds?.nowPct || 0}%` }} />
+            <div className="v5-tickets-value">{formatV5Tickets(tickets?.ticketsSoFar || 0)}</div>
+            <div className="v5-tickets-rate">
+              +{formatV5Tickets(tickets?.liveTicketsPerMinute || 0)} tickets / min
             </div>
-            <div className="v5-odds-scale">
+            <div className="v5-tickets-timeline" aria-label="Current draw ticket progress">
+              <div className="v5-tickets-fill" style={{ width: `${tickets?.drawProgressPct || 0}%` }} />
+            </div>
+            <div className="v5-tickets-scale">
               <span>Start</span>
-              <span>Now</span>
               <span>Draw</span>
             </div>
-            <p className="deposit-caption v5-odds-copy">
-              {odds?.isWithdrawPreview
-                ? "Withdraw preview: you keep the odds you've earned this draw; out of future draws."
-                : odds?.joinedMidPeriod
-                  ? `Joined mid-draw: full odds from the next draw, about ${formatV5Percent(odds?.steadyPct || 0)} if balances hold.`
-                  : odds?.hasPrincipal
-                    ? 'Held for the full draw window: this draw is near your steady ongoing chance.'
-                    : 'Deposit to start filling this draw. Earlier deposits fill more of the bar.'}
+            <div className="stat-sub v5-tickets-target">
+              {formatV5Tickets(tickets?.ticketsSoFar || 0)} of ~{formatV5Tickets(tickets?.projectedTickets || 0)} by the draw
+            </div>
+            <p className="deposit-caption v5-tickets-copy">
+              {tickets?.hasPrincipal
+                ? 'Your tickets grow the longer your MON sits — add more and they pile up faster. New draw, your tickets rebuild.'
+                : 'Deposit to start building tickets for this draw. Each new draw starts fresh and rebuilds from your MON over time.'}
             </p>
-            <div className="stat-sub">Ongoing draws: ~{formatV5Percent(odds?.steadyPct || 0)}</div>
           </div>
         </div>
       </div>
@@ -1619,6 +1642,7 @@ export function V5UatExperience() {
   const [busy, setBusy] = useState('')
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
+  const [liveNowMs, setLiveNowMs] = useState(() => Date.now())
 
   const readProvider = useMemo(() => new ethers.JsonRpcProvider(cfg.rpcUrl), [cfg.rpcUrl])
   const vault = useMemo(() => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, readProvider), [cfg.prizeVault, readProvider])
@@ -1678,6 +1702,7 @@ export function V5UatExperience() {
       return logs
         .map((item) => ({
           type: item.type,
+          amount: item.log.args?.amount?.toString?.() || '0',
           blockNumber: item.log.blockNumber,
           transactionIndex: item.log.transactionIndex || 0,
           index: item.log.index || 0,
@@ -1705,9 +1730,15 @@ export function V5UatExperience() {
       balance,
       historyRows,
       periodAccountEvents: periodLogs,
+      readAtMs: Date.now(),
       boosterSupported: vaultCode !== '0x' && totalBoosterPrincipal !== null && boosterPrincipal !== null,
     })
   }, [account, cfg.prizeVault, manager, readProvider, vault])
+
+  useEffect(() => {
+    const id = setInterval(() => setLiveNowMs(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [])
 
   useEffect(() => {
     trackPageView('/v5-uat', 'EverDraw V5 UAT')
@@ -1772,9 +1803,9 @@ export function V5UatExperience() {
   const secondsRemaining = Math.max(0, periodEnd - now)
   const countdown = formatV5Duration(secondsRemaining)
   const previewCopy = state?.preview
-    ? state.preview.due ? (state.preview.willSkip ? 'Draw ready, no odds yet' : 'Draw ready for keeper') : 'Next draw building'
+    ? state.preview.due ? (state.preview.willSkip ? 'Draw ready, no tickets yet' : 'Draw ready for keeper') : 'Next draw building'
     : 'Keeper preview unavailable'
-  const oddsProjection = buildV5OddsProjection({ state, account, mode: playActionMode })
+  const ticketModel = buildV5TicketModel({ state, account, nowMs: liveNowMs })
   const claimButton = () => transact('Claim prize', claim)
   const openVaultPage = (event) => {
     event?.preventDefault?.()
@@ -1858,7 +1889,7 @@ export function V5UatExperience() {
             setAmount={setPlayAmount}
             principal={state?.principal || 0n}
             walletBalance={state?.balance || 0n}
-            odds={oddsProjection}
+            tickets={ticketModel}
             actionMode={playActionMode}
             setActionMode={setPlayActionMode}
             notice={playNotice}

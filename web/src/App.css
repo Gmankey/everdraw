@@ -1582,24 +1582,24 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
   gap: 12px;
 }
 
-.v5-odds-panel {
+.v5-tickets-panel {
   margin-top: 6px;
   padding-top: var(--space-sm);
   border-top: 1px solid rgba(155, 109, 255, 0.14);
 }
 
-.v5-odds-head {
+.v5-tickets-head {
   margin: 0 0 10px;
   padding: 0;
   border: 0;
   background: transparent;
 }
 
-.v5-odds-head span:last-child {
+.v5-tickets-head span:last-child {
   cursor: help;
 }
 
-.v5-odds-value {
+.v5-tickets-value {
   color: #ede8ff;
   font-size: 2.25rem;
   font-weight: 900;
@@ -1607,7 +1607,14 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
   letter-spacing: 0;
 }
 
-.v5-odds-timeline {
+.v5-tickets-rate {
+  margin-top: 4px;
+  color: rgba(196, 181, 253, 0.72);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.v5-tickets-timeline {
   position: relative;
   height: 14px;
   margin-top: 14px;
@@ -1617,26 +1624,17 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
   background: rgba(94, 84, 120, 0.28);
 }
 
-.v5-odds-shade {
+.v5-tickets-fill {
   position: absolute;
   top: 0;
+  left: 0;
   bottom: 0;
   min-width: 0;
   border-radius: 999px;
   background: linear-gradient(90deg, rgba(155, 109, 255, 0.92), rgba(196, 181, 253, 0.82));
 }
 
-.v5-odds-now {
-  position: absolute;
-  top: -3px;
-  bottom: -3px;
-  width: 2px;
-  transform: translateX(-1px);
-  background: #ede8ff;
-  box-shadow: 0 0 12px rgba(237, 232, 255, 0.52);
-}
-
-.v5-odds-scale {
+.v5-tickets-scale {
   display: flex;
   justify-content: space-between;
   margin-top: 7px;
@@ -1647,7 +1645,11 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
   text-transform: uppercase;
 }
 
-.v5-odds-copy {
+.v5-tickets-target {
+  margin-top: 8px;
+}
+
+.v5-tickets-copy {
   margin-top: 10px;
   text-align: left;
 }
