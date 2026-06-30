@@ -1330,20 +1330,66 @@ async function v5BuildHistoryRows({ account, block, vault, manager }) {
   return rows.sort((a, b) => b.blockNumber - a.blockNumber).slice(0, 24)
 }
 
-function V5ActionCard({ mode, amount, setAmount, principal, busy, boosterSupported, onDeposit, onWithdraw }) {
+function V5ActionCard({ mode, amount, setAmount, principal, walletBalance, actionMode = 'deposit', setActionMode, busy, account, boosterSupported, onDeposit, onWithdraw, onConnect }) {
   const isDegen = mode === 'degen'
+  if (!isDegen) {
+    const isDeposit = actionMode === 'deposit'
+    const balanceLabel = isDeposit ? 'Wallet balance' : 'Deposited balance'
+    const balanceValue = isDeposit ? walletBalance : principal
+    const submitLabel = busy
+      ? 'Submitting...'
+      : !account
+        ? `Connect Wallet to ${isDeposit ? 'Deposit' : 'Withdraw'}`
+        : isDeposit ? 'Deposit' : 'Withdraw'
+
+    return (
+      <div className="card v5-product-card">
+        <section className="round-toggle v5-action-toggle" aria-label="Deposit or withdraw">
+          <button className={`toggle-btn ${isDeposit ? 'active' : ''}`} onClick={() => setActionMode('deposit')}>Deposit</button>
+          <button className={`toggle-btn ${!isDeposit ? 'active' : ''}`} onClick={() => setActionMode('withdraw')}>Withdraw</button>
+        </section>
+
+        <div className="deposit-area">
+          <div className="input-group">
+            <div className="input-wrapper">
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+              />
+              <span className="currency-label">MON</span>
+            </div>
+            <div className="balance-info">
+              <span>{balanceLabel}: {formatV5Mon(balanceValue)} MON</span>
+              <button className="max-btn" onClick={() => setAmount(formatDepositMon(balanceValue || 0n))}>Max</button>
+            </div>
+          </div>
+
+          <div className="deposit-cta-wrap">
+            <button
+              className="btn deposit-btn"
+              disabled={Boolean(busy)}
+              onClick={!account ? onConnect : isDeposit ? onDeposit : onWithdraw}
+            >
+              {submitLabel}
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div className={`card v5-product-card ${isDegen ? 'v5-degen-card' : ''}`}>
+    <div className="card v5-product-card v5-degen-card">
       <div className="card-header">
         <div>
-          <div className="card-title">{isDegen ? 'Degen Pool' : 'Buy Tickets'}</div>
+          <div className="card-title">Degen Pool</div>
           <p className="v5-product-copy">
-            {isDegen
-              ? 'Add to the prize, earn points, no chance to win, withdraw anytime.'
-              : 'Deposits and withdrawals are open anytime. Your balance is entered in every future draw.'}
+            Add to the prize, earn points, no chance to win, withdraw anytime.
           </p>
         </div>
-        {isDegen ? <span className="open-badge">0 odds</span> : <span className="open-badge">Open</span>}
       </div>
 
       <div className="deposit-area">
@@ -1359,7 +1405,7 @@ function V5ActionCard({ mode, amount, setAmount, principal, busy, boosterSupport
             <span className="currency-label">MON</span>
           </div>
           <div className="balance-info">
-            <span>{isDegen ? 'Your Degen pool balance' : 'Your balance'}</span>
+            <span>Your Degen pool balance</span>
             <span>{formatV5Mon(principal)} MON</span>
           </div>
         </div>
@@ -1367,20 +1413,20 @@ function V5ActionCard({ mode, amount, setAmount, principal, busy, boosterSupport
         <div className="v5-action-grid">
           <button
             className="btn deposit-btn"
-            disabled={Boolean(busy) || (isDegen && !boosterSupported)}
+            disabled={Boolean(busy) || !boosterSupported}
             onClick={onDeposit}
           >
-            {busy ? 'Submitting...' : isDegen ? 'Add to Degen pool' : 'Deposit'}
+            {busy ? 'Submitting...' : 'Add to Degen pool'}
           </button>
           <button
             className="btn deposit-btn ghost-btn"
-            disabled={Boolean(busy) || (isDegen && !boosterSupported)}
+            disabled={Boolean(busy) || !boosterSupported}
             onClick={onWithdraw}
           >
             Withdraw
           </button>
         </div>
-        {isDegen && !boosterSupported ? (
+        {!boosterSupported ? (
           <p className="deposit-caption">This deployed vault does not expose the Degen pool contract methods yet.</p>
         ) : null}
       </div>
@@ -1476,6 +1522,7 @@ export function V5UatExperience() {
   const [degenAmount, setDegenAmount] = useState('1')
   const [state, setState] = useState(null)
   const [v5Page, setV5Page] = useState('vault')
+  const [playActionMode, setPlayActionMode] = useState('deposit')
   const [busy, setBusy] = useState('')
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
@@ -1604,8 +1651,6 @@ export function V5UatExperience() {
   const periodEnd = nextPeriodStart + drawPeriod
   const secondsRemaining = Math.max(0, periodEnd - now)
   const countdown = formatV5Duration(secondsRemaining)
-  const draw = state?.draw
-  const drawStatus = draw ? V5_DRAW_STATUS[Number(draw[11])] || 'Unknown' : 'Warming up'
   const previewCopy = state?.preview
     ? state.preview.due ? (state.preview.willSkip ? 'Draw ready, no odds yet' : 'Draw ready for keeper') : 'Next draw building'
     : 'Keeper preview unavailable'
@@ -1645,7 +1690,9 @@ export function V5UatExperience() {
               amount={degenAmount}
               setAmount={setDegenAmount}
               principal={state?.boosterPrincipal}
+              walletBalance={state?.balance || 0n}
               busy={busy}
+              account={account}
               boosterSupported={Boolean(state?.boosterSupported)}
               onDeposit={() => transact('Degen pool deposit', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).boostDeposit({ value: parseV5Mon(degenAmount) }))}
               onWithdraw={() => transact('Degen pool withdraw', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).boostWithdraw(parseV5Mon(degenAmount)))}
@@ -1670,8 +1717,13 @@ export function V5UatExperience() {
             amount={playAmount}
             setAmount={setPlayAmount}
             principal={state?.principal || 0n}
+            walletBalance={state?.balance || 0n}
+            actionMode={playActionMode}
+            setActionMode={setPlayActionMode}
             busy={busy}
+            account={account}
             boosterSupported
+            onConnect={connect}
             onDeposit={() => transact('Deposit', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).deposit({ value: parseV5Mon(playAmount) }))}
             onWithdraw={() => transact('Withdraw', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).withdraw(parseV5Mon(playAmount)))}
           />
@@ -1681,19 +1733,14 @@ export function V5UatExperience() {
             <div className="v5-next-draw-overlay">
               <div className="card-header vault-layer">
                 <div className="card-title">Next prize draw</div>
-                <span className="open-badge">{drawStatus}</span>
               </div>
               <div className="countdown-center vault-layer vault-center">
                 <div className="countdown-value">{countdown}</div>
                 <div className="countdown-sub">{previewCopy}</div>
-                <p className="deposit-caption">Deposits and withdrawals are open anytime. Your balance is entered in every future draw.</p>
-                <button className="btn v5-see-winners-btn" onClick={() => setV5Page('previous')}>SEE WINNERS</button>
               </div>
             </div>
           </div>
         </section>
-
-        <RoundProgressSteps state={1} settlementSecs={0} secondsRemaining={secondsRemaining} isV3 />
 
         <section className="stats-grid two-col">
           <StatCard label="Total Tickets" value={`${formatV5Mon(state?.totalParticipantPrincipal)} MON`} sub={`Draw #${state?.currentDrawId?.toString() || '0'}`} icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 7a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v2a2 2 0 0 0 0 4v2a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3v-2a2 2 0 0 0 0-4V7z"/></svg>} />
@@ -1702,21 +1749,6 @@ export function V5UatExperience() {
           <StatCard label="Total Prize Pool" value={`${formatV5Mon(state?.availableYield)} MON`} sub="Estimated current yield" icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 17h2.59l3.7-3.71 3 3L17.59 11H20v2h-1.59l-6.12 6.12-3-3L7 18.41V21H3v-4zM14 3h7v7h-2V6.41l-5.29 5.3-1.42-1.42 5.3-5.29H14V3z"/></svg>} />
         </section>
 
-        <section className="main-grid v5-degen-section" id="degen">
-          <div className="card">
-            <div className="card-header"><div className="card-title">Claim</div></div>
-            <div className="deposit-area">
-              <button
-                className="btn deposit-btn"
-                disabled={Boolean(busy) || !account}
-                onClick={() => transact('Claim prize', claim)}
-              >
-                Claim Prize
-              </button>
-              <p className="deposit-caption">Claims are fetched automatically when available.</p>
-            </div>
-          </div>
-        </section>
         </>
         )}
 

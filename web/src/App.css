@@ -1508,6 +1508,14 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
   margin: 0;
 }
 
+.v5-action-toggle {
+  margin: 0 0 var(--space-md);
+}
+
+.v5-action-toggle .toggle-btn {
+  flex: 1;
+}
+
 .v5-vault-stage {
   position: relative;
   min-height: 380px;
@@ -1521,11 +1529,6 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
   flex-direction: column;
   padding: var(--space-md);
   pointer-events: none;
-}
-
-.v5-next-draw-overlay .v5-see-winners-btn {
-  margin: 16px auto 0;
-  pointer-events: auto;
 }
 
 .v5-next-draw-overlay .countdown-center {
