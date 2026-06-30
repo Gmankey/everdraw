@@ -714,7 +714,7 @@ function FounderLaunchArticle() {
   )
 }
 
-function Header({ account, onConnect, currentPage, points }) {
+function Header({ account, onConnect, currentPage, points, showDegen = false }) {
   return (
     <header>
       <div className="logo">
@@ -723,6 +723,7 @@ function Header({ account, onConnect, currentPage, points }) {
       </div>
       <nav className="nav-links">
         <a href="/#vault" className={`nav-link ${currentPage === 'vault' ? 'active' : ''}`}>Vault</a>
+        {showDegen ? <a href="#degen" className="nav-link">Degen</a> : null}
         <a href="/#stats" className={`nav-link ${currentPage === 'stats' ? 'active' : ''}`}>Stats</a>
         <a href="/#profile" className={`nav-link ${currentPage === 'profile' ? 'active' : ''}`}>Profile</a>
         <a href="/#leaderboard" className={`nav-link ${currentPage === 'leaderboard' ? 'active' : ''}`}>Leaderboard</a>
@@ -1241,19 +1242,19 @@ function normalizeV5ClaimPayload(payload) {
 }
 
 function V5ActionCard({ mode, amount, setAmount, principal, busy, boosterSupported, onDeposit, onWithdraw }) {
-  const isBooster = mode === 'boost'
+  const isDegen = mode === 'degen'
   return (
-    <div className={`card v5-product-card ${isBooster ? 'v5-degen-card' : ''}`}>
+    <div className={`card v5-product-card ${isDegen ? 'v5-degen-card' : ''}`}>
       <div className="card-header">
         <div>
-          <div className="card-title">{isBooster ? 'Degen Pool' : 'Play the Draw'}</div>
+          <div className="card-title">{isDegen ? 'Degen Pool' : 'Buy Tickets'}</div>
           <p className="v5-product-copy">
-            {isBooster
-              ? 'Grow the public prize pool without taking winner odds. Your principal stays withdrawable while the yield funds everyone\'s draw.'
-              : 'Deposit testnet MON for V5 odds. Your position stays continuous across draws until you withdraw.'}
+            {isDegen
+              ? 'Add to the prize, earn points, no chance to win, withdraw anytime.'
+              : 'Deposits and withdrawals are open anytime. Your balance is entered in every future draw.'}
           </p>
         </div>
-        {isBooster ? <span className="open-badge">0 odds</span> : <span className="open-badge">V5</span>}
+        {isDegen ? <span className="open-badge">0 odds</span> : <span className="open-badge">Open</span>}
       </div>
 
       <div className="deposit-area">
@@ -1269,7 +1270,7 @@ function V5ActionCard({ mode, amount, setAmount, principal, busy, boosterSupport
             <span className="currency-label">MON</span>
           </div>
           <div className="balance-info">
-            <span>{isBooster ? 'Your Degen Pool balance' : 'Your playing balance'}</span>
+            <span>{isDegen ? 'Your Degen pool balance' : 'Your balance'}</span>
             <span>{formatV5Mon(principal)} MON</span>
           </div>
         </div>
@@ -1277,21 +1278,21 @@ function V5ActionCard({ mode, amount, setAmount, principal, busy, boosterSupport
         <div className="v5-action-grid">
           <button
             className="btn deposit-btn"
-            disabled={Boolean(busy) || (isBooster && !boosterSupported)}
+            disabled={Boolean(busy) || (isDegen && !boosterSupported)}
             onClick={onDeposit}
           >
-            {busy ? 'Submitting...' : isBooster ? 'Add to Degen Pool' : 'Deposit to Play'}
+            {busy ? 'Submitting...' : isDegen ? 'Add to Degen pool' : 'Deposit'}
           </button>
           <button
             className="btn deposit-btn ghost-btn"
-            disabled={Boolean(busy) || (isBooster && !boosterSupported)}
+            disabled={Boolean(busy) || (isDegen && !boosterSupported)}
             onClick={onWithdraw}
           >
             Withdraw
           </button>
         </div>
-        {isBooster && !boosterSupported ? (
-          <p className="deposit-caption">This deployed vault does not expose the Degen Pool contract methods yet. The UI is ready; the V5 UAT address needs the booster-enabled vault.</p>
+        {isDegen && !boosterSupported ? (
+          <p className="deposit-caption">This deployed vault does not expose the Degen pool contract methods yet.</p>
         ) : null}
       </div>
     </div>
@@ -1439,71 +1440,52 @@ export function V5UatExperience() {
 
   return (
     <div className="app-shell v5-uat-mode">
+      <div className="beta-corner-ribbon" title="Testnet UAT only"></div>
       <div className="app-container">
-        <header>
-          <div className="logo">EverDraw</div>
-          <nav className="nav-links">
-            <a href="#vault" className="nav-link active">Vault</a>
-            <a href="#stats" className="nav-link">Stats</a>
-            <a href="#profile" className="nav-link">Rewards</a>
-          </nav>
-          <div className="header-actions">
-            <span className="v5-uat-pill">TESTNET / UAT</span>
-            <button className="btn" onClick={connect}>{account ? shortAddr(account) : 'Connect Wallet'}</button>
-          </div>
-        </header>
+        <Header account={account} onConnect={connect} currentPage="vault" points={null} showDegen />
+        <div className="v5-uat-strip">TESTNET / UAT</div>
 
-        <section className="v5-uat-banner-prod">
-          <span className="round-label-hero">V5 Continuous Draws</span>
-          <h1>Win from the vault. Boost the prize.</h1>
-          <p>Testing the real V5 product flow on Monad testnet: deposit to play, use the Degen Pool to grow prizes without odds, withdraw anytime, and claim with one click.</p>
+        <h1>
+          Win the Pot.
+          <br />
+          Or keep your lot.
+        </h1>
+
+        <section className="vault-bar">
+          <button className="vault-label active" tabIndex={-1}>VAULT A</button>
+          <div className="vault-gear-track">
+            <div className="vault-gear-knob">⚙</div>
+          </div>
+          <button className="vault-label" tabIndex={-1}>VAULT B</button>
+          <div className="vault-bar-divider"></div>
+          <button className="vault-aux-btn" disabled>Previous Vault</button>
+          <button className="vault-aux-btn" disabled>My Rounds</button>
         </section>
 
-        <section className="main-grid v5-main-grid">
-          <div className="v5-left-stack">
-            <V5ActionCard
-              mode="play"
-              amount={playAmount}
-              setAmount={setPlayAmount}
-              principal={state?.principal || 0n}
-              busy={busy}
-              boosterSupported
-              onDeposit={() => transact('Deposit', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).deposit({ value: parseV5Mon(playAmount) }))}
-              onWithdraw={() => transact('Withdraw', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).withdraw(parseV5Mon(playAmount)))}
-            />
-            <V5ActionCard
-              mode="boost"
-              amount={degenAmount}
-              setAmount={setDegenAmount}
-              principal={state?.boosterPrincipal}
-              busy={busy}
-              boosterSupported={Boolean(state?.boosterSupported)}
-              onDeposit={() => transact('Degen Pool deposit', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).boostDeposit({ value: parseV5Mon(degenAmount) }))}
-              onWithdraw={() => transact('Degen Pool withdraw', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).boostWithdraw(parseV5Mon(degenAmount)))}
-            />
-          </div>
+        <section className="main-grid">
+          <V5ActionCard
+            mode="play"
+            amount={playAmount}
+            setAmount={setPlayAmount}
+            principal={state?.principal || 0n}
+            busy={busy}
+            boosterSupported
+            onDeposit={() => transact('Deposit', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).deposit({ value: parseV5Mon(playAmount) }))}
+            onWithdraw={() => transact('Withdraw', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).withdraw(parseV5Mon(playAmount)))}
+          />
 
-          <div className="card filled vault-card v5-draw-card">
-            <div className="card-header vault-layer">
-              <div className="card-title">Next V5 Draw</div>
-              <span className="open-badge">{drawStatus}</span>
-            </div>
-            <div className="countdown-center vault-layer vault-center">
-              <div className="countdown-value">{countdown}</div>
-              <div className="countdown-sub">{previewCopy}</div>
-            </div>
-            <div className="v5-claim-panel vault-layer">
-              <div>
-                <strong>{formatV5Mon(state?.availableYield)} MON</strong>
-                <span>Current prize yield</span>
+          <div className="card filled vault-card v5-vault-stage" id="vault-card">
+            <VaultDoorBackground progressPct={50} salesOpen />
+            <div className="v5-next-draw-overlay">
+              <div className="card-header vault-layer">
+                <div className="card-title">Next prize draw</div>
+                <span className="open-badge">{drawStatus}</span>
               </div>
-              <button
-                className="btn btn-winners"
-                disabled={Boolean(busy) || !account}
-                onClick={() => transact('Claim prize', claim)}
-              >
-                Claim Prize
-              </button>
+              <div className="countdown-center vault-layer vault-center">
+                <div className="countdown-value">{countdown}</div>
+                <div className="countdown-sub">{previewCopy}</div>
+                <p className="deposit-caption">Deposits and withdrawals are open anytime. Your balance is entered in every future draw.</p>
+              </div>
             </div>
           </div>
         </section>
@@ -1511,20 +1493,35 @@ export function V5UatExperience() {
         <RoundProgressSteps state={1} settlementSecs={0} secondsRemaining={secondsRemaining} isV3 />
 
         <section className="stats-grid two-col">
-          <StatCard label="Playing Principal" value={`${formatV5Mon(state?.totalParticipantPrincipal)} MON`} sub="Odds-bearing V5 deposits" icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 7a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v2a2 2 0 0 0 0 4v2a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3v-2a2 2 0 0 0 0-4V7z"/></svg>} />
-          <StatCard label="Degen Pool" value={state?.totalBoosterPrincipal === null ? 'Pending' : `${formatV5Mon(state?.totalBoosterPrincipal)} MON`} sub="Zero-odds principal growing the prize" icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>} />
-          <StatCard label="Draw" value={`#${state?.currentDrawId?.toString() || '0'}`} sub={draw ? `Status: ${drawStatus}` : 'First V5 draw pending'} icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M6 4h12v3a4 4 0 0 1-4 4h-1v2.08A4 4 0 0 1 16 17v2H8v-2a4 4 0 0 1 3-3.87V11h-1a4 4 0 0 1-4-4V4z"/></svg>} />
-          <StatCard label="Wallet" value={account ? `${formatV5Mon(state?.balance)} MON` : 'Connect'} sub={state?.paused ? 'Vault paused' : Number(state?.stoppedAt || 0n) ? 'Vault stopped' : 'Monad testnet'} icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 7a3 3 0 0 1 3-3h14v4H6a1 1 0 0 0 0 2h15v10H6a3 3 0 0 1-3-3V7zm14 7a1.5 1.5 0 1 0 0 3h2v-3h-2z"/></svg>} />
+          <StatCard label="Total Tickets" value={`${formatV5Mon(state?.totalParticipantPrincipal)} MON`} sub={`Draw #${state?.currentDrawId?.toString() || '0'}`} icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 7a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v2a2 2 0 0 0 0 4v2a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3v-2a2 2 0 0 0 0-4V7z"/></svg>} />
+          <StatCard label="Total TVL" value={`${formatV5Mon(state?.totalPrincipal)} MON`} sub="SHMON Deposited" icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>} />
+          <StatCard label="Winner" value="—" sub="Revealed after draw" icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M6 4h12v3a4 4 0 0 1-4 4h-1v2.08A4 4 0 0 1 16 17v2H8v-2a4 4 0 0 1 3-3.87V11h-1a4 4 0 0 1-4-4V4z"/></svg>} />
+          <StatCard label="Total Prize Pool" value={`${formatV5Mon(state?.availableYield)} MON`} sub="Estimated current yield" icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 17h2.59l3.7-3.71 3 3L17.59 11H20v2h-1.59l-6.12 6.12-3-3L7 18.41V21H3v-4zM14 3h7v7h-2V6.41l-5.29 5.3-1.42-1.42 5.3-5.29H14V3z"/></svg>} />
         </section>
 
-        <section className="participants-card v5-contract-strip">
-          <div className="participants-head">
-            <span>V5 Testnet Contracts</span>
-            <button className="max-btn" onClick={() => refresh()}>Refresh</button>
-          </div>
-          <div className="participants-table">
-            <div className="participants-row v5-contract-row"><span>Vault</span><span>{shortAddr(cfg.prizeVault)}</span><span>Draw Manager</span><span>{shortAddr(cfg.drawManager)}</span><span>Claim Manager</span></div>
-            <div className="participants-row v5-contract-row"><span>Proofs</span><span>{cfg.claimProofUrl ? 'Configured' : 'Waiting on indexer URL'}</span><span>Chain</span><span>Monad testnet</span><span>{shortAddr(cfg.claimManager)}</span></div>
+        <section className="main-grid v5-degen-section" id="degen">
+          <V5ActionCard
+            mode="degen"
+            amount={degenAmount}
+            setAmount={setDegenAmount}
+            principal={state?.boosterPrincipal}
+            busy={busy}
+            boosterSupported={Boolean(state?.boosterSupported)}
+            onDeposit={() => transact('Degen pool deposit', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).boostDeposit({ value: parseV5Mon(degenAmount) }))}
+            onWithdraw={() => transact('Degen pool withdraw', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).boostWithdraw(parseV5Mon(degenAmount)))}
+          />
+          <div className="card">
+            <div className="card-header"><div className="card-title">Claim</div></div>
+            <div className="deposit-area">
+              <button
+                className="btn deposit-btn"
+                disabled={Boolean(busy) || !account}
+                onClick={() => transact('Claim prize', claim)}
+              >
+                Claim Prize
+              </button>
+              <p className="deposit-caption">Claims are fetched automatically when available.</p>
+            </div>
           </div>
         </section>
 

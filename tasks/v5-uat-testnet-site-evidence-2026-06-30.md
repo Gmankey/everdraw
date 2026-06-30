@@ -47,3 +47,17 @@ Date: 2026-06-30
 - Participant flow is `Deposit to Play` / `Withdraw`, wired to `deposit()` and `withdraw()`.
 - Claim is a single `Claim Prize` button. It auto-fetches proofs from `VITE_V5_CLAIM_PROOF_URL` and calls `claimMany`; there is no JSON paste box.
 - The repo does not currently expose a frontend-consumable proof endpoint; the keeper has proof data internally for batch `claimMany`. If `VITE_V5_CLAIM_PROOF_URL` is not configured yet, the one-button claim flow shows a product message instead of asking the user for raw proofs.
+
+## Rev 3 Strict Deviation Fix
+
+- Reverted the UAT surface to the production layout: production `Header`, production H1 copy, production `vault-bar`, production `main-grid`, production stat labels/order, and production footer/disclaimer placement.
+- Added only the allowed top-nav delta: `Degen`.
+- Mounted the production vault card/graphic path with `VaultDoorBackground` in the same right-side main-grid position and size.
+- Countdown now reads as `Next prize draw`, not a deposit deadline, with the short line: `Deposits and withdrawals are open anytime. Your balance is entered in every future draw.`
+- Removed the rev-2 custom hero, contract diagnostics strip, custom card placement, and stray visible boost wording.
+- Browser pass on the final deploy confirmed:
+  - nav: `Vault`, `Degen`, `Stats`, `Profile`, `Leaderboard`, `Articles`, `Docs`
+  - cards: `Buy Tickets`, `Next prize draw`, `Degen Pool`, `Claim`
+  - vault graphic/card mounted at the production right-side main-grid size
+  - no visible `Boost Deposit`, `Boost the prize`, `Claim Many`, `Paste a ClaimManager`, or `V5 Testnet Contracts`
+  - no browser console errors
