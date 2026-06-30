@@ -1,23 +1,33 @@
-# Builder ticket — V5 UAT testnet site (separate Vercel, do NOT touch production)
+# Builder ticket — V5 UAT testnet site (REDO: must look/behave like production)
 
-**Date:** 2026-06-30. **From:** PM. **For:** Builder. **Why:** the operator needs to test the full V5 product — including the **Degen pool** — through the real UI before mainnet. Until now V5 has only been driven on-chain via `cast`; there is no frontend to user-acceptance-test it. (PM oversight — fixing it.)
+**Date:** 2026-06-30 (rev 2). **From:** PM. **For:** Builder. **Supersedes the first attempt (PR #170).**
 
-## Decision
-Stand up a **separate, isolated testnet UAT site** for the V5 frontend, pointed at the V5 **testnet** contracts. **Hard constraint: do not overwrite, repoint, or modify anything in production** — not the prod Vercel project, not its env vars, not its domain. New Vercel project, new env, new preview URL.
+## What went wrong (rev 1)
+The first attempt built a **bespoke debug page** — raw hex address cards, a "Boost Deposit" button, and a "paste a ClaimManager leaf/proof JSON" box. **That is not UAT.** No real user ever sees raw addresses or pastes a merkle proof. UAT means a **user exercises the real product experience** to catch UX/visual/flow problems — so the UAT site must look and behave **like production**, just on testnet. My rev-1 ticket failed to say that. Fixing it here.
 
-## Build / deploy
-1. **New Vercel project** (e.g. `everdraw-v5-uat`) from `web/`, separate from the prod `everdraw` project. Its own preview URL (no custom prod domain).
-2. **Env points at V5 testnet** (current soak deploy):
-   - chain id `10143`, RPC `https://testnet-rpc.monad.xyz`
-   - DrawManager `0x58502275bE5d5e998fE8318eC6343a0bc2A81C7c`, PrizeVault `0x5dB2AA29ACf832baf43d10BAEd6ff53a23549f10`, TwabController `0x165A546828e122935DE6B96ec894Ef14705194d7`, ClaimManager `0x885b117Dd7268bc8F26F5800330900d2Fb3dD1ac`
-   - (If you redeploy V5 for the Degen-pool soak, repoint UAT to the new addresses — never prod.)
-3. **Frontend must surface the V5 surfaces** so the operator can actually test: deposit + withdraw (participant), the **Degen pool deposit/withdraw** (zero-odds, points), current draw / prize, claim. If the Degen-pool UI isn't built yet, flag it — that's part of UAT scope.
-4. **Label it clearly as TESTNET/UAT** in the UI so it can never be confused with prod.
+## What UAT must be
+Deploy the **real production frontend** (`web/`, the same app behind `everdraw.xyz` — its design system, components, header, wallet-connect, styling, polish) to the isolated testnet Vercel project, presenting **V5's flows** in that production look. A user should not be able to tell it apart from the real product except for a small "testnet" banner.
+
+- **Reuse the production app** (`web/src/App.jsx`, `App.css`, `Stats.jsx`, the existing components and visual identity). **Do NOT build a new standalone page.** V5 ≠ V4.1 functionally (continuous TWAB, no rounds), so build V5's flows *inside* the production design language — the result is effectively the future V5 production frontend, tested on testnet first.
+- **Real user flows, production-styled (no dev-isms):**
+  - Prize/pot, current draw, countdown — styled like prod, not raw cards.
+  - **Deposit to play** (participant) — the real deposit UX.
+  - **Withdraw** — real UX.
+  - **Degen pool** — a polished product feature with plain-language copy ("add to the prize, earn points, no chance to win, withdraw anytime"), not a raw "Boost Deposit" button.
+  - **Claim = ONE BUTTON.** The frontend must **auto-fetch the proof** from the indexer/keeper output and submit the claim. **Never** ask the user to paste JSON/leaves/proofs. If the proof source isn't wired, that's part of this ticket.
+  - Wallet connect identical to prod.
+- Raw addresses/chain debug info, if shown at all, belong in a small footer/diagnostics area — never the primary UI.
+
+## Isolation (unchanged, keep it)
+- Same separate Vercel project `everdraw-v5-uat` (already created) — **redeploy the corrected frontend to it**, don't make another.
+- Points at V5 testnet (chain 10143, DrawManager `0x58502275…`, vault `0x5dB2AA…`, claim `0x885b11…`).
+- **Production (`everdraw.xyz` + its Vercel project/envs/domain) must stay untouched** — verified rev 1, keep it that way.
+- Small persistent "TESTNET / UAT" banner so it can't be mistaken for prod.
 
 ## Acceptance
-- A working preview URL the operator can open and exercise the full flow on testnet.
-- Production (`everdraw.xyz`, the prod Vercel project + envs) is provably untouched (working rule #6 — confirm the prod site still serves the prod build and addresses).
-- Deliver as your own committed PR + the live UAT URL.
+- The UAT URL looks and feels like `everdraw.xyz` (same design system/components), with V5 flows a real user can complete: connect, deposit, withdraw, degen deposit/withdraw, see prize/draw, and **claim with a single click (no JSON paste)**.
+- Prod confirmed untouched (working rule #6).
+- Deliver as your own committed PR + the updated UAT URL.
 
-## Note
-This is the UAT gate before any V5 mainnet launch. Real user-acceptance testing (deposit/withdraw/degen/claim through the UI) happens here first.
+## Note on the "match production" nuance
+"Match production exactly" = match the **look, feel, polish, components, and UX patterns** of `everdraw.xyz`. It does **not** mean clone the V4.1 round UI (V5 has no rounds). Present V5's real flows with production-grade design so UAT reflects what users will actually experience at V5 launch.
