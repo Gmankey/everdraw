@@ -26,18 +26,20 @@ On the participant vault view, add a **"Your chance in the next draw"** element:
 - Do not show a "tickets" counter or a cumulative "odds keep rising the longer you stay" meter — that's factually wrong for TWAB and will mislead.
 - Do not present the draw countdown as a deposit deadline (see the UAT countdown fix).
 
-## Visual spec — draw-period timeline (PM-designed, build this)
-Make time-weighting legible by drawing the **draw period as a horizontal timeline (start → draw)** and **shading the slice of it the user's balance is counted for**. That shaded slice *is* their chance. This is the required presentation.
+## Visual spec — balance-over-the-draw AREA model (PM-designed, build this)
+**(Supersedes the earlier "binary shaded-slice" idea — that can't represent multiple deposits/withdrawals.)** The truth is **time-weighted average balance**: plot the user's **balance over the current draw period (start → draw)** as a step area — it steps **up** at each deposit (only from when it's added) and **down** at each withdraw — and the user's weight is the **average height (the shaded area ÷ the period width)**. That average is what counts; the % is their share of it across all players.
 
-- **Headline:** "Your chance · this draw" = projected final share **if they hold their current balance to the draw** (`yourTWAB_projected / totalTWAB_projected`). Project, don't tick per-second — it should only move when the user or others act. Show it's an estimate.
-- **Timeline bar:** track = the current draw period; shade (accent) the portion their balance counts; leave the rest muted; mark "now".
-  - **Held all period:** full bar → full % (steady state). Copy: entered at full odds every draw until withdraw.
-  - **Joined mid-period:** only the post-join slice shaded → reduced % "this draw"; copy: full odds (~steady %) from the next draw.
-  - **Withdraw preview:** when the user opens withdraw, show the slice they'd keep (start → now) and the % they **keep this draw**, with copy "you keep the odds you've earned; out of future draws." Show this BEFORE they confirm.
-- **Secondary line:** "ongoing draws: ~Y%" = steady-state share once held a full period, so the mid-join case isn't mistaken for their permanent odds.
-- One-line explainer + tooltip: "The shaded slice is the part of this draw your balance counts — that's your chance. Deposit early to fill more; withdraw anytime and keep what you've earned."
-- Reuse production card/stat styling; no new component system (UAT rule).
-- Reference mockups: held-all / joined-halfway / withdraw-halfway timeline cards (shared by PM 2026-06-30).
+- **The % means (label it explicitly):** "Your chance to win this draw" = **your time-weighted deposit ÷ everyone's time-weighted deposit** — a win probability, not a share of the prize. Show the denominator in plain terms ("your 7.5 ÷ 60 in the pool") and an intuitive **"≈ 1 in N draws"**. Don't show a bare % with no "of what."
+- **Headline = projected if they hold** current balance to the draw (`yourTWAB_projected / totalTWAB_projected`). Project — don't tick per-second; only moves when the user or others act. Mark it an estimate (finalizes at draw).
+- **The chart (the core element):** y = your balance, x = the draw period. Step up at each deposit, down at each withdraw; shade the area; draw the **average line = "what counts."** This makes every case fall out naturally:
+  - **Held all period (one deposit):** flat full rectangle → average = full balance.
+  - **Joined mid-period:** zero then a step up → average is the post-join portion only → reduced this draw; full from next draw.
+  - **Deposited again later:** a low step then a taller step → average is **between** the two (e.g. 5 then +5 → avg 7.5, NOT 10) → later money counts only from when added.
+  - **Withdraw preview:** show the step down to zero at "now" → the average (and the odds) they **keep this draw**; out of future draws. Show BEFORE they confirm.
+- **Secondary line:** "ongoing draws: ~Y%" = steady-state share once a steady balance has been held a full period (so a mid-period state isn't mistaken for permanent odds).
+- Tooltip: "Your chance = your average balance over the draw ÷ everyone's. Money counts from when you add it and the longer it sits, so deposit early/bigger to raise your average. Withdraw anytime — you keep what you've earned."
+- Reuse production card/stat styling; no new component system (UAT rule). Do NOT show a tickets counter or an ever-rising meter; do NOT present the countdown as a deposit deadline.
+- Reference mockups (PM, 2026-06-30): held-all / joined-halfway / withdraw-halfway slice cards, and the balance-over-draw step-area chart (5 at start, +5 midweek → avg 7.5 → 12.5%).
 
 ## Acceptance
-- A user sees a correct, plain-language "your chance" built on the **draw-period timeline / shaded-slice** model above, with correct behavior for: held-full (full+steady), joined-mid (reduced this draw, full next), and withdraw-mid (keep earned slice, out of future). Matches production styling. PM reviews against the mechanic + the mockups before merge.
+- A user sees "Your chance to win this draw = X%" with an explicit "of what" (your time-weighted deposit ÷ everyone's) and a "≈ 1 in N" intuition, backed by the **balance-over-the-draw area chart** that correctly renders: held-full, joined-mid, **multiple deposits at different times (average between them)**, and withdraw-mid (keep earned, out of future). Matches production styling. PM reviews against the mechanic + mockups before merge.
