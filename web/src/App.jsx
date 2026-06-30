@@ -714,7 +714,7 @@ function FounderLaunchArticle() {
   )
 }
 
-function Header({ account, onConnect, currentPage, points, showDegen = false }) {
+function Header({ account, onConnect, currentPage, points, showDegen = false, onDegenClick, onVaultClick }) {
   return (
     <header>
       <div className="logo">
@@ -722,8 +722,8 @@ function Header({ account, onConnect, currentPage, points, showDegen = false }) 
         EverDraw
       </div>
       <nav className="nav-links">
-        <a href="/#vault" className={`nav-link ${currentPage === 'vault' ? 'active' : ''}`}>Vault</a>
-        {showDegen ? <a href="#degen" className="nav-link">Degen</a> : null}
+        <a href="/#vault" className={`nav-link ${currentPage === 'vault' ? 'active' : ''}`} onClick={onVaultClick}>Vault</a>
+        {showDegen ? <a href="#degen" className={`nav-link ${currentPage === 'degen' ? 'active' : ''}`} onClick={onDegenClick}>Degen</a> : null}
         <a href="/#stats" className={`nav-link ${currentPage === 'stats' ? 'active' : ''}`}>Stats</a>
         <a href="/#profile" className={`nav-link ${currentPage === 'profile' ? 'active' : ''}`}>Profile</a>
         <a href="/#leaderboard" className={`nav-link ${currentPage === 'leaderboard' ? 'active' : ''}`}>Leaderboard</a>
@@ -1135,6 +1135,10 @@ const V5_VAULT_ABI = [
   'function availableYield() view returns (uint256)',
   'function paused() view returns (bool)',
   'function stoppedAt() view returns (uint64)',
+  'event Deposit(address indexed recipient, uint256 amount)',
+  'event Withdraw(address indexed recipient, uint256 amount)',
+  'event BoostDeposit(address indexed booster, uint256 amount, uint256 balance, uint64 timestamp)',
+  'event BoostWithdraw(address indexed booster, uint256 amount, uint256 balance, uint64 timestamp)',
 ]
 
 const V5_DRAW_MANAGER_ABI = [
@@ -1143,6 +1147,7 @@ const V5_DRAW_MANAGER_ABI = [
   'function drawPeriod() view returns (uint64)',
   'function previewStartDraw() view returns (bool due,bool willSkip,uint256 requiredFee)',
   'function draws(uint256) view returns (uint64 periodStart,uint64 periodEnd,uint64 randomnessRequestId,bytes32 seed,uint256 totalTwab,uint256 totalPayout,uint32 winnerCount,uint32 rewardLegCount,bytes32 root,uint64 proposedAt,address proposer,uint8 status,uint256 grossYield,uint256 sponsorYield,uint256 feeAmount)',
+  'event RootFinalized(uint256 indexed drawId, bytes32 indexed root, uint32 winnerCount, uint256 totalPayout)',
 ]
 
 const V5_CLAIM_MANAGER_ABI = [
@@ -1241,6 +1246,90 @@ function normalizeV5ClaimPayload(payload) {
   }
 }
 
+function v5EventDate(block) {
+  if (!block?.timestamp) return '—'
+  return new Date(Number(block.timestamp) * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function v5ExplorerTx(hash) {
+  return hash ? `https://testnet.monadexplorer.com/tx/${hash}` : '#'
+}
+
+async function v5BuildHistoryRows({ account, block, vault, manager }) {
+  if (!block?.number) return []
+  const fromBlock = Math.max(0, Number(block.number) - 200000)
+  const [deposits, withdrawals, boostDeposits, boostWithdrawals, finalizedDraws] = await Promise.all([
+    account ? vault.queryFilter(vault.filters.Deposit(account), fromBlock, block.number).catch(() => []) : [],
+    account ? vault.queryFilter(vault.filters.Withdraw(account), fromBlock, block.number).catch(() => []) : [],
+    account ? vault.queryFilter(vault.filters.BoostDeposit(account), fromBlock, block.number).catch(() => []) : [],
+    account ? vault.queryFilter(vault.filters.BoostWithdraw(account), fromBlock, block.number).catch(() => []) : [],
+    manager.queryFilter(manager.filters.RootFinalized(), fromBlock, block.number).catch(() => []),
+  ])
+
+  const logs = [...deposits, ...withdrawals, ...boostDeposits, ...boostWithdrawals, ...finalizedDraws]
+  const blockNumbers = [...new Set(logs.map((log) => log.blockNumber).filter(Boolean))]
+  const eventProvider = manager.runner?.provider || manager.runner
+  const blockMap = new Map(await Promise.all(blockNumbers.map(async (blockNumber) => [
+    blockNumber,
+    await eventProvider.getBlock(blockNumber).catch(() => null),
+  ])))
+
+  const rows = [
+    ...deposits.map((log) => ({
+      key: `${log.transactionHash}-deposit-${log.index}`,
+      blockNumber: log.blockNumber,
+      date: v5EventDate(blockMap.get(log.blockNumber)),
+      transaction: 'Deposit',
+      result: 'Entered',
+      principal: `+${formatV5Mon(log.args?.amount)} MON`,
+      prize: '—',
+      tx: log.transactionHash,
+    })),
+    ...withdrawals.map((log) => ({
+      key: `${log.transactionHash}-withdraw-${log.index}`,
+      blockNumber: log.blockNumber,
+      date: v5EventDate(blockMap.get(log.blockNumber)),
+      transaction: 'Withdraw',
+      result: 'Exited',
+      principal: `-${formatV5Mon(log.args?.amount)} MON`,
+      prize: '—',
+      tx: log.transactionHash,
+    })),
+    ...boostDeposits.map((log) => ({
+      key: `${log.transactionHash}-boost-deposit-${log.index}`,
+      blockNumber: log.blockNumber,
+      date: v5EventDate(blockMap.get(log.blockNumber)),
+      transaction: 'Degen pool deposit',
+      result: 'No odds',
+      principal: `+${formatV5Mon(log.args?.amount)} MON`,
+      prize: '—',
+      tx: log.transactionHash,
+    })),
+    ...boostWithdrawals.map((log) => ({
+      key: `${log.transactionHash}-boost-withdraw-${log.index}`,
+      blockNumber: log.blockNumber,
+      date: v5EventDate(blockMap.get(log.blockNumber)),
+      transaction: 'Degen pool withdraw',
+      result: 'No odds',
+      principal: `-${formatV5Mon(log.args?.amount)} MON`,
+      prize: '—',
+      tx: log.transactionHash,
+    })),
+    ...finalizedDraws.map((log) => ({
+      key: `${log.transactionHash}-draw-${log.index}`,
+      blockNumber: log.blockNumber,
+      date: v5EventDate(blockMap.get(log.blockNumber)),
+      transaction: `Prize draw #${log.args?.drawId?.toString?.() || '—'}`,
+      result: 'Finalized',
+      principal: '—',
+      prize: `${formatV5Mon(log.args?.totalPayout)} MON`,
+      tx: log.transactionHash,
+    })),
+  ]
+
+  return rows.sort((a, b) => b.blockNumber - a.blockNumber).slice(0, 24)
+}
+
 function V5ActionCard({ mode, amount, setAmount, principal, busy, boosterSupported, onDeposit, onWithdraw }) {
   const isDegen = mode === 'degen'
   return (
@@ -1299,6 +1388,86 @@ function V5ActionCard({ mode, amount, setAmount, principal, busy, boosterSupport
   )
 }
 
+function V5PreviousRound({ state, onBack, onClaim, busy, status, error }) {
+  const draw = state?.draw
+  const drawId = state?.currentDrawId?.toString?.() || '0'
+  const winnerCount = Number(draw?.winnerCount ?? draw?.[6] ?? 0)
+  const prize = `${formatV5Mon(draw?.totalPayout ?? draw?.[5])} MON`
+  const statusLabel = draw ? V5_DRAW_STATUS[Number(draw?.status ?? draw?.[11])] || 'Unknown' : 'Warming up'
+
+  return (
+    <div className="winners-view-page">
+      <div className="winners-back-wrap">
+        <button className="back-link" onClick={onBack}>{'\u2190'} Back to Vault</button>
+      </div>
+
+      <div className="winners-hero">
+        <h2>Previous Round</h2>
+        <p className="round-label-hero">Draw {drawId}</p>
+      </div>
+
+      <div className="winner-spotlight-card">
+        <div className="winner-address">{winnerCount > 0 ? `${winnerCount} winner${winnerCount === 1 ? '' : 's'}` : 'No winner yet'}</div>
+        <div className="winner-stats">
+          <div>
+            <span>Prize Won</span>
+            <strong>{prize}</strong>
+          </div>
+          <div>
+            <span>Status</span>
+            <strong>{statusLabel}</strong>
+          </div>
+        </div>
+        <button className="btn" onClick={onClaim} disabled={Boolean(busy)}>Claim Prize</button>
+      </div>
+
+      <div className="participants-card">
+        <div className="participants-head">
+          <span>All Participants</span>
+          <span>V5 UAT</span>
+        </div>
+        <div className="participants-table">
+          <div className="participants-row">
+            <span>{'\u2014'}</span><span>Winner data comes from the V5 claim indexer when a draw finalizes.</span><span>{winnerCount}</span><span>{statusLabel}</span><span>{prize}</span>
+          </div>
+        </div>
+      </div>
+
+      {status ? <p className="deposit-caption">{status}</p> : null}
+      {error ? <p className="deposit-caption" style={{ color: '#ff8ea1' }}>{error}</p> : null}
+    </div>
+  )
+}
+
+function V5HistoryTable({ account, rows }) {
+  return (
+    <section className="participants-card v5-history-card">
+      <div className="participants-head">
+        <span>My History</span>
+        <span>{account ? shortAddr(account) : 'Connect wallet'}</span>
+      </div>
+      <div className="participants-table">
+        <div className="participants-row participants-header v5-history-row">
+          <span>Date</span><span>Transaction</span><span>Result</span><span>Principal</span><span>Prize</span>
+        </div>
+        {!account ? (
+          <div className="points-empty-state">Connect a wallet to view your history.</div>
+        ) : rows.length === 0 ? (
+          <div className="points-empty-state">No V5 UAT history found yet.</div>
+        ) : rows.map((row) => (
+          <div className="participants-row v5-history-row" key={row.key}>
+            <span>{row.date}</span>
+            <span>{row.tx ? <a className="stats-winner-link" href={v5ExplorerTx(row.tx)} target="_blank" rel="noopener noreferrer">{row.transaction}</a> : row.transaction}</span>
+            <span>{row.result}</span>
+            <span>{row.principal}</span>
+            <span>{row.prize}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
 export function V5UatExperience() {
   initPosthog()
   const cfg = useMemo(v5Config, [])
@@ -1306,6 +1475,7 @@ export function V5UatExperience() {
   const [playAmount, setPlayAmount] = useState('1')
   const [degenAmount, setDegenAmount] = useState('1')
   const [state, setState] = useState(null)
+  const [v5Page, setV5Page] = useState('vault')
   const [busy, setBusy] = useState('')
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
@@ -1351,6 +1521,7 @@ export function V5UatExperience() {
       vault.boosterPrincipalOf(user).catch(() => null),
       readProvider.getBalance(user).catch(() => 0n),
     ]) : [0n, 0n, 0n]
+    const historyRows = await v5BuildHistoryRows({ account: user, block, vault, manager })
 
     setState({
       block,
@@ -1368,6 +1539,7 @@ export function V5UatExperience() {
       principal,
       boosterPrincipal,
       balance,
+      historyRows,
       boosterSupported: vaultCode !== '0x' && totalBoosterPrincipal !== null && boosterPrincipal !== null,
     })
   }, [account, cfg.prizeVault, manager, readProvider, vault])
@@ -1437,12 +1609,21 @@ export function V5UatExperience() {
   const previewCopy = state?.preview
     ? state.preview.due ? (state.preview.willSkip ? 'Draw ready, no odds yet' : 'Draw ready for keeper') : 'Next draw building'
     : 'Keeper preview unavailable'
+  const claimButton = () => transact('Claim prize', claim)
+  const openVaultPage = (event) => {
+    event?.preventDefault?.()
+    setV5Page('vault')
+  }
+  const openDegenPage = (event) => {
+    event?.preventDefault?.()
+    setV5Page('degen')
+  }
 
   return (
     <div className="app-shell v5-uat-mode">
       <div className="beta-corner-ribbon" title="Testnet UAT only"></div>
       <div className="app-container">
-        <Header account={account} onConnect={connect} currentPage="vault" points={null} showDegen />
+        <Header account={account} onConnect={connect} currentPage={v5Page === 'degen' ? 'degen' : 'vault'} points={null} showDegen onDegenClick={openDegenPage} onVaultClick={openVaultPage} />
         <div className="v5-uat-strip">TESTNET / UAT</div>
 
         <h1>
@@ -1452,16 +1633,37 @@ export function V5UatExperience() {
         </h1>
 
         <section className="vault-bar">
-          <button className="vault-label active" tabIndex={-1}>VAULT A</button>
-          <div className="vault-gear-track">
-            <div className="vault-gear-knob">⚙</div>
-          </div>
-          <button className="vault-label" tabIndex={-1}>VAULT B</button>
-          <div className="vault-bar-divider"></div>
-          <button className="vault-aux-btn" disabled>Previous Vault</button>
-          <button className="vault-aux-btn" disabled>My Rounds</button>
+          <button className={`vault-aux-btn ${v5Page === 'vault' ? 'active' : ''}`} onClick={openVaultPage}>Vault</button>
+          <button className={`vault-aux-btn ${v5Page === 'previous' ? 'active' : ''}`} onClick={() => setV5Page('previous')}>Previous Round</button>
+          <button className={`vault-aux-btn ${v5Page === 'history' ? 'active' : ''}`} onClick={() => setV5Page('history')}>My History</button>
         </section>
 
+        {v5Page === 'degen' ? (
+          <section className="main-grid v5-single-card-page">
+            <V5ActionCard
+              mode="degen"
+              amount={degenAmount}
+              setAmount={setDegenAmount}
+              principal={state?.boosterPrincipal}
+              busy={busy}
+              boosterSupported={Boolean(state?.boosterSupported)}
+              onDeposit={() => transact('Degen pool deposit', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).boostDeposit({ value: parseV5Mon(degenAmount) }))}
+              onWithdraw={() => transact('Degen pool withdraw', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).boostWithdraw(parseV5Mon(degenAmount)))}
+            />
+          </section>
+        ) : v5Page === 'previous' ? (
+          <V5PreviousRound
+            state={state}
+            onBack={() => setV5Page('vault')}
+            onClaim={claimButton}
+            busy={busy}
+            status={status}
+            error={error}
+          />
+        ) : v5Page === 'history' ? (
+          <V5HistoryTable account={account} rows={state?.historyRows || []} />
+        ) : (
+        <>
         <section className="main-grid">
           <V5ActionCard
             mode="play"
@@ -1475,7 +1677,7 @@ export function V5UatExperience() {
           />
 
           <div className="card filled vault-card v5-vault-stage" id="vault-card">
-            <VaultDoorBackground progressPct={50} salesOpen />
+            <VaultDoorBackground progressPct={50} salesOpen={false} />
             <div className="v5-next-draw-overlay">
               <div className="card-header vault-layer">
                 <div className="card-title">Next prize draw</div>
@@ -1485,6 +1687,7 @@ export function V5UatExperience() {
                 <div className="countdown-value">{countdown}</div>
                 <div className="countdown-sub">{previewCopy}</div>
                 <p className="deposit-caption">Deposits and withdrawals are open anytime. Your balance is entered in every future draw.</p>
+                <button className="btn v5-see-winners-btn" onClick={() => setV5Page('previous')}>SEE WINNERS</button>
               </div>
             </div>
           </div>
@@ -1500,16 +1703,6 @@ export function V5UatExperience() {
         </section>
 
         <section className="main-grid v5-degen-section" id="degen">
-          <V5ActionCard
-            mode="degen"
-            amount={degenAmount}
-            setAmount={setDegenAmount}
-            principal={state?.boosterPrincipal}
-            busy={busy}
-            boosterSupported={Boolean(state?.boosterSupported)}
-            onDeposit={() => transact('Degen pool deposit', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).boostDeposit({ value: parseV5Mon(degenAmount) }))}
-            onWithdraw={() => transact('Degen pool withdraw', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).boostWithdraw(parseV5Mon(degenAmount)))}
-          />
           <div className="card">
             <div className="card-header"><div className="card-title">Claim</div></div>
             <div className="deposit-area">
@@ -1524,6 +1717,8 @@ export function V5UatExperience() {
             </div>
           </div>
         </section>
+        </>
+        )}
 
         {status ? <p className="deposit-caption">{status}</p> : null}
         {error ? <p className="deposit-caption" style={{ color: '#ff8ea1' }}>{error}</p> : null}
