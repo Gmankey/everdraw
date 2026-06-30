@@ -31,3 +31,26 @@ Deploy the **real production frontend** (`web/`, the same app behind `everdraw.x
 
 ## Note on the "match production" nuance
 "Match production exactly" = match the **look, feel, polish, components, and UX patterns** of `everdraw.xyz`. It does **not** mean clone the V4.1 round UI (V5 has no rounds). Present V5's real flows with production-grade design so UAT reflects what users will actually experience at V5 launch.
+
+---
+
+## REV 3 — strict deviation fix-list (the rev-2 redo still took liberties)
+
+The redo reused `web/` (good) but **moved boxes, reworded copy, dropped the vault graphic, and omitted nav** — still not UAT. **Binding rule: the UAT page must match production layout, copy, and components EXACTLY, except the explicit allowed changes below. Do NOT restyle, rename, move, reword, or drop anything else. If a V5 element is needed, reuse prod's existing component styling — do not invent new styling. When unsure, keep prod's version.**
+
+### The ONLY allowed differences from production
+1. Small persistent **TESTNET/UAT banner**.
+2. Points at V5 testnet contracts (chain 10143).
+3. V5 flows replace the V4.1 round/ticket mechanics (V5 has no rounds), in prod's exact design language.
+4. A new **"Degen" top-nav link** (item 7).
+5. Claim is one button with auto-fetched proof (already done — keep).
+
+### Specific fixes to the current UAT build
+6. **Render the vault graphic/animation EXACTLY as production** — the animation code is already bundled but isn't mounted in the V5 view; mount it in the same position/size as prod.
+7. **Add a "Degen" link to the top nav** next to Vault / Stats / Rewards, pointing to the Degen pool section.
+8. **Fix the countdown (TWAB UX bug).** V5 has **no deposit lock** — deposit/withdraw anytime. The countdown must read as **"next prize draw"** and must NOT imply a deposit deadline; add a short line that deposits/withdrawals are open anytime and you're entered in every future draw. Do not present it like a V4.1 round lock.
+9. **Revert all unrequested copy and box-placement changes** to production's wording and layout. Only items 1–5 may differ.
+10. Remove the stray **"Boost"** wording — use **"Degen pool"** consistently.
+
+### Standing directive
+No unrequested UI/copy/layout changes, on this or any future UAT/frontend task. UAT = production, exactly, minus the listed deltas. If something seems to need changing beyond the list, flag it for the PM first — don't just change it.
