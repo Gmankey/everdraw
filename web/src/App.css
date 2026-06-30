@@ -1477,3 +1477,129 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
 .previous-vault-card .deposit-btn {
   margin-top: 1.25rem;
 }
+
+/* V5 UAT uses the production shell/components with a small testnet treatment. */
+.v5-uat-mode .app-container {
+  gap: 28px;
+}
+
+.v5-uat-pill {
+  border: 1px solid rgba(245, 158, 11, 0.5);
+  border-radius: 999px;
+  padding: 8px 12px;
+  color: #fbbf24;
+  background: rgba(245, 158, 11, 0.08);
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+
+.v5-uat-banner-prod {
+  display: grid;
+  gap: 10px;
+  max-width: 940px;
+}
+
+.v5-uat-banner-prod h1 {
+  max-width: 900px;
+  margin-bottom: 4px;
+}
+
+.v5-uat-banner-prod p {
+  max-width: 760px;
+  color: rgba(196, 181, 253, 0.74);
+  font-size: 1.05rem;
+  line-height: 1.5;
+}
+
+.v5-main-grid {
+  grid-template-columns: minmax(0, 1fr) minmax(390px, 0.82fr);
+  align-items: stretch;
+  margin-bottom: 8px;
+}
+
+.v5-left-stack {
+  display: grid;
+  gap: var(--space-md);
+}
+
+.v5-product-card {
+  min-height: 320px;
+}
+
+.v5-product-card .card-header {
+  gap: 16px;
+}
+
+.v5-product-copy {
+  max-width: 620px;
+  margin-top: 8px;
+  color: rgba(196, 181, 253, 0.66);
+  line-height: 1.45;
+}
+
+.v5-degen-card {
+  background:
+    radial-gradient(circle at 92% 12%, rgba(251, 191, 36, 0.13), transparent 28%),
+    #161225;
+  border-color: rgba(251, 191, 36, 0.28);
+}
+
+.v5-action-grid {
+  display: grid;
+  grid-template-columns: 1fr 0.72fr;
+  gap: 12px;
+}
+
+.v5-action-grid .deposit-btn {
+  margin: 0;
+}
+
+.v5-draw-card {
+  min-height: 100%;
+  background:
+    radial-gradient(circle at 50% 38%, rgba(155,109,255,.34), rgba(155,109,255,.08) 45%, rgba(16,13,30,.94) 78%),
+    #100d1e;
+}
+
+.v5-claim-panel {
+  width: min(100%, 420px);
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+  margin-top: auto;
+  text-align: center;
+}
+
+.v5-claim-panel strong {
+  display: block;
+  color: #ede8ff;
+  font-size: 2rem;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+}
+
+.v5-claim-panel span {
+  color: rgba(196, 181, 253, 0.62);
+  font-weight: 700;
+}
+
+.v5-contract-strip {
+  max-width: none;
+}
+
+.v5-contract-row {
+  grid-template-columns: 0.7fr 1.2fr 0.9fr 1.2fr 1.2fr;
+}
+
+@media (max-width: 900px) {
+  .v5-main-grid,
+  .v5-action-grid,
+  .v5-contract-row {
+    grid-template-columns: 1fr;
+  }
+
+  .v5-contract-row span {
+    text-align: left !important;
+  }
+}

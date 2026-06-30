@@ -1112,6 +1112,436 @@ function RoundProgressSteps({ state, settlementSecs, secondsRemaining, isV3 = fa
   )
 }
 
+const V5_UAT_DEFAULTS = {
+  chainId: 10143,
+  rpcUrl: 'https://testnet-rpc.monad.xyz',
+  drawManager: '0x58502275bE5d5e998fE8318eC6343a0bc2A81C7c',
+  prizeVault: '0x5dB2AA29ACf832baf43d10BAEd6ff53a23549f10',
+  twabController: '0x165A546828e122935DE6B96ec894Ef14705194d7',
+  claimManager: '0x885b117Dd7268bc8F26F5800330900d2Fb3dD1ac',
+}
+
+const V5_VAULT_ABI = [
+  'function deposit() payable returns (uint256)',
+  'function withdraw(uint256 amount) returns (uint256)',
+  'function boostDeposit() payable returns (uint256)',
+  'function boostWithdraw(uint256 amount) returns (uint256)',
+  'function principalOf(address) view returns (uint256)',
+  'function boosterPrincipalOf(address) view returns (uint256)',
+  'function totalPrincipal() view returns (uint256)',
+  'function totalParticipantPrincipal() view returns (uint256)',
+  'function totalBoosterPrincipal() view returns (uint256)',
+  'function availableYield() view returns (uint256)',
+  'function paused() view returns (bool)',
+  'function stoppedAt() view returns (uint64)',
+]
+
+const V5_DRAW_MANAGER_ABI = [
+  'function currentDrawId() view returns (uint256)',
+  'function nextPeriodStart() view returns (uint64)',
+  'function drawPeriod() view returns (uint64)',
+  'function previewStartDraw() view returns (bool due,bool willSkip,uint256 requiredFee)',
+  'function draws(uint256) view returns (uint64 periodStart,uint64 periodEnd,uint64 randomnessRequestId,bytes32 seed,uint256 totalTwab,uint256 totalPayout,uint32 winnerCount,uint32 rewardLegCount,bytes32 root,uint64 proposedAt,address proposer,uint8 status,uint256 grossYield,uint256 sponsorYield,uint256 feeAmount)',
+]
+
+const V5_CLAIM_MANAGER_ABI = [
+  'function claimMany(tuple(bytes32 distributionId,uint256 leafIndex,address account,address token,uint256 amount)[] leaves, bytes32[][] proofs)',
+]
+
+const V5_DRAW_STATUS = ['Waiting', 'Awaiting seed', 'Seeded', 'Proposed', 'Finalized', 'Skipped']
+
+function v5EnvAddress(name, fallback) {
+  const value = import.meta.env[name] || fallback
+  return ethers.isAddress(value) ? value : fallback
+}
+
+function v5Config() {
+  return {
+    chainId: Number(import.meta.env.VITE_CHAIN_ID || V5_UAT_DEFAULTS.chainId),
+    rpcUrl: import.meta.env.VITE_RPC_URL || V5_UAT_DEFAULTS.rpcUrl,
+    drawManager: v5EnvAddress('VITE_V5_DRAW_MANAGER_ADDRESS', V5_UAT_DEFAULTS.drawManager),
+    prizeVault: v5EnvAddress('VITE_V5_PRIZE_VAULT_ADDRESS', V5_UAT_DEFAULTS.prizeVault),
+    twabController: v5EnvAddress('VITE_V5_TWAB_CONTROLLER_ADDRESS', V5_UAT_DEFAULTS.twabController),
+    claimManager: v5EnvAddress('VITE_V5_CLAIM_MANAGER_ADDRESS', V5_UAT_DEFAULTS.claimManager),
+    claimProofUrl: import.meta.env.VITE_V5_CLAIM_PROOF_URL || '',
+  }
+}
+
+function formatV5Mon(value, digits = 4) {
+  try {
+    return Number(ethers.formatEther(value || 0n)).toFixed(digits)
+  } catch {
+    return Number(0).toFixed(digits)
+  }
+}
+
+function parseV5Mon(value) {
+  const clean = String(value || '').trim()
+  if (!clean || Number(clean) <= 0) throw new Error('Enter an amount greater than zero')
+  return ethers.parseEther(clean)
+}
+
+function formatV5Duration(totalSeconds) {
+  const seconds = Math.max(0, Number(totalSeconds || 0))
+  const days = Math.floor(seconds / 86400)
+  const hours = Math.floor((seconds % 86400) / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  if (days > 0) return `${days}d ${hours}h`
+  if (hours > 0) return `${hours}h ${minutes}m`
+  return `${minutes}m`
+}
+
+async function switchToV5Chain(provider, chainId, rpcUrl) {
+  const hexChainId = `0x${Number(chainId).toString(16)}`
+  try {
+    await provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: hexChainId }] })
+  } catch (err) {
+    if (err?.code !== 4902) throw err
+    await provider.request({
+      method: 'wallet_addEthereumChain',
+      params: [{
+        chainId: hexChainId,
+        chainName: 'Monad Testnet',
+        nativeCurrency: { name: 'MON', symbol: 'MON', decimals: 18 },
+        rpcUrls: [rpcUrl],
+        blockExplorerUrls: ['https://testnet.monadexplorer.com'],
+      }],
+    })
+  }
+}
+
+function v5ClaimUrl(template, account, cfg) {
+  if (!template) return ''
+  const encodedAccount = encodeURIComponent(account)
+  const join = template.includes('?') ? '&' : '?'
+  if (template.includes('{account}')) {
+    return template
+      .replaceAll('{account}', encodedAccount)
+      .replaceAll('{claimManager}', encodeURIComponent(cfg.claimManager))
+      .replaceAll('{vault}', encodeURIComponent(cfg.prizeVault))
+  }
+  return `${template}${join}account=${encodedAccount}&claimManager=${encodeURIComponent(cfg.claimManager)}&vault=${encodeURIComponent(cfg.prizeVault)}`
+}
+
+function normalizeV5ClaimPayload(payload) {
+  const leaves = payload?.leaves || payload?.claims || payload?.claim?.leaves || (payload?.leaf ? [payload.leaf] : [])
+  const proofs = payload?.proofs || payload?.claim?.proofs || leaves.map((leaf) => leaf.proof || [])
+  if (!Array.isArray(leaves) || leaves.length === 0) return null
+  return {
+    leaves: leaves.map((leaf) => ({
+      distributionId: leaf.distributionId,
+      leafIndex: leaf.leafIndex,
+      account: leaf.account,
+      token: leaf.token,
+      amount: leaf.amount,
+    })),
+    proofs,
+    total: payload?.total || payload?.amount || leaves.reduce((sum, leaf) => sum + BigInt(leaf.amount || 0), 0n).toString(),
+  }
+}
+
+function V5ActionCard({ mode, amount, setAmount, principal, busy, boosterSupported, onDeposit, onWithdraw }) {
+  const isBooster = mode === 'boost'
+  return (
+    <div className={`card v5-product-card ${isBooster ? 'v5-degen-card' : ''}`}>
+      <div className="card-header">
+        <div>
+          <div className="card-title">{isBooster ? 'Degen Pool' : 'Play the Draw'}</div>
+          <p className="v5-product-copy">
+            {isBooster
+              ? 'Grow the public prize pool without taking winner odds. Your principal stays withdrawable while the yield funds everyone\'s draw.'
+              : 'Deposit testnet MON for V5 odds. Your position stays continuous across draws until you withdraw.'}
+          </p>
+        </div>
+        {isBooster ? <span className="open-badge">0 odds</span> : <span className="open-badge">V5</span>}
+      </div>
+
+      <div className="deposit-area">
+        <div className="input-group">
+          <div className="input-wrapper">
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+            />
+            <span className="currency-label">MON</span>
+          </div>
+          <div className="balance-info">
+            <span>{isBooster ? 'Your Degen Pool balance' : 'Your playing balance'}</span>
+            <span>{formatV5Mon(principal)} MON</span>
+          </div>
+        </div>
+
+        <div className="v5-action-grid">
+          <button
+            className="btn deposit-btn"
+            disabled={Boolean(busy) || (isBooster && !boosterSupported)}
+            onClick={onDeposit}
+          >
+            {busy ? 'Submitting...' : isBooster ? 'Add to Degen Pool' : 'Deposit to Play'}
+          </button>
+          <button
+            className="btn deposit-btn ghost-btn"
+            disabled={Boolean(busy) || (isBooster && !boosterSupported)}
+            onClick={onWithdraw}
+          >
+            Withdraw
+          </button>
+        </div>
+        {isBooster && !boosterSupported ? (
+          <p className="deposit-caption">This deployed vault does not expose the Degen Pool contract methods yet. The UI is ready; the V5 UAT address needs the booster-enabled vault.</p>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+export function V5UatExperience() {
+  initPosthog()
+  const cfg = useMemo(v5Config, [])
+  const [account, setAccount] = useState('')
+  const [playAmount, setPlayAmount] = useState('1')
+  const [degenAmount, setDegenAmount] = useState('1')
+  const [state, setState] = useState(null)
+  const [busy, setBusy] = useState('')
+  const [status, setStatus] = useState('')
+  const [error, setError] = useState('')
+
+  const readProvider = useMemo(() => new ethers.JsonRpcProvider(cfg.rpcUrl), [cfg.rpcUrl])
+  const vault = useMemo(() => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, readProvider), [cfg.prizeVault, readProvider])
+  const manager = useMemo(() => new ethers.Contract(cfg.drawManager, V5_DRAW_MANAGER_ABI, readProvider), [cfg.drawManager, readProvider])
+
+  const refresh = useCallback(async (targetAccount = account) => {
+    setError('')
+    const [
+      block,
+      currentDrawId,
+      nextPeriodStart,
+      drawPeriod,
+      preview,
+      totalPrincipal,
+      totalParticipantPrincipal,
+      totalBoosterPrincipal,
+      availableYield,
+      paused,
+      stoppedAt,
+      vaultCode,
+    ] = await Promise.all([
+      readProvider.getBlock('latest'),
+      manager.currentDrawId(),
+      manager.nextPeriodStart(),
+      manager.drawPeriod(),
+      manager.previewStartDraw().catch(() => null),
+      vault.totalPrincipal(),
+      vault.totalParticipantPrincipal(),
+      vault.totalBoosterPrincipal().catch(() => null),
+      vault.availableYield(),
+      vault.paused(),
+      vault.stoppedAt(),
+      readProvider.getCode(cfg.prizeVault),
+    ])
+
+    const draw = currentDrawId > 0n ? await manager.draws(currentDrawId).catch(() => null) : null
+    const user = ethers.isAddress(targetAccount || '') ? targetAccount : ''
+    const [principal, boosterPrincipal, balance] = user ? await Promise.all([
+      vault.principalOf(user).catch(() => 0n),
+      vault.boosterPrincipalOf(user).catch(() => null),
+      readProvider.getBalance(user).catch(() => 0n),
+    ]) : [0n, 0n, 0n]
+
+    setState({
+      block,
+      currentDrawId,
+      nextPeriodStart,
+      drawPeriod,
+      preview,
+      draw,
+      totalPrincipal,
+      totalParticipantPrincipal,
+      totalBoosterPrincipal,
+      availableYield,
+      paused,
+      stoppedAt,
+      principal,
+      boosterPrincipal,
+      balance,
+      boosterSupported: vaultCode !== '0x' && totalBoosterPrincipal !== null && boosterPrincipal !== null,
+    })
+  }, [account, cfg.prizeVault, manager, readProvider, vault])
+
+  useEffect(() => {
+    trackPageView('/v5-uat', 'EverDraw V5 UAT')
+    refresh().catch((err) => setError(err?.message || String(err)))
+    const id = setInterval(() => refresh().catch(() => {}), 20_000)
+    return () => clearInterval(id)
+  }, [refresh])
+
+  const connect = useCallback(async () => {
+    setError('')
+    await modal.open()
+    const provider = getWalletProvider()
+    if (!provider) return
+    const accounts = await provider.request({ method: 'eth_requestAccounts' })
+    await switchToV5Chain(provider, cfg.chainId, cfg.rpcUrl)
+    const next = accounts?.[0] || ''
+    setAccount(next)
+    await refresh(next)
+  }, [cfg.chainId, cfg.rpcUrl, refresh])
+
+  const transact = useCallback(async (label, fn) => {
+    setBusy(label)
+    setStatus('')
+    setError('')
+    try {
+      const provider = getWalletProvider()
+      if (!provider) throw new Error('Connect wallet first')
+      await switchToV5Chain(provider, cfg.chainId, cfg.rpcUrl)
+      const browserProvider = new ethers.BrowserProvider(provider)
+      const signer = await browserProvider.getSigner()
+      const tx = await fn(signer)
+      setStatus(`${label} submitted. Waiting for confirmation...`)
+      const receipt = await tx.wait()
+      const nextAccount = await signer.getAddress()
+      setAccount(nextAccount)
+      setStatus(`${label} confirmed: ${receipt.hash}`)
+      await refresh(nextAccount)
+    } catch (err) {
+      setError(err?.shortMessage || err?.message || String(err))
+    } finally {
+      setBusy('')
+    }
+  }, [cfg.chainId, cfg.rpcUrl, refresh])
+
+  const claim = useCallback(async (signer) => {
+    if (!cfg.claimProofUrl) throw new Error('Claim proof source is not configured yet for this UAT build.')
+    const signerAccount = await signer.getAddress()
+    const res = await fetch(v5ClaimUrl(cfg.claimProofUrl, signerAccount, cfg), { headers: { accept: 'application/json' } })
+    if (!res.ok) throw new Error(`No claim found yet (${res.status})`)
+    const payload = normalizeV5ClaimPayload(await res.json())
+    if (!payload) throw new Error('No claimable prize found for this wallet yet.')
+    const claims = new ethers.Contract(cfg.claimManager, V5_CLAIM_MANAGER_ABI, signer)
+    return claims.claimMany(payload.leaves, payload.proofs)
+  }, [cfg])
+
+  const now = Number(state?.block?.timestamp || 0)
+  const nextPeriodStart = Number(state?.nextPeriodStart || 0n)
+  const drawPeriod = Number(state?.drawPeriod || 0n)
+  const periodEnd = nextPeriodStart + drawPeriod
+  const secondsRemaining = Math.max(0, periodEnd - now)
+  const countdown = formatV5Duration(secondsRemaining)
+  const draw = state?.draw
+  const drawStatus = draw ? V5_DRAW_STATUS[Number(draw[11])] || 'Unknown' : 'Warming up'
+  const previewCopy = state?.preview
+    ? state.preview.due ? (state.preview.willSkip ? 'Draw ready, no odds yet' : 'Draw ready for keeper') : 'Next draw building'
+    : 'Keeper preview unavailable'
+
+  return (
+    <div className="app-shell v5-uat-mode">
+      <div className="app-container">
+        <header>
+          <div className="logo">EverDraw</div>
+          <nav className="nav-links">
+            <a href="#vault" className="nav-link active">Vault</a>
+            <a href="#stats" className="nav-link">Stats</a>
+            <a href="#profile" className="nav-link">Rewards</a>
+          </nav>
+          <div className="header-actions">
+            <span className="v5-uat-pill">TESTNET / UAT</span>
+            <button className="btn" onClick={connect}>{account ? shortAddr(account) : 'Connect Wallet'}</button>
+          </div>
+        </header>
+
+        <section className="v5-uat-banner-prod">
+          <span className="round-label-hero">V5 Continuous Draws</span>
+          <h1>Win from the vault. Boost the prize.</h1>
+          <p>Testing the real V5 product flow on Monad testnet: deposit to play, use the Degen Pool to grow prizes without odds, withdraw anytime, and claim with one click.</p>
+        </section>
+
+        <section className="main-grid v5-main-grid">
+          <div className="v5-left-stack">
+            <V5ActionCard
+              mode="play"
+              amount={playAmount}
+              setAmount={setPlayAmount}
+              principal={state?.principal || 0n}
+              busy={busy}
+              boosterSupported
+              onDeposit={() => transact('Deposit', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).deposit({ value: parseV5Mon(playAmount) }))}
+              onWithdraw={() => transact('Withdraw', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).withdraw(parseV5Mon(playAmount)))}
+            />
+            <V5ActionCard
+              mode="boost"
+              amount={degenAmount}
+              setAmount={setDegenAmount}
+              principal={state?.boosterPrincipal}
+              busy={busy}
+              boosterSupported={Boolean(state?.boosterSupported)}
+              onDeposit={() => transact('Degen Pool deposit', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).boostDeposit({ value: parseV5Mon(degenAmount) }))}
+              onWithdraw={() => transact('Degen Pool withdraw', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).boostWithdraw(parseV5Mon(degenAmount)))}
+            />
+          </div>
+
+          <div className="card filled vault-card v5-draw-card">
+            <div className="card-header vault-layer">
+              <div className="card-title">Next V5 Draw</div>
+              <span className="open-badge">{drawStatus}</span>
+            </div>
+            <div className="countdown-center vault-layer vault-center">
+              <div className="countdown-value">{countdown}</div>
+              <div className="countdown-sub">{previewCopy}</div>
+            </div>
+            <div className="v5-claim-panel vault-layer">
+              <div>
+                <strong>{formatV5Mon(state?.availableYield)} MON</strong>
+                <span>Current prize yield</span>
+              </div>
+              <button
+                className="btn btn-winners"
+                disabled={Boolean(busy) || !account}
+                onClick={() => transact('Claim prize', claim)}
+              >
+                Claim Prize
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <RoundProgressSteps state={1} settlementSecs={0} secondsRemaining={secondsRemaining} isV3 />
+
+        <section className="stats-grid two-col">
+          <StatCard label="Playing Principal" value={`${formatV5Mon(state?.totalParticipantPrincipal)} MON`} sub="Odds-bearing V5 deposits" icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 7a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v2a2 2 0 0 0 0 4v2a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3v-2a2 2 0 0 0 0-4V7z"/></svg>} />
+          <StatCard label="Degen Pool" value={state?.totalBoosterPrincipal === null ? 'Pending' : `${formatV5Mon(state?.totalBoosterPrincipal)} MON`} sub="Zero-odds principal growing the prize" icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>} />
+          <StatCard label="Draw" value={`#${state?.currentDrawId?.toString() || '0'}`} sub={draw ? `Status: ${drawStatus}` : 'First V5 draw pending'} icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M6 4h12v3a4 4 0 0 1-4 4h-1v2.08A4 4 0 0 1 16 17v2H8v-2a4 4 0 0 1 3-3.87V11h-1a4 4 0 0 1-4-4V4z"/></svg>} />
+          <StatCard label="Wallet" value={account ? `${formatV5Mon(state?.balance)} MON` : 'Connect'} sub={state?.paused ? 'Vault paused' : Number(state?.stoppedAt || 0n) ? 'Vault stopped' : 'Monad testnet'} icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 7a3 3 0 0 1 3-3h14v4H6a1 1 0 0 0 0 2h15v10H6a3 3 0 0 1-3-3V7zm14 7a1.5 1.5 0 1 0 0 3h2v-3h-2z"/></svg>} />
+        </section>
+
+        <section className="participants-card v5-contract-strip">
+          <div className="participants-head">
+            <span>V5 Testnet Contracts</span>
+            <button className="max-btn" onClick={() => refresh()}>Refresh</button>
+          </div>
+          <div className="participants-table">
+            <div className="participants-row v5-contract-row"><span>Vault</span><span>{shortAddr(cfg.prizeVault)}</span><span>Draw Manager</span><span>{shortAddr(cfg.drawManager)}</span><span>Claim Manager</span></div>
+            <div className="participants-row v5-contract-row"><span>Proofs</span><span>{cfg.claimProofUrl ? 'Configured' : 'Waiting on indexer URL'}</span><span>Chain</span><span>Monad testnet</span><span>{shortAddr(cfg.claimManager)}</span></div>
+          </div>
+        </section>
+
+        {status ? <p className="deposit-caption">{status}</p> : null}
+        {error ? <p className="deposit-caption" style={{ color: '#ff8ea1' }}>{error}</p> : null}
+
+        <footer className="site-footer" id="disclaimer">
+          <div className="disclaimer-box">
+            <div className="disclaimer-title">Testnet UAT</div>
+            <p>This isolated site is for EverDraw V5 user acceptance testing on Monad testnet. Use testnet funds only. Production everdraw.xyz and production Vercel envs are not used by this build.</p>
+          </div>
+        </footer>
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
   initPosthog()
 

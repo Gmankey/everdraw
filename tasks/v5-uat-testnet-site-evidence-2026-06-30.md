@@ -21,16 +21,29 @@ Date: 2026-06-30
 - `VITE_V5_PRIZE_VAULT_ADDRESS=0x5dB2AA29ACf832baf43d10BAEd6ff53a23549f10`
 - `VITE_V5_TWAB_CONTROLLER_ADDRESS=0x165A546828e122935DE6B96ec894Ef14705194d7`
 - `VITE_V5_CLAIM_MANAGER_ADDRESS=0x885b117Dd7268bc8F26F5800330900d2Fb3dD1ac`
+- `VITE_V5_CLAIM_PROOF_URL=` pending keeper/indexer proof endpoint
 
 ## Verification
 
 - `npm run build` passed.
 - `VITE_V5_UAT=true npm run build` passed.
-- `npx eslint src/V5UatApp.jsx src/main.jsx` passed.
 - `npm run test:rpc-cache` passed.
-- Deployed bundle contains `V5 TESTNET UAT ONLY`, `EverDraw V5 UAT`, the V5 DrawManager/Vault addresses, and `boostDeposit`.
+- `npx eslint src/main.jsx src/App.jsx` still reports existing production-app lint debt in `App.jsx`; the prior UAT hook-order error from the standalone early-return approach is gone.
+- Deployed bundle contains production-styled V5 UAT markers, the V5 DrawManager/Vault addresses, and `boostDeposit`.
 - `https://everdraw.xyz` returned HTTP 200 after the UAT deploy.
+- Browser visual/DOM pass on `https://everdraw-v5-uat.vercel.app` confirmed:
+  - shell class `app-shell v5-uat-mode`
+  - H1 `Win from the vault. Boost the prize.`
+  - visible buttons `Deposit to Play`, `Add to Degen Pool`, `Claim Prize`
+  - cards `Play the Draw`, `Degen Pool`, `Next V5 Draw`
+  - no `Paste a ClaimManager leaf/proof JSON`, `Boost Deposit`, or `Claim Many`
+  - no browser console errors
 
-## Degen Pool UI Note
+## Rev 2 UI Notes
 
-The UAT UI includes Degen Pool / Prize Booster deposit and withdraw controls wired to `boostDeposit()` and `boostWithdraw()`. The controls disable themselves and show a warning if the configured vault does not expose the ADR-0040 booster read/write surface, so testers get an explicit signal if the current address predates the booster redeploy.
+- Removed the standalone debug page (`V5UatApp.jsx` / `V5UatApp.css`).
+- V5 UAT is now selected from `main.jsx` but implemented inside `App.jsx`, using the production app shell, cards, stats, inputs, buttons, and `App.css`.
+- The Degen Pool is presented as a product feature with plain-language copy and buttons labeled `Add to Degen Pool` / `Withdraw`, wired to `boostDeposit()` and `boostWithdraw()`.
+- Participant flow is `Deposit to Play` / `Withdraw`, wired to `deposit()` and `withdraw()`.
+- Claim is a single `Claim Prize` button. It auto-fetches proofs from `VITE_V5_CLAIM_PROOF_URL` and calls `claimMany`; there is no JSON paste box.
+- The repo does not currently expose a frontend-consumable proof endpoint; the keeper has proof data internally for batch `claimMany`. If `VITE_V5_CLAIM_PROOF_URL` is not configured yet, the one-button claim flow shows a product message instead of asking the user for raw proofs.
