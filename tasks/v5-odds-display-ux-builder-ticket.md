@@ -48,5 +48,13 @@ Operator pushback clarified the time axis. Two distinct quantities — keep them
 - **DO NOT** render a steadily-climbing % for a user who just holds — that is **false** and would mislead users into thinking waiting raises their odds. The climbing visual is **entries**; the % moves only on balance changes.
 - Definitive reference mockup (PM, 2026-06-30): "entries climb vs share over draw" — entries line climbs with a steeper kink at +5; % annotated 12.5% → 17.6% (steps at the add, not with time).
 
+### Pool dynamics — the % moves because of OTHER people, so frame it as a live estimate
+The % is a **share relative to the whole pool**, so it moves on others' actions too, not just the user's. Build for this:
+- **Someone joins mid-draw:** starts a new, lower entries line → smaller share; their joining **dilutes** everyone already in (your % dips when they arrive).
+- **Someone leaves mid-draw:** their entries line goes flat → **their** share fades as others keep climbing past them, and **everyone still in gains** (your % rises).
+- Therefore your "% to win" is a **live estimate that updates as others deposit/withdraw and locks at the draw** — label it exactly that, so a move the user didn't cause is already explained.
+- **Lead with "your entries"** (your money × time in) as the prominent, stable thing the user controls and can watch climb; show the **% to win as the secondary live estimate** with the caveat. Don't make a user feel cheated by a % that dropped because someone else joined.
+- Reference mockup (PM, 2026-06-30): "entries join/leave dynamics" — three players each deposit 5; in-all-draw → 50%, joins-midweek → 25%, leaves-midweek → 25%.
+
 ## Acceptance
 - A user sees "Your chance to win this draw = X%" with an explicit "of what" (your time-weighted deposit ÷ everyone's) and a "≈ 1 in N" intuition, backed by the **balance-over-the-draw area chart** that correctly renders: held-full, joined-mid, **multiple deposits at different times (average between them)**, and withdraw-mid (keep earned, out of future). Matches production styling. PM reviews against the mechanic + mockups before merge.
