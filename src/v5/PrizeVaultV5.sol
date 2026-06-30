@@ -35,6 +35,8 @@ contract PrizeVaultV5 {
 
     address public pendingStrategy;
     uint64 public pendingStrategyEffectiveAt;
+    address public pendingDrawManager;
+    uint64 public pendingDrawManagerEffectiveAt;
 
     mapping(address => uint256) public principalOf;
     mapping(address => uint256) public sponsorPrincipalOf;
@@ -63,6 +65,8 @@ contract PrizeVaultV5 {
     event StrategyChangeQueued(address indexed strategy, uint64 effectiveAt);
     event StrategyChanged(address indexed strategy);
     event StrategyChangeCancelled();
+    event DrawManagerChangeQueued(address indexed drawManager, uint64 effectiveAt);
+    event DrawManagerChangeCancelled();
     event ShortfallEntered(uint256 assets, uint256 principal);
     event ShortfallExited(uint256 assets, uint256 principal);
 
@@ -78,6 +82,7 @@ contract PrizeVaultV5 {
     error InsufficientAllowance();
     error AlreadyStopped();
     error NoPendingStrategyChange();
+    error NoPendingDrawManagerChange();
     error TimelockNotElapsed();
     error StrategyMigrationShortfall(uint256 beforeAssets, uint256 afterAssets);
     error NotDrawManager();
@@ -178,9 +183,16 @@ contract PrizeVaultV5 {
     }
 
     function setDrawManager(address newDrawManager) external onlyOwner {
-        if (newDrawManager == address(0)) revert ZeroAddress();
-        drawManager = newDrawManager;
-        emit DrawManagerSet(newDrawManager);
+        _requireContract(newDrawManager);
+        if (drawManager == address(0)) {
+            drawManager = newDrawManager;
+            emit DrawManagerSet(newDrawManager);
+            return;
+        }
+
+        pendingDrawManager = newDrawManager;
+        pendingDrawManagerEffectiveAt = uint64(block.timestamp + STRATEGY_CHANGE_DELAY);
+        emit DrawManagerChangeQueued(newDrawManager, pendingDrawManagerEffectiveAt);
     }
 
     function transferOwnership(address newOwner) external onlyOwner {
@@ -236,6 +248,22 @@ contract PrizeVaultV5 {
         pendingStrategy = address(0);
         pendingStrategyEffectiveAt = 0;
         emit StrategyChangeCancelled();
+    }
+
+    function commitDrawManagerChange() external onlyOwner {
+        if (pendingDrawManagerEffectiveAt == 0) revert NoPendingDrawManagerChange();
+        if (block.timestamp < pendingDrawManagerEffectiveAt) revert TimelockNotElapsed();
+        drawManager = pendingDrawManager;
+        pendingDrawManager = address(0);
+        pendingDrawManagerEffectiveAt = 0;
+        emit DrawManagerSet(drawManager);
+    }
+
+    function cancelDrawManagerChange() external onlyOwner {
+        if (pendingDrawManagerEffectiveAt == 0) revert NoPendingDrawManagerChange();
+        pendingDrawManager = address(0);
+        pendingDrawManagerEffectiveAt = 0;
+        emit DrawManagerChangeCancelled();
     }
 
     function deposit() external payable whenNotPaused nonReentrant returns (uint256 shares) {
@@ -355,6 +383,10 @@ contract PrizeVaultV5 {
         if (assets < minDeposit) revert DepositTooSmall();
         if (depositCap != 0 && totalPrincipal + assets > depositCap) revert DepositCapExceeded();
         if (shortfallMode) revert VaultIsStopped();
+    }
+
+    function _requireContract(address target) internal view {
+        if (target == address(0) || target.code.length == 0) revert ZeroAddress();
     }
 
     function _creditParticipant(address account, uint256 assets) internal {

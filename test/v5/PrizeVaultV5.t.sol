@@ -7,6 +7,8 @@ import {ShmonStrategy} from "../../src/v5/strategies/ShmonStrategy.sol";
 import {EverdrawTwabController} from "../../src/v5/twab/EverdrawTwabController.sol";
 import {MockERC4626YieldVault} from "../mocks/MockERC4626YieldVault.sol";
 
+contract DummyDrawManager {}
+
 contract PrizeVaultV5Test is Test {
     EverdrawTwabController twab;
     MockERC4626YieldVault shmon;
@@ -20,6 +22,9 @@ contract PrizeVaultV5Test is Test {
 
     event BoostDeposit(address indexed booster, uint256 amount, uint256 balance, uint64 timestamp);
     event BoostWithdraw(address indexed booster, uint256 amount, uint256 balance, uint64 timestamp);
+    event DrawManagerSet(address indexed drawManager);
+    event DrawManagerChangeQueued(address indexed drawManager, uint64 effectiveAt);
+    event DrawManagerChangeCancelled();
 
     function setUp() public {
         vm.warp(1_000_000);
@@ -434,6 +439,75 @@ contract PrizeVaultV5Test is Test {
         vault.commitStrategyChange();
 
         assertEq(address(vault.strategy()), address(next));
+    }
+
+    function test_drawManagerInitialSetIsImmediateThenChangesUseTimelock() public {
+        DummyDrawManager first = new DummyDrawManager();
+        DummyDrawManager next = new DummyDrawManager();
+
+        vm.expectEmit(true, false, false, true, address(vault));
+        emit DrawManagerSet(address(first));
+        vault.setDrawManager(address(first));
+        assertEq(vault.drawManager(), address(first));
+
+        uint64 effectiveAt = uint64(block.timestamp + vault.STRATEGY_CHANGE_DELAY());
+        vm.expectEmit(true, false, false, true, address(vault));
+        emit DrawManagerChangeQueued(address(next), effectiveAt);
+        vault.setDrawManager(address(next));
+
+        assertEq(vault.drawManager(), address(first));
+        assertEq(vault.pendingDrawManager(), address(next));
+        assertEq(vault.pendingDrawManagerEffectiveAt(), effectiveAt);
+
+        vm.expectRevert(PrizeVaultV5.TimelockNotElapsed.selector);
+        vault.commitDrawManagerChange();
+
+        vm.warp(effectiveAt);
+        vault.commitDrawManagerChange();
+
+        assertEq(vault.drawManager(), address(next));
+        assertEq(vault.pendingDrawManager(), address(0));
+        assertEq(vault.pendingDrawManagerEffectiveAt(), 0);
+    }
+
+    function test_drawManagerChangeCanBeCancelled() public {
+        DummyDrawManager first = new DummyDrawManager();
+        DummyDrawManager next = new DummyDrawManager();
+
+        vault.setDrawManager(address(first));
+        vault.setDrawManager(address(next));
+
+        vm.expectEmit(false, false, false, true, address(vault));
+        emit DrawManagerChangeCancelled();
+        vault.cancelDrawManagerChange();
+
+        assertEq(vault.drawManager(), address(first));
+        assertEq(vault.pendingDrawManager(), address(0));
+        assertEq(vault.pendingDrawManagerEffectiveAt(), 0);
+
+        vm.expectRevert(PrizeVaultV5.NoPendingDrawManagerChange.selector);
+        vault.commitDrawManagerChange();
+    }
+
+    function test_withdrawRemainsLiveDuringDrawManagerTimelock() public {
+        DummyDrawManager first = new DummyDrawManager();
+        DummyDrawManager next = new DummyDrawManager();
+
+        vm.deal(alice, 10 ether);
+        vm.prank(alice);
+        vault.deposit{value: 4 ether}();
+
+        vault.setDrawManager(address(first));
+        vault.setDrawManager(address(next));
+
+        uint256 before = alice.balance;
+        vm.prank(alice);
+        vault.withdraw(1 ether);
+
+        assertEq(alice.balance - before, 1 ether);
+        assertEq(vault.principalOf(alice), 3 ether);
+        assertEq(vault.drawManager(), address(first));
+        assertEq(vault.pendingDrawManager(), address(next));
     }
 
     function test_strategyChangeMigratesSharesToNewStrategy() public {
