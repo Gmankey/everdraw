@@ -41,5 +41,12 @@ On the participant vault view, add a **"Your chance in the next draw"** element:
 - Reuse production card/stat styling; no new component system (UAT rule). Do NOT show a tickets counter or an ever-rising meter; do NOT present the countdown as a deposit deadline.
 - Reference mockups (PM, 2026-06-30): held-all / joined-halfway / withdraw-halfway slice cards, and the balance-over-draw step-area chart (5 at start, +5 midweek → avg 7.5 → 12.5%).
 
+### CRITICAL correctness rule — entries climb over time, the % does NOT (don't fake it)
+Operator pushback clarified the time axis. Two distinct quantities — keep them distinct in the UI:
+- **Entries (climb over time):** your money × time it has sat. This **rises through the draw** and rises **steeper** after you add more — this is the legitimate "time component." Show it as the climbing line/fill; it **resets each draw**.
+- **% to win (a share, NOT a clock):** = your entries ÷ everyone's entries. It is **steady while your balance is steady** (everyone's entries tick up together, so your slice doesn't move just because time passes), and it **steps up only when you add more** (or others leave) — e.g. 5 held ≈ 12.5%, add +5 midweek → ≈ 17.6%. A fresh/late deposit's share is reduced for its first partial draw, then full.
+- **DO NOT** render a steadily-climbing % for a user who just holds — that is **false** and would mislead users into thinking waiting raises their odds. The climbing visual is **entries**; the % moves only on balance changes.
+- Definitive reference mockup (PM, 2026-06-30): "entries climb vs share over draw" — entries line climbs with a steeper kink at +5; % annotated 12.5% → 17.6% (steps at the add, not with time).
+
 ## Acceptance
 - A user sees "Your chance to win this draw = X%" with an explicit "of what" (your time-weighted deposit ÷ everyone's) and a "≈ 1 in N" intuition, backed by the **balance-over-the-draw area chart** that correctly renders: held-full, joined-mid, **multiple deposits at different times (average between them)**, and withdraw-mid (keep earned, out of future). Matches production styling. PM reviews against the mechanic + mockups before merge.
