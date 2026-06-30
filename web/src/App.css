@@ -1508,12 +1508,68 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
   margin: 0;
 }
 
-.v5-action-toggle {
+.v5-action-pill {
+  display: flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  gap: 4px;
   margin: 0 0 var(--space-md);
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #16122a;
 }
 
-.v5-action-toggle .toggle-btn {
-  flex: 1;
+.v5-action-pill-btn {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  color: #6b5f85;
+  cursor: pointer;
+  font-family: 'Outfit', sans-serif;
+  font-size: 0.85rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  padding: 4px 14px;
+  text-transform: uppercase;
+}
+
+.v5-action-pill-btn.active {
+  color: #ede8ff;
+}
+
+.v5-action-pill-track {
+  position: relative;
+  width: 68px;
+  height: 32px;
+  flex-shrink: 0;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #0a0815;
+}
+
+.v5-action-pill-knob {
+  position: absolute;
+  top: 50%;
+  left: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  transform: translateY(-50%);
+  border-radius: 50%;
+  background: #7c3aed;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 900;
+  line-height: 1;
+  transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.v5-action-pill-knob.right {
+  left: calc(100% - 29px);
 }
 
 .v5-vault-stage {

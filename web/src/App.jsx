@@ -1344,9 +1344,12 @@ function V5ActionCard({ mode, amount, setAmount, principal, walletBalance, actio
 
     return (
       <div className="card v5-product-card">
-        <section className="round-toggle v5-action-toggle" aria-label="Deposit or withdraw">
-          <button className={`toggle-btn ${isDeposit ? 'active' : ''}`} onClick={() => setActionMode('deposit')}>Deposit</button>
-          <button className={`toggle-btn ${!isDeposit ? 'active' : ''}`} onClick={() => setActionMode('withdraw')}>Withdraw</button>
+        <section className="v5-action-pill" aria-label="Deposit or withdraw">
+          <button className={`v5-action-pill-btn ${isDeposit ? 'active' : ''}`} onClick={() => setActionMode('deposit')}>Deposit</button>
+          <div className="v5-action-pill-track">
+            <div className={`v5-action-pill-knob ${!isDeposit ? 'right' : ''}`}>{isDeposit ? '+' : '-'}</div>
+          </div>
+          <button className={`v5-action-pill-btn ${!isDeposit ? 'active' : ''}`} onClick={() => setActionMode('withdraw')}>Withdraw</button>
         </section>
 
         <div className="deposit-area">
@@ -1663,6 +1666,9 @@ export function V5UatExperience() {
     event?.preventDefault?.()
     setV5Page('degen')
   }
+  const openPreviousRound = () => {
+    setV5Page('previous')
+  }
 
   return (
     <div className="app-shell v5-uat-mode">
@@ -1679,7 +1685,7 @@ export function V5UatExperience() {
 
         <section className="vault-bar">
           <button className={`vault-aux-btn ${v5Page === 'vault' ? 'active' : ''}`} onClick={openVaultPage}>Vault</button>
-          <button className={`vault-aux-btn ${v5Page === 'previous' ? 'active' : ''}`} onClick={() => setV5Page('previous')}>Previous Round</button>
+          <button className={`vault-aux-btn ${v5Page === 'previous' || v5Page === 'winners' ? 'active' : ''}`} onClick={openPreviousRound}>Previous Round</button>
           <button className={`vault-aux-btn ${v5Page === 'history' ? 'active' : ''}`} onClick={() => setV5Page('history')}>My History</button>
         </section>
 
@@ -1698,10 +1704,10 @@ export function V5UatExperience() {
               onWithdraw={() => transact('Degen pool withdraw', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).boostWithdraw(parseV5Mon(degenAmount)))}
             />
           </section>
-        ) : v5Page === 'previous' ? (
+        ) : v5Page === 'winners' ? (
           <V5PreviousRound
             state={state}
-            onBack={() => setV5Page('vault')}
+            onBack={openPreviousRound}
             onClaim={claimButton}
             busy={busy}
             status={status}
@@ -1728,18 +1734,22 @@ export function V5UatExperience() {
             onWithdraw={() => transact('Withdraw', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).withdraw(parseV5Mon(playAmount)))}
           />
 
-          <div className="card filled vault-card v5-vault-stage" id="vault-card">
-            <VaultDoorBackground progressPct={50} salesOpen={false} />
-            <div className="v5-next-draw-overlay">
-              <div className="card-header vault-layer">
-                <div className="card-title">Next prize draw</div>
-              </div>
-              <div className="countdown-center vault-layer vault-center">
-                <div className="countdown-value">{countdown}</div>
-                <div className="countdown-sub">{previewCopy}</div>
+          {v5Page === 'previous' ? (
+            <VaultAnimationTest onComplete={() => setV5Page('winners')} />
+          ) : (
+            <div className="card filled vault-card v5-vault-stage" id="vault-card">
+              <VaultDoorBackground progressPct={50} salesOpen={false} />
+              <div className="v5-next-draw-overlay">
+                <div className="card-header vault-layer">
+                  <div className="card-title">Next prize draw</div>
+                </div>
+                <div className="countdown-center vault-layer vault-center">
+                  <div className="countdown-value">{countdown}</div>
+                  <div className="countdown-sub">{previewCopy}</div>
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </section>
 
         <section className="stats-grid two-col">
