@@ -27,6 +27,23 @@ Per draw, a participant's base points = their **entries that draw** = their time
 
 Degen points = degen entries × this ramp. **Do NOT also apply the vault streak multiplier to degen points** (that would double-count tenure) — vault points use the vault streak; degen points use the degen ramp. Degen entries still carry zero win odds.
 
+## 2b. Anti-gaming — the multiplier is PER-TRANCHE tenure, not account-level
+**Problem:** an account-level streak multiplier lets a user pre-farm the *rate* with 1 MON of dust for weeks, then apply it to a large late deposit. **Fix:** the multiplier tracks **each deposit's own continuous tenure**, so fresh money always starts at the base rung regardless of account history. All off-chain (indexer) — **no gas / no contract change.**
+
+**Model:**
+- Each deposit is a **tranche** `{amount, startWeek, pool: vault|degen}` in the indexer.
+- A tranche's multiplier = the vault streak curve (1.0→2.0×) or degen ramp (2→5×) indexed by **that tranche's tenure** (weeks since created, still held) — not the account streak.
+- Points per draw = **Σ over open tranches** `(tranche.amount × time-in-draw × 0.005) × trancheMultiplier`. Bonuses stay flat (added after, not multiplied).
+
+**Nuances + decisions (defaults marked ✅ — flag any to change):**
+1. **Withdrawal order — LIFO ✅** (consume newest tranches first, so loyal holders keep their old high-tenure tranches). [alt: FIFO — harsher, kills your best rate first.]
+2. **Full exit (balance→0) resets all tranches ✅**; re-deposit starts fresh. **Partial withdrawal:** surviving (older) tranches keep their tenure. Grace window on full exit: **none ✅** (any full exit resets). [alt: short grace so a quick re-deposit keeps tenure.]
+3. **Tranche merge (bounds storage + UI): merge deposits within the same draw-week into one tranche ✅**, hard cap ~52 tranches/user with oldest-merge fallback. Prevents a micro-deposit spam from bloating the ledger.
+4. **Vault and degen tranches are separate sets ✅** (separate curves).
+5. **Tier + bonuses stay ACCOUNT-level; only the multiplier is per-tranche ✅.** The tier badge (Bronze…Diamond) and streak-milestone / loss-streak bonuses use the account weekly streak (loyalty status). The points *multiplier* is per-tranche. → the UI header shows an **effective multiplier** = points-weighted average across your tranches, with the tier badge shown separately. [This split is the main UX consequence — confirm.]
+6. **Points on skipped / no-prize draws: award them ✅** (you participated; entries were earned) — this is a CHANGE from the current code, which zeroes points on `skippedOrFailed`. [alt: keep zeroing.]
+7. **Migration:** at V5 launch, seed each existing balance as one tranche at **tenure 0** ✅ (everyone starts fresh on the per-tranche clock).
+
 ## 3. Bonuses — final set (update `pointsMath.ts` constants + `derivePoints.ts` triggers)
 | Bonus | Value | Trigger |
 |---|---|---|
@@ -46,9 +63,10 @@ Current code: `comebackKing = won && hadPriorDeposit` — i.e. "first win after 
 ## 5. UI (points page) — reuse the existing design, change:
 - **"Recent rounds" → "Recent draws"**; **"Tickets bought" → "Your entry"** (= entries that draw).
 - Add a **Degen pool** points source row showing the **current ramp multiplier** (e.g. "3× — builds to 5×") and "no chance to win" — the boost must be visible (it's the incentive). Ideally show the degen ramp progress ("1 more week to 4×"), like the vault "next multiplier" element.
-- Add the **"Next multiplier"** element under the multiplier: uses `nextTierThreshold(streakWeeks)` → "keep your deposit in N more weekly draws to reach [tier] — [×]"; note "withdrawing resets your streak." (Reference PM mockup, 2026-07-01.)
-- Total points + active multiplier + tier + weekly streak + bonuses panel all stay; wire them to the V5 draw cadence.
+- **Multiplier is now per-tranche (§2b)** — the header shows an **effective (points-weighted) multiplier** across the user's tranches, with the **tier badge** (account streak) shown separately.
+- **"Next multiplier"** element: reflects the user's ramping tranche(s) — "your deposit from [week] reaches [next ×] in N days"; note a full withdrawal resets. (For the degen row, show its ramp progress the same way.)
+- Total points + tier + weekly streak + bonuses panel all stay; wire to the V5 draw cadence.
 - No cash/token value shown.
 
 ## Acceptance
-- Points derive from V5 draws: vault base = entries × vault-streak multiplier; degen = entries × the degen ramp (2×→5× over 4 weeks, degen-specific streak, not stacked with the vault streak); all bonuses per §3 with the corrected Comeback King, On The Double removed. Points page shows "Recent draws", "Your entry", the Degen ramping-multiplier source (with its progress), and the vault "Next multiplier" progress. Unit tests updated (`pointsMath.test.ts`, `derivePoints.test.ts`). Own committed PR.
+- Points derive from V5 draws with **per-tranche tenure multipliers (§2b)**: each deposit tranche earns the vault curve (1→2×) or degen ramp (2→5×) by *its own* age; fresh money starts at base regardless of account history (anti-gaming). LIFO withdrawal, per-week tranche merge, full-exit reset. Bonuses per §3 (corrected Comeback King, On The Double removed) stay account-level and flat. Tier stays account-streak; the shown multiplier is the effective (blended) per-tranche rate. Points page shows "Recent draws", "Your entry", the Degen source, effective multiplier + "next multiplier". Unit tests updated (`pointsMath.test.ts`, `derivePoints.test.ts`) incl. the anti-gaming case (dust-streak + late large deposit does NOT get the high rate). Own committed PR.
