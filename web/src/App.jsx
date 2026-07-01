@@ -723,7 +723,7 @@ function Header({ account, onConnect, currentPage, points, showDegen = false, on
       </div>
       <nav className="nav-links">
         <a href="/#vault" className={`nav-link ${currentPage === 'vault' ? 'active' : ''}`} onClick={onVaultClick}>Vault</a>
-        {showDegen ? <a href="#degen" className={`nav-link ${currentPage === 'degen' ? 'active' : ''}`} onClick={onDegenClick}>Degen</a> : null}
+        {showDegen ? <a href="#patron" className={`nav-link ${currentPage === 'degen' ? 'active' : ''}`} onClick={onDegenClick}>Patron</a> : null}
         <a href="/#stats" className={`nav-link ${currentPage === 'stats' ? 'active' : ''}`}>Stats</a>
         <a href="/#profile" className={`nav-link ${currentPage === 'profile' ? 'active' : ''}`}>Profile</a>
         <a href="/#leaderboard" className={`nav-link ${currentPage === 'leaderboard' ? 'active' : ''}`}>Leaderboard</a>
@@ -1120,13 +1120,17 @@ const V5_UAT_DEFAULTS = {
   prizeVault: '0x5dB2AA29ACf832baf43d10BAEd6ff53a23549f10',
   twabController: '0x165A546828e122935DE6B96ec894Ef14705194d7',
   claimManager: '0x885b117Dd7268bc8F26F5800330900d2Fb3dD1ac',
+  shmon: '0x282BdDFF5e58793AcAb65438b257Dbd15A8745C9',
 }
 
 const V5_VAULT_ABI = [
   'function deposit() payable returns (uint256)',
+  'function depositShmon(uint256 shares) returns (uint256)',
   'function withdraw(uint256 amount) returns (uint256)',
   'function boostDeposit() payable returns (uint256)',
+  'function boostDepositShmon(uint256 shares) returns (uint256)',
   'function boostWithdraw(uint256 amount) returns (uint256)',
+  'function strategy() view returns (address)',
   'function principalOf(address) view returns (uint256)',
   'function boosterPrincipalOf(address) view returns (uint256)',
   'function totalPrincipal() view returns (uint256)',
@@ -1154,6 +1158,13 @@ const V5_CLAIM_MANAGER_ABI = [
   'function claimMany(tuple(bytes32 distributionId,uint256 leafIndex,address account,address token,uint256 amount)[] leaves, bytes32[][] proofs)',
 ]
 
+const V5_SHMON_ABI = [
+  'function approve(address spender, uint256 value) returns (bool)',
+  'function balanceOf(address owner) view returns (uint256)',
+  'function convertToAssets(uint256 shares) view returns (uint256 assets)',
+  'function previewDeposit(uint256 assets) view returns (uint256 shares)',
+]
+
 const V5_DRAW_STATUS = ['Waiting', 'Awaiting seed', 'Seeded', 'Proposed', 'Finalized', 'Skipped']
 
 function v5EnvAddress(name, fallback) {
@@ -1169,6 +1180,7 @@ function v5Config() {
     prizeVault: v5EnvAddress('VITE_V5_PRIZE_VAULT_ADDRESS', V5_UAT_DEFAULTS.prizeVault),
     twabController: v5EnvAddress('VITE_V5_TWAB_CONTROLLER_ADDRESS', V5_UAT_DEFAULTS.twabController),
     claimManager: v5EnvAddress('VITE_V5_CLAIM_MANAGER_ADDRESS', V5_UAT_DEFAULTS.claimManager),
+    shmon: v5EnvAddress('VITE_SHMON_ADDRESS', V5_UAT_DEFAULTS.shmon),
     claimProofUrl: import.meta.env.VITE_V5_CLAIM_PROOF_URL || '',
   }
 }
@@ -1374,7 +1386,7 @@ async function v5BuildHistoryRows({ account, block, vault, manager }) {
       key: `${log.transactionHash}-boost-deposit-${log.index}`,
       blockNumber: log.blockNumber,
       date: v5EventDate(blockMap.get(log.blockNumber)),
-      transaction: 'Degen pool deposit',
+      transaction: 'Patron Pool deposit',
       result: 'Prize excluded',
       principal: `+${formatV5Mon(log.args?.amount)} MON`,
       prize: '—',
@@ -1384,7 +1396,7 @@ async function v5BuildHistoryRows({ account, block, vault, manager }) {
       key: `${log.transactionHash}-boost-withdraw-${log.index}`,
       blockNumber: log.blockNumber,
       date: v5EventDate(blockMap.get(log.blockNumber)),
-      transaction: 'Degen pool withdraw',
+      transaction: 'Patron Pool withdraw',
       result: 'Prize excluded',
       principal: `-${formatV5Mon(log.args?.amount)} MON`,
       prize: '—',
@@ -1405,32 +1417,51 @@ async function v5BuildHistoryRows({ account, block, vault, manager }) {
   return rows.sort((a, b) => b.blockNumber - a.blockNumber).slice(0, 24)
 }
 
-function V5ActionCard({ mode, amount, setAmount, principal, walletBalance, tickets, actionMode = 'deposit', setActionMode, notice, busy, account, boosterSupported, onDeposit, onWithdraw, onConnect }) {
+function V5ActionCard({
+  mode,
+  amount,
+  setAmount,
+  principal,
+  walletBalance,
+  shmonBalance,
+  depositAsset = 'MON',
+  setDepositAsset,
+  tickets,
+  actionMode = 'deposit',
+  setActionMode,
+  notice,
+  busy,
+  account,
+  boosterSupported,
+  onDeposit,
+  onWithdraw,
+  onConnect,
+}) {
   const isDegen = mode === 'degen'
   const isDeposit = actionMode === 'deposit'
-  const balanceLabel = isDeposit ? 'Wallet balance' : isDegen ? 'Degen pool balance' : 'Deposited balance'
-  const balanceValue = isDeposit ? walletBalance : principal
-  const submitVerb = isDeposit ? (isDegen ? 'Add to Degen pool' : 'Deposit') : 'Withdraw'
+  const depositUsesShmon = isDeposit && depositAsset === 'shMON'
+  const balanceLabel = isDeposit
+    ? depositUsesShmon ? 'shMON balance' : 'Wallet balance'
+    : isDegen ? 'Patron Pool balance' : 'Deposited balance'
+  const balanceValue = isDeposit ? (depositUsesShmon ? shmonBalance : walletBalance) : principal
+  const submitVerb = isDeposit ? (isDegen ? 'Deposit' : 'Deposit') : 'Withdraw'
   const submitLabel = busy
     ? 'Submitting...'
     : !account
       ? `Connect Wallet to ${isDeposit ? 'Deposit' : 'Withdraw'}`
-      : submitVerb
+      : isDeposit ? `${submitVerb} ${depositAsset}` : submitVerb
 
   return (
     <div className={`card v5-product-card${isDegen ? ' v5-degen-card' : ''}`}>
       {isDegen ? (
         <div className="card-header">
           <div>
-            <div className="card-title">Degen Pool</div>
-            <p className="v5-product-copy">
-              Adds to the prize, earns boosted points, no chance to win, withdraw anytime.
-            </p>
+            <div className="card-title">Patron Pool</div>
           </div>
         </div>
       ) : null}
 
-      <section className="v5-action-pill" aria-label={isDegen ? 'Add to Degen pool or withdraw' : 'Deposit or withdraw'}>
+      <section className="v5-action-pill" aria-label={isDegen ? 'Deposit to Patron Pool or withdraw' : 'Deposit or withdraw'}>
         <button className={`v5-action-pill-btn ${isDeposit ? 'active' : ''}`} onClick={() => setActionMode('deposit')}>Deposit</button>
         <div className="v5-action-pill-track">
           <button
@@ -1446,6 +1477,18 @@ function V5ActionCard({ mode, amount, setAmount, principal, walletBalance, ticke
       </section>
 
       <div className="deposit-area">
+        {isDeposit ? (
+          <div className="token-selector-wrap v5-token-selector-wrap">
+            <div className="token-selector">
+              <button type="button" className="token-select-btn" onClick={() => setDepositAsset(depositUsesShmon ? 'MON' : 'shMON')}>
+                <img src={depositUsesShmon ? shmonIcon : monIcon} alt="" style={{ width: 20, height: 20, borderRadius: '50%', objectFit: 'cover' }} />
+                <span>{depositAsset}</span>
+                <span className="token-select-arrow">Switch</span>
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         <div className="input-group">
           <div className="input-wrapper">
             <input
@@ -1476,7 +1519,7 @@ function V5ActionCard({ mode, amount, setAmount, principal, walletBalance, ticke
           </button>
           {notice ? <p className="deposit-caption">{notice}</p> : null}
           {isDegen && !boosterSupported ? (
-            <p className="deposit-caption">This UAT vault needs the post-#167 redeploy before Degen pool transactions can run.</p>
+            <p className="deposit-caption">This UAT vault needs the post-#167 redeploy before Patron Pool transactions can run.</p>
           ) : null}
         </div>
 
@@ -1506,7 +1549,17 @@ function V5ActionCard({ mode, amount, setAmount, principal, walletBalance, ticke
                 : 'Deposit to start building tickets for this draw. Each new draw starts fresh and rebuilds from your MON over time.'}
             </p>
           </div>
-        ) : null}
+        ) : (
+          <details className="v5-patron-details">
+            <summary>What is the Patron Pool?</summary>
+            <p>
+              Depositing in the Patron Pool gives you 0 entries into the weekly draw. Instead, you become a patron and contribute your yield to the prize pool. This noble sacrifice helps make the weekly prize larger for everyone while earning boosted EverDraw points, without taking any winner slots from players.
+            </p>
+            <p>
+              This pool is illiquid and deposits are not tradeable in DeFi. When you withdraw, you receive 100% of your initial MON deposit value; to earn normal shMON yield again, move that value back through shMonad after leaving the Patron Pool.
+            </p>
+          </details>
+        )}
       </div>
     </div>
   )
@@ -1602,6 +1655,8 @@ export function V5UatExperience() {
   const [v5Page, setV5Page] = useState('vault')
   const [playActionMode, setPlayActionMode] = useState('deposit')
   const [degenActionMode, setDegenActionMode] = useState('deposit')
+  const [playDepositAsset, setPlayDepositAsset] = useState('MON')
+  const [degenDepositAsset, setDegenDepositAsset] = useState('MON')
   const [playNotice, setPlayNotice] = useState('')
   const [degenNotice, setDegenNotice] = useState('')
   const [busy, setBusy] = useState('')
@@ -1612,6 +1667,7 @@ export function V5UatExperience() {
   const readProvider = useMemo(() => new ethers.JsonRpcProvider(cfg.rpcUrl), [cfg.rpcUrl])
   const vault = useMemo(() => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, readProvider), [cfg.prizeVault, readProvider])
   const manager = useMemo(() => new ethers.Contract(cfg.drawManager, V5_DRAW_MANAGER_ABI, readProvider), [cfg.drawManager, readProvider])
+  const shmon = useMemo(() => new ethers.Contract(cfg.shmon, V5_SHMON_ABI, readProvider), [cfg.shmon, readProvider])
 
   const refresh = useCallback(async (targetAccount = account) => {
     setError('')
@@ -1645,11 +1701,13 @@ export function V5UatExperience() {
 
     const draw = currentDrawId > 0n ? await manager.draws(currentDrawId).catch(() => null) : null
     const user = ethers.isAddress(targetAccount || '') ? targetAccount : ''
-    const [principal, boosterPrincipal, balance] = user ? await Promise.all([
+    const [principal, boosterPrincipal, balance, shmonShares] = user ? await Promise.all([
       vault.principalOf(user).catch(() => 0n),
       vault.boosterPrincipalOf(user).catch(() => null),
       readProvider.getBalance(user).catch(() => 0n),
-    ]) : [0n, 0n, 0n]
+      shmon.balanceOf(user).catch(() => 0n),
+    ]) : [0n, 0n, 0n, 0n]
+    const shmonBalance = shmonShares > 0n ? await shmon.convertToAssets(shmonShares).catch(() => 0n) : 0n
     const historyRows = await v5BuildHistoryRows({ account: user, block, vault, manager })
     const periodStart = Number(nextPeriodStart || 0n)
     const periodLogs = user && periodStart > 0 && block?.number ? await Promise.all([
@@ -1693,12 +1751,14 @@ export function V5UatExperience() {
       principal,
       boosterPrincipal,
       balance,
+      shmonBalance,
+      shmonShares,
       historyRows,
       periodAccountEvents: periodLogs,
       readAtMs: Date.now(),
       boosterSupported: vaultCode !== '0x' && totalBoosterPrincipal !== null && boosterPrincipal !== null,
     })
-  }, [account, cfg.prizeVault, manager, readProvider, vault])
+  }, [account, cfg.prizeVault, manager, readProvider, shmon, vault])
 
   useEffect(() => {
     const id = setInterval(() => setLiveNowMs(Date.now()), 1000)
@@ -1798,10 +1858,23 @@ export function V5UatExperience() {
   const afterDegenAction = async ({ account: nextAccount }) => {
     setDegenAmount('')
     const deposited = await vault.boosterPrincipalOf(nextAccount).catch(() => 0n)
-    setDegenNotice(`Total currently in Degen pool: ${formatV5Mon(deposited)} MON`)
+    setDegenNotice(`Total currently in Patron Pool: ${formatV5Mon(deposited)} MON`)
   }
   const clearPlayAmount = () => setPlayAmount('')
   const clearDegenAmount = () => setDegenAmount('')
+  const depositV5Shmon = async (signer, amountValue, methodName) => {
+    const assets = parseV5Mon(amountValue)
+    const shmonWrite = new ethers.Contract(cfg.shmon, V5_SHMON_ABI, signer)
+    const vaultWrite = new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer)
+    const strategyAddress = await vaultWrite.strategy()
+    const shares = await shmonWrite.previewDeposit(assets)
+    if (shares <= 0n) throw new Error('shMON deposit amount is too small')
+    setStatus('Approving shMON...')
+    const approveTx = await shmonWrite.approve(strategyAddress, shares)
+    await approveTx.wait()
+    setStatus('Submitting shMON deposit...')
+    return vaultWrite[methodName](shares)
+  }
   const drawPayout = BigInt(state?.draw?.totalPayout ?? state?.draw?.[5] ?? 0n)
   const canClaimPrize = Boolean(account && cfg.claimProofUrl && drawPayout > 0n)
 
@@ -1832,6 +1905,9 @@ export function V5UatExperience() {
               setAmount={setDegenAmount}
               principal={state?.boosterPrincipal}
               walletBalance={state?.balance || 0n}
+              shmonBalance={state?.shmonBalance || 0n}
+              depositAsset={degenDepositAsset}
+              setDepositAsset={setDegenDepositAsset}
               actionMode={degenActionMode}
               setActionMode={setDegenActionMode}
               notice={degenNotice}
@@ -1839,8 +1915,12 @@ export function V5UatExperience() {
               account={account}
               boosterSupported={Boolean(state?.boosterSupported)}
               onConnect={connect}
-              onDeposit={() => transact('Degen pool deposit', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).boostDeposit({ value: parseV5Mon(degenAmount) }), { afterSubmit: clearDegenAmount, afterConfirm: afterDegenAction })}
-              onWithdraw={() => transact('Degen pool withdraw', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).boostWithdraw(parseV5Mon(degenAmount)), { afterSubmit: clearDegenAmount, afterConfirm: afterDegenAction })}
+              onDeposit={() => transact('Patron Pool deposit', (signer) => (
+                degenDepositAsset === 'shMON'
+                  ? depositV5Shmon(signer, degenAmount, 'boostDepositShmon')
+                  : new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).boostDeposit({ value: parseV5Mon(degenAmount) })
+              ), { afterSubmit: clearDegenAmount, afterConfirm: afterDegenAction })}
+              onWithdraw={() => transact('Patron Pool withdraw', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).boostWithdraw(parseV5Mon(degenAmount)), { afterSubmit: clearDegenAmount, afterConfirm: afterDegenAction })}
             />
           </section>
         ) : v5Page === 'winners' ? (
@@ -1864,6 +1944,9 @@ export function V5UatExperience() {
             setAmount={setPlayAmount}
             principal={state?.principal || 0n}
             walletBalance={state?.balance || 0n}
+            shmonBalance={state?.shmonBalance || 0n}
+            depositAsset={playDepositAsset}
+            setDepositAsset={setPlayDepositAsset}
             tickets={ticketModel}
             actionMode={playActionMode}
             setActionMode={setPlayActionMode}
@@ -1872,7 +1955,11 @@ export function V5UatExperience() {
             account={account}
             boosterSupported
             onConnect={connect}
-            onDeposit={() => transact('Deposit', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).deposit({ value: parseV5Mon(playAmount) }), { afterSubmit: clearPlayAmount, afterConfirm: afterPlayAction })}
+            onDeposit={() => transact('Deposit', (signer) => (
+              playDepositAsset === 'shMON'
+                ? depositV5Shmon(signer, playAmount, 'depositShmon')
+                : new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).deposit({ value: parseV5Mon(playAmount) })
+            ), { afterSubmit: clearPlayAmount, afterConfirm: afterPlayAction })}
             onWithdraw={() => transact('Withdraw', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).withdraw(parseV5Mon(playAmount)), { afterSubmit: clearPlayAmount, afterConfirm: afterPlayAction })}
           />
 

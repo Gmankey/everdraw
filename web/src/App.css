@@ -1582,6 +1582,46 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
   gap: 12px;
 }
 
+.v5-token-selector-wrap {
+  margin: -8px 0 16px;
+}
+
+.v5-patron-details {
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(155, 109, 255, 0.18);
+  color: rgba(196, 181, 253, 0.78);
+}
+
+.v5-patron-details summary {
+  cursor: pointer;
+  color: #ede8ff;
+  font-weight: 900;
+  list-style: none;
+}
+
+.v5-patron-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.v5-patron-details summary::after {
+  content: '+';
+  float: right;
+  color: #9b6dff;
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
+.v5-patron-details[open] summary::after {
+  content: '-';
+}
+
+.v5-patron-details p {
+  margin: 14px 0 0;
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+
 .v5-tickets-panel {
   margin-top: 6px;
   padding-top: var(--space-sm);
