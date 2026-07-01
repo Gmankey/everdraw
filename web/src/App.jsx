@@ -1439,17 +1439,19 @@ function V5ActionCard({
 }) {
   const isDegen = mode === 'degen'
   const isDeposit = actionMode === 'deposit'
+  const [tokenDropdownOpen, setTokenDropdownOpen] = useState(false)
   const depositUsesShmon = isDeposit && depositAsset === 'shMON'
   const balanceLabel = isDeposit
     ? depositUsesShmon ? 'shMON balance' : 'Wallet balance'
     : isDegen ? 'Patron Pool balance' : 'Deposited balance'
   const balanceValue = isDeposit ? (depositUsesShmon ? shmonBalance : walletBalance) : principal
+  const balanceUnit = depositUsesShmon ? 'shMON' : 'MON'
   const submitVerb = isDeposit ? (isDegen ? 'Deposit' : 'Deposit') : 'Withdraw'
   const submitLabel = busy
     ? 'Submitting...'
     : !account
       ? `Connect Wallet to ${isDeposit ? 'Deposit' : 'Withdraw'}`
-      : isDeposit ? `${submitVerb} ${depositAsset}` : submitVerb
+      : isDeposit ? `${submitVerb} with ${depositAsset}` : submitVerb
 
   return (
     <div className={`card v5-product-card${isDegen ? ' v5-degen-card' : ''}`}>
@@ -1477,18 +1479,6 @@ function V5ActionCard({
       </section>
 
       <div className="deposit-area">
-        {isDeposit ? (
-          <div className="token-selector-wrap v5-token-selector-wrap">
-            <div className="token-selector">
-              <button type="button" className="token-select-btn" onClick={() => setDepositAsset(depositUsesShmon ? 'MON' : 'shMON')}>
-                <img src={depositUsesShmon ? shmonIcon : monIcon} alt="" style={{ width: 20, height: 20, borderRadius: '50%', objectFit: 'cover' }} />
-                <span>{depositAsset}</span>
-                <span className="token-select-arrow">Switch</span>
-              </button>
-            </div>
-          </div>
-        ) : null}
-
         <div className="input-group">
           <div className="input-wrapper">
             <input
@@ -1503,13 +1493,46 @@ function V5ActionCard({
           <div className="balance-info">
             <span>{balanceLabel}</span>
             <span className="v5-balance-actions">
-              <span>{formatV5Mon(balanceValue || 0n)} MON</span>
+              <span>{formatV5Mon(balanceValue || 0n)} {balanceUnit}</span>
               <button className="max-btn" onClick={() => setAmount(formatDepositMon(balanceValue || 0n))}>Max</button>
             </span>
           </div>
         </div>
 
         <div className="deposit-cta-wrap">
+          {isDeposit ? (
+            <div className="token-selector-wrap">
+              <div className="token-selector">
+                <button
+                  className="token-select-btn"
+                  type="button"
+                  onClick={() => setTokenDropdownOpen((open) => !open)}
+                >
+                  <img src={depositUsesShmon ? shmonIcon : monIcon} alt="" style={{ width: 20, height: 20, borderRadius: '50%', objectFit: 'cover' }} />
+                  <span>{depositAsset}</span>
+                  <span className="token-select-arrow">▾</span>
+                </button>
+                {tokenDropdownOpen ? (
+                  <div className="token-dropdown">
+                    <button
+                      className={`token-dropdown-item${depositAsset === 'MON' ? ' selected' : ''}`}
+                      onClick={() => { setDepositAsset('MON'); setTokenDropdownOpen(false) }}
+                    >
+                      <img src={monIcon} alt="" style={{ width: 18, height: 18, borderRadius: '50%', objectFit: 'cover', marginRight: 6, verticalAlign: 'middle' }} />
+                      MON
+                    </button>
+                    <button
+                      className={`token-dropdown-item${depositAsset === 'shMON' ? ' selected' : ''}`}
+                      onClick={() => { setDepositAsset('shMON'); setTokenDropdownOpen(false) }}
+                    >
+                      <img src={shmonIcon} alt="" style={{ width: 18, height: 18, borderRadius: '50%', objectFit: 'cover', marginRight: 6, verticalAlign: 'middle' }} />
+                      shMON
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
           <button
             className="btn deposit-btn"
             disabled={Boolean(busy) || (isDegen && !boosterSupported && Boolean(account))}
@@ -1553,10 +1576,10 @@ function V5ActionCard({
           <details className="v5-patron-details">
             <summary>What is the Patron Pool?</summary>
             <p>
-              Depositing in the Patron Pool gives you 0 entries into the weekly draw. Instead, you become a patron and contribute your yield to the prize pool. This noble sacrifice helps make the weekly prize larger for everyone while earning boosted EverDraw points, without taking any winner slots from players.
+              Depositing in the Patron Pool gives you 0 entries into the weekly draw. Instead, you become a patron and contribute your yield to the prize pool. This noble sacrifice helps make the weekly prize larger for everyone while you earn boosted EverDraw points.
             </p>
             <p>
-              This pool is illiquid and deposits are not tradeable in DeFi. When you withdraw, you receive 100% of your initial MON deposit value; to earn normal shMON yield again, move that value back through shMonad after leaving the Patron Pool.
+              This pool is illiquid and deposits are not tradeable in DeFi. When you withdraw with the current V5 contract, you receive 100% of your initial MON deposit value back as MON.
             </p>
           </details>
         )}

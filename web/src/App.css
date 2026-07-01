@@ -1582,10 +1582,6 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
   gap: 12px;
 }
 
-.v5-token-selector-wrap {
-  margin: -8px 0 16px;
-}
-
 .v5-patron-details {
   margin-top: 24px;
   padding-top: 18px;
