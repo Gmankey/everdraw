@@ -1407,65 +1407,80 @@ async function v5BuildHistoryRows({ account, block, vault, manager }) {
 
 function V5ActionCard({ mode, amount, setAmount, principal, walletBalance, tickets, actionMode = 'deposit', setActionMode, notice, busy, account, boosterSupported, onDeposit, onWithdraw, onConnect }) {
   const isDegen = mode === 'degen'
-  if (!isDegen) {
-    const isDeposit = actionMode === 'deposit'
-    const balanceLabel = isDeposit ? 'Wallet balance' : 'Deposited balance'
-    const balanceValue = isDeposit ? walletBalance : principal
-    const submitLabel = busy
-      ? 'Submitting...'
-      : !account
-        ? `Connect Wallet to ${isDeposit ? 'Deposit' : 'Withdraw'}`
-        : isDeposit ? 'Deposit' : 'Withdraw'
+  const isDeposit = actionMode === 'deposit'
+  const balanceLabel = isDeposit ? 'Wallet balance' : isDegen ? 'Degen pool balance' : 'Deposited balance'
+  const balanceValue = isDeposit ? walletBalance : principal
+  const submitVerb = isDeposit ? (isDegen ? 'Add to Degen pool' : 'Deposit') : 'Withdraw'
+  const submitLabel = busy
+    ? 'Submitting...'
+    : !account
+      ? `Connect Wallet to ${isDeposit ? 'Deposit' : 'Withdraw'}`
+      : submitVerb
 
-    return (
-      <div className="card v5-product-card">
-        <section className="v5-action-pill" aria-label="Deposit or withdraw">
-          <button className={`v5-action-pill-btn ${isDeposit ? 'active' : ''}`} onClick={() => setActionMode('deposit')}>Deposit</button>
-          <div className="v5-action-pill-track">
-            <button
-              type="button"
-              className={`v5-action-pill-knob ${!isDeposit ? 'right' : ''}`}
-              onClick={() => setActionMode(isDeposit ? 'withdraw' : 'deposit')}
-              aria-label={isDeposit ? 'Switch to withdraw' : 'Switch to deposit'}
-            >
-              {isDeposit ? '+' : '-'}
-            </button>
+  return (
+    <div className={`card v5-product-card${isDegen ? ' v5-degen-card' : ''}`}>
+      {isDegen ? (
+        <div className="card-header">
+          <div>
+            <div className="card-title">Degen Pool</div>
+            <p className="v5-product-copy">
+              Adds to the prize, earns boosted points, no chance to win, withdraw anytime.
+            </p>
           </div>
-          <button className={`v5-action-pill-btn ${!isDeposit ? 'active' : ''}`} onClick={() => setActionMode('withdraw')}>Withdraw</button>
-        </section>
+        </div>
+      ) : null}
 
-        <div className="deposit-area">
-          <div className="input-group">
-            <div className="input-wrapper">
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-              />
-              <span className="currency-label">MON</span>
-            </div>
-            <div className="balance-info">
-              <span>{balanceLabel}</span>
-              <span className="v5-balance-actions">
-                <span>{formatV5Mon(balanceValue)} MON</span>
-                <button className="max-btn" onClick={() => setAmount(formatDepositMon(balanceValue || 0n))}>Max</button>
-              </span>
-            </div>
+      <section className="v5-action-pill" aria-label={isDegen ? 'Add to Degen pool or withdraw' : 'Deposit or withdraw'}>
+        <button className={`v5-action-pill-btn ${isDeposit ? 'active' : ''}`} onClick={() => setActionMode('deposit')}>Deposit</button>
+        <div className="v5-action-pill-track">
+          <button
+            type="button"
+            className={`v5-action-pill-knob ${!isDeposit ? 'right' : ''}`}
+            onClick={() => setActionMode(isDeposit ? 'withdraw' : 'deposit')}
+            aria-label={isDeposit ? 'Switch to withdraw' : 'Switch to deposit'}
+          >
+            {isDeposit ? '+' : '-'}
+          </button>
+        </div>
+        <button className={`v5-action-pill-btn ${!isDeposit ? 'active' : ''}`} onClick={() => setActionMode('withdraw')}>Withdraw</button>
+      </section>
+
+      <div className="deposit-area">
+        <div className="input-group">
+          <div className="input-wrapper">
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+            />
+            <span className="currency-label">MON</span>
           </div>
-
-          <div className="deposit-cta-wrap">
-            <button
-              className="btn deposit-btn"
-              disabled={Boolean(busy)}
-              onClick={!account ? onConnect : isDeposit ? onDeposit : onWithdraw}
-            >
-              {submitLabel}
-            </button>
-            {notice ? <p className="deposit-caption">{notice}</p> : null}
+          <div className="balance-info">
+            <span>{balanceLabel}</span>
+            <span className="v5-balance-actions">
+              <span>{formatV5Mon(balanceValue || 0n)} MON</span>
+              <button className="max-btn" onClick={() => setAmount(formatDepositMon(balanceValue || 0n))}>Max</button>
+            </span>
           </div>
+        </div>
 
+        <div className="deposit-cta-wrap">
+          <button
+            className="btn deposit-btn"
+            disabled={Boolean(busy) || (isDegen && !boosterSupported && Boolean(account))}
+            onClick={!account ? onConnect : isDeposit ? onDeposit : onWithdraw}
+          >
+            {submitLabel}
+          </button>
+          {notice ? <p className="deposit-caption">{notice}</p> : null}
+          {isDegen && !boosterSupported ? (
+            <p className="deposit-caption">This UAT vault needs the post-#167 redeploy before Degen pool transactions can run.</p>
+          ) : null}
+        </div>
+
+        {!isDegen ? (
           <div className="v5-tickets-panel">
             <div className="participants-head v5-tickets-head">
               <span>Your tickets · this draw</span>
@@ -1491,58 +1506,6 @@ function V5ActionCard({ mode, amount, setAmount, principal, walletBalance, ticke
                 : 'Deposit to start building tickets for this draw. Each new draw starts fresh and rebuilds from your MON over time.'}
             </p>
           </div>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="card v5-product-card v5-degen-card">
-      <div className="card-header">
-        <div>
-          <div className="card-title">Degen Pool</div>
-          <p className="v5-product-copy">
-            Add to the prize, earn points, no chance to win, withdraw anytime.
-          </p>
-        </div>
-      </div>
-
-      <div className="deposit-area">
-        <div className="input-group">
-          <div className="input-wrapper">
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-            />
-            <span className="currency-label">MON</span>
-          </div>
-          <div className="balance-info">
-            <span>Your Degen pool balance</span>
-            <span>{formatV5Mon(principal)} MON</span>
-          </div>
-        </div>
-
-        <div className="v5-action-grid">
-          <button
-            className="btn deposit-btn"
-            disabled={Boolean(busy) || !boosterSupported}
-            onClick={onDeposit}
-          >
-            {busy ? 'Submitting...' : 'Add to Degen pool'}
-          </button>
-          <button
-            className="btn deposit-btn ghost-btn"
-            disabled={Boolean(busy) || !boosterSupported}
-            onClick={onWithdraw}
-          >
-            Withdraw
-          </button>
-        </div>
-        {!boosterSupported ? (
-          <p className="deposit-caption">This deployed vault does not expose the Degen pool contract methods yet.</p>
         ) : null}
       </div>
     </div>
@@ -1638,7 +1601,9 @@ export function V5UatExperience() {
   const [state, setState] = useState(null)
   const [v5Page, setV5Page] = useState('vault')
   const [playActionMode, setPlayActionMode] = useState('deposit')
+  const [degenActionMode, setDegenActionMode] = useState('deposit')
   const [playNotice, setPlayNotice] = useState('')
+  const [degenNotice, setDegenNotice] = useState('')
   const [busy, setBusy] = useState('')
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
@@ -1830,7 +1795,13 @@ export function V5UatExperience() {
     const deposited = await vault.principalOf(nextAccount).catch(() => 0n)
     setPlayNotice(`Total currently deposited: ${formatV5Mon(deposited)} MON`)
   }
+  const afterDegenAction = async ({ account: nextAccount }) => {
+    setDegenAmount('')
+    const deposited = await vault.boosterPrincipalOf(nextAccount).catch(() => 0n)
+    setDegenNotice(`Total currently in Degen pool: ${formatV5Mon(deposited)} MON`)
+  }
   const clearPlayAmount = () => setPlayAmount('')
+  const clearDegenAmount = () => setDegenAmount('')
   const drawPayout = BigInt(state?.draw?.totalPayout ?? state?.draw?.[5] ?? 0n)
   const canClaimPrize = Boolean(account && cfg.claimProofUrl && drawPayout > 0n)
 
@@ -1861,11 +1832,15 @@ export function V5UatExperience() {
               setAmount={setDegenAmount}
               principal={state?.boosterPrincipal}
               walletBalance={state?.balance || 0n}
+              actionMode={degenActionMode}
+              setActionMode={setDegenActionMode}
+              notice={degenNotice}
               busy={busy}
               account={account}
               boosterSupported={Boolean(state?.boosterSupported)}
-              onDeposit={() => transact('Degen pool deposit', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).boostDeposit({ value: parseV5Mon(degenAmount) }))}
-              onWithdraw={() => transact('Degen pool withdraw', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).boostWithdraw(parseV5Mon(degenAmount)))}
+              onConnect={connect}
+              onDeposit={() => transact('Degen pool deposit', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).boostDeposit({ value: parseV5Mon(degenAmount) }), { afterSubmit: clearDegenAmount, afterConfirm: afterDegenAction })}
+              onWithdraw={() => transact('Degen pool withdraw', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).boostWithdraw(parseV5Mon(degenAmount)), { afterSubmit: clearDegenAmount, afterConfirm: afterDegenAction })}
             />
           </section>
         ) : v5Page === 'winners' ? (
