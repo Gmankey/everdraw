@@ -78,6 +78,54 @@
         "drawManagerAddressSecret": "DRAW_MANAGER_ADDRESS",
         "fromBlockSecret": "V5_WATCHER_FROM_BLOCK"
       }
+    },
+    {
+      "role": "V5 M8 testnet soak",
+      "status": "deployed-pending-soak",
+      "deployedAt": "2026-07-01T15:39:05.051Z",
+      "deployedBy": "0xd5cc1f1D7b78943bDF09541A2ace41B5c6D83431",
+      "source": "src/v5",
+      "deployCommit": "e99ceadd110c02d7d8a450d5707ac97656047440",
+      "addresses": {
+        "twabController": "0xf702CA87E21d24c039aa8a4437865BB74A498E8b",
+        "shmonStrategy": "0xA1c3BcF8Ad03178dEF01a3125603BC081754bA19",
+        "prizeVault": "0x87D32349AB9B71D73e864dD8ad424cF558E70ecF",
+        "claimManager": "0x82C927c2a64138e7339af51EF22AA6f21110E561",
+        "pythRandomnessOracle": "0x6A4E77d6d460CDABe3489941429c31837AB92597",
+        "drawManager": "0x4c3De9e237f07d456CbE1E74c9A9DDD8abADD88F"
+      },
+      "deployTxs": {
+        "twabController": "0x0ea3f960dd1f0f4907c01fcfae7aa629a4147c9703a678d5b3bd96d4bb6adfbc",
+        "shmonStrategy": "0x7ff8b66d96bdcaf85d6e3bfdb06bbb43f902d0e816e33c2bf8c0997f9c71621e",
+        "prizeVault": "0x9f2b2ce2970b4d0459633705b678b9c1370770e6846779e1a1f2192812d1fa1d",
+        "claimManager": "0xb9ae1fa2b63c85f52f2d49b0a48db1996157aafb358b3f76608c7996d80c43c6",
+        "pythRandomnessOracle": "0xfb03b52e923b5d7aef5c525fca400c93cad8c085154adfb7e13347c54684b90d",
+        "drawManager": "0x72275510bcb18a1ef1ac85377844b9262b49e16914f5960d6ee5bfe73bcba902",
+        "strategySetVault": "0x03033fece15359be9b74ab963b65ef1a1e644849fd59e6424b1d4acf853f0d01",
+        "twabRegisterVault": "0xe8da10f3eafd9caa81ef93c0dea7dff59614ab0a8ad5d65821ee9e2daef36223",
+        "claimAuthorizeManager": "0x856d3c65ea2a0528092165936b995784a3e1e91dce490c231c82088188578c8b",
+        "vaultSetDrawManager": "0x57051c7251278c8d79c5182f4d87bd9e78f734ab56609f1d47b14fd9d2754ee9"
+      },
+      "startBlock": 41747895,
+      "constructorArgs": {
+        "shmon": "0x282BdDFF5e58793AcAb65438b257Dbd15A8745C9",
+        "entropy": "0x825c0390f379c631f3cf11a82a37d20bddf93c07",
+        "entropyProvider": "0x6CC14824Ea2918f5De5C2f75A9Da968ad4BD6344",
+        "guardian": "0xd5cc1f1D7b78943bDF09541A2ace41B5c6D83431",
+        "keeper": "0x629Bd7f323fD29E3dF75855C9BC542889c6c1268",
+        "firstPeriodStart": 1782920318,
+        "twabPeriodLength": 3600,
+        "twabPeriodOffset": 1782920318,
+        "drawPeriod": 3600,
+        "proposerGrace": 300,
+        "challengeWindow": 900,
+        "depositCap": "25000000000000000000000",
+        "symbol": "EVRDRAW-V5-MON"
+      },
+      "watcherSecrets": {
+        "drawManagerAddressSecret": "DRAW_MANAGER_ADDRESS",
+        "fromBlockSecret": "V5_WATCHER_FROM_BLOCK"
+      }
     }
   ]
 }
