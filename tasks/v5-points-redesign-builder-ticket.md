@@ -16,7 +16,16 @@ Per draw, a participant's base points = their **entries that draw** = their time
 | Platinum | 13–25 | 1.50× |
 | Diamond | 26+ | 2.00× |
 
-**Degen pool points: 5× source multiplier** on degen entries (degen deposits earn 5× base, zero win odds). Applies on top of the streak multiplier.
+**Degen pool points: a RAMPING multiplier that builds to 5×** based on consecutive weeks in the Degen pool (not a flat 5×). Add a **degen-specific streak** (consecutive weekly draws with an active degen position; resets on full degen withdraw), and a `getDegenMultiplier(degenWeeks)` mirroring `getMultiplierX100`:
+
+| Weeks in Degen pool | Degen multiplier |
+|---|---|
+| 1 (first) | 2× |
+| 2 | 3× |
+| 3 | 4× |
+| 4+ | 5× (cap) |
+
+Degen points = degen entries × this ramp. **Do NOT also apply the vault streak multiplier to degen points** (that would double-count tenure) — vault points use the vault streak; degen points use the degen ramp. Degen entries still carry zero win odds.
 
 ## 3. Bonuses — final set (update `pointsMath.ts` constants + `derivePoints.ts` triggers)
 | Bonus | Value | Trigger |
@@ -36,10 +45,10 @@ Current code: `comebackKing = won && hadPriorDeposit` — i.e. "first win after 
 
 ## 5. UI (points page) — reuse the existing design, change:
 - **"Recent rounds" → "Recent draws"**; **"Tickets bought" → "Your entry"** (= entries that draw).
-- Add a **Degen pool** points source row with a **5× badge** and "no chance to win" — the boost must be visible (it's the incentive).
+- Add a **Degen pool** points source row showing the **current ramp multiplier** (e.g. "3× — builds to 5×") and "no chance to win" — the boost must be visible (it's the incentive). Ideally show the degen ramp progress ("1 more week to 4×"), like the vault "next multiplier" element.
 - Add the **"Next multiplier"** element under the multiplier: uses `nextTierThreshold(streakWeeks)` → "keep your deposit in N more weekly draws to reach [tier] — [×]"; note "withdrawing resets your streak." (Reference PM mockup, 2026-07-01.)
 - Total points + active multiplier + tier + weekly streak + bonuses panel all stay; wire them to the V5 draw cadence.
 - No cash/token value shown.
 
 ## Acceptance
-- Points derive from V5 draws: base = entries × streak multiplier, degen entries × 5×, all bonuses per §3 with the corrected Comeback King, On The Double removed. Points page shows "Recent draws", "Your entry", the Degen 5× source, and the "Next multiplier" progress. Unit tests updated (`pointsMath.test.ts`, `derivePoints.test.ts`). Own committed PR.
+- Points derive from V5 draws: vault base = entries × vault-streak multiplier; degen = entries × the degen ramp (2×→5× over 4 weeks, degen-specific streak, not stacked with the vault streak); all bonuses per §3 with the corrected Comeback King, On The Double removed. Points page shows "Recent draws", "Your entry", the Degen ramping-multiplier source (with its progress), and the vault "Next multiplier" progress. Unit tests updated (`pointsMath.test.ts`, `derivePoints.test.ts`). Own committed PR.
