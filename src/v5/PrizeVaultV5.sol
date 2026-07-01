@@ -49,6 +49,7 @@ contract PrizeVaultV5 {
     event SponsorWithdraw(address indexed sponsor, uint256 amount);
     event BoostDeposit(address indexed booster, uint256 amount, uint256 balance, uint64 timestamp);
     event BoostWithdraw(address indexed booster, uint256 amount, uint256 balance, uint64 timestamp);
+    event SharesWithdrawn(address indexed account, uint256 principalAmount, uint256 shares);
     event EmergencySharesRedeemed(address indexed account, uint256 principalAmount, uint256 shares);
     event DepositCapUpdated(uint256 depositCap);
     event MinDepositUpdated(uint256 minDeposit);
@@ -304,6 +305,15 @@ contract PrizeVaultV5 {
         emit Withdraw(msg.sender, assetsPaid);
     }
 
+    function withdrawShmon(uint256 amount) external nonReentrant returns (uint256 shares) {
+        if (amount == 0) revert ZeroAmount();
+        if (principalOf[msg.sender] < amount) revert InsufficientBalance();
+        _refreshShortfallMode();
+        shares = _withdrawParticipantShares(msg.sender, amount);
+        emit Withdraw(msg.sender, amount);
+        emit SharesWithdrawn(msg.sender, amount, shares);
+    }
+
     function withdrawSponsor(uint256 amount) external nonReentrant returns (uint256 assetsPaid) {
         if (amount == 0) revert ZeroAmount();
         if (sponsorPrincipalOf[msg.sender] < amount) revert InsufficientBalance();
@@ -312,12 +322,30 @@ contract PrizeVaultV5 {
         emit SponsorWithdraw(msg.sender, assetsPaid);
     }
 
+    function withdrawSponsorShmon(uint256 amount) external nonReentrant returns (uint256 shares) {
+        if (amount == 0) revert ZeroAmount();
+        if (sponsorPrincipalOf[msg.sender] < amount) revert InsufficientBalance();
+        _refreshShortfallMode();
+        shares = _withdrawSponsorShares(msg.sender, amount);
+        emit SponsorWithdraw(msg.sender, amount);
+        emit SharesWithdrawn(msg.sender, amount, shares);
+    }
+
     function boostWithdraw(uint256 amount) external nonReentrant returns (uint256 assetsPaid) {
         if (amount == 0) revert ZeroAmount();
         if (boosterPrincipalOf[msg.sender] < amount) revert InsufficientBalance();
         _refreshShortfallMode();
         assetsPaid = _withdrawBooster(msg.sender, amount);
         emit BoostWithdraw(msg.sender, amount, boosterPrincipalOf[msg.sender], uint64(block.timestamp));
+    }
+
+    function boostWithdrawShmon(uint256 amount) external nonReentrant returns (uint256 shares) {
+        if (amount == 0) revert ZeroAmount();
+        if (boosterPrincipalOf[msg.sender] < amount) revert InsufficientBalance();
+        _refreshShortfallMode();
+        shares = _withdrawBoosterShares(msg.sender, amount);
+        emit BoostWithdraw(msg.sender, amount, boosterPrincipalOf[msg.sender], uint64(block.timestamp));
+        emit SharesWithdrawn(msg.sender, amount, shares);
     }
 
     function emergencyRedeemShares(uint256 principalAmount) external nonReentrant returns (uint256 shares) {
@@ -388,16 +416,34 @@ contract PrizeVaultV5 {
         strategy.withdraw(assetsPaid, account);
     }
 
+    function _withdrawParticipantShares(address account, uint256 principalAmount) internal returns (uint256 shares) {
+        uint256 assetsPaid = _payoutAmount(principalAmount);
+        _debitParticipant(account, principalAmount);
+        shares = strategy.withdrawShares(assetsPaid, account);
+    }
+
     function _withdrawSponsor(address sponsor, uint256 principalAmount) internal returns (uint256 assetsPaid) {
         assetsPaid = _payoutAmount(principalAmount);
         _debitSponsor(sponsor, principalAmount);
         strategy.withdraw(assetsPaid, sponsor);
     }
 
+    function _withdrawSponsorShares(address sponsor, uint256 principalAmount) internal returns (uint256 shares) {
+        uint256 assetsPaid = _payoutAmount(principalAmount);
+        _debitSponsor(sponsor, principalAmount);
+        shares = strategy.withdrawShares(assetsPaid, sponsor);
+    }
+
     function _withdrawBooster(address booster, uint256 principalAmount) internal returns (uint256 assetsPaid) {
         assetsPaid = _payoutAmount(principalAmount);
         _debitBooster(booster, principalAmount);
         strategy.withdraw(assetsPaid, booster);
+    }
+
+    function _withdrawBoosterShares(address booster, uint256 principalAmount) internal returns (uint256 shares) {
+        uint256 assetsPaid = _payoutAmount(principalAmount);
+        _debitBooster(booster, principalAmount);
+        shares = strategy.withdrawShares(assetsPaid, booster);
     }
 
     function _debitParticipant(address account, uint256 principalAmount) internal {

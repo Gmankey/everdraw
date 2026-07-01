@@ -1127,9 +1127,11 @@ const V5_VAULT_ABI = [
   'function deposit() payable returns (uint256)',
   'function depositShmon(uint256 shares) returns (uint256)',
   'function withdraw(uint256 amount) returns (uint256)',
+  'function withdrawShmon(uint256 amount) returns (uint256)',
   'function boostDeposit() payable returns (uint256)',
   'function boostDepositShmon(uint256 shares) returns (uint256)',
   'function boostWithdraw(uint256 amount) returns (uint256)',
+  'function boostWithdrawShmon(uint256 amount) returns (uint256)',
   'function strategy() view returns (address)',
   'function principalOf(address) view returns (uint256)',
   'function boosterPrincipalOf(address) view returns (uint256)',
@@ -1452,6 +1454,7 @@ function V5ActionCard({
     : !account
       ? `Connect Wallet to ${isDeposit ? 'Deposit' : 'Withdraw'}`
       : isDeposit ? `${submitVerb} with ${depositAsset}` : submitVerb
+  const actionLabel = !isDeposit && account ? 'Withdraw as shMON' : submitLabel
 
   return (
     <div className={`card v5-product-card${isDegen ? ' v5-degen-card' : ''}`}>
@@ -1538,7 +1541,7 @@ function V5ActionCard({
             disabled={Boolean(busy) || (isDegen && !boosterSupported && Boolean(account))}
             onClick={!account ? onConnect : isDeposit ? onDeposit : onWithdraw}
           >
-            {submitLabel}
+            {actionLabel}
           </button>
           {notice ? <p className="deposit-caption">{notice}</p> : null}
           {isDegen && !boosterSupported ? (
@@ -1579,7 +1582,7 @@ function V5ActionCard({
               Depositing in the Patron Pool gives you 0 entries into the weekly draw. Instead, you become a patron and contribute your yield to the prize pool. This noble sacrifice helps make the weekly prize larger for everyone while you earn boosted EverDraw points.
             </p>
             <p>
-              This pool is illiquid and deposits are not tradeable in DeFi. When you withdraw with the current V5 contract, you receive 100% of your initial MON deposit value back as MON.
+              This pool is illiquid and deposits are not tradeable in DeFi. When you withdraw, you receive 100% of your initial MON deposit value back as shMON.
             </p>
           </details>
         )}
@@ -1943,7 +1946,7 @@ export function V5UatExperience() {
                   ? depositV5Shmon(signer, degenAmount, 'boostDepositShmon')
                   : new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).boostDeposit({ value: parseV5Mon(degenAmount) })
               ), { afterSubmit: clearDegenAmount, afterConfirm: afterDegenAction })}
-              onWithdraw={() => transact('Patron Pool withdraw', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).boostWithdraw(parseV5Mon(degenAmount)), { afterSubmit: clearDegenAmount, afterConfirm: afterDegenAction })}
+              onWithdraw={() => transact('Patron Pool withdraw', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).boostWithdrawShmon(parseV5Mon(degenAmount)), { afterSubmit: clearDegenAmount, afterConfirm: afterDegenAction })}
             />
           </section>
         ) : v5Page === 'winners' ? (
@@ -1983,7 +1986,7 @@ export function V5UatExperience() {
                 ? depositV5Shmon(signer, playAmount, 'depositShmon')
                 : new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).deposit({ value: parseV5Mon(playAmount) })
             ), { afterSubmit: clearPlayAmount, afterConfirm: afterPlayAction })}
-            onWithdraw={() => transact('Withdraw', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).withdraw(parseV5Mon(playAmount)), { afterSubmit: clearPlayAmount, afterConfirm: afterPlayAction })}
+            onWithdraw={() => transact('Withdraw', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).withdrawShmon(parseV5Mon(playAmount)), { afterSubmit: clearPlayAmount, afterConfirm: afterPlayAction })}
           />
 
           {v5Page === 'previous' ? (

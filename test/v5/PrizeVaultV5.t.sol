@@ -168,6 +168,29 @@ contract PrizeVaultV5Test is Test {
         assertEq(twab.delegateBalanceOf(address(vault), twab.BOOSTER_DELEGATE()), 2.5 ether);
     }
 
+    function test_boostWithdrawShmonReturnsSharesAndLeavesYieldInVault() public {
+        vm.deal(booster, 10 ether);
+        vm.prank(booster);
+        vault.boostDeposit{value: 4 ether}();
+
+        vm.deal(address(shmon), address(shmon).balance + 4 ether);
+        shmon.setRate(2 ether);
+
+        vm.prank(booster);
+        vm.expectEmit(true, false, false, true, address(vault));
+        emit BoostWithdraw(booster, 4 ether, 0, uint64(block.timestamp));
+        vault.boostWithdrawShmon(4 ether);
+
+        assertEq(shmon.balanceOf(booster), 2 ether);
+        assertEq(vault.boosterPrincipalOf(booster), 0);
+        assertEq(vault.totalBoosterPrincipal(), 0);
+        assertEq(vault.totalPrincipal(), 0);
+        assertEq(strategy.sharesHeld(), 2 ether);
+        assertEq(strategy.totalAssets(), 4 ether);
+        assertEq(twab.balanceOf(address(vault), booster), 0);
+        assertEq(twab.delegateBalanceOf(address(vault), twab.BOOSTER_DELEGATE()), 0);
+    }
+
     function test_boosterPrincipalCannotTransfer() public {
         vm.deal(booster, 10 ether);
         vm.prank(booster);
@@ -197,6 +220,26 @@ contract PrizeVaultV5Test is Test {
         assertEq(vault.principalOf(alice), 2.5 ether);
         assertEq(vault.totalPrincipal(), 2.5 ether);
         assertEq(twab.balanceOf(address(vault), alice), 2.5 ether);
+    }
+
+    function test_withdrawShmonReturnsSharesAndLeavesYieldInVault() public {
+        vm.deal(alice, 10 ether);
+        vm.prank(alice);
+        vault.deposit{value: 4 ether}();
+
+        vm.deal(address(shmon), address(shmon).balance + 4 ether);
+        shmon.setRate(2 ether);
+
+        vm.prank(alice);
+        vault.withdrawShmon(4 ether);
+
+        assertEq(shmon.balanceOf(alice), 2 ether);
+        assertEq(vault.principalOf(alice), 0);
+        assertEq(vault.totalParticipantPrincipal(), 0);
+        assertEq(vault.totalPrincipal(), 0);
+        assertEq(strategy.sharesHeld(), 2 ether);
+        assertEq(strategy.totalAssets(), 4 ether);
+        assertEq(twab.balanceOf(address(vault), alice), 0);
     }
 
     function test_withdrawalLiveAfterStopButDepositsBlocked() public {

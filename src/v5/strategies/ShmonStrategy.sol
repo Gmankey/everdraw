@@ -80,6 +80,12 @@ contract ShmonStrategy is IYieldStrategyV5 {
         if (!ok) revert NativeTransferFailed();
     }
 
+    function withdrawShares(uint256 assets, address to) external onlyVault returns (uint256 shares) {
+        shares = shmonVault.previewWithdraw(assets);
+        if (shares == 0) revert ZeroShares();
+        _safeTransfer(address(shmonVault), to, shares);
+    }
+
     function totalAssets() external view returns (uint256) {
         return address(this).balance + shmonVault.convertToAssets(shmonVault.balanceOf(address(this)));
     }
