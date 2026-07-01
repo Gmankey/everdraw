@@ -1145,6 +1145,11 @@ const V5_VAULT_ABI = [
   'event Withdraw(address indexed recipient, uint256 amount)',
   'event BoostDeposit(address indexed booster, uint256 amount, uint256 balance, uint64 timestamp)',
   'event BoostWithdraw(address indexed booster, uint256 amount, uint256 balance, uint64 timestamp)',
+  'error ZeroAmount()',
+  'error DepositTooSmall()',
+  'error DepositCapExceeded()',
+  'error VaultIsStopped()',
+  'error InsufficientBalance()',
 ]
 
 const V5_DRAW_MANAGER_ABI = [
@@ -1566,9 +1571,6 @@ function V5ActionCard({
               <span>Start</span>
               <span>Draw</span>
             </div>
-            <div className="stat-sub v5-tickets-target">
-              {formatV5Tickets(tickets?.ticketsSoFar || 0)} of ~{formatV5Tickets(tickets?.projectedTickets || 0)} by the draw
-            </div>
             <p className="deposit-caption v5-tickets-copy">
               {tickets?.hasPrincipal
                 ? 'Your tickets grow the longer your MON sits — add more and they pile up faster. New draw, your tickets rebuild.'
@@ -1854,7 +1856,7 @@ export function V5UatExperience() {
   const secondsRemaining = Math.max(0, periodEnd - now)
   const countdown = formatV5Duration(secondsRemaining)
   const previewCopy = state?.preview
-    ? state.preview.due ? (state.preview.willSkip ? 'Draw ready, no tickets yet' : 'Draw ready for keeper') : 'Next draw building'
+    ? state.preview.due ? (state.preview.willSkip ? 'Next draw pending keeper' : 'Next draw ready for keeper') : 'Next draw building'
     : 'Keeper preview unavailable'
   const ticketModel = buildV5TicketModel({ state, account, nowMs: liveNowMs })
   const claimButton = () => transact('Claim prize', claim)

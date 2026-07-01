@@ -242,8 +242,9 @@ contract PrizeVaultV5 {
     function deposit() external payable whenNotPaused nonReentrant returns (uint256 shares) {
         uint256 assets = msg.value;
         _requireDepositAllowed(assets);
+        uint256 assetsBefore = strategy.totalAssets();
         shares = strategy.deposit{value: assets}(assets);
-        _creditParticipant(msg.sender, assets);
+        _creditParticipant(msg.sender, _assetsDelta(assetsBefore));
     }
 
     function depositShmon(uint256 shares) external whenNotPaused nonReentrant returns (uint256 assets) {
@@ -256,8 +257,9 @@ contract PrizeVaultV5 {
     function sponsorDeposit() external payable whenNotPaused nonReentrant returns (uint256 shares) {
         uint256 assets = msg.value;
         _requireDepositAllowed(assets);
+        uint256 assetsBefore = strategy.totalAssets();
         shares = strategy.deposit{value: assets}(assets);
-        _creditSponsor(msg.sender, assets);
+        _creditSponsor(msg.sender, _assetsDelta(assetsBefore));
     }
 
     function sponsorDepositShmon(uint256 shares) external whenNotPaused nonReentrant returns (uint256 assets) {
@@ -270,8 +272,9 @@ contract PrizeVaultV5 {
     function boostDeposit() external payable whenNotPaused nonReentrant returns (uint256 shares) {
         uint256 assets = msg.value;
         _requireDepositAllowed(assets);
+        uint256 assetsBefore = strategy.totalAssets();
         shares = strategy.deposit{value: assets}(assets);
-        _creditBooster(msg.sender, assets);
+        _creditBooster(msg.sender, _assetsDelta(assetsBefore));
     }
 
     function boostDepositShmon(uint256 shares) external whenNotPaused nonReentrant returns (uint256 assets) {
@@ -383,6 +386,12 @@ contract PrizeVaultV5 {
         if (assets < minDeposit) revert DepositTooSmall();
         if (depositCap != 0 && totalPrincipal + assets > depositCap) revert DepositCapExceeded();
         if (shortfallMode) revert VaultIsStopped();
+    }
+
+    function _assetsDelta(uint256 assetsBefore) internal view returns (uint256 creditedAssets) {
+        uint256 assetsAfter = strategy.totalAssets();
+        if (assetsAfter <= assetsBefore) revert ZeroAmount();
+        creditedAssets = assetsAfter - assetsBefore;
     }
 
     function _creditParticipant(address account, uint256 assets) internal {
