@@ -900,6 +900,42 @@ function ClaimFlowModal({ open, mode, busy, status, error, onClose, onRedeemToWa
   return createPortal(modal, document.body)
 }
 
+function WithdrawImpactModal({ open, busy, isFull, amountLabel, streakWeeks, multiplier, onCancel, onConfirm }) {
+  if (!open) return null
+
+  const copy = isFull
+    ? `withdrawing everything resets your ${streakWeeks}-week streak / ${multiplier}× multiplier, rebuild from zero`
+    : `removes your most recent ${amountLabel} and its tenure; the rest keeps its ${streakWeeks}-week streak`
+
+  const modal = (
+    <div className="shmon-modal-backdrop claim-flow-backdrop" role="dialog" aria-modal="true" aria-labelledby="withdraw-impact-title">
+      <div className="card shmon-modal claim-flow-modal principal">
+        <div className="claim-flow-head compact">
+          <button type="button" className="claim-flow-close" onClick={onCancel} disabled={busy} aria-label="Close">×</button>
+        </div>
+        <div className="claim-flow-confirm">
+          <div className="claim-flow-confirm-panel">
+            <div className="claim-flow-eyebrow">HEADS UP</div>
+            <div className="claim-flow-confirm-copy" id="withdraw-impact-title">{copy}</div>
+          </div>
+          <div className="claim-flow-confirm-actions">
+            <button type="button" className="claim-option-card claim-confirm-btn" onClick={onCancel} disabled={busy}>
+              <span className="claim-option-kicker">Cancel</span>
+              <strong>Cancel</strong>
+            </button>
+            <button type="button" className="claim-option-card primary claim-confirm-btn" onClick={onConfirm} disabled={busy}>
+              <span className="claim-option-kicker">Confirm</span>
+              <strong>Confirm</strong>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+
+  return createPortal(modal, document.body)
+}
+
 function VaultDoorBackground({ progressPct, salesOpen }) {
   const clamped = Math.max(0, Math.min(100, Number(progressPct) || 0))
   const r = 142
@@ -1459,7 +1495,6 @@ function V5ActionCard({
     : !account
       ? `Connect Wallet to ${isDeposit ? 'Deposit' : 'Withdraw'}`
       : isDeposit ? `${submitVerb} with ${depositAsset}` : submitVerb
-  const actionLabel = !isDeposit && account ? 'Withdraw as shMON' : submitLabel
 
   return (
     <div className={`card v5-product-card${isDegen ? ' v5-degen-card' : ''}`}>
@@ -1546,7 +1581,7 @@ function V5ActionCard({
             disabled={Boolean(busy) || (isDegen && !boosterSupported && Boolean(account))}
             onClick={!account ? onConnect : isDeposit ? onDeposit : onWithdraw}
           >
-            {actionLabel}
+            {submitLabel}
           </button>
           {notice ? <p className="deposit-caption">{notice}</p> : null}
           {isDegen && !boosterSupported ? (
@@ -1691,6 +1726,10 @@ export function V5UatExperience() {
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
   const [liveNowMs, setLiveNowMs] = useState(() => Date.now())
+  const [withdrawRequest, setWithdrawRequest] = useState(null)
+  const [withdrawImpactOpen, setWithdrawImpactOpen] = useState(false)
+  const [withdrawChoiceOpen, setWithdrawChoiceOpen] = useState(false)
+  const [withdrawRedirectWarningOpen, setWithdrawRedirectWarningOpen] = useState(false)
 
   const readProvider = useMemo(() => new ethers.JsonRpcProvider(cfg.rpcUrl), [cfg.rpcUrl])
   const vault = useMemo(() => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, readProvider), [cfg.prizeVault, readProvider])
@@ -1903,6 +1942,89 @@ export function V5UatExperience() {
     setStatus('Submitting shMON deposit...')
     return vaultWrite[methodName](shares)
   }
+  const closeWithdrawFlow = () => {
+    if (busy) return
+    setWithdrawRequest(null)
+    setWithdrawImpactOpen(false)
+    setWithdrawChoiceOpen(false)
+    setWithdrawRedirectWarningOpen(false)
+  }
+  const beginWithdrawFlow = ({ kind, amountValue, principal, label, methodName, clearAmount, afterConfirm }) => {
+    setError('')
+    setStatus('')
+    try {
+      const amount = parseV5Mon(amountValue)
+      if (amount > (principal || 0n)) throw new Error('Insufficient balance')
+      setWithdrawRequest({
+        kind,
+        amount,
+        amountValue,
+        amountLabel: `${formatV5Mon(amount)} MON`,
+        principal: principal || 0n,
+        isFull: amount >= (principal || 0n),
+        label,
+        methodName,
+        clearAmount,
+        afterConfirm,
+        streakWeeks: 0,
+        multiplier: '1',
+      })
+      setWithdrawImpactOpen(true)
+    } catch (err) {
+      setError(err?.shortMessage || err?.message || String(err))
+    }
+  }
+  const confirmWithdrawImpact = () => {
+    setWithdrawImpactOpen(false)
+    setWithdrawChoiceOpen(true)
+  }
+  const withdrawToWallet = () => {
+    const request = withdrawRequest
+    if (!request) return
+    return transact(request.label, (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer)[request.methodName](request.amount), {
+      afterSubmit: request.clearAmount,
+      afterConfirm: async (ctx) => {
+        setWithdrawChoiceOpen(false)
+        setWithdrawRequest(null)
+        await request.afterConfirm?.(ctx)
+      },
+    })
+  }
+  const withdrawAndConvert = () => {
+    setWithdrawRedirectWarningOpen(true)
+  }
+  const confirmWithdrawAndConvert = () => {
+    const request = withdrawRequest
+    if (!request) return
+    const shmonadWindow = window.open('', '_blank')
+    try {
+      if (shmonadWindow) {
+        shmonadWindow.document.write('<!doctype html><title>Opening shmonad.xyz</title><body style="font-family:system-ui;background:#100d1e;color:#fff;display:grid;place-items:center;height:100vh;margin:0"><main style="text-align:center"><h1>Redeeming…</h1><p>shmonad.xyz will open after your wallet confirms. Then click Unstake.</p></main></body>')
+        shmonadWindow.document.close()
+      }
+    } catch {}
+    const openShmonad = () => {
+      try {
+        if (shmonadWindow && !shmonadWindow.closed) {
+          shmonadWindow.location.assign('https://shmonad.xyz')
+          shmonadWindow.focus?.()
+          return
+        }
+      } catch {}
+      window.location.assign('https://shmonad.xyz')
+    }
+    return transact(request.label, (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer)[request.methodName](request.amount), {
+      afterSubmit: request.clearAmount,
+      afterConfirm: async (ctx) => {
+        setWithdrawChoiceOpen(false)
+        setWithdrawRedirectWarningOpen(false)
+        setWithdrawRequest(null)
+        await request.afterConfirm?.(ctx)
+        setStatus('Redeemed. Continue MON conversion in shmonad.xyz.')
+        openShmonad()
+      },
+    })
+  }
   const drawPayout = BigInt(state?.draw?.totalPayout ?? state?.draw?.[5] ?? 0n)
   const canClaimPrize = Boolean(account && cfg.claimProofUrl && drawPayout > 0n)
 
@@ -1948,8 +2070,20 @@ export function V5UatExperience() {
                   ? depositV5Shmon(signer, degenAmount, 'boostDepositShmon')
                   : new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).boostDeposit({ value: parseV5Mon(degenAmount) })
               ), { afterSubmit: clearDegenAmount, afterConfirm: afterDegenAction })}
-              onWithdraw={() => transact('Patron Pool withdraw', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).boostWithdrawShmon(parseV5Mon(degenAmount)), { afterSubmit: clearDegenAmount, afterConfirm: afterDegenAction })}
+              onWithdraw={() => beginWithdrawFlow({
+                kind: 'degen',
+                amountValue: degenAmount,
+                principal: state?.boosterPrincipal || 0n,
+                label: 'Patron Pool withdraw',
+                methodName: 'boostWithdrawShmon',
+                clearAmount: clearDegenAmount,
+                afterConfirm: afterDegenAction,
+              })}
             />
+            <section className="stats-grid two-col v5-degen-position">
+              <StatCard label="Your current position" value={`${formatV5Mon(state?.boosterPrincipal || 0n)} MON`} sub="Patron Pool" icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 3l8 4v6c0 4.42-3.05 8.32-8 9-4.95-.68-8-4.58-8-9V7l8-4zm0 3.2L7 8.7V13c0 2.86 1.82 5.43 5 6.08 3.18-.65 5-3.22 5-6.08V8.7l-5-2.5z"/></svg>} />
+              <StatCard label="Entries" value="0" sub="Patron deposits do not enter draws" icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm4.95 13.54-1.41 1.41L12 13.41l-3.54 3.54-1.41-1.41L10.59 12 7.05 8.46l1.41-1.41L12 10.59l3.54-3.54 1.41 1.41L13.41 12l3.54 3.54z"/></svg>} />
+            </section>
           </section>
         ) : v5Page === 'winners' ? (
           <V5PreviousRound
@@ -1988,7 +2122,15 @@ export function V5UatExperience() {
                 ? depositV5Shmon(signer, playAmount, 'depositShmon')
                 : new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).deposit({ value: parseV5Mon(playAmount) })
             ), { afterSubmit: clearPlayAmount, afterConfirm: afterPlayAction })}
-            onWithdraw={() => transact('Withdraw', (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).withdrawShmon(parseV5Mon(playAmount)), { afterSubmit: clearPlayAmount, afterConfirm: afterPlayAction })}
+            onWithdraw={() => beginWithdrawFlow({
+              kind: 'vault',
+              amountValue: playAmount,
+              principal: state?.principal || 0n,
+              label: 'Withdraw',
+              methodName: 'withdrawShmon',
+              clearAmount: clearPlayAmount,
+              afterConfirm: afterPlayAction,
+            })}
           />
 
           {v5Page === 'previous' ? (
@@ -2020,6 +2162,30 @@ export function V5UatExperience() {
         )}
 
         {error && v5Page !== 'winners' ? <p className="deposit-caption" style={{ color: '#ff8ea1' }}>{error}</p> : null}
+
+        <WithdrawImpactModal
+          open={withdrawImpactOpen}
+          busy={Boolean(busy)}
+          isFull={Boolean(withdrawRequest?.isFull)}
+          amountLabel={withdrawRequest?.amountLabel || '0.0000 MON'}
+          streakWeeks={withdrawRequest?.streakWeeks || 0}
+          multiplier={withdrawRequest?.multiplier || '1'}
+          onCancel={closeWithdrawFlow}
+          onConfirm={confirmWithdrawImpact}
+        />
+        <ClaimFlowModal
+          open={withdrawChoiceOpen}
+          mode="principal"
+          busy={Boolean(busy)}
+          status={status}
+          error={error}
+          onClose={closeWithdrawFlow}
+          onRedeemToWallet={withdrawToWallet}
+          onRedeemAndConvert={withdrawAndConvert}
+          onBackFromRedirectWarning={() => setWithdrawRedirectWarningOpen(false)}
+          confirmRedirectOpen={withdrawRedirectWarningOpen}
+          onConfirmRedirect={confirmWithdrawAndConvert}
+        />
 
         <footer className="site-footer" id="disclaimer">
           <div className="disclaimer-box">
