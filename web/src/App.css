@@ -381,6 +381,23 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
   font-size: 1rem;
   line-height: 1.6;
 }
+.claim-flow-warning {
+  width: min(560px, 100%);
+  margin: 6px auto 0;
+  padding: 14px 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(246, 183, 60, 0.62);
+  background:
+    linear-gradient(180deg, rgba(246, 183, 60, 0.2), rgba(246, 183, 60, 0.08)),
+    rgba(246, 183, 60, 0.08);
+  color: #ffd27a;
+  box-shadow: 0 0 0 1px rgba(246, 183, 60, 0.12), 0 18px 44px rgba(246, 183, 60, 0.08);
+  font-family: 'Outfit', sans-serif;
+  font-size: 1.05rem;
+  font-weight: 900;
+  line-height: 1.35;
+  text-align: center;
+}
 
 .claim-flow-close {
   position: absolute;
@@ -1718,6 +1735,16 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
 .v5-single-card-page {
   grid-template-columns: minmax(0, 560px);
   justify-content: center;
+}
+
+.v5-degen-position {
+  width: min(560px, 100%);
+  grid-template-columns: minmax(0, 1fr);
+  justify-self: center;
+}
+
+.v5-degen-position .stat-card {
+  width: 100%;
 }
 
 .v5-degen-section {

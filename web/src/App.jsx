@@ -851,7 +851,7 @@ function ClaimFlowModal({ open, mode, busy, status, error, onClose, onRedeemToWa
             <div className="claim-flow-hero">
               {heroEyebrow ? <div className="claim-flow-eyebrow">{heroEyebrow}</div> : null}
               <div className="claim-flow-title" id="claim-flow-title">{heroTitle}</div>
-              {headerNotice ? <p className="claim-flow-body">{headerNotice}</p> : null}
+              {headerNotice ? <p className="claim-flow-warning">{headerNotice}</p> : null}
               {heroBody ? <p className="claim-flow-body">{heroBody}</p> : null}
             </div>
           ) : null}
@@ -2006,9 +2006,9 @@ export function V5UatExperience() {
         setWithdrawChoiceOpen(false)
         setWithdrawRedirectWarningOpen(false)
         setWithdrawRequest(null)
-        await request.afterConfirm?.(ctx)
         setStatus('Redeemed. Continue MON conversion in shmonad.xyz.')
         openShmonad()
+        await request.afterConfirm?.(ctx)
       },
     })
   }
@@ -2067,7 +2067,7 @@ export function V5UatExperience() {
                 afterConfirm: afterDegenAction,
               })}
             />
-            <section className="stats-grid two-col v5-degen-position">
+            <section className="stats-grid v5-degen-position">
               <StatCard label="Your current position" value={`${formatV5Mon(state?.boosterPrincipal || 0n)} MON`} sub="Patron Pool" icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 3l8 4v6c0 4.42-3.05 8.32-8 9-4.95-.68-8-4.58-8-9V7l8-4zm0 3.2L7 8.7V13c0 2.86 1.82 5.43 5 6.08 3.18-.65 5-3.22 5-6.08V8.7l-5-2.5z"/></svg>} />
             </section>
           </section>
