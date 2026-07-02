@@ -851,7 +851,12 @@ function ClaimFlowModal({ open, mode, busy, status, error, onClose, onRedeemToWa
             <div className="claim-flow-hero">
               {heroEyebrow ? <div className="claim-flow-eyebrow">{heroEyebrow}</div> : null}
               <div className="claim-flow-title" id="claim-flow-title">{heroTitle}</div>
-              {headerNotice ? <p className="claim-flow-warning">{headerNotice}</p> : null}
+              {headerNotice ? (
+                <div className="claim-flow-confirm-panel claim-flow-header-warning">
+                  <div className="claim-flow-eyebrow">HEADS UP</div>
+                  <div className="claim-flow-confirm-copy">{headerNotice}</div>
+                </div>
+              ) : null}
               {heroBody ? <p className="claim-flow-body">{heroBody}</p> : null}
             </div>
           ) : null}
