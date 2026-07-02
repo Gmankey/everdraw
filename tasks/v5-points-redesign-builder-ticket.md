@@ -36,8 +36,11 @@ Degen points = degen entries × this ramp. **Do NOT also apply the vault streak 
 - Points per draw = **Σ over open tranches** `(tranche.amount × time-in-draw × 0.005) × trancheMultiplier`. Bonuses stay flat (added after, not multiplied).
 
 **Nuances + decisions (defaults marked ✅ — flag any to change):**
-1. **Any withdrawal resets EVERYTHING (operator decision, 2026-07-02).** Withdrawing *any* amount (partial or full, vault or degen) **resets that pool's tenure to 0** — all tranches AND the account weekly streak/multiplier for that pool restart from zero. No LIFO, no partial preservation, no grace. Simpler and stickier by design. (Per-tranche is still needed on the *deposit* side so fresh money doesn't inherit old tenure.)
-2. **Withdrawal is gated by a confirmation modal** (see §5): warn the user they'll lose the streak/multiplier accumulated so far, with **Confirm / Cancel**. Applies to both vault and Degen pool withdrawals.
+1. **Withdrawal — full resets, partial only affects the withdrawn portion (operator decision, 2026-07-02).**
+   - **Full withdrawal (position → 0):** everything resets for that pool — all tranches removed, and the account weekly streak / tier / multiplier reset to zero.
+   - **Partial withdrawal: LIFO** — the withdrawn amount is taken from your **newest tranches first**; only those lose their tenure. **Surviving (older) tranches keep their tenure**, and your **account weekly streak continues** (you still hold a position). Only the withdrawn portion is affected — a long-held holder who trims a bit keeps their earned multiplier on the rest.
+   - Vault and Degen tranches/streaks are independent (withdrawing from one doesn't touch the other).
+2. **Withdrawal is gated by a confirmation modal** (see §5), context-aware: a **full** withdrawal warns it resets the whole streak/multiplier; a **partial** warns it removes your newest portion (and its tenure) while the rest keeps its streak. **Confirm / Cancel.**
 3. **Tranche merge (bounds storage + UI): merge deposits within the same draw-week into one tranche ✅**, hard cap ~52 tranches/user with oldest-merge fallback. Prevents a micro-deposit spam from bloating the ledger.
 4. **Vault and degen tranches are separate sets ✅** (separate curves).
 5. **Tier + bonuses stay ACCOUNT-level; only the multiplier is per-tranche ✅.** The tier badge (Bronze…Diamond) and streak-milestone / loss-streak bonuses use the account weekly streak (loyalty status). The points *multiplier* is per-tranche. → the UI header shows an **effective multiplier** = points-weighted average across your tranches, with the tier badge shown separately. [This split is the main UX consequence — confirm.]
@@ -65,7 +68,10 @@ Current code: `comebackKing = won && hadPriorDeposit` — i.e. "first win after 
 - Add a **Degen pool** points source row showing the **current ramp multiplier** (e.g. "3× — builds to 5×") and "no chance to win" — the boost must be visible (it's the incentive). Ideally show the degen ramp progress ("1 more week to 4×"), like the vault "next multiplier" element.
 - **Multiplier is now per-tranche (§2b)** — the header shows an **effective (points-weighted) multiplier** across the user's tranches, with the **tier badge** (account streak) shown separately.
 - **"Next multiplier"** element: reflects the user's ramping tranche(s) — "your deposit from [week] reaches [next ×] in N days"; note a full withdrawal resets. (For the degen row, show its ramp progress the same way.)
-- **Withdrawal confirmation modal (required):** on any withdraw click (vault or Degen), before the tx, show a modal — "Withdrawing resets your streak. You're on a N-week streak at [×]; you'll start rebuilding from zero." with **Confirm withdraw / Cancel**. Only proceed on Confirm. (This is the guardrail for §2b decision 1.)
+- **Withdrawal confirmation modal (required), context-aware** (guardrail for §2b decision 1):
+  - **Full withdrawal:** "Withdrawing everything resets your streak. You're on an N-week streak at [×]; you'll rebuild from zero." Confirm / Cancel.
+  - **Partial withdrawal:** "This removes your most recent [X MON] and its multiplier tenure. The rest of your position keeps its N-week streak." Confirm / Cancel.
+  - Only proceed on Confirm.
 - Total points + tier + weekly streak + bonuses panel all stay; wire to the V5 draw cadence.
 - No cash/token value shown.
 
