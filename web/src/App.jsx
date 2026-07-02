@@ -714,7 +714,7 @@ function FounderLaunchArticle() {
   )
 }
 
-function Header({ account, onConnect, currentPage, points, showDegen = false, onDegenClick, onVaultClick }) {
+function Header({ account, onConnect, currentPage, points, showDegen = false, onDegenClick, onVaultClick, onProfileClick }) {
   return (
     <header>
       <div className="logo">
@@ -725,7 +725,7 @@ function Header({ account, onConnect, currentPage, points, showDegen = false, on
         <a href="/#vault" className={`nav-link ${currentPage === 'vault' ? 'active' : ''}`} onClick={onVaultClick}>Vault</a>
         {showDegen ? <a href="#patron" className={`nav-link ${currentPage === 'degen' ? 'active' : ''}`} onClick={onDegenClick}>Patron</a> : null}
         <a href="/#stats" className={`nav-link ${currentPage === 'stats' ? 'active' : ''}`}>Stats</a>
-        <a href="/#profile" className={`nav-link ${currentPage === 'profile' ? 'active' : ''}`}>Profile</a>
+        <a href="/#profile" className={`nav-link ${currentPage === 'profile' ? 'active' : ''}`} onClick={onProfileClick}>Profile</a>
         <a href="/#leaderboard" className={`nav-link ${currentPage === 'leaderboard' ? 'active' : ''}`}>Leaderboard</a>
         <a href="/articles/drawn-back-to-defi" className={`nav-link ${currentPage === 'article' ? 'active' : ''}`}>Articles</a>
         <a href="https://docs.everdraw.xyz" target="_blank" rel="noopener noreferrer" className="nav-link">Docs</a>
@@ -766,7 +766,7 @@ function StatCard({ label, value, sub, icon }) {
   )
 }
 
-function ClaimFlowModal({ open, mode, busy, status, error, onClose, onRedeemToWallet, onRedeemAndConvert, onBackFromRedirectWarning, confirmRedirectOpen, onConfirmRedirect, isV2 = false }) {
+function ClaimFlowModal({ open, mode, busy, status, error, onClose, onRedeemToWallet, onRedeemAndConvert, onBackFromRedirectWarning, confirmRedirectOpen, onConfirmRedirect, isV2 = false, headerNotice = '' }) {
   if (!open) return null
 
   const isWinner = mode === 'winner'
@@ -851,6 +851,7 @@ function ClaimFlowModal({ open, mode, busy, status, error, onClose, onRedeemToWa
             <div className="claim-flow-hero">
               {heroEyebrow ? <div className="claim-flow-eyebrow">{heroEyebrow}</div> : null}
               <div className="claim-flow-title" id="claim-flow-title">{heroTitle}</div>
+              {headerNotice ? <p className="claim-flow-body">{headerNotice}</p> : null}
               {heroBody ? <p className="claim-flow-body">{heroBody}</p> : null}
             </div>
           ) : null}
@@ -893,42 +894,6 @@ function ClaimFlowModal({ open, mode, busy, status, error, onClose, onRedeemToWa
 
         {status ? <div className="shmon-subline claim-flow-status">{status}</div> : null}
         {error ? <div className="shmon-subline claim-flow-status error">{error}</div> : null}
-      </div>
-    </div>
-  )
-
-  return createPortal(modal, document.body)
-}
-
-function WithdrawImpactModal({ open, busy, isFull, amountLabel, streakWeeks, multiplier, onCancel, onConfirm }) {
-  if (!open) return null
-
-  const copy = isFull
-    ? `withdrawing everything resets your ${streakWeeks}-week streak / ${multiplier}× multiplier, rebuild from zero`
-    : `removes your most recent ${amountLabel} and its tenure; the rest keeps its ${streakWeeks}-week streak`
-
-  const modal = (
-    <div className="shmon-modal-backdrop claim-flow-backdrop" role="dialog" aria-modal="true" aria-labelledby="withdraw-impact-title">
-      <div className="card shmon-modal claim-flow-modal principal">
-        <div className="claim-flow-head compact">
-          <button type="button" className="claim-flow-close" onClick={onCancel} disabled={busy} aria-label="Close">×</button>
-        </div>
-        <div className="claim-flow-confirm">
-          <div className="claim-flow-confirm-panel">
-            <div className="claim-flow-eyebrow">HEADS UP</div>
-            <div className="claim-flow-confirm-copy" id="withdraw-impact-title">{copy}</div>
-          </div>
-          <div className="claim-flow-confirm-actions">
-            <button type="button" className="claim-option-card claim-confirm-btn" onClick={onCancel} disabled={busy}>
-              <span className="claim-option-kicker">Cancel</span>
-              <strong>Cancel</strong>
-            </button>
-            <button type="button" className="claim-option-card primary claim-confirm-btn" onClick={onConfirm} disabled={busy}>
-              <span className="claim-option-kicker">Confirm</span>
-              <strong>Confirm</strong>
-            </button>
-          </div>
-        </div>
       </div>
     </div>
   )
@@ -1727,9 +1692,10 @@ export function V5UatExperience() {
   const [error, setError] = useState('')
   const [liveNowMs, setLiveNowMs] = useState(() => Date.now())
   const [withdrawRequest, setWithdrawRequest] = useState(null)
-  const [withdrawImpactOpen, setWithdrawImpactOpen] = useState(false)
   const [withdrawChoiceOpen, setWithdrawChoiceOpen] = useState(false)
   const [withdrawRedirectWarningOpen, setWithdrawRedirectWarningOpen] = useState(false)
+  const [pointsProfile, setPointsProfile] = useState(null)
+  const [pointsHistory, setPointsHistory] = useState([])
 
   const readProvider = useMemo(() => new ethers.JsonRpcProvider(cfg.rpcUrl), [cfg.rpcUrl])
   const vault = useMemo(() => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, readProvider), [cfg.prizeVault, readProvider])
@@ -1839,6 +1805,29 @@ export function V5UatExperience() {
     return () => clearInterval(id)
   }, [refresh])
 
+  useEffect(() => {
+    const ac = new AbortController()
+    if (!account) {
+      setPointsProfile(null)
+      setPointsHistory([])
+      return () => ac.abort()
+    }
+    Promise.all([
+      fetch(`${getIndexerBaseUrl()}/api/points/${account}`, { signal: ac.signal }).then((r) => r.ok ? r.json() : null),
+      fetch(`${getIndexerBaseUrl()}/api/points/${account}/history?limit=12`, { signal: ac.signal }).then((r) => r.ok ? r.json() : []),
+    ]).then(([profile, history]) => {
+      assertNotAborted(ac.signal)
+      setPointsProfile(profile)
+      setPointsHistory(Array.isArray(history) ? history : [])
+    }).catch((err) => {
+      if (!isAbortError(err)) {
+        setPointsProfile(null)
+        setPointsHistory([])
+      }
+    })
+    return () => ac.abort()
+  }, [account])
+
   const connect = useCallback(async () => {
     setError('')
     await modal.open()
@@ -1909,6 +1898,11 @@ export function V5UatExperience() {
     setStatus('')
     setV5Page('degen')
   }
+  const openProfilePage = (event) => {
+    event?.preventDefault?.()
+    setStatus('')
+    setV5Page('profile')
+  }
   const openPreviousRound = () => {
     setStatus('')
     setV5Page('previous')
@@ -1945,7 +1939,6 @@ export function V5UatExperience() {
   const closeWithdrawFlow = () => {
     if (busy) return
     setWithdrawRequest(null)
-    setWithdrawImpactOpen(false)
     setWithdrawChoiceOpen(false)
     setWithdrawRedirectWarningOpen(false)
   }
@@ -1966,17 +1959,11 @@ export function V5UatExperience() {
         methodName,
         clearAmount,
         afterConfirm,
-        streakWeeks: 0,
-        multiplier: '1',
       })
-      setWithdrawImpactOpen(true)
+      setWithdrawChoiceOpen(true)
     } catch (err) {
       setError(err?.shortMessage || err?.message || String(err))
     }
-  }
-  const confirmWithdrawImpact = () => {
-    setWithdrawImpactOpen(false)
-    setWithdrawChoiceOpen(true)
   }
   const withdrawToWallet = () => {
     const request = withdrawRequest
@@ -1996,7 +1983,7 @@ export function V5UatExperience() {
   const confirmWithdrawAndConvert = () => {
     const request = withdrawRequest
     if (!request) return
-    const shmonadWindow = window.open('', '_blank')
+    const shmonadWindow = window.open('about:blank', '_blank')
     try {
       if (shmonadWindow) {
         shmonadWindow.document.write('<!doctype html><title>Opening shmonad.xyz</title><body style="font-family:system-ui;background:#100d1e;color:#fff;display:grid;place-items:center;height:100vh;margin:0"><main style="text-align:center"><h1>Redeeming…</h1><p>shmonad.xyz will open after your wallet confirms. Then click Unstake.</p></main></body>')
@@ -2032,7 +2019,7 @@ export function V5UatExperience() {
     <div className="app-shell v5-uat-mode">
       <div className="beta-corner-ribbon" title="Testnet UAT only"></div>
       <div className="app-container">
-        <Header account={account} onConnect={connect} currentPage={v5Page === 'degen' ? 'degen' : 'vault'} points={null} showDegen onDegenClick={openDegenPage} onVaultClick={openVaultPage} />
+        <Header account={account} onConnect={connect} currentPage={v5Page === 'degen' ? 'degen' : v5Page === 'profile' ? 'profile' : 'vault'} points={pointsProfile} showDegen onDegenClick={openDegenPage} onVaultClick={openVaultPage} onProfileClick={openProfilePage} />
         <div className="v5-uat-strip">TESTNET / UAT</div>
 
         <h1>
@@ -2082,9 +2069,10 @@ export function V5UatExperience() {
             />
             <section className="stats-grid two-col v5-degen-position">
               <StatCard label="Your current position" value={`${formatV5Mon(state?.boosterPrincipal || 0n)} MON`} sub="Patron Pool" icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 3l8 4v6c0 4.42-3.05 8.32-8 9-4.95-.68-8-4.58-8-9V7l8-4zm0 3.2L7 8.7V13c0 2.86 1.82 5.43 5 6.08 3.18-.65 5-3.22 5-6.08V8.7l-5-2.5z"/></svg>} />
-              <StatCard label="Entries" value="0" sub="Patron deposits do not enter draws" icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm4.95 13.54-1.41 1.41L12 13.41l-3.54 3.54-1.41-1.41L10.59 12 7.05 8.46l1.41-1.41L12 10.59l3.54-3.54 1.41 1.41L13.41 12l3.54 3.54z"/></svg>} />
             </section>
           </section>
+        ) : v5Page === 'profile' ? (
+          <ProfilePage account={account} points={pointsProfile} history={pointsHistory} />
         ) : v5Page === 'winners' ? (
           <V5PreviousRound
             state={state}
@@ -2163,16 +2151,6 @@ export function V5UatExperience() {
 
         {error && v5Page !== 'winners' ? <p className="deposit-caption" style={{ color: '#ff8ea1' }}>{error}</p> : null}
 
-        <WithdrawImpactModal
-          open={withdrawImpactOpen}
-          busy={Boolean(busy)}
-          isFull={Boolean(withdrawRequest?.isFull)}
-          amountLabel={withdrawRequest?.amountLabel || '0.0000 MON'}
-          streakWeeks={withdrawRequest?.streakWeeks || 0}
-          multiplier={withdrawRequest?.multiplier || '1'}
-          onCancel={closeWithdrawFlow}
-          onConfirm={confirmWithdrawImpact}
-        />
         <ClaimFlowModal
           open={withdrawChoiceOpen}
           mode="principal"
@@ -2185,6 +2163,7 @@ export function V5UatExperience() {
           onBackFromRedirectWarning={() => setWithdrawRedirectWarningOpen(false)}
           confirmRedirectOpen={withdrawRedirectWarningOpen}
           onConfirmRedirect={confirmWithdrawAndConvert}
+          headerNotice="Withdrawing your deposits will impact your weekly streak"
         />
 
         <footer className="site-footer" id="disclaimer">
