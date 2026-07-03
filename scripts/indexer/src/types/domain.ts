@@ -35,7 +35,12 @@ export type SupportedEventName =
   | 'RootProposed'
   | 'RootVetoed'
   | 'RootFinalized'
-  | 'DrawEconomicsSnapshot';
+  | 'DrawEconomicsSnapshot'
+  // V5 ClaimManager events
+  | 'DistributionRegistered'
+  | 'ClaimPaid'
+  | 'ClaimDeferred'
+  | 'DeferredClaimPaid';
 
 export interface RawEventRow {
   txHash: string;

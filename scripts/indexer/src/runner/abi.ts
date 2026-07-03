@@ -50,4 +50,10 @@ export const POOL_EVENT_ABI = [
   'event RootVetoed(uint256 indexed drawId, bytes32 indexed root, address indexed guardian, uint64 proposeAfter)',
   'event RootFinalized(uint256 indexed drawId, bytes32 indexed root, uint32 winnerCount, uint256 totalPayout)',
   'event DrawEconomicsSnapshot(uint256 indexed drawId, uint256 grossYield, uint256 sponsorYield, uint256 feeAmount, uint256 totalPayout)',
+
+  // ── V5 ClaimManagerV5 events ────────────────────────────────────────────
+  'event DistributionRegistered(bytes32 indexed distributionId, address indexed source, bytes32 indexed sourceKey, bytes32 root, uint32 leafCount, bytes32 metadata)',
+  'event ClaimPaid(bytes32 indexed distributionId, uint256 indexed leafIndex, address indexed account, address token, uint256 amount)',
+  'event ClaimDeferred(bytes32 indexed distributionId, uint256 indexed leafIndex, address indexed account, address token, uint256 amount)',
+  'event DeferredClaimPaid(bytes32 indexed distributionId, uint256 indexed leafIndex, address indexed account, address token, uint256 amount)',
 ] as const;

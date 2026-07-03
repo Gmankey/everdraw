@@ -47,6 +47,10 @@ const SUPPORTED_EVENTS: SupportedEventName[] = [
   'RootVetoed',
   'RootFinalized',
   'DrawEconomicsSnapshot',
+  'DistributionRegistered',
+  'ClaimPaid',
+  'ClaimDeferred',
+  'DeferredClaimPaid',
 ];
 
 export interface IndexerRunner {
@@ -207,6 +211,8 @@ function toRawEventRow(input: {
     ? Number(parsed.args.roundId)
     : parsed.args.drawId != null
       ? Number(parsed.args.drawId)
+      : parsed.name === 'DistributionRegistered' && parsed.args.sourceKey != null
+        ? Number(BigInt(parsed.args.sourceKey))
       : null;
 
   let wallet: string | null = null;
@@ -215,6 +221,7 @@ function toRawEventRow(input: {
   else if (parsed.args.user) wallet = String(parsed.args.user).toLowerCase();
   else if (parsed.args.recipient) wallet = String(parsed.args.recipient).toLowerCase();
   else if (parsed.args.booster) wallet = String(parsed.args.booster).toLowerCase();
+  else if (parsed.args.account) wallet = String(parsed.args.account).toLowerCase();
 
   const amountMon = parsed.args.monPaid != null
     ? String(parsed.args.monPaid)
@@ -428,6 +435,28 @@ function normalizeArgs(eventName: SupportedEventName, args: any): Record<string,
         sponsorYield: String(args.sponsorYield),
         feeAmount: String(args.feeAmount),
         totalPayout: String(args.totalPayout),
+      };
+
+    // ── V5 ClaimManagerV5 ─────────────────────────────────────────────────
+    case 'DistributionRegistered':
+      return {
+        distributionId: String(args.distributionId),
+        source: String(args.source).toLowerCase(),
+        sourceKey: String(args.sourceKey),
+        root: String(args.root),
+        leafCount: Number(args.leafCount),
+        metadata: String(args.metadata),
+      };
+
+    case 'ClaimPaid':
+    case 'ClaimDeferred':
+    case 'DeferredClaimPaid':
+      return {
+        distributionId: String(args.distributionId),
+        leafIndex: String(args.leafIndex),
+        account: String(args.account).toLowerCase(),
+        token: String(args.token).toLowerCase(),
+        amount: String(args.amount),
       };
 
     default:
