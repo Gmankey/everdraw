@@ -19,6 +19,10 @@ export interface DeriveV5TranchesService {
   rebuildFromRaw(range?: { fromBlock: number; toBlock: number }): void;
 }
 
+export function firstFullWeightDrawId(startDrawId: number | null): number | null {
+  return startDrawId == null ? null : startDrawId + 1;
+}
+
 export function createDeriveV5TranchesService(
   rawEventsRepo: RawEventsRepo,
   v5TranchesRepo: V5TranchesRepo
@@ -85,9 +89,35 @@ export function createDeriveV5TranchesService(
             event,
           });
         }
+        assertBalanceAfter({
+          repo: v5TranchesRepo,
+          wallet: position.wallet,
+          vaultAddress: event.contractAddress,
+          poolType: position.poolType,
+          expected: position.balanceAfter,
+          event,
+        });
       }
     },
   };
+}
+
+function assertBalanceAfter(input: {
+  repo: V5TranchesRepo;
+  wallet: string;
+  vaultAddress: string;
+  poolType: V5PoolType;
+  expected: bigint | null;
+  event: RawEventRow;
+}): void {
+  if (input.expected == null) return;
+  const actual = BigInt(input.repo.sumOpenRemaining(input.wallet, input.vaultAddress, input.poolType));
+  if (actual !== input.expected) {
+    throw new Error(
+      `V5 tranche balance drift after ${input.event.eventName} ${input.event.txHash}:${input.event.logIndex} ` +
+      `wallet=${input.wallet} pool=${input.poolType} expected=${input.expected} actual=${actual}`
+    );
+  }
 }
 
 function consumeNewestTranches(input: {

@@ -7,6 +7,7 @@ import type { WalletRoundsRepo } from './repositories/walletRoundsRepo.js';
 import type { PointsRepo } from './repositories/pointsRepo.js';
 import type { V5TranchesRepo } from './repositories/v5TranchesRepo.js';
 import { calculateRoundPoints, getMultiplierX100, getTier, lossStreakThresholdBonus, nextMilestone, nextTierThreshold } from './services/pointsMath.js';
+import { firstFullWeightDrawId } from './services/deriveV5Tranches.js';
 
 export interface ApiServer {
   start(): Promise<Server>;
@@ -162,6 +163,7 @@ export function createApiServer(params: {
       opened_at: row.openedAt,
       opened_tx_hash: row.openedTxHash,
       start_draw_id: row.startDrawId,
+      first_full_weight_draw_id: firstFullWeightDrawId(row.startDrawId),
       closed_at: row.closedAt,
       closed_block_number: row.closedBlockNumber,
       closed_log_index: row.closedLogIndex,

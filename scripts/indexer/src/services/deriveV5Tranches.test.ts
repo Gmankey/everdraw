@@ -3,7 +3,7 @@ import Database from 'better-sqlite3';
 import { applySchema } from '../db/database.js';
 import { createRawEventsRepo } from '../repositories/rawEventsRepo.js';
 import { createV5TranchesRepo } from '../repositories/v5TranchesRepo.js';
-import { createDeriveV5TranchesService } from './deriveV5Tranches.js';
+import { createDeriveV5TranchesService, firstFullWeightDrawId } from './deriveV5Tranches.js';
 import type { RawEventRow } from '../types/domain.js';
 
 const db = new Database(':memory:');
@@ -41,7 +41,7 @@ rawEventsRepo.upsertMany([
     logIndex: 1,
     contractAddress: drawManager,
     roundId: 7,
-    payload: JSON.stringify({ drawId: 7, periodStart: 1782946800, periodEnd: 1782950400 }),
+    payload: JSON.stringify({ drawId: 7, periodStart: 1782950400, periodEnd: 1782954000 }),
   }),
   raw({
     eventName: 'Deposit',
@@ -86,6 +86,9 @@ assert.equal(vaultTranches[1].closedBlockNumber, 100);
 const degenTranches = tranches.filter((row) => row.poolType === 'degen');
 assert.equal(degenTranches.length, 1);
 assert.equal(degenTranches[0].remainingAmount, '40');
+assert.equal(vaultTranches[0].startDrawId, 7);
+assert.equal(firstFullWeightDrawId(vaultTranches[0].startDrawId), 8);
+assert.equal(v5TranchesRepo.sumOpenRemaining(wallet, vault, 'degen'), '40');
 
 const events = v5TranchesRepo.listPositionEvents(wallet);
 assert.equal(events.length, 4);
@@ -95,5 +98,19 @@ assert.deepEqual(events.map((event) => `${event.poolType}:${event.action}:${even
   'degen:deposit:40',
   'vault:withdraw:60',
 ]);
+
+rawEventsRepo.upsertMany([
+  raw({
+    eventName: 'BoostWithdraw',
+    logIndex: 6,
+    blockTimestamp: '2026-07-02T00:35:00.000Z',
+    payload: JSON.stringify({ booster: wallet, amount: '10', balance: '999' }),
+  }),
+]);
+
+assert.throws(
+  () => service.rebuildFromRaw(),
+  /V5 tranche balance drift after BoostWithdraw/
+);
 
 console.log('deriveV5Tranches.test.ts ok');

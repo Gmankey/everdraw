@@ -14,6 +14,7 @@ export interface V5TranchesRepo {
     closedTxHash: string | null;
   }): void;
   listOpenNewestFirst(wallet: string, vaultAddress: string, poolType: V5TrancheRow['poolType']): V5TrancheRow[];
+  sumOpenRemaining(wallet: string, vaultAddress: string, poolType: V5TrancheRow['poolType']): string;
   listByWallet(wallet: string): V5TrancheRow[];
   listPositionEvents(wallet: string): V5PositionEventRow[];
 }
@@ -131,6 +132,15 @@ export function createV5TranchesRepo(db: Database.Database): V5TranchesRepo {
     ORDER BY block_number ASC, log_index ASC
   `);
 
+  const sumOpenRemainingStmt = db.prepare(`
+    SELECT remaining_amount AS remainingAmount
+    FROM v5_tranches
+    WHERE LOWER(wallet) = LOWER(?)
+      AND LOWER(vault_address) = LOWER(?)
+      AND pool_type = ?
+      AND CAST(remaining_amount AS TEXT) != '0'
+  `);
+
   return {
     deleteAll() { deleteAllTx(); },
     insertPositionEvent(row) { insertPositionEventStmt.run(row); },
@@ -141,6 +151,10 @@ export function createV5TranchesRepo(db: Database.Database): V5TranchesRepo {
     updateTrancheRemaining(input) { updateTrancheRemainingStmt.run(input); },
     listOpenNewestFirst(wallet, vaultAddress, poolType) {
       return listOpenNewestFirstStmt.all(wallet, vaultAddress, poolType) as V5TrancheRow[];
+    },
+    sumOpenRemaining(wallet, vaultAddress, poolType) {
+      const rows = sumOpenRemainingStmt.all(wallet, vaultAddress, poolType) as Array<{ remainingAmount: string }>;
+      return rows.reduce((sum, row) => sum + BigInt(row.remainingAmount), 0n).toString();
     },
     listByWallet(wallet) {
       return listByWalletStmt.all(wallet) as V5TrancheRow[];
