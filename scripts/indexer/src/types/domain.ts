@@ -122,8 +122,8 @@ export interface WalletPointsRow {
   lifetimePoints: number;
   hasReceivedFirstDepositBonus: 0 | 1;
   hasReceivedFirstWinBonus: 0 | 1;
-  hasReceivedOnTheDoubleBonus: 0 | 1;
   hasReceivedComebackKingBonus: 0 | 1;
+  hasReceivedPrizePatronBonus: 0 | 1;
   highestLossStreakBonusAwarded: number;
   highestStreakMilestoneAwarded: number;
   updatedAt: number;
@@ -135,6 +135,7 @@ export interface WalletStreakRow {
   longestStreakWeeks: number;
   lastCheckpointUnix: number | null;
   consecutiveNonWins: number;
+  consecutiveMissedDraws: number;
   updatedAt: number;
 }
 

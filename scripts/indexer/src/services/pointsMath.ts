@@ -1,20 +1,22 @@
 export type PointsTier = 'Bronze' | 'Silver' | 'Gold' | 'Platinum' | 'Diamond';
 
 export const STREAK_MILESTONE_POINTS = new Map<number, number>([
-  [2, 10],
-  [4, 50],
-  [13, 200],
-  [26, 500],
-  [52, 1000],
+  [2, 10_000],
+  [4, 50_000],
+  [13, 200_000],
+  [26, 500_000],
+  [52, 1_000_000],
 ]);
 
-export const ON_THE_DOUBLE_POINTS = 50;
-export const COMEBACK_KING_POINTS = 100;
+export const FIRST_DEPOSIT_POINTS = 25_000;
+export const WIN_POINTS = 25_000;
+export const COMEBACK_KING_POINTS = 100_000;
+export const PRIZE_PATRON_POINTS = 25_000;
 
 export const LOSS_STREAK_THRESHOLD_POINTS = new Map<number, number>([
-  [10, 50],
-  [26, 200],
-  [52, 500],
+  [10, 50_000],
+  [26, 500_000],
+  [52, 2_000_000],
 ]);
 
 export function getMultiplierX100(streakWeeks: number): number {
@@ -45,6 +47,28 @@ export function nextMilestone(streakWeeks: number): number | null {
   return [2, 4, 13, 26, 52].find((milestone) => milestone > streakWeeks) ?? null;
 }
 
+export function getDegenMultiplierX100(degenWeeks: number): number {
+  if (degenWeeks >= 4) return 500;
+  if (degenWeeks >= 3) return 400;
+  if (degenWeeks >= 2) return 300;
+  return 200;
+}
+
+export function trancheTenureWeeks(firstFullWeightDrawId: number | null, drawId: number): number {
+  if (firstFullWeightDrawId == null || drawId < firstFullWeightDrawId) return 0;
+  return drawId - firstFullWeightDrawId + 1;
+}
+
+export function multiplierForTranche(input: {
+  poolType: 'vault' | 'degen';
+  firstFullWeightDrawId: number | null;
+  drawId: number;
+}): number {
+  const weeks = trancheTenureWeeks(input.firstFullWeightDrawId, input.drawId);
+  if (input.poolType === 'degen') return getDegenMultiplierX100(weeks);
+  return getMultiplierX100(weeks);
+}
+
 export type BonusBreakdown = Record<string, number>;
 
 export function lossStreakThresholdBonus(nextConsecutiveNonWins: number, highestAwarded: number): { threshold: number; points: number } | null {
@@ -58,28 +82,25 @@ export function lossStreakThresholdBonus(nextConsecutiveNonWins: number, highest
 }
 
 export function calculateRoundPoints(input: {
-  tickets: number;
+  entries: number;
   streakWeeks: number;
   won: boolean;
-  onTheDouble: boolean;
   lossStreakBonusPoints?: number;
   firstDeposit: boolean;
   comebackKing: boolean;
+  prizePatron?: boolean;
   skippedOrFailed?: boolean;
 }): { basePoints: number; multiplierX100: number; bonuses: BonusBreakdown; totalPoints: number } {
-  const basePoints = Math.max(0, Math.floor(input.tickets || 0));
+  const basePoints = Math.max(0, input.entries || 0);
   const multiplierX100 = getMultiplierX100(input.streakWeeks);
-  if (input.skippedOrFailed) {
-    return { basePoints: 0, multiplierX100, bonuses: {}, totalPoints: 0 };
-  }
 
   const multiplied = Math.round((basePoints * multiplierX100) / 100);
   const bonuses: BonusBreakdown = {};
-  if (input.won) bonuses.win = 25;
-  if (input.onTheDouble) bonuses.on_the_double = ON_THE_DOUBLE_POINTS;
+  if (input.won) bonuses.win = WIN_POINTS;
   if ((input.lossStreakBonusPoints ?? 0) > 0 && !input.won) bonuses.loss_streak = input.lossStreakBonusPoints!;
-  if (input.firstDeposit) bonuses.first_deposit = 25;
-  if (input.comebackKing && input.won) bonuses.comeback_king = COMEBACK_KING_POINTS;
+  if (input.firstDeposit) bonuses.first_deposit = FIRST_DEPOSIT_POINTS;
+  if (input.comebackKing) bonuses.comeback_king = COMEBACK_KING_POINTS;
+  if (input.prizePatron) bonuses.prize_patron = PRIZE_PATRON_POINTS;
 
   const totalPoints = multiplied + Object.values(bonuses).reduce((sum, value) => sum + value, 0);
   return { basePoints, multiplierX100, bonuses, totalPoints };

@@ -78,10 +78,9 @@ export function createApiServer(params: {
     const streak = pointsRepo.getWalletStreak(wallet);
     const points = pointsRepo.getWalletPoints(wallet);
     const result = calculateRoundPoints({
-      tickets,
+      entries: tickets,
       streakWeeks: streak?.currentStreakWeeks ?? 0,
       won: false,
-      onTheDouble: false,
       lossStreakBonusPoints: lossStreakThresholdBonus((streak?.consecutiveNonWins ?? 0) + 1, points?.highestLossStreakBonusAwarded ?? 0)?.points ?? 0,
       firstDeposit: !points || points.hasReceivedFirstDepositBonus === 0,
       comebackKing: false,
@@ -112,12 +111,13 @@ export function createApiServer(params: {
       current_multiplier_x100: getMultiplierX100(currentStreakWeeks),
       current_tier: getTier(currentStreakWeeks),
       consecutive_non_wins: profile?.consecutiveNonWins ?? 0,
+      consecutive_missed_draws: profile?.consecutiveMissedDraws ?? 0,
       highest_streak_milestone_awarded: profile?.highestStreakMilestoneAwarded ?? 0,
       highest_loss_streak_bonus_awarded: profile?.highestLossStreakBonusAwarded ?? 0,
       has_received_first_deposit_bonus: profile?.hasReceivedFirstDepositBonus ?? 0,
       has_received_first_win_bonus: profile?.hasReceivedFirstWinBonus ?? 0,
-      has_received_on_the_double_bonus: profile?.hasReceivedOnTheDoubleBonus ?? 0,
       has_received_comeback_king_bonus: profile?.hasReceivedComebackKingBonus ?? 0,
+      has_received_prize_patron_bonus: profile?.hasReceivedPrizePatronBonus ?? 0,
       next_tier_threshold: nextTierThreshold(currentStreakWeeks),
       next_milestone: nextMilestone(currentStreakWeeks),
       rank: profile ? pointsRepo.getRank(wallet, 'all') : null,

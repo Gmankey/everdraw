@@ -35,12 +35,25 @@ export function createDerivePointsService(input: {
           if (a.roundId !== b.roundId) return a.roundId - b.roundId;
           return a.poolAddress.localeCompare(b.poolAddress);
         });
+      const knownWallets = new Set<string>();
 
       for (const round of rounds) {
         const participants = walletRoundsRepo.listByRound(round.roundId, round.poolAddress)
           .filter((participant) => participant.tickets > 0);
+        const participantWallets = new Set(participants.map((participant) => participant.wallet.toLowerCase()));
         const awardedAtUnix = toUnix(round.settledAt) ?? timestamp;
         const skippedOrFailed = round.isSkipped === 1 || round.state === 'skipped';
+
+        for (const wallet of knownWallets) {
+          if (participantWallets.has(wallet)) continue;
+          pointsRepo.ensureWallet(wallet, timestamp);
+          const streak = pointsRepo.getWalletStreak(wallet)!;
+          pointsRepo.upsertWalletStreak({
+            ...streak,
+            consecutiveMissedDraws: streak.consecutiveMissedDraws + 1,
+            updatedAt: timestamp,
+          });
+        }
 
         for (const participant of participants) {
           const wallet = participant.wallet.toLowerCase();
@@ -49,22 +62,21 @@ export function createDerivePointsService(input: {
           const streak = pointsRepo.getWalletStreak(wallet)!;
           const won = participant.won === 1 || (round.winner != null && round.winner.toLowerCase() === wallet);
           const firstDeposit = points.hasReceivedFirstDepositBonus === 0;
-          const hadPriorDeposit = pointsRepo.hadFirstDepositBefore(wallet, round.roundId);
-          const comebackKing = points.hasReceivedComebackKingBonus === 0 && won && hadPriorDeposit;
-          const onTheDouble = points.hasReceivedOnTheDoubleBonus === 0 && !skippedOrFailed && pointsRepo.hasOtherActivePoolAt(wallet, round.poolAddress, awardedAtUnix);
-          const nextConsecutiveNonWins = skippedOrFailed ? streak.consecutiveNonWins : (won ? 0 : streak.consecutiveNonWins + 1);
-          const lossStreakBonus = !won && !skippedOrFailed
+          const prizePatron = points.hasReceivedPrizePatronBonus === 0 && pointsRepo.hasDegenDepositAtOrBefore(wallet, awardedAtUnix);
+          const comebackKing = streak.consecutiveMissedDraws >= 2;
+          const nextConsecutiveNonWins = won ? 0 : streak.consecutiveNonWins + 1;
+          const lossStreakBonus = !won
             ? lossStreakThresholdBonus(nextConsecutiveNonWins, points.highestLossStreakBonusAwarded)
             : null;
 
           const result = calculateRoundPoints({
-            tickets: participant.tickets,
+            entries: participant.tickets,
             streakWeeks: streak.currentStreakWeeks,
             won,
-            onTheDouble,
             lossStreakBonusPoints: lossStreakBonus?.points ?? 0,
             firstDeposit,
             comebackKing,
+            prizePatron,
             skippedOrFailed,
           });
 
@@ -83,9 +95,9 @@ export function createDerivePointsService(input: {
             ...points,
             lifetimePoints: points.lifetimePoints + result.totalPoints,
             hasReceivedFirstDepositBonus: firstDeposit ? 1 : points.hasReceivedFirstDepositBonus,
-            hasReceivedFirstWinBonus: comebackKing ? 1 : points.hasReceivedFirstWinBonus,
-            hasReceivedOnTheDoubleBonus: onTheDouble ? 1 : points.hasReceivedOnTheDoubleBonus,
+            hasReceivedFirstWinBonus: won ? 1 : points.hasReceivedFirstWinBonus,
             hasReceivedComebackKingBonus: comebackKing ? 1 : points.hasReceivedComebackKingBonus,
+            hasReceivedPrizePatronBonus: prizePatron ? 1 : points.hasReceivedPrizePatronBonus,
             highestLossStreakBonusAwarded: lossStreakBonus?.threshold ?? points.highestLossStreakBonusAwarded,
             updatedAt: timestamp,
           });
@@ -93,8 +105,10 @@ export function createDerivePointsService(input: {
           pointsRepo.upsertWalletStreak({
             ...streak,
             consecutiveNonWins: nextConsecutiveNonWins,
+            consecutiveMissedDraws: 0,
             updatedAt: timestamp,
           });
+          knownWallets.add(wallet);
         }
       }
     },
@@ -129,6 +143,7 @@ export function createDerivePointsService(input: {
           currentStreakWeeks: nextCurrent,
           longestStreakWeeks: nextLongest,
           lastCheckpointUnix: checkpointUnix,
+          consecutiveMissedDraws: hasActivePosition ? streak.consecutiveMissedDraws : 0,
           updatedAt: checkpointUnix,
         });
         pointsRepo.upsertWalletPoints({

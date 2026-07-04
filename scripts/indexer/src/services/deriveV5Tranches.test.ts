@@ -101,9 +101,31 @@ assert.deepEqual(events.map((event) => `${event.poolType}:${event.action}:${even
 
 rawEventsRepo.upsertMany([
   raw({
-    eventName: 'BoostWithdraw',
+    eventName: 'Withdraw',
     logIndex: 6,
     blockTimestamp: '2026-07-02T00:35:00.000Z',
+    payload: JSON.stringify({ recipient: wallet, amount: '90', balance: '0' }),
+  }),
+  raw({
+    eventName: 'BoostWithdraw',
+    logIndex: 7,
+    blockTimestamp: '2026-07-02T00:40:00.000Z',
+    payload: JSON.stringify({ booster: wallet, amount: '40', balance: '0' }),
+  }),
+]);
+
+service.rebuildFromRaw();
+
+assert.equal(v5TranchesRepo.sumOpenRemaining(wallet, vault, 'vault'), '0');
+assert.equal(v5TranchesRepo.sumOpenRemaining(wallet, vault, 'degen'), '0');
+const closedTranches = v5TranchesRepo.listByWallet(wallet);
+assert.equal(closedTranches.every((row) => row.remainingAmount === '0' && row.closedAt != null), true);
+
+rawEventsRepo.upsertMany([
+  raw({
+    eventName: 'BoostWithdraw',
+    logIndex: 8,
+    blockTimestamp: '2026-07-02T00:45:00.000Z',
     payload: JSON.stringify({ booster: wallet, amount: '10', balance: '999' }),
   }),
 ]);
