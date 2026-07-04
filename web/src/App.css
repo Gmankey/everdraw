@@ -1477,3 +1477,65 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
 .previous-vault-card .deposit-btn {
   margin-top: 1.25rem;
 }
+
+.points-next-multiplier {
+  width: min(720px, 100%);
+  margin: 0 auto 12px;
+  text-align: center;
+}
+
+.points-source-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  width: min(760px, 100%);
+  margin: 0 auto 14px;
+}
+
+.points-source-row {
+  display: grid;
+  gap: 5px;
+  padding: 13px 14px;
+  border: 1px solid rgba(155, 109, 255, 0.22);
+  border-radius: 14px;
+  background: rgba(10, 8, 22, 0.36);
+}
+
+.points-source-row span {
+  color: rgba(196, 181, 253, 0.64);
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.points-source-row strong {
+  color: #ede8ff;
+  font-size: 1rem;
+  font-weight: 950;
+}
+
+.points-source-row small {
+  color: rgba(196, 181, 253, 0.58);
+  font-weight: 750;
+  line-height: 1.25;
+}
+
+.degen-source-row {
+  border-color: rgba(245, 158, 11, 0.28);
+  background: rgba(245, 158, 11, 0.065);
+}
+
+.degen-source-row strong {
+  color: #fde68a;
+}
+
+.withdraw-streak-warning {
+  margin: 0 0 16px;
+  border-color: rgba(245, 158, 11, 0.52);
+  background: rgba(245, 158, 11, 0.08);
+}
+
+@media (max-width: 760px) {
+  .points-source-grid { grid-template-columns: 1fr; }
+}
