@@ -73,16 +73,22 @@ function ensureWalletPointsColumns(db: Database.Database): void {
 
   if (columns.length === 0) return;
 
-  if (!names.has('has_received_on_the_double_bonus')) {
-    db.exec('ALTER TABLE wallet_points ADD COLUMN has_received_on_the_double_bonus INTEGER NOT NULL DEFAULT 0');
-  }
-
   if (!names.has('has_received_comeback_king_bonus')) {
     db.exec('ALTER TABLE wallet_points ADD COLUMN has_received_comeback_king_bonus INTEGER NOT NULL DEFAULT 0');
   }
 
+  if (!names.has('has_received_prize_patron_bonus')) {
+    db.exec('ALTER TABLE wallet_points ADD COLUMN has_received_prize_patron_bonus INTEGER NOT NULL DEFAULT 0');
+  }
+
   if (!names.has('highest_loss_streak_bonus_awarded')) {
     db.exec('ALTER TABLE wallet_points ADD COLUMN highest_loss_streak_bonus_awarded INTEGER NOT NULL DEFAULT 0');
+  }
+
+  const streakColumns = db.prepare("PRAGMA table_info(wallet_streaks)").all() as Array<{ name: string }>;
+  const streakNames = new Set(streakColumns.map((column) => column.name));
+  if (streakColumns.length > 0 && !streakNames.has('consecutive_missed_draws')) {
+    db.exec('ALTER TABLE wallet_streaks ADD COLUMN consecutive_missed_draws INTEGER NOT NULL DEFAULT 0');
   }
 }
 

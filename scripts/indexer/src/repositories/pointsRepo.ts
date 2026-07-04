@@ -21,7 +21,7 @@ export interface PointsRepo {
   hasAnySettledRoundBetween(fromUnix: number, toUnix: number): boolean;
   hasActivePositionAt(wallet: string, checkpointUnix: number, poolAddress?: string): boolean;
   hadFirstDepositBefore(wallet: string, roundId: number): boolean;
-  hasOtherActivePoolAt(wallet: string, poolAddress: string, atUnix: number): boolean;
+  hasDegenDepositAtOrBefore(wallet: string, atUnix: number): boolean;
 }
 
 export function createPointsRepo(db: Database.Database): PointsRepo {
@@ -30,18 +30,19 @@ export function createPointsRepo(db: Database.Database): PointsRepo {
     db.prepare(`
       UPDATE wallet_points SET
         lifetime_points =
+          CASE WHEN highest_streak_milestone_awarded >= 2 THEN ${STREAK_MILESTONE_POINTS.get(2) ?? 0} ELSE 0 END +
           CASE WHEN highest_streak_milestone_awarded >= 4 THEN ${STREAK_MILESTONE_POINTS.get(4) ?? 0} ELSE 0 END +
           CASE WHEN highest_streak_milestone_awarded >= 13 THEN ${STREAK_MILESTONE_POINTS.get(13) ?? 0} ELSE 0 END +
           CASE WHEN highest_streak_milestone_awarded >= 26 THEN ${STREAK_MILESTONE_POINTS.get(26) ?? 0} ELSE 0 END +
           CASE WHEN highest_streak_milestone_awarded >= 52 THEN ${STREAK_MILESTONE_POINTS.get(52) ?? 0} ELSE 0 END,
         has_received_first_deposit_bonus = 0,
         has_received_first_win_bonus = 0,
-        has_received_on_the_double_bonus = 0,
         has_received_comeback_king_bonus = 0,
+        has_received_prize_patron_bonus = 0,
         highest_loss_streak_bonus_awarded = 0,
         updated_at = CAST(strftime('%s','now') AS INTEGER)
     `).run();
-    db.prepare("UPDATE wallet_streaks SET consecutive_non_wins = 0, updated_at = CAST(strftime('%s','now') AS INTEGER)").run();
+    db.prepare("UPDATE wallet_streaks SET consecutive_non_wins = 0, consecutive_missed_draws = 0, updated_at = CAST(strftime('%s','now') AS INTEGER)").run();
   });
 
   const ensureWalletStmt = db.prepare(`
@@ -56,8 +57,8 @@ export function createPointsRepo(db: Database.Database): PointsRepo {
     SELECT wallet, lifetime_points AS lifetimePoints,
       has_received_first_deposit_bonus AS hasReceivedFirstDepositBonus,
       has_received_first_win_bonus AS hasReceivedFirstWinBonus,
-      has_received_on_the_double_bonus AS hasReceivedOnTheDoubleBonus,
       has_received_comeback_king_bonus AS hasReceivedComebackKingBonus,
+      has_received_prize_patron_bonus AS hasReceivedPrizePatronBonus,
       highest_loss_streak_bonus_awarded AS highestLossStreakBonusAwarded,
       highest_streak_milestone_awarded AS highestStreakMilestoneAwarded,
       updated_at AS updatedAt
@@ -68,28 +69,30 @@ export function createPointsRepo(db: Database.Database): PointsRepo {
       longest_streak_weeks AS longestStreakWeeks,
       last_checkpoint_unix AS lastCheckpointUnix,
       consecutive_non_wins AS consecutiveNonWins,
+      consecutive_missed_draws AS consecutiveMissedDraws,
       updated_at AS updatedAt
     FROM wallet_streaks WHERE LOWER(wallet) = LOWER(?)
   `);
   const upsertPointsStmt = db.prepare(`
-    INSERT INTO wallet_points (wallet, lifetime_points, has_received_first_deposit_bonus, has_received_first_win_bonus, has_received_on_the_double_bonus, has_received_comeback_king_bonus, highest_loss_streak_bonus_awarded, highest_streak_milestone_awarded, updated_at)
-    VALUES (LOWER(@wallet), @lifetimePoints, @hasReceivedFirstDepositBonus, @hasReceivedFirstWinBonus, @hasReceivedOnTheDoubleBonus, @hasReceivedComebackKingBonus, @highestLossStreakBonusAwarded, @highestStreakMilestoneAwarded, @updatedAt)
+    INSERT INTO wallet_points (wallet, lifetime_points, has_received_first_deposit_bonus, has_received_first_win_bonus, has_received_comeback_king_bonus, has_received_prize_patron_bonus, highest_loss_streak_bonus_awarded, highest_streak_milestone_awarded, updated_at)
+    VALUES (LOWER(@wallet), @lifetimePoints, @hasReceivedFirstDepositBonus, @hasReceivedFirstWinBonus, @hasReceivedComebackKingBonus, @hasReceivedPrizePatronBonus, @highestLossStreakBonusAwarded, @highestStreakMilestoneAwarded, @updatedAt)
     ON CONFLICT(wallet) DO UPDATE SET lifetime_points = excluded.lifetime_points,
       has_received_first_deposit_bonus = excluded.has_received_first_deposit_bonus,
       has_received_first_win_bonus = excluded.has_received_first_win_bonus,
-      has_received_on_the_double_bonus = excluded.has_received_on_the_double_bonus,
       has_received_comeback_king_bonus = excluded.has_received_comeback_king_bonus,
+      has_received_prize_patron_bonus = excluded.has_received_prize_patron_bonus,
       highest_loss_streak_bonus_awarded = excluded.highest_loss_streak_bonus_awarded,
       highest_streak_milestone_awarded = excluded.highest_streak_milestone_awarded,
       updated_at = excluded.updated_at
   `);
   const upsertStreakStmt = db.prepare(`
-    INSERT INTO wallet_streaks (wallet, current_streak_weeks, longest_streak_weeks, last_checkpoint_unix, consecutive_non_wins, updated_at)
-    VALUES (LOWER(@wallet), @currentStreakWeeks, @longestStreakWeeks, @lastCheckpointUnix, @consecutiveNonWins, @updatedAt)
+    INSERT INTO wallet_streaks (wallet, current_streak_weeks, longest_streak_weeks, last_checkpoint_unix, consecutive_non_wins, consecutive_missed_draws, updated_at)
+    VALUES (LOWER(@wallet), @currentStreakWeeks, @longestStreakWeeks, @lastCheckpointUnix, @consecutiveNonWins, @consecutiveMissedDraws, @updatedAt)
     ON CONFLICT(wallet) DO UPDATE SET current_streak_weeks = excluded.current_streak_weeks,
       longest_streak_weeks = excluded.longest_streak_weeks,
       last_checkpoint_unix = excluded.last_checkpoint_unix,
       consecutive_non_wins = excluded.consecutive_non_wins,
+      consecutive_missed_draws = excluded.consecutive_missed_draws,
       updated_at = excluded.updated_at
   `);
   const insertRoundPointsStmt = db.prepare(`
@@ -182,14 +185,14 @@ export function createPointsRepo(db: Database.Database): PointsRepo {
       const row = db.prepare(`SELECT COUNT(*) AS c FROM wallet_rounds WHERE LOWER(wallet) = LOWER(?) AND tickets > 0 AND round_id < ?`).get(wallet, roundId) as { c: number };
       return row.c > 0;
     },
-    hasOtherActivePoolAt(wallet, poolAddress, atUnix) {
+    hasDegenDepositAtOrBefore(wallet, atUnix) {
       const row = db.prepare(`
-        SELECT COUNT(*) AS c FROM wallet_rounds wr JOIN rounds r ON r.round_id = wr.round_id AND r.pool_address = wr.pool_address
-        WHERE LOWER(wr.wallet) = LOWER(?) AND LOWER(wr.pool_address) <> LOWER(?) AND wr.tickets > 0
-          AND r.state IN ('open','committed','drawn','unstaking','settled')
-          AND (r.opened_at IS NULL OR CAST(strftime('%s', r.opened_at) AS INTEGER) <= ?)
-          AND (r.settled_at IS NULL OR CAST(strftime('%s', r.settled_at) AS INTEGER) >= ?)
-      `).get(wallet, poolAddress, atUnix, atUnix) as { c: number };
+        SELECT COUNT(*) AS c FROM v5_position_events
+        WHERE LOWER(wallet) = LOWER(?)
+          AND pool_type = 'degen'
+          AND action = 'deposit'
+          AND CAST(strftime('%s', block_timestamp) AS INTEGER) <= ?
+      `).get(wallet, atUnix) as { c: number };
       return row.c > 0;
     },
   };
