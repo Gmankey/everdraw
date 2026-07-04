@@ -4,9 +4,11 @@ import { createRoundsRepo } from './repositories/roundsRepo.js';
 import { createWalletRoundsRepo } from './repositories/walletRoundsRepo.js';
 import { createWalletStatsRepo } from './repositories/walletStatsRepo.js';
 import { createIndexerStateRepo } from './repositories/indexerStateRepo.js';
+import { createV5TranchesRepo } from './repositories/v5TranchesRepo.js';
 import { createDeriveRoundsService } from './services/deriveRounds.js';
 import { createDeriveWalletRoundsService } from './services/deriveWalletRounds.js';
 import { createDeriveWalletStatsService } from './services/deriveWalletStats.js';
+import { createDeriveV5TranchesService } from './services/deriveV5Tranches.js';
 import { getRunnerConfig } from './runner/config.js';
 import { createIndexerRunner } from './runner/service.js';
 
@@ -18,10 +20,12 @@ const roundsRepo = createRoundsRepo(db);
 const walletRoundsRepo = createWalletRoundsRepo(db);
 const walletStatsRepo = createWalletStatsRepo(db);
 const indexerStateRepo = createIndexerStateRepo(db);
+const v5TranchesRepo = createV5TranchesRepo(db);
 
 const deriveRoundsService = createDeriveRoundsService(rawEventsRepo, roundsRepo);
 const deriveWalletRoundsService = createDeriveWalletRoundsService(rawEventsRepo, walletRoundsRepo);
 const deriveWalletStatsService = createDeriveWalletStatsService(walletRoundsRepo, walletStatsRepo);
+const deriveV5TranchesService = createDeriveV5TranchesService(rawEventsRepo, v5TranchesRepo);
 
 const runner = createIndexerRunner({
   config: getRunnerConfig(),
@@ -30,6 +34,7 @@ const runner = createIndexerRunner({
   deriveRoundsService,
   deriveWalletRoundsService,
   deriveWalletStatsService,
+  deriveV5TranchesService,
 });
 
 await runner.start();

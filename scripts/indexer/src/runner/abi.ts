@@ -35,4 +35,25 @@ export const POOL_EVENT_ABI = [
   // V3 RoundSettled — principalShares + prizeShares, no winner (different topic hash from legacy and V2)
   'event RoundSettled(uint256 indexed roundId, uint256 principalShares, uint256 prizeShares)',
   'event EmergencyForceSettled(uint256 indexed roundId)',
+
+  // ── V5 PrizeVaultV5 events ───────────────────────────────────────────────
+  'event Deposit(address indexed recipient, uint256 amount)',
+  'event Withdraw(address indexed recipient, uint256 amount)',
+  'event BoostDeposit(address indexed booster, uint256 amount, uint256 balance, uint64 timestamp)',
+  'event BoostWithdraw(address indexed booster, uint256 amount, uint256 balance, uint64 timestamp)',
+
+  // ── V5 DrawManagerV5 events ──────────────────────────────────────────────
+  'event DrawStarted(uint256 indexed drawId, uint64 periodStart, uint64 periodEnd, uint256 totalTwab, uint256 totalPayout, uint64 requestId)',
+  'event DrawSkipped(uint256 indexed drawId, uint64 periodStart, uint64 periodEnd, uint256 totalTwab, uint256 availablePrize, string reason)',
+  'event SeedReceived(uint256 indexed drawId, uint64 indexed requestId, bytes32 seed)',
+  'event RootProposed(uint256 indexed drawId, bytes32 indexed root, uint32 winnerCount, uint256 totalPayout, address indexed proposer, bytes32 algorithmVersion, uint64 challengeEndsAt)',
+  'event RootVetoed(uint256 indexed drawId, bytes32 indexed root, address indexed guardian, uint64 proposeAfter)',
+  'event RootFinalized(uint256 indexed drawId, bytes32 indexed root, uint32 winnerCount, uint256 totalPayout)',
+  'event DrawEconomicsSnapshot(uint256 indexed drawId, uint256 grossYield, uint256 sponsorYield, uint256 feeAmount, uint256 totalPayout)',
+
+  // ── V5 ClaimManagerV5 events ────────────────────────────────────────────
+  'event DistributionRegistered(bytes32 indexed distributionId, address indexed source, bytes32 indexed sourceKey, bytes32 root, uint32 leafCount, bytes32 metadata)',
+  'event ClaimPaid(bytes32 indexed distributionId, uint256 indexed leafIndex, address indexed account, address token, uint256 amount)',
+  'event ClaimDeferred(bytes32 indexed distributionId, uint256 indexed leafIndex, address indexed account, address token, uint256 amount)',
+  'event DeferredClaimPaid(bytes32 indexed distributionId, uint256 indexed leafIndex, address indexed account, address token, uint256 amount)',
 ] as const;

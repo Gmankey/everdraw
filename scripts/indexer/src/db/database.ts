@@ -26,6 +26,7 @@ export function applySchema(db: Database.Database, schemaPath = SCHEMA_PATH): vo
   ensureRoundsColumns(db);
   ensureWalletRoundsColumns(db);
   ensureWalletPointsColumns(db);
+  ensureV5TrancheTables(db);
 }
 
 function ensureRoundsColumns(db: Database.Database): void {
@@ -83,4 +84,49 @@ function ensureWalletPointsColumns(db: Database.Database): void {
   if (!names.has('highest_loss_streak_bonus_awarded')) {
     db.exec('ALTER TABLE wallet_points ADD COLUMN highest_loss_streak_bonus_awarded INTEGER NOT NULL DEFAULT 0');
   }
+}
+
+function ensureV5TrancheTables(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS v5_position_events (
+      tx_hash TEXT NOT NULL,
+      log_index INTEGER NOT NULL,
+      block_number INTEGER NOT NULL,
+      block_timestamp TEXT NOT NULL,
+      vault_address TEXT NOT NULL,
+      wallet TEXT NOT NULL,
+      pool_type TEXT NOT NULL CHECK (pool_type IN ('vault', 'degen')),
+      action TEXT NOT NULL CHECK (action IN ('deposit', 'withdraw')),
+      amount TEXT NOT NULL,
+      balance_after TEXT,
+      raw_event_name TEXT NOT NULL,
+      PRIMARY KEY (tx_hash, log_index)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_v5_position_events_wallet ON v5_position_events(wallet);
+    CREATE INDEX IF NOT EXISTS idx_v5_position_events_vault_pool ON v5_position_events(vault_address, pool_type);
+    CREATE INDEX IF NOT EXISTS idx_v5_position_events_order ON v5_position_events(block_number, log_index);
+
+    CREATE TABLE IF NOT EXISTS v5_tranches (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      wallet TEXT NOT NULL,
+      vault_address TEXT NOT NULL,
+      pool_type TEXT NOT NULL CHECK (pool_type IN ('vault', 'degen')),
+      amount TEXT NOT NULL,
+      remaining_amount TEXT NOT NULL,
+      opened_block_number INTEGER NOT NULL,
+      opened_log_index INTEGER NOT NULL,
+      opened_at TEXT NOT NULL,
+      opened_tx_hash TEXT NOT NULL,
+      start_draw_id INTEGER,
+      closed_at TEXT,
+      closed_block_number INTEGER,
+      closed_log_index INTEGER,
+      closed_tx_hash TEXT
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_v5_tranches_opening_event ON v5_tranches(opened_tx_hash, opened_log_index);
+    CREATE INDEX IF NOT EXISTS idx_v5_tranches_wallet_pool ON v5_tranches(wallet, vault_address, pool_type);
+    CREATE INDEX IF NOT EXISTS idx_v5_tranches_open ON v5_tranches(wallet, vault_address, pool_type, remaining_amount);
+  `);
 }

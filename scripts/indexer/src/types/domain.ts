@@ -22,7 +22,25 @@ export type SupportedEventName =
   // V4-only
   | 'RandomnessRequested'
   | 'RandomnessFulfilled'
-  | 'EmergencyForceSettled';
+  | 'EmergencyForceSettled'
+  // V5 PrizeVault events
+  | 'Deposit'
+  | 'Withdraw'
+  | 'BoostDeposit'
+  | 'BoostWithdraw'
+  // V5 DrawManager lifecycle events
+  | 'DrawStarted'
+  | 'DrawSkipped'
+  | 'SeedReceived'
+  | 'RootProposed'
+  | 'RootVetoed'
+  | 'RootFinalized'
+  | 'DrawEconomicsSnapshot'
+  // V5 ClaimManager events
+  | 'DistributionRegistered'
+  | 'ClaimPaid'
+  | 'ClaimDeferred'
+  | 'DeferredClaimPaid';
 
 export interface RawEventRow {
   txHash: string;
@@ -129,4 +147,39 @@ export interface WalletRoundPointsRow {
   bonusesBreakdown: string;
   totalPoints: number;
   awardedAtUnix: number;
+}
+
+export type V5PoolType = 'vault' | 'degen';
+export type V5PositionAction = 'deposit' | 'withdraw';
+
+export interface V5PositionEventRow {
+  txHash: string;
+  logIndex: number;
+  blockNumber: number;
+  blockTimestamp: string;
+  vaultAddress: string;
+  wallet: string;
+  poolType: V5PoolType;
+  action: V5PositionAction;
+  amount: string;
+  balanceAfter: string | null;
+  rawEventName: SupportedEventName;
+}
+
+export interface V5TrancheRow {
+  id?: number;
+  wallet: string;
+  vaultAddress: string;
+  poolType: V5PoolType;
+  amount: string;
+  remainingAmount: string;
+  openedBlockNumber: number;
+  openedLogIndex: number;
+  openedAt: string;
+  openedTxHash: string;
+  startDrawId: number | null;
+  closedAt: string | null;
+  closedBlockNumber: number | null;
+  closedLogIndex: number | null;
+  closedTxHash: string | null;
 }
