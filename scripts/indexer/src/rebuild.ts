@@ -27,7 +27,7 @@ function main(): void {
   const deriveRounds = createDeriveRoundsService(rawEventsRepo, roundsRepo);
   const deriveWalletRounds = createDeriveWalletRoundsService(rawEventsRepo, walletRoundsRepo);
   const deriveWalletStats = createDeriveWalletStatsService(walletRoundsRepo, walletStatsRepo);
-  const deriveV5Tranches = createDeriveV5TranchesService(rawEventsRepo, v5TranchesRepo);
+  const deriveV5Tranches = createDeriveV5TranchesService(rawEventsRepo, v5TranchesRepo, walletRoundsRepo);
 
   deriveRounds.rebuildFromRaw();
   deriveWalletRounds.rebuildFromRaw();

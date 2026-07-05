@@ -39,7 +39,7 @@ export function createDerivePointsService(input: {
 
       for (const round of rounds) {
         const participants = walletRoundsRepo.listByRound(round.roundId, round.poolAddress)
-          .filter((participant) => participant.tickets > 0);
+          .filter((participant) => participant.tickets > 0 || (participant.v5ResolvedBase ?? 0) > 0);
         const participantWallets = new Set(participants.map((participant) => participant.wallet.toLowerCase()));
         const awardedAtUnix = toUnix(round.settledAt) ?? timestamp;
         const skippedOrFailed = round.isSkipped === 1 || round.state === 'skipped';
@@ -69,8 +69,11 @@ export function createDerivePointsService(input: {
             ? lossStreakThresholdBonus(nextConsecutiveNonWins, points.highestLossStreakBonusAwarded)
             : null;
 
+          // V5 draws carry a per-tranche-blended base (§2b); the account streak multiplier is NOT re-applied.
+          const isV5 = participant.v5ResolvedBase != null;
           const result = calculateRoundPoints({
-            entries: participant.tickets,
+            entries: isV5 ? participant.v5ResolvedBase! : participant.tickets,
+            multiplierX100Override: isV5 ? 100 : undefined,
             streakWeeks: streak.currentStreakWeeks,
             won,
             lossStreakBonusPoints: lossStreakBonus?.points ?? 0,

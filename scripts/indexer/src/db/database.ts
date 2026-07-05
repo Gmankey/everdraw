@@ -65,6 +65,10 @@ function ensureWalletRoundsColumns(db: Database.Database): void {
   if (!names.has('withdrawn_at')) {
     db.exec('ALTER TABLE wallet_rounds ADD COLUMN withdrawn_at TEXT');
   }
+
+  if (!names.has('v5_resolved_base')) {
+    db.exec('ALTER TABLE wallet_rounds ADD COLUMN v5_resolved_base REAL');
+  }
 }
 
 function ensureWalletPointsColumns(db: Database.Database): void {
