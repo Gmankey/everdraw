@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS wallet_rounds (
   principal_withdrawn TEXT NOT NULL DEFAULT '0',
   withdrawn_at TEXT,
   net_position TEXT NOT NULL DEFAULT '0',
+  v5_resolved_base REAL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (wallet, round_id, pool_address)

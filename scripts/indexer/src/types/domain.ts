@@ -93,6 +93,8 @@ export interface WalletRoundRow {
   principalWithdrawn: string;
   withdrawnAt: string | null;
   netPosition: string;
+  // V5 only: per-tranche-blended resolved base points for this draw (null for legacy rounds).
+  v5ResolvedBase?: number | null;
   createdAt: string;
   updatedAt: string;
 }

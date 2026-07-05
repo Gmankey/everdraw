@@ -35,7 +35,7 @@ async function main(): Promise<void> {
   const deriveRoundsService = createDeriveRoundsService(rawEventsRepo, roundsRepo);
   const deriveWalletRoundsService = createDeriveWalletRoundsService(rawEventsRepo, walletRoundsRepo);
   const deriveWalletStatsService = createDeriveWalletStatsService(walletRoundsRepo, walletStatsRepo);
-  const deriveV5TranchesService = createDeriveV5TranchesService(rawEventsRepo, v5TranchesRepo);
+  const deriveV5TranchesService = createDeriveV5TranchesService(rawEventsRepo, v5TranchesRepo, walletRoundsRepo);
   const derivePointsService = createDerivePointsService({ pointsRepo, roundsRepo, walletRoundsRepo });
 
   const runner = createIndexerRunner({

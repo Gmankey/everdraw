@@ -1,8 +1,11 @@
 import type Database from 'better-sqlite3';
 import type { WalletRoundRow } from '../types/domain.js';
+import { nowIso } from '../utils/time.js';
 
 export interface WalletRoundsRepo {
   upsert(row: WalletRoundRow): void;
+  // V5: attach the per-tranche-blended resolved base to a (wallet, draw) row without clobbering win/claim data.
+  upsertV5ResolvedBase(wallet: string, roundId: number, poolAddress: string, resolvedBase: number): void;
   replaceForRound(roundId: number, rows: WalletRoundRow[], poolAddress?: string): void;
   listByRound(roundId: number, poolAddress?: string): WalletRoundRow[];
   listByWalletWithRound(wallet: string): Array<WalletRoundRow & { state: string; salesEndTime: string | null; isSkipped: number }>;
@@ -55,6 +58,14 @@ export function createWalletRoundsRepo(db: Database.Database): WalletRoundsRepo 
       updated_at = excluded.updated_at
   `);
 
+  const upsertV5ResolvedBaseStmt = db.prepare(`
+    INSERT INTO wallet_rounds (wallet, round_id, pool_address, v5_resolved_base, created_at, updated_at)
+    VALUES (LOWER(@wallet), @roundId, LOWER(@poolAddress), @resolvedBase, @now, @now)
+    ON CONFLICT(wallet, round_id, pool_address) DO UPDATE SET
+      v5_resolved_base = excluded.v5_resolved_base,
+      updated_at = excluded.updated_at
+  `);
+
   const deleteForRoundStmt = db.prepare(`
     DELETE FROM wallet_rounds
     WHERE round_id = ? AND (? IS NULL OR LOWER(pool_address) = LOWER(?))
@@ -73,6 +84,7 @@ export function createWalletRoundsRepo(db: Database.Database): WalletRoundsRepo 
       principal_withdrawn as principalWithdrawn,
       withdrawn_at as withdrawnAt,
       net_position as netPosition,
+      v5_resolved_base as v5ResolvedBase,
       created_at as createdAt,
       updated_at as updatedAt
     FROM wallet_rounds
@@ -153,6 +165,9 @@ export function createWalletRoundsRepo(db: Database.Database): WalletRoundsRepo 
   return {
     upsert(row) {
       upsertStmt.run(row);
+    },
+    upsertV5ResolvedBase(wallet, roundId, poolAddress, resolvedBase) {
+      upsertV5ResolvedBaseStmt.run({ wallet, roundId, poolAddress, resolvedBase, now: nowIso() });
     },
     replaceForRound(roundId, rows, poolAddress) {
       replaceForRoundTx(roundId, rows, poolAddress);

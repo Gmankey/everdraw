@@ -90,9 +90,11 @@ export function calculateRoundPoints(input: {
   comebackKing: boolean;
   prizePatron?: boolean;
   skippedOrFailed?: boolean;
+  // V5: base already has per-tranche multipliers baked in (§2b), so pass 100 to skip the account-streak multiplier.
+  multiplierX100Override?: number;
 }): { basePoints: number; multiplierX100: number; bonuses: BonusBreakdown; totalPoints: number } {
   const basePoints = Math.max(0, input.entries || 0);
-  const multiplierX100 = getMultiplierX100(input.streakWeeks);
+  const multiplierX100 = input.multiplierX100Override ?? getMultiplierX100(input.streakWeeks);
 
   const multiplied = Math.round((basePoints * multiplierX100) / 100);
   const bonuses: BonusBreakdown = {};

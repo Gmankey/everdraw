@@ -1,6 +1,12 @@
 import type { RawEventsRepo } from '../repositories/rawEventsRepo.js';
 import type { V5TranchesRepo } from '../repositories/v5TranchesRepo.js';
+import type { WalletRoundsRepo } from '../repositories/walletRoundsRepo.js';
 import type { RawEventRow, V5PoolType, V5PositionAction } from '../types/domain.js';
+import { multiplierForTranche } from './pointsMath.js';
+
+// Locked ticket rate: 0.005 entries/MON/minute (see v5-odds-display-ux ticket).
+const ENTRIES_RATE_PER_MON_PER_MIN = 0.005;
+const WEI_PER_MON = 1e18;
 
 type DrawWindow = {
   drawId: number;
@@ -25,7 +31,8 @@ export function firstFullWeightDrawId(startDrawId: number | null): number | null
 
 export function createDeriveV5TranchesService(
   rawEventsRepo: RawEventsRepo,
-  v5TranchesRepo: V5TranchesRepo
+  v5TranchesRepo: V5TranchesRepo,
+  walletRoundsRepo?: WalletRoundsRepo
 ): DeriveV5TranchesService {
   return {
     rebuildFromRaw(range) {
@@ -41,6 +48,14 @@ export function createDeriveV5TranchesService(
         .map(toDrawWindow)
         .filter((window): window is DrawWindow => window != null)
         .sort((a, b) => a.periodStart - b.periodStart || a.drawId - b.drawId);
+
+      // Map each V5 draw to the DrawManager that emitted it (= the round's pool_address).
+      const drawManagerByDrawId = new Map<number, string>();
+      for (const event of finalizedEvents) {
+        if (event.eventName !== 'DrawStarted' && event.eventName !== 'DrawSkipped') continue;
+        const window = toDrawWindow(event);
+        if (window) drawManagerByDrawId.set(window.drawId, event.contractAddress.toLowerCase());
+      }
 
       v5TranchesRepo.deleteAll();
 
@@ -97,6 +112,11 @@ export function createDeriveV5TranchesService(
           expected: position.balanceAfter,
           event,
         });
+      }
+
+      // Per-wallet per-draw entries → resolved base points (per-tranche tenure multiplier, §2b).
+      if (walletRoundsRepo) {
+        writeV5ResolvedBase({ finalizedEvents, drawWindows, drawManagerByDrawId, walletRoundsRepo });
       }
     },
   };
@@ -199,4 +219,107 @@ function sortEvents(a: RawEventRow, b: RawEventRow): number {
   return a.blockNumber !== b.blockNumber
     ? a.blockNumber - b.blockNumber
     : a.logIndex - b.logIndex;
+}
+
+function findDrawIdUnix(windows: DrawWindow[], unix: number): number | null {
+  const match = windows.find((window) => window.periodStart <= unix && unix < window.periodEnd);
+  return match?.drawId ?? null;
+}
+
+type TrancheState = { remaining: bigint; startDrawId: number | null };
+type PosEvent = { unix: number; action: V5PositionAction; amount: bigint };
+
+// For each V5 draw, compute every wallet's resolved base points:
+//   resolvedBase = Σ over tranches [ entries_t × multiplierForTranche(t)/100 ]
+//   entries_t    = 0.005 × (tranche's time-weighted balance-minutes over [periodStart, periodEnd])
+// The tranche multiplier follows each deposit's own tenure (§2b anti-gaming), NOT the account streak.
+// Vault and Degen tranches are tracked separately; degen carries the 2→5× ramp, vault the 1→2× curve.
+function writeV5ResolvedBase(input: {
+  finalizedEvents: RawEventRow[];
+  drawWindows: DrawWindow[];
+  drawManagerByDrawId: Map<number, string>;
+  walletRoundsRepo: WalletRoundsRepo;
+}): void {
+  const { finalizedEvents, drawWindows, drawManagerByDrawId, walletRoundsRepo } = input;
+  if (drawWindows.length === 0) return;
+  const windows = [...drawWindows].sort((a, b) => a.periodStart - b.periodStart);
+  const maxEnd = Math.max(...windows.map((w) => w.periodEnd));
+
+  // Group ordered position events by wallet + pool.
+  const groups = new Map<string, PosEvent[]>();
+  const groupMeta = new Map<string, { wallet: string; poolType: V5PoolType }>();
+  for (const event of finalizedEvents) {
+    const position = toPositionEvent(event);
+    if (!position) continue;
+    const unix = Math.floor(Date.parse(event.blockTimestamp) / 1000);
+    if (!Number.isFinite(unix)) continue;
+    const key = `${position.wallet}:${position.poolType}`;
+    if (!groups.has(key)) {
+      groups.set(key, []);
+      groupMeta.set(key, { wallet: position.wallet, poolType: position.poolType });
+    }
+    groups.get(key)!.push({ unix, action: position.action, amount: position.amount });
+  }
+
+  // resolvedBase[wallet][drawId]
+  const resolved = new Map<string, Map<number, number>>();
+  const addBase = (wallet: string, drawId: number, value: number) => {
+    if (value === 0) return;
+    if (!resolved.has(wallet)) resolved.set(wallet, new Map());
+    const byDraw = resolved.get(wallet)!;
+    byDraw.set(drawId, (byDraw.get(drawId) ?? 0) + value);
+  };
+
+  for (const [key, events] of groups) {
+    const { wallet, poolType } = groupMeta.get(key)!;
+    events.sort((a, b) => a.unix - b.unix);
+    const stack: TrancheState[] = [];
+
+    const flushSegment = (t0: number, t1: number) => {
+      if (t1 <= t0) return;
+      for (const win of windows) {
+        const os = Math.max(t0, win.periodStart);
+        const oe = Math.min(t1, win.periodEnd);
+        if (oe <= os) continue;
+        const minutes = (oe - os) / 60;
+        for (const tranche of stack) {
+          if (tranche.remaining <= 0n) continue;
+          const balanceMon = Number(tranche.remaining) / WEI_PER_MON;
+          const entries = ENTRIES_RATE_PER_MON_PER_MIN * balanceMon * minutes;
+          const mult = multiplierForTranche({
+            poolType,
+            firstFullWeightDrawId: firstFullWeightDrawId(tranche.startDrawId),
+            drawId: win.drawId,
+          });
+          addBase(wallet, win.drawId, entries * (mult / 100));
+        }
+      }
+    };
+
+    let prevTime: number | null = null;
+    for (const ev of events) {
+      if (prevTime != null) flushSegment(prevTime, ev.unix);
+      if (ev.action === 'deposit') {
+        stack.push({ remaining: ev.amount, startDrawId: findDrawIdUnix(windows, ev.unix) });
+      } else {
+        let remaining = ev.amount;
+        for (let i = stack.length - 1; i >= 0 && remaining > 0n; i--) {
+          const consumed = stack[i].remaining < remaining ? stack[i].remaining : remaining;
+          stack[i].remaining -= consumed;
+          remaining -= consumed;
+        }
+      }
+      prevTime = ev.unix;
+    }
+    // Balance persists after the last event through the end of the final draw window.
+    if (prevTime != null) flushSegment(prevTime, maxEnd);
+  }
+
+  for (const [wallet, byDraw] of resolved) {
+    for (const [drawId, base] of byDraw) {
+      const poolAddress = drawManagerByDrawId.get(drawId);
+      if (!poolAddress) continue;
+      walletRoundsRepo.upsertV5ResolvedBase(wallet, drawId, poolAddress, base);
+    }
+  }
 }
