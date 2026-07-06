@@ -160,7 +160,14 @@ export function createPointsRepo(db: Database.Database): PointsRepo {
       return row?.rank ?? null;
     },
     listWalletsWithDeposits() {
-      return db.prepare('SELECT DISTINCT LOWER(wallet) AS wallet FROM wallet_rounds WHERE tickets > 0 ORDER BY wallet ASC').all().map((r: any) => r.wallet as string);
+      // V5 wallet-rounds never populate `tickets` (that's a V4 ticket-count field); their
+      // entries live in `v5_resolved_base` instead. Without the OR here, every V5 wallet is
+      // silently invisible to the weekly checkpoint and its streak never advances.
+      return db.prepare(`
+        SELECT DISTINCT LOWER(wallet) AS wallet FROM wallet_rounds
+        WHERE tickets > 0 OR v5_resolved_base > 0
+        ORDER BY wallet ASC
+      `).all().map((r: any) => r.wallet as string);
     },
     hasAnySettledRoundBetween(fromUnix, toUnix) {
       const row = db.prepare(`SELECT COUNT(*) AS c FROM rounds WHERE state = 'settled' AND settled_at IS NOT NULL AND CAST(strftime('%s', settled_at) AS INTEGER) >= ? AND CAST(strftime('%s', settled_at) AS INTEGER) < ?`).get(fromUnix, toUnix) as { c: number };
@@ -179,7 +186,22 @@ export function createPointsRepo(db: Database.Database): PointsRepo {
           AND (r.settled_at IS NULL OR CAST(strftime('%s', r.settled_at) AS INTEGER) >= ?)
           ${poolSql}
       `).get(...params) as { c: number };
-      return row.c > 0;
+      if (row.c > 0) return true;
+
+      // V5 has no "open"/"committed" sales-window concept (deposits are continuous, not
+      // round-gated) -- the correct signal for "does this wallet currently hold a position" is
+      // simply an open tranche as of checkpointUnix, independent of any draw's lifecycle state.
+      const v5Params: Array<string | number> = [wallet, checkpointUnix, checkpointUnix];
+      let v5PoolSql = '';
+      if (poolAddress) { v5PoolSql = ' AND LOWER(vault_address) = LOWER(?)'; v5Params.push(poolAddress); }
+      const v5Row = db.prepare(`
+        SELECT COUNT(*) AS c FROM v5_tranches
+        WHERE LOWER(wallet) = LOWER(?)
+          AND CAST(strftime('%s', opened_at) AS INTEGER) <= ?
+          AND (closed_at IS NULL OR CAST(strftime('%s', closed_at) AS INTEGER) > ?)
+          ${v5PoolSql}
+      `).get(...v5Params) as { c: number };
+      return v5Row.c > 0;
     },
     hadFirstDepositBefore(wallet, roundId) {
       const row = db.prepare(`SELECT COUNT(*) AS c FROM wallet_rounds WHERE LOWER(wallet) = LOWER(?) AND tickets > 0 AND round_id < ?`).get(wallet, roundId) as { c: number };
