@@ -5,6 +5,10 @@ interface IERC20ClaimManagerV5 {
     function balanceOf(address account) external view returns (uint256);
 }
 
+interface IPrizeVaultV5Compound {
+    function depositFor(address recipient) external payable returns (uint256 shares);
+}
+
 /// @title ClaimManagerV5
 /// @notice Generalized V5 payout substrate for merkle distributions.
 contract ClaimManagerV5 {
@@ -51,6 +55,13 @@ contract ClaimManagerV5 {
     mapping(bytes32 => mapping(uint256 => uint256)) private claimedBitmaps;
     mapping(bytes32 => mapping(uint256 => DeferredClaim)) public deferredClaims;
 
+    // ADR-0043: prize auto-compound. `compoundVaultFor[source]` is the PrizeVaultV5 (or
+    // compatible) a given distribution source's native-token winnings should be restaked into
+    // by default; empty means "no compounding for this source, pay to wallet as before".
+    // `compoundOptOut[account]` lets a winner opt out entirely and always be paid to wallet.
+    mapping(address => address) public compoundVaultFor;
+    mapping(address => bool) public compoundOptOut;
+
     event OwnershipTransferStarted(address indexed previousOwner, address indexed pendingOwner);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     event SourceAuthorizationSet(address indexed source, bool authorized);
@@ -83,6 +94,14 @@ contract ClaimManagerV5 {
         address token,
         uint256 amount
     );
+    event PrizeCompounded(
+        bytes32 indexed distributionId,
+        uint256 indexed leafIndex,
+        address indexed account,
+        uint256 amount
+    );
+    event CompoundVaultSet(address indexed source, address indexed vault);
+    event CompoundOptOutSet(address indexed account, bool optedOut);
 
     error NotOwner();
     error NotAuthorizedSource();
@@ -134,6 +153,20 @@ contract ClaimManagerV5 {
         if (source == address(0)) revert ZeroAddress();
         authorizedSource[source] = authorized;
         emit SourceAuthorizationSet(source, authorized);
+    }
+
+    /// @notice Configure which vault a distribution source's native-token winnings should
+    /// auto-compound into. Pass address(0) to disable compounding for that source.
+    function setCompoundVault(address source, address vault) external onlyOwner {
+        if (source == address(0)) revert ZeroAddress();
+        compoundVaultFor[source] = vault;
+        emit CompoundVaultSet(source, vault);
+    }
+
+    /// @notice Winners can opt out of auto-compound entirely and always be paid to wallet.
+    function setCompoundOptOut(bool optedOut) external {
+        compoundOptOut[msg.sender] = optedOut;
+        emit CompoundOptOutSet(msg.sender, optedOut);
     }
 
     function distributionIdFor(address source, bytes32 sourceKey) public pure returns (bytes32) {
@@ -259,14 +292,42 @@ contract ClaimManagerV5 {
         if (accounted > distributionTokenTotal[leaf.distributionId][leaf.token]) revert TokenBudgetExceeded();
         distributionTokenAccounted[leaf.distributionId][leaf.token] = accounted;
 
-        if (_tryPay(leaf.token, leaf.account, leaf.amount)) {
+        (bool paid, bool compounded) =
+            _tryCompoundOrPay(distribution.source, leaf.token, leaf.account, leaf.amount);
+        if (paid) {
             reservedByToken[leaf.token] -= leaf.amount;
             emit ClaimPaid(leaf.distributionId, leaf.leafIndex, leaf.account, leaf.token, leaf.amount);
+            if (compounded) {
+                emit PrizeCompounded(leaf.distributionId, leaf.leafIndex, leaf.account, leaf.amount);
+            }
         } else {
             deferredClaims[leaf.distributionId][leaf.leafIndex] =
                 DeferredClaim({account: leaf.account, token: leaf.token, amount: leaf.amount});
             emit ClaimDeferred(leaf.distributionId, leaf.leafIndex, leaf.account, leaf.token, leaf.amount);
         }
+    }
+
+    /// @notice ADR-0043: for native-token claims with a compound vault configured for this
+    /// distribution's source, and the winner hasn't opted out, restake the prize into the
+    /// winner's vault principal (a fresh tranche at tenure 0) instead of paying their wallet.
+    /// Falls back to a direct wallet payout if the vault call reverts (e.g. paused), and falls
+    /// back further to the existing deferred-claim path if even that fails -- a winner's claim
+    /// is never bricked by this feature; at worst it behaves exactly as it did before ADR-0043.
+    function _tryCompoundOrPay(address source, address token, address account, uint256 amount)
+        internal
+        returns (bool paid, bool compounded)
+    {
+        if (token == NATIVE_TOKEN && !compoundOptOut[account]) {
+            address vault = compoundVaultFor[source];
+            if (vault != address(0)) {
+                try IPrizeVaultV5Compound(vault).depositFor{value: amount}(account) returns (uint256) {
+                    return (true, true);
+                } catch {
+                    // Vault paused/reverted -- fall through to a direct wallet payout below.
+                }
+            }
+        }
+        return (_tryPay(token, account, amount), false);
     }
 
     function _setClaimed(bytes32 distributionId, uint256 leafIndex) internal {

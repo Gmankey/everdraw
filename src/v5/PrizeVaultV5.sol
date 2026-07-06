@@ -247,6 +247,17 @@ contract PrizeVaultV5 {
         _creditParticipant(msg.sender, _assetsDelta(assetsBefore));
     }
 
+    /// @notice Deposit on behalf of another account (e.g. ADR-0043 prize auto-compound).
+    /// Permissionless like ERC4626's receiver-based deposit: crediting someone else's principal
+    /// is inherently benign, so this needs no special access control.
+    function depositFor(address recipient) external payable whenNotPaused nonReentrant returns (uint256 shares) {
+        if (recipient == address(0)) revert ZeroAddress();
+        uint256 assets = msg.value;
+        _requireDepositAllowed(assets);
+        shares = strategy.deposit{value: assets}(assets);
+        _creditParticipant(recipient, assets);
+    }
+
     function depositShmon(uint256 shares) external whenNotPaused nonReentrant returns (uint256 assets) {
         if (stoppedAt != 0) revert VaultIsStopped();
         assets = strategy.depositSharesFrom(msg.sender, shares);
