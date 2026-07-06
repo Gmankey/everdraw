@@ -13,6 +13,7 @@ import type { RunnerConfig } from './config.js';
 import { POOL_EVENT_ABI } from './abi.js';
 
 const LAST_FINALIZED_BLOCK_KEY = 'last_finalized_block';
+const LAST_POINTS_CHECKPOINT_UNIX_KEY = 'last_points_checkpoint_unix';
 const SUPPORTED_EVENTS: SupportedEventName[] = [
   // Shared
   'RoundStarted',
@@ -73,6 +74,20 @@ export function createIndexerRunner(input: {
   const provider = makeProvider(config.rpcUrl, config.rpcUrlFallback);
   const iface = new Interface(POOL_EVENT_ABI);
 
+  // Streak/tier/multiplier progression only advances via this checkpoint; it must run on its
+  // own cadence (independent of block-scan frequency) or every wallet stays frozen at week 0.
+  function maybeRunPointsCheckpoint(): void {
+    if (!derivePointsService) return;
+    const nowUnix = Math.floor(Date.now() / 1000);
+    const lastRunUnix = Number(indexerStateRepo.get(LAST_POINTS_CHECKPOINT_UNIX_KEY)?.value ?? 0);
+    if (!isPointsCheckpointDue(nowUnix, lastRunUnix, config.pointsCheckpointIntervalSec)) return;
+    const result = derivePointsService.runWeeklyCheckpoint(nowUnix);
+    if (!result.skipped) {
+      indexerStateRepo.set(LAST_POINTS_CHECKPOINT_UNIX_KEY, String(nowUnix), nowIso());
+    }
+    console.log('[indexer] points checkpoint', result);
+  }
+
   return {
     async syncOnce() {
       console.log('[indexer] syncOnce starting...');
@@ -115,6 +130,7 @@ export function createIndexerRunner(input: {
         deriveV5TranchesService?.rebuildFromRaw();
         deriveWalletStatsService.rebuild();
         derivePointsService?.rebuildSettlementPoints();
+        maybeRunPointsCheckpoint();
       }
       indexerStateRepo.set(LAST_FINALIZED_BLOCK_KEY, String(toBlock), nowIso());
 
@@ -483,4 +499,8 @@ async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 5): Promise<T> {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function isPointsCheckpointDue(nowUnix: number, lastRunUnix: number, intervalSec: number): boolean {
+  return nowUnix - lastRunUnix >= intervalSec;
 }

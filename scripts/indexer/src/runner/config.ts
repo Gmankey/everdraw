@@ -7,6 +7,7 @@ export interface RunnerConfig {
   chunkSize: number;
   maxBlocksPerSync: number;
   pollIntervalMs: number;
+  pointsCheckpointIntervalSec: number;
 }
 
 export function getRunnerConfig(): RunnerConfig {
@@ -29,5 +30,8 @@ export function getRunnerConfig(): RunnerConfig {
     chunkSize: Number(process.env.INDEXER_CHUNK_SIZE ?? 100),
     maxBlocksPerSync: Number(process.env.INDEXER_MAX_BLOCKS_PER_SYNC ?? 10_000),
     pollIntervalMs: Number(process.env.INDEXER_POLL_INTERVAL_MS ?? 2000),
+    // Weekly on mainnet; override (e.g. 3600 = hourly) on faster testnet draw cadences so the
+    // streak/tier/multiplier progression is actually observable within a test session.
+    pointsCheckpointIntervalSec: Number(process.env.POINTS_CHECKPOINT_INTERVAL_SEC ?? 604_800),
   };
 }
