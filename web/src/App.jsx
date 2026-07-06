@@ -346,6 +346,50 @@ function bonusLabel(key) {
     .toLowerCase()
 }
 
+function vaultMultiplierForWeeks(weeks) {
+  const n = Number(weeks || 0)
+  if (n >= 26) return 200
+  if (n >= 13) return 150
+  if (n >= 8) return 125
+  if (n >= 4) return 110
+  return 100
+}
+
+function degenMultiplierForWeeks(weeks) {
+  const n = Number(weeks || 0)
+  if (n >= 4) return 500
+  if (n >= 3) return 400
+  if (n >= 2) return 300
+  return 200
+}
+
+function trancheWeeks(tranche, drawId) {
+  const firstFull = Number(tranche?.first_full_weight_draw_id ?? 0)
+  const current = Number(drawId || 0)
+  if (!firstFull || !current || current < firstFull) return 0
+  return current - firstFull + 1
+}
+
+function trancheRemainingMon(tranche) {
+  try {
+    return Number(ethers.formatEther(BigInt(tranche?.remaining_amount || '0')))
+  } catch {
+    return 0
+  }
+}
+
+function formatMultiplier(x100) {
+  return `${(Number(x100 || 100) / 100).toFixed(2).replace(/\.00$/, '')}x`
+}
+
+function nextVaultThreshold(weeks) {
+  return [4, 8, 13, 26].find((n) => Number(weeks || 0) < n) ?? null
+}
+
+function nextDegenThreshold(weeks) {
+  return [2, 3, 4].find((n) => Number(weeks || 0) < n) ?? null
+}
+
 function PointsHeaderWidget({ account, points }) {
   const [open, setOpen] = useState(false)
   if (!account) return null
@@ -382,67 +426,81 @@ function PointsBreakdown({ item }) {
   )
 }
 
-function ProfilePage({ account, points, history }) {
+function ProfilePage({ account, points, history, tranches, currentDrawId }) {
   if (!account) return <section className="participants-card points-page"><h2>Your Points</h2><p>Connect a wallet to view your EverDraw points profile.</p></section>
   const historyRows = Array.isArray(history) ? history : []
-  const hasHistoryBonus = (targetLabel) => historyRows.some((row) =>
-    Object.entries(row?.bonuses_breakdown || {}).some(([key, value]) =>
-      Number(value) > 0 && bonusLabel(key) === targetLabel
-    )
-  )
+  const openTranches = (Array.isArray(tranches) ? tranches : []).filter((row) => trancheRemainingMon(row) > 0)
+  const vaultTranches = openTranches.filter((row) => row.pool_type === 'vault')
+  const degenTranches = openTranches.filter((row) => row.pool_type === 'degen')
+  const drawId = Number(currentDrawId || historyRows[0]?.round_id || 0)
   const streakWeeks = Number(points?.current_streak_weeks || 0)
-  const multiplierX100 = Number(points?.current_multiplier_x100 || 100)
+  const tier = points?.current_tier || 'Bronze'
   const dotCount = 52
   const litDots = Math.max(0, Math.min(dotCount, streakWeeks))
+
+  // Main vault position: use the oldest open vault tranche's own tenure (per-tranche multiplier,
+  // §2b anti-gaming) rather than the account streak, falling back to the account rate if the
+  // wallet has no open tranche data yet (e.g. indexer not caught up).
+  const oldestVault = vaultTranches
+    .map((tranche) => ({ weeks: trancheWeeks(tranche, drawId), amount: trancheRemainingMon(tranche) }))
+    .filter((row) => row.amount > 0)
+    .sort((a, b) => b.weeks - a.weeks || b.amount - a.amount)[0]
+  const oldestDegen = degenTranches
+    .map((tranche) => ({ weeks: trancheWeeks(tranche, drawId), amount: trancheRemainingMon(tranche) }))
+    .filter((row) => row.amount > 0)
+    .sort((a, b) => b.weeks - a.weeks || b.amount - a.amount)[0]
+
+  const mainVaultMultiplierX100 = oldestVault ? vaultMultiplierForWeeks(oldestVault.weeks) : Number(points?.current_multiplier_x100 || 100)
+  const hasPatronPosition = Boolean(oldestDegen)
+  const patronVaultMultiplierX100 = oldestDegen ? degenMultiplierForWeeks(oldestDegen.weeks) : 200
+
+  const nextVault = oldestVault ? nextVaultThreshold(oldestVault.weeks) : nextVaultThreshold(streakWeeks)
+  const nextDegen = oldestDegen ? nextDegenThreshold(oldestDegen.weeks) : 2
+  const nextMainVaultCopy = oldestVault && nextVault
+    ? `Reaches ${formatMultiplier(vaultMultiplierForWeeks(nextVault))} in ${Math.max(1, nextVault - oldestVault.weeks)} draw${Math.max(1, nextVault - oldestVault.weeks) === 1 ? '' : 's'}.`
+    : oldestVault ? 'At the top multiplier tier.' : 'Deposit into the vault to start building your multiplier.'
+  const nextPatronCopy = oldestDegen && nextDegen
+    ? `${Math.max(1, nextDegen - oldestDegen.weeks)} more draw${Math.max(1, nextDegen - oldestDegen.weeks) === 1 ? '' : 's'} to ${formatMultiplier(degenMultiplierForWeeks(nextDegen))}.`
+    : oldestDegen ? 'At the 5x Patron Pool cap.' : 'No Patron Pool position — starts at 2x and builds to 5x.'
+
   const highestMilestoneAwarded = Number(points?.highest_streak_milestone_awarded || 0)
-  const streakMilestones = [
-    { weeks: 2, label: 'Germination Streak', points: 10, visible: true },
-    { weeks: 4, label: 'Sprout Streak', points: 50 },
-    { weeks: 13, label: 'Seedling Streak', points: 200 },
-    { weeks: 26, label: 'Flourishing Streak', points: 500 },
-    { weeks: 52, label: 'Evergreen Streak', points: 1000 },
-  ].map((m) => ({ ...m, claimed: highestMilestoneAwarded >= m.weeks || streakWeeks >= m.weeks }))
-  const noWinWeeks = Number(points?.consecutive_non_wins || points?.current_no_win_streak_weeks || points?.no_win_streak_weeks || 0)
+  const noWinDraws = Number(points?.consecutive_non_wins || 0)
   const highestLossAwarded = Number(points?.highest_loss_streak_bonus_awarded || 0)
-  const firstDepositDone = Boolean(Number(points?.has_received_first_deposit_bonus || 0) || points?.first_deposit_completed || points?.has_deposited || Number(points?.deposit_count || 0) > 0)
-  const comebackKingDone = Boolean(Number(points?.has_received_comeback_king_bonus || points?.has_received_first_win_bonus || 0) || points?.first_win_completed || points?.has_won || Number(points?.win_count || 0) > 0)
-  const winDone = Boolean(points?.has_won || Number(points?.win_count || 0) > 0 || hasHistoryBonus('win'))
-  const twoVaultsDone = Boolean(Number(points?.has_received_on_the_double_bonus || 0) || points?.two_vaults_completed || Number(points?.vault_count || points?.vaults_entered || 0) >= 2)
-  const bonuses = [
-    { key: 'first-deposit', label: 'First Deposit', unlocked: firstDepositDone, visible: true, tooltip: 'A first time playing bonus +25' },
-    { key: 'win', label: 'Win', unlocked: winDone, hidden: !winDone, tooltip: 'Winning a round +25' },
-    ...streakMilestones.map((m) => ({
-      key: `streak-${m.weeks}`,
-      label: m.claimed || m.visible ? m.label : '???',
-      unlocked: m.claimed,
-      hidden: !m.claimed && !m.visible,
-      visible: Boolean(m.visible),
-      tooltip: `${m.weeks} week streak +${m.points}`,
-    })),
-    { key: 'first-win', label: comebackKingDone ? 'First Win' : '???', unlocked: comebackKingDone, hidden: !comebackKingDone, tooltip: 'Congrats on your first win! +100' },
-    { key: 'one-two-double', label: twoVaultsDone ? 'One Two Double' : '???', unlocked: twoVaultsDone, hidden: !twoVaultsDone, tooltip: 'Active in both vaults +50' },
-    { key: 'rising', label: highestLossAwarded >= 10 || noWinWeeks >= 10 ? 'Rising' : '???', unlocked: highestLossAwarded >= 10 || noWinWeeks >= 10, hidden: highestLossAwarded < 10 && noWinWeeks < 10, tooltip: 'Hang in there +50' },
-    { key: 'ascended', label: highestLossAwarded >= 26 || noWinWeeks >= 26 ? 'Ascended' : '???', unlocked: highestLossAwarded >= 26 || noWinWeeks >= 26, hidden: highestLossAwarded < 26 && noWinWeeks < 26, tooltip: 'Virtuous patience must be rewarded +200' },
-    { key: 'transcended', label: highestLossAwarded >= 52 || noWinWeeks >= 52 ? 'Transcended' : '???', unlocked: highestLossAwarded >= 52 || noWinWeeks >= 52, hidden: highestLossAwarded < 52 && noWinWeeks < 52, tooltip: 'Few have reached this level of transcendence +500' },
+  const bonusRows = [
+    { key: 'first-deposit', label: 'First Deposit', points: 25000, unlocked: Number(points?.has_received_first_deposit_bonus || 0) === 1 },
+    { key: 'win', label: 'Win', points: 25000, unlocked: Number(points?.has_received_first_win_bonus || 0) === 1 || historyRows.some((row) => Number(row?.bonuses_breakdown?.win || 0) > 0) },
+    { key: 'prize-patron', label: 'Prize Patron', points: 25000, unlocked: Number(points?.has_received_prize_patron_bonus || 0) === 1 },
+    { key: 'comeback-king', label: 'Comeback King', points: 100000, unlocked: historyRows.some((row) => Number(row?.bonuses_breakdown?.comeback_king || 0) > 0) },
+    { key: 'loss-10', label: '10 draw no-win streak', points: 50000, unlocked: highestLossAwarded >= 10 || noWinDraws >= 10 },
+    { key: 'loss-26', label: '26 draw no-win streak', points: 500000, unlocked: highestLossAwarded >= 26 || noWinDraws >= 26 },
+    { key: 'loss-52', label: '52 draw no-win streak', points: 2000000, unlocked: highestLossAwarded >= 52 || noWinDraws >= 52 },
+    { key: 'streak-2', label: '2 week streak', points: 10000, unlocked: highestMilestoneAwarded >= 2 || streakWeeks >= 2 },
+    { key: 'streak-4', label: '4 week streak', points: 50000, unlocked: highestMilestoneAwarded >= 4 || streakWeeks >= 4 },
+    { key: 'streak-13', label: '13 week streak', points: 200000, unlocked: highestMilestoneAwarded >= 13 || streakWeeks >= 13 },
+    { key: 'streak-26', label: '26 week streak', points: 500000, unlocked: highestMilestoneAwarded >= 26 || streakWeeks >= 26 },
+    { key: 'streak-52', label: '52 week streak', points: 1000000, unlocked: highestMilestoneAwarded >= 52 || streakWeeks >= 52 },
   ].sort((a, b) => Number(b.unlocked) - Number(a.unlocked))
+  const recentDraws = historyRows.slice(0, 12)
   const ensName = points?.ens && !ethers.isAddress(points.ens) && points.ens.toLowerCase() !== account.toLowerCase() ? points.ens : ''
-  const recentRounds = historyRows.slice(0, 12)
+
   return (
     <section className="participants-card points-page">
-      <div className="points-page-head">
-        <div>
-          <h2>{ensName || 'Your Points'}</h2>
-          <span>{shortAddr(account)}</span>
-        </div>
-      </div>
+      <div className="points-page-head"><div><h2>{ensName || 'Your Points'}</h2><span>{shortAddr(account)}</span></div></div>
       <div className="points-profile-layout points-profile-layout-rewards">
         <div className="points-profile-summary points-profile-main-card rewards-main-card">
           <div className="points-popover-kicker rewards-kicker">Total points balance</div>
           <div className="points-profile-total rewards-total">{Number(points?.lifetime_points || 0).toLocaleString()}</div>
+
           <div className="rewards-pill-row">
-            <div className="points-multiplier-pill rewards-multiplier-pill"><span>Active multiplier</span><strong>{(multiplierX100 / 100).toFixed(2)}x</strong></div>
-            <div className={`${tierClass(points?.current_tier)} rewards-tier-pill`}>{points?.current_tier || 'Bronze'}</div>
+            <div className="points-multiplier-pill rewards-multiplier-pill" title={nextMainVaultCopy}><span>Main vault multiplier</span><strong>{formatMultiplier(mainVaultMultiplierX100)}</strong></div>
+            <div className={`${tierClass(tier)} rewards-tier-pill`}>{tier}</div>
           </div>
+          <div className="points-next-milestone points-next-multiplier">{nextMainVaultCopy}</div>
+
+          <div className="rewards-pill-row">
+            <div className={`points-multiplier-pill rewards-multiplier-pill degen-multiplier-pill ${hasPatronPosition ? '' : 'muted'}`} title={nextPatronCopy}><span>Patron vault multiplier</span><strong>{hasPatronPosition ? formatMultiplier(patronVaultMultiplierX100) : '—'}</strong></div>
+          </div>
+          <div className="points-next-milestone points-next-multiplier">{nextPatronCopy}</div>
 
           <div className="points-streak-mini rewards-streak-block">
             <div>
@@ -452,8 +510,7 @@ function ProfilePage({ account, points, history }) {
             <div className="points-streak-dots points-streak-dots-52" aria-label={`${litDots} of ${dotCount} weeks active`}>
               {Array.from({ length: dotCount }).map((_, i) => {
                 const week = i + 1
-                const milestone = streakMilestones.find((m) => m.weeks === week)
-                return <span key={week} className={`${i < litDots ? 'lit' : ''} ${milestone ? 'milestone-dot' : ''} ${milestone?.claimed ? 'claimed' : ''}`} />
+                return <span key={week} className={i < litDots ? 'lit' : ''} title={`Next multiplier: ${formatMultiplier(vaultMultiplierForWeeks(week))}`} />
               })}
             </div>
           </div>
@@ -461,16 +518,16 @@ function ProfilePage({ account, points, history }) {
 
         <aside className="points-profile-side rewards-side-card">
           <div className="points-milestones-panel rewards-milestones-panel rewards-bonuses-panel">
-            <h3>Bonuses🔷</h3>
+            <h3>Bonuses</h3>
             <div className="points-milestone-list rewards-bonus-list">
-              {bonuses.map((bonus) => (
-                <div className={`points-milestone-row rewards-bonus-row ${bonus.unlocked ? 'claimed' : 'locked'} ${bonus.hidden ? 'hidden-bonus' : ''}`} key={bonus.key} title={bonus.tooltip}>
-                  <span className="points-milestone-icon" aria-hidden="true">{bonus.unlocked ? '✓' : bonus.hidden ? '?' : ''}</span>
+              {bonusRows.map((bonus) => (
+                <div className={`points-milestone-row rewards-bonus-row ${bonus.unlocked ? 'claimed' : 'locked'}`} key={bonus.key} title={`${bonus.label} +${bonus.points.toLocaleString()} points`}>
+                  <span className="points-milestone-icon" aria-hidden="true">{bonus.unlocked ? '✓' : ''}</span>
                   <div>
                     <strong>{bonus.label}</strong>
-                    <small>{bonus.hidden ? '' : bonus.unlocked ? 'Unlocked' : bonus.tooltip}</small>
+                    <small>+{bonus.points.toLocaleString()} points</small>
                   </div>
-                  <span className="points-milestone-status">{bonus.unlocked ? 'UNLOCKED' : bonus.hidden ? '' : 'Locked'}</span>
+                  <span className="points-milestone-status">{bonus.unlocked ? 'UNLOCKED' : 'Locked'}</span>
                 </div>
               ))}
             </div>
@@ -479,22 +536,22 @@ function ProfilePage({ account, points, history }) {
       </div>
 
       <div className="points-recent-rounds">
-        <h3>Recent rounds</h3>
+        <h3>Recent draws</h3>
         <div className="participants-table">
-          <div className="participants-row participants-header points-rounds-row"><span>Round</span><span>Tickets Bought</span><span>Multiplier</span><span>Bonus</span><span>Total</span></div>
-          {recentRounds.length === 0 ? (
-            <div className="points-empty-state">No rounds yet. Buy a ticket to start earning.</div>
-          ) : recentRounds.map((h) => {
+          <div className="participants-row participants-header points-rounds-row"><span>Draw</span><span>Your entry</span><span>Multiplier</span><span>Bonus</span><span>Total</span></div>
+          {recentDraws.length === 0 ? (
+            <div className="points-empty-state">No draws yet. Deposit to start earning entries.</div>
+          ) : recentDraws.map((h) => {
             const bonusEntries = Object.entries(h.bonuses_breakdown || {}).filter(([, value]) => Number(value) > 0)
             return (
               <div className="participants-row points-rounds-row" key={`${h.pool_address}:${h.round_id}`}>
                 <span>#{h.round_id}</span>
-                <span>{h.base_points}</span>
-                <span>×{(h.multiplier_x100 / 100).toFixed(2)}</span>
+                <span>{Number(h.base_points || 0).toLocaleString()}</span>
+                <span>x{(Number(h.multiplier_x100 || 100) / 100).toFixed(2)}</span>
                 <span className="round-bonus-pills">
                   {bonusEntries.map(([key]) => <span className="round-bonus-pill" key={key}>{bonusLabel(key)}</span>)}
                 </span>
-                <span>+{h.total_points}</span>
+                <span>+{Number(h.total_points || 0).toLocaleString()}</span>
               </div>
             )
           })}
@@ -766,7 +823,8 @@ function StatCard({ label, value, sub, icon }) {
   )
 }
 
-function ClaimFlowModal({ open, mode, busy, status, error, onClose, onRedeemToWallet, onRedeemAndConvert, onBackFromRedirectWarning, confirmRedirectOpen, onConfirmRedirect, isV2 = false, headerNotice = '' }) {
+function ClaimFlowModal({ open, mode, busy, status, error, onClose, onRedeemToWallet, onRedeemAndConvert, onBackFromRedirectWarning, confirmRedirectOpen, onConfirmRedirect, isV2 = false, headerNotice = '', withdrawWarningText = '' }) {
+  const noticeText = withdrawWarningText || headerNotice
   if (!open) return null
 
   const isWinner = mode === 'winner'
@@ -851,10 +909,10 @@ function ClaimFlowModal({ open, mode, busy, status, error, onClose, onRedeemToWa
             <div className="claim-flow-hero">
               {heroEyebrow ? <div className="claim-flow-eyebrow">{heroEyebrow}</div> : null}
               <div className="claim-flow-title" id="claim-flow-title">{heroTitle}</div>
-              {headerNotice ? (
+              {noticeText ? (
                 <div className="claim-flow-confirm-panel claim-flow-header-warning">
                   <div className="claim-flow-eyebrow">HEADS UP</div>
-                  <div className="claim-flow-confirm-copy">{headerNotice}</div>
+                  <div className="claim-flow-confirm-copy">{noticeText}</div>
                 </div>
               ) : null}
               {heroBody ? <p className="claim-flow-body">{heroBody}</p> : null}
@@ -1355,79 +1413,53 @@ function buildV5TicketModel({ state, account, nowMs }) {
   }
 }
 
-async function v5BuildHistoryRows({ account, block, vault, manager }) {
-  if (!block?.number) return []
-  const fromBlock = Math.max(0, Number(block.number) - 200000)
-  const [deposits, withdrawals, boostDeposits, boostWithdrawals, finalizedDraws] = await Promise.all([
-    account ? vault.queryFilter(vault.filters.Deposit(account), fromBlock, block.number).catch(() => []) : [],
-    account ? vault.queryFilter(vault.filters.Withdraw(account), fromBlock, block.number).catch(() => []) : [],
-    account ? vault.queryFilter(vault.filters.BoostDeposit(account), fromBlock, block.number).catch(() => []) : [],
-    account ? vault.queryFilter(vault.filters.BoostWithdraw(account), fromBlock, block.number).catch(() => []) : [],
-    manager.queryFilter(manager.filters.RootFinalized(), fromBlock, block.number).catch(() => []),
+function v5EventDateFromIso(iso) {
+  const ms = Date.parse(iso || '')
+  if (!Number.isFinite(ms)) return '—'
+  return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+// Reads from the indexer (not eth_getLogs): a fixed on-chain lookback window cannot span a
+// testnet vault's full lifetime once the chain head advances past it (Monad blocks are seconds
+// apart), so a direct queryFilter here silently returns nothing for real deposit history.
+async function v5BuildHistoryRows({ account, vault, manager }) {
+  if (!account) return []
+  const base = getIndexerBaseUrl()
+  const drawManagerLc = String(manager?.target || '').toLowerCase()
+  const [positionEvents, rounds] = await Promise.all([
+    fetch(`${base}/api/v5/wallets/${account}/position-events`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
+    fetch(`${base}/api/rounds`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
   ])
 
-  const logs = [...deposits, ...withdrawals, ...boostDeposits, ...boostWithdrawals, ...finalizedDraws]
-  const blockNumbers = [...new Set(logs.map((log) => log.blockNumber).filter(Boolean))]
-  const eventProvider = manager.runner?.provider || manager.runner
-  const blockMap = new Map(await Promise.all(blockNumbers.map(async (blockNumber) => [
-    blockNumber,
-    await eventProvider.getBlock(blockNumber).catch(() => null),
-  ])))
+  const positionRows = (Array.isArray(positionEvents) ? positionEvents : []).map((ev) => {
+    const isDeposit = ev.action === 'deposit'
+    const isDegen = ev.pool_type === 'degen'
+    return {
+      key: `${ev.tx_hash}-${ev.log_index}`,
+      sortAt: Date.parse(ev.block_timestamp || '') || 0,
+      date: v5EventDateFromIso(ev.block_timestamp),
+      transaction: isDegen ? (isDeposit ? 'Patron Pool deposit' : 'Patron Pool withdraw') : (isDeposit ? 'Deposit' : 'Withdraw'),
+      result: isDegen ? 'Prize excluded' : (isDeposit ? 'Entered' : 'Exited'),
+      principal: `${isDeposit ? '+' : '-'}${formatV5Mon(ev.amount)} MON`,
+      prize: '—',
+      tx: ev.tx_hash,
+    }
+  })
 
-  const rows = [
-    ...deposits.map((log) => ({
-      key: `${log.transactionHash}-deposit-${log.index}`,
-      blockNumber: log.blockNumber,
-      date: v5EventDate(blockMap.get(log.blockNumber)),
-      transaction: 'Deposit',
-      result: 'Entered',
-      principal: `+${formatV5Mon(log.args?.amount)} MON`,
-      prize: '—',
-      tx: log.transactionHash,
-    })),
-    ...withdrawals.map((log) => ({
-      key: `${log.transactionHash}-withdraw-${log.index}`,
-      blockNumber: log.blockNumber,
-      date: v5EventDate(blockMap.get(log.blockNumber)),
-      transaction: 'Withdraw',
-      result: 'Exited',
-      principal: `-${formatV5Mon(log.args?.amount)} MON`,
-      prize: '—',
-      tx: log.transactionHash,
-    })),
-    ...boostDeposits.map((log) => ({
-      key: `${log.transactionHash}-boost-deposit-${log.index}`,
-      blockNumber: log.blockNumber,
-      date: v5EventDate(blockMap.get(log.blockNumber)),
-      transaction: 'Patron Pool deposit',
-      result: 'Prize excluded',
-      principal: `+${formatV5Mon(log.args?.amount)} MON`,
-      prize: '—',
-      tx: log.transactionHash,
-    })),
-    ...boostWithdrawals.map((log) => ({
-      key: `${log.transactionHash}-boost-withdraw-${log.index}`,
-      blockNumber: log.blockNumber,
-      date: v5EventDate(blockMap.get(log.blockNumber)),
-      transaction: 'Patron Pool withdraw',
-      result: 'Prize excluded',
-      principal: `-${formatV5Mon(log.args?.amount)} MON`,
-      prize: '—',
-      tx: log.transactionHash,
-    })),
-    ...finalizedDraws.map((log) => ({
-      key: `${log.transactionHash}-draw-${log.index}`,
-      blockNumber: log.blockNumber,
-      date: v5EventDate(blockMap.get(log.blockNumber)),
-      transaction: `Prize draw #${log.args?.drawId?.toString?.() || '—'}`,
+  const drawRows = (Array.isArray(rounds) ? rounds : [])
+    .filter((r) => String(r.poolAddress || '').toLowerCase() === drawManagerLc && r.state === 'settled')
+    .map((r) => ({
+      key: `draw-${r.roundId}`,
+      sortAt: Date.parse(r.settledAt || '') || 0,
+      date: v5EventDateFromIso(r.settledAt),
+      transaction: `Prize draw #${r.roundId}`,
       result: 'Finalized',
       principal: '—',
-      prize: `${formatV5Mon(log.args?.totalPayout)} MON`,
-      tx: log.transactionHash,
-    })),
-  ]
+      prize: `${formatV5Mon(r.yieldMon)} MON`,
+      tx: null,
+    }))
 
-  return rows.sort((a, b) => b.blockNumber - a.blockNumber).slice(0, 24)
+  return [...positionRows, ...drawRows].sort((a, b) => b.sortAt - a.sortAt).slice(0, 24)
 }
 
 function V5ActionCard({
@@ -1701,28 +1733,16 @@ export function V5UatExperience() {
   const [withdrawRedirectWarningOpen, setWithdrawRedirectWarningOpen] = useState(false)
   const [pointsProfile, setPointsProfile] = useState(null)
   const [pointsHistory, setPointsHistory] = useState([])
+  const [pointsTranches, setPointsTranches] = useState([])
 
   const readProvider = useMemo(() => new ethers.JsonRpcProvider(cfg.rpcUrl), [cfg.rpcUrl])
   const vault = useMemo(() => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, readProvider), [cfg.prizeVault, readProvider])
   const manager = useMemo(() => new ethers.Contract(cfg.drawManager, V5_DRAW_MANAGER_ABI, readProvider), [cfg.drawManager, readProvider])
   const shmon = useMemo(() => new ethers.Contract(cfg.shmon, V5_SHMON_ABI, readProvider), [cfg.shmon, readProvider])
+  const refreshFailureStreak = useRef(0)
 
   const refresh = useCallback(async (targetAccount = account) => {
-    setError('')
-    const [
-      block,
-      currentDrawId,
-      nextPeriodStart,
-      drawPeriod,
-      preview,
-      totalPrincipal,
-      totalParticipantPrincipal,
-      totalBoosterPrincipal,
-      availableYield,
-      paused,
-      stoppedAt,
-      vaultCode,
-    ] = await Promise.all([
+    const attemptCoreReads = () => Promise.all([
       readProvider.getBlock('latest'),
       manager.currentDrawId(),
       manager.nextPeriodStart(),
@@ -1736,6 +1756,43 @@ export function V5UatExperience() {
       vault.stoppedAt(),
       readProvider.getCode(cfg.prizeVault),
     ])
+
+    // The shared public testnet RPC occasionally drops a single call (e.g. "missing revert
+    // data") with no on-chain cause. Retry once before surfacing anything, so one blip doesn't
+    // leave the whole page frozen on stale state until the next poll (or forever, if it keeps
+    // failing every tick).
+    let core
+    try {
+      core = await attemptCoreReads()
+    } catch (err) {
+      await new Promise((resolve) => setTimeout(resolve, 1500))
+      try {
+        core = await attemptCoreReads()
+      } catch (err2) {
+        refreshFailureStreak.current += 1
+        if (refreshFailureStreak.current >= 3) {
+          setError('Having trouble reaching the Monad testnet RPC — retrying automatically...')
+        }
+        throw err2
+      }
+    }
+    refreshFailureStreak.current = 0
+    setError('')
+
+    const [
+      block,
+      currentDrawId,
+      nextPeriodStart,
+      drawPeriod,
+      preview,
+      totalPrincipal,
+      totalParticipantPrincipal,
+      totalBoosterPrincipal,
+      availableYield,
+      paused,
+      stoppedAt,
+      vaultCode,
+    ] = core
 
     const draw = currentDrawId > 0n ? await manager.draws(currentDrawId).catch(() => null) : null
     const user = ethers.isAddress(targetAccount || '') ? targetAccount : ''
@@ -1815,19 +1872,23 @@ export function V5UatExperience() {
     if (!account) {
       setPointsProfile(null)
       setPointsHistory([])
+      setPointsTranches([])
       return () => ac.abort()
     }
     Promise.all([
       fetch(`${getIndexerBaseUrl()}/api/points/${account}`, { signal: ac.signal }).then((r) => r.ok ? r.json() : null),
       fetch(`${getIndexerBaseUrl()}/api/points/${account}/history?limit=12`, { signal: ac.signal }).then((r) => r.ok ? r.json() : []),
-    ]).then(([profile, history]) => {
+      fetch(`${getIndexerBaseUrl()}/api/v5/wallets/${account}/tranches`, { signal: ac.signal }).then((r) => r.ok ? r.json() : []),
+    ]).then(([profile, history, tranches]) => {
       assertNotAborted(ac.signal)
       setPointsProfile(profile)
       setPointsHistory(Array.isArray(history) ? history : [])
+      setPointsTranches(Array.isArray(tranches) ? tranches : [])
     }).catch((err) => {
       if (!isAbortError(err)) {
         setPointsProfile(null)
         setPointsHistory([])
+        setPointsTranches([])
       }
     })
     return () => ac.abort()
@@ -1916,6 +1977,22 @@ export function V5UatExperience() {
     setStatus('')
     setV5Page('history')
   }
+  const withdrawWarningText = useMemo(() => {
+    if (!withdrawChoiceOpen || !withdrawRequest) return ''
+    const isDegen = withdrawRequest.kind === 'degen'
+    const drawId = Number(state?.currentDrawId || 0)
+    const poolTranches = (Array.isArray(pointsTranches) ? pointsTranches : [])
+      .filter((row) => row.pool_type === (isDegen ? 'degen' : 'vault') && trancheRemainingMon(row) > 0)
+    const oldest = poolTranches
+      .map((tranche) => ({ weeks: trancheWeeks(tranche, drawId), amount: trancheRemainingMon(tranche) }))
+      .sort((a, b) => b.weeks - a.weeks || b.amount - a.amount)[0]
+    const weeks = oldest ? oldest.weeks : 0
+    const multiplier = isDegen ? formatMultiplier(degenMultiplierForWeeks(weeks)) : formatMultiplier(vaultMultiplierForWeeks(weeks))
+    const poolLabel = isDegen ? 'Patron Pool' : 'vault'
+    return withdrawRequest.isFull
+      ? `Withdrawing everything from the ${poolLabel} resets its streak. You're on a ${weeks}-week streak at ${multiplier}; you'll rebuild from zero.`
+      : `This removes your most recent ${withdrawRequest.amountLabel} and its multiplier tenure. The rest of your ${poolLabel} position keeps its ${weeks}-week streak.`
+  }, [withdrawChoiceOpen, withdrawRequest, pointsTranches, state?.currentDrawId])
   const afterPlayAction = async ({ account: nextAccount }) => {
     setPlayAmount('')
     const deposited = await vault.principalOf(nextAccount).catch(() => 0n)
@@ -2077,7 +2154,7 @@ export function V5UatExperience() {
             </section>
           </section>
         ) : v5Page === 'profile' ? (
-          <ProfilePage account={account} points={pointsProfile} history={pointsHistory} />
+          <ProfilePage account={account} points={pointsProfile} history={pointsHistory} tranches={pointsTranches} currentDrawId={state?.currentDrawId} />
         ) : v5Page === 'winners' ? (
           <V5PreviousRound
             state={state}
@@ -2168,7 +2245,7 @@ export function V5UatExperience() {
           onBackFromRedirectWarning={() => setWithdrawRedirectWarningOpen(false)}
           confirmRedirectOpen={withdrawRedirectWarningOpen}
           onConfirmRedirect={confirmWithdrawAndConvert}
-          headerNotice="Withdrawing your deposits will impact your weekly streak"
+          withdrawWarningText={withdrawWarningText}
         />
 
         <footer className="site-footer" id="disclaimer">

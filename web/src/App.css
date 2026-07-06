@@ -819,6 +819,11 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
 .points-streak-dots-26 { width: 100%; display: grid; grid-template-columns: repeat(26, minmax(8px, 1fr)); gap: 7px; }
 .points-streak-dots-26 span { width: 100%; max-width: 16px; justify-self: center; aspect-ratio: 1; height: auto; }
 .points-next-milestone { padding: 11px 13px; border-radius: 14px; border: 1px dashed rgba(155,109,255,.22); color: rgba(244,239,255,.62); background: rgba(255,255,255,.025); font-size: .86rem; font-weight: 760; }
+.points-next-multiplier { margin: 4px 0 16px; text-align: left; }
+.degen-multiplier-pill { border-color: rgba(245,158,11,.34); background: rgba(120,53,15,.28); }
+.degen-multiplier-pill span { color: #fde68a; }
+.degen-multiplier-pill.muted { opacity: .55; }
+.points-streak-dots span[title] { cursor: help; }
 .points-profile-link { color: #c4b5fd; text-decoration: none; font-weight: 900; width: fit-content; }
 .points-profile-link:hover { color: #fff; }
 .tier-chip { display: inline-flex; width: fit-content; align-items: center; border-radius: 999px; padding: 6px 10px; font-weight: 900; font-size: .76rem; text-transform: uppercase; letter-spacing: .06em; border: 1px solid rgba(255,255,255,.14); color: #f4efff; background: rgba(255,255,255,.08); }
