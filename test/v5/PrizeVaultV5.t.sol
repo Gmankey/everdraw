@@ -44,6 +44,34 @@ contract PrizeVaultV5Test is Test {
         assertEq(twab.totalParticipantSupply(address(vault)), 3 ether);
     }
 
+    // ADR-0043: depositFor lets a third party (the ClaimManager, compounding a prize) credit
+    // someone else's principal. Permissionless -- crediting another account is always benign.
+    function test_depositForCreditsRecipientNotCaller() public {
+        address relayer = makeAddr("relayer");
+        vm.deal(relayer, 5 ether);
+
+        vm.prank(relayer);
+        vault.depositFor{value: 5 ether}(alice);
+
+        assertEq(vault.principalOf(alice), 5 ether);
+        assertEq(vault.principalOf(relayer), 0);
+        assertEq(vault.totalPrincipal(), 5 ether);
+        assertEq(twab.balanceOf(address(vault), alice), 5 ether);
+    }
+
+    function test_depositForRevertsOnZeroRecipient() public {
+        vm.deal(address(this), 1 ether);
+        vm.expectRevert(PrizeVaultV5.ZeroAddress.selector);
+        vault.depositFor{value: 1 ether}(address(0));
+    }
+
+    function test_depositForRevertsWhenPaused() public {
+        vault.pause();
+        vm.deal(address(this), 1 ether);
+        vm.expectRevert("paused");
+        vault.depositFor{value: 1 ether}(alice);
+    }
+
     function test_transferMovesParticipantSharesAndUpdatesTwab() public {
         vm.deal(alice, 10 ether);
         vm.prank(alice);
