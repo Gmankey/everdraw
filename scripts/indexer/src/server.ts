@@ -5,7 +5,9 @@ import type { IndexerRunner } from './runner/service.js';
 import type { RoundsRepo } from './repositories/roundsRepo.js';
 import type { WalletRoundsRepo } from './repositories/walletRoundsRepo.js';
 import type { PointsRepo } from './repositories/pointsRepo.js';
+import type { V5TranchesRepo } from './repositories/v5TranchesRepo.js';
 import { calculateRoundPoints, getMultiplierX100, getTier, lossStreakThresholdBonus, nextMilestone, nextTierThreshold } from './services/pointsMath.js';
+import { firstFullWeightDrawId } from './services/deriveV5Tranches.js';
 
 export interface ApiServer {
   start(): Promise<Server>;
@@ -17,9 +19,10 @@ export function createApiServer(params: {
   roundsRepo: RoundsRepo;
   walletRoundsRepo: WalletRoundsRepo;
   pointsRepo: PointsRepo;
+  v5TranchesRepo?: V5TranchesRepo;
   startedAt: number;
 }): ApiServer {
-  const { port, runner, roundsRepo, walletRoundsRepo, pointsRepo, startedAt } = params;
+  const { port, runner, roundsRepo, walletRoundsRepo, pointsRepo, v5TranchesRepo, startedAt } = params;
   const app = express();
   app.use(cors());
 
@@ -75,10 +78,9 @@ export function createApiServer(params: {
     const streak = pointsRepo.getWalletStreak(wallet);
     const points = pointsRepo.getWalletPoints(wallet);
     const result = calculateRoundPoints({
-      tickets,
+      entries: tickets,
       streakWeeks: streak?.currentStreakWeeks ?? 0,
       won: false,
-      onTheDouble: false,
       lossStreakBonusPoints: lossStreakThresholdBonus((streak?.consecutiveNonWins ?? 0) + 1, points?.highestLossStreakBonusAwarded ?? 0)?.points ?? 0,
       firstDeposit: !points || points.hasReceivedFirstDepositBonus === 0,
       comebackKing: false,
@@ -109,12 +111,13 @@ export function createApiServer(params: {
       current_multiplier_x100: getMultiplierX100(currentStreakWeeks),
       current_tier: getTier(currentStreakWeeks),
       consecutive_non_wins: profile?.consecutiveNonWins ?? 0,
+      consecutive_missed_draws: profile?.consecutiveMissedDraws ?? 0,
       highest_streak_milestone_awarded: profile?.highestStreakMilestoneAwarded ?? 0,
       highest_loss_streak_bonus_awarded: profile?.highestLossStreakBonusAwarded ?? 0,
       has_received_first_deposit_bonus: profile?.hasReceivedFirstDepositBonus ?? 0,
       has_received_first_win_bonus: profile?.hasReceivedFirstWinBonus ?? 0,
-      has_received_on_the_double_bonus: profile?.hasReceivedOnTheDoubleBonus ?? 0,
       has_received_comeback_king_bonus: profile?.hasReceivedComebackKingBonus ?? 0,
+      has_received_prize_patron_bonus: profile?.hasReceivedPrizePatronBonus ?? 0,
       next_tier_threshold: nextTierThreshold(currentStreakWeeks),
       next_milestone: nextMilestone(currentStreakWeeks),
       rank: profile ? pointsRepo.getRank(wallet, 'all') : null,
@@ -136,6 +139,60 @@ export function createApiServer(params: {
       bonuses_breakdown: JSON.parse(row.bonusesBreakdown || '{}'),
       total_points: row.totalPoints,
       awarded_at_unix: row.awardedAtUnix,
+    })));
+  });
+
+  app.get('/api/v5/wallets/:wallet/tranches', (req, res) => {
+    if (!v5TranchesRepo) {
+      res.status(501).json({ error: 'v5 tranche ledger is not configured' });
+      return;
+    }
+    const wallet = req.params.wallet.toLowerCase();
+    if (!/^0x[0-9a-fA-F]{40}$/i.test(wallet)) {
+      res.status(400).json({ error: 'invalid wallet address' });
+      return;
+    }
+    res.json(v5TranchesRepo.listByWallet(wallet).map((row) => ({
+      wallet: row.wallet,
+      vault_address: row.vaultAddress,
+      pool_type: row.poolType,
+      amount: row.amount,
+      remaining_amount: row.remainingAmount,
+      opened_block_number: row.openedBlockNumber,
+      opened_log_index: row.openedLogIndex,
+      opened_at: row.openedAt,
+      opened_tx_hash: row.openedTxHash,
+      start_draw_id: row.startDrawId,
+      first_full_weight_draw_id: firstFullWeightDrawId(row.startDrawId),
+      closed_at: row.closedAt,
+      closed_block_number: row.closedBlockNumber,
+      closed_log_index: row.closedLogIndex,
+      closed_tx_hash: row.closedTxHash,
+    })));
+  });
+
+  app.get('/api/v5/wallets/:wallet/position-events', (req, res) => {
+    if (!v5TranchesRepo) {
+      res.status(501).json({ error: 'v5 tranche ledger is not configured' });
+      return;
+    }
+    const wallet = req.params.wallet.toLowerCase();
+    if (!/^0x[0-9a-fA-F]{40}$/i.test(wallet)) {
+      res.status(400).json({ error: 'invalid wallet address' });
+      return;
+    }
+    res.json(v5TranchesRepo.listPositionEvents(wallet).map((row) => ({
+      tx_hash: row.txHash,
+      log_index: row.logIndex,
+      block_number: row.blockNumber,
+      block_timestamp: row.blockTimestamp,
+      vault_address: row.vaultAddress,
+      wallet: row.wallet,
+      pool_type: row.poolType,
+      action: row.action,
+      amount: row.amount,
+      balance_after: row.balanceAfter,
+      raw_event_name: row.rawEventName,
     })));
   });
 

@@ -31,16 +31,34 @@ export function createDeriveWalletRoundsService(
 
       const finalizedEvents = allEvents
         .filter((event) => event.finalized === 1)
-        .filter((event) => event.roundId != null)
         .sort(sortEvents);
+      const distributionDrawIds = new Map<string, { drawId: number; poolAddress: string }>();
+      for (const event of finalizedEvents) {
+        if (event.eventName !== 'DistributionRegistered' || event.roundId == null) continue;
+        const payload = parsePayload<{ distributionId: string; source?: string }>(event.payload);
+        distributionDrawIds.set(payload.distributionId.toLowerCase(), {
+          drawId: event.roundId,
+          poolAddress: (payload.source ?? event.contractAddress).toLowerCase(),
+        });
+      }
 
       const grouped = new Map<string, WalletRoundAccumulator>();
 
       for (const event of finalizedEvents) {
-        if (event.roundId == null) continue;
+        let roundId = event.roundId;
+        let poolAddress = event.contractAddress;
+        if (event.eventName === 'ClaimPaid' || event.eventName === 'ClaimDeferred' || event.eventName === 'DeferredClaimPaid') {
+          const payload = parsePayload<{ distributionId: string }>(event.payload);
+          const mapped = distributionDrawIds.get(payload.distributionId.toLowerCase());
+          if (mapped) {
+            roundId = mapped.drawId;
+            poolAddress = mapped.poolAddress;
+          }
+        }
+        if (roundId == null) continue;
         if (!event.wallet) continue;
 
-        const acc = getOrCreate(grouped, event.contractAddress, event.wallet, event.roundId);
+        const acc = getOrCreate(grouped, poolAddress, event.wallet, roundId);
 
         switch (event.eventName) {
           case 'TicketsBought':
@@ -90,6 +108,17 @@ export function createDeriveWalletRoundsService(
               amount: string | number;
             }>(event.payload);
 
+            acc.prizeClaimed += BigInt(stringifyNumberish(payload.amount ?? '0'));
+            break;
+          }
+
+          case 'ClaimPaid': {
+            const payload = parsePayload<{
+              distributionId: string;
+              account: string;
+              amount: string | number;
+            }>(event.payload);
+            acc.won = 1;
             acc.prizeClaimed += BigInt(stringifyNumberish(payload.amount ?? '0'));
             break;
           }

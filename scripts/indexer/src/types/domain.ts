@@ -22,7 +22,25 @@ export type SupportedEventName =
   // V4-only
   | 'RandomnessRequested'
   | 'RandomnessFulfilled'
-  | 'EmergencyForceSettled';
+  | 'EmergencyForceSettled'
+  // V5 PrizeVault events
+  | 'Deposit'
+  | 'Withdraw'
+  | 'BoostDeposit'
+  | 'BoostWithdraw'
+  // V5 DrawManager lifecycle events
+  | 'DrawStarted'
+  | 'DrawSkipped'
+  | 'SeedReceived'
+  | 'RootProposed'
+  | 'RootVetoed'
+  | 'RootFinalized'
+  | 'DrawEconomicsSnapshot'
+  // V5 ClaimManager events
+  | 'DistributionRegistered'
+  | 'ClaimPaid'
+  | 'ClaimDeferred'
+  | 'DeferredClaimPaid';
 
 export interface RawEventRow {
   txHash: string;
@@ -75,6 +93,8 @@ export interface WalletRoundRow {
   principalWithdrawn: string;
   withdrawnAt: string | null;
   netPosition: string;
+  // V5 only: per-tranche-blended resolved base points for this draw (null for legacy rounds).
+  v5ResolvedBase?: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -104,8 +124,8 @@ export interface WalletPointsRow {
   lifetimePoints: number;
   hasReceivedFirstDepositBonus: 0 | 1;
   hasReceivedFirstWinBonus: 0 | 1;
-  hasReceivedOnTheDoubleBonus: 0 | 1;
   hasReceivedComebackKingBonus: 0 | 1;
+  hasReceivedPrizePatronBonus: 0 | 1;
   highestLossStreakBonusAwarded: number;
   highestStreakMilestoneAwarded: number;
   updatedAt: number;
@@ -117,6 +137,7 @@ export interface WalletStreakRow {
   longestStreakWeeks: number;
   lastCheckpointUnix: number | null;
   consecutiveNonWins: number;
+  consecutiveMissedDraws: number;
   updatedAt: number;
 }
 
@@ -129,4 +150,39 @@ export interface WalletRoundPointsRow {
   bonusesBreakdown: string;
   totalPoints: number;
   awardedAtUnix: number;
+}
+
+export type V5PoolType = 'vault' | 'degen';
+export type V5PositionAction = 'deposit' | 'withdraw';
+
+export interface V5PositionEventRow {
+  txHash: string;
+  logIndex: number;
+  blockNumber: number;
+  blockTimestamp: string;
+  vaultAddress: string;
+  wallet: string;
+  poolType: V5PoolType;
+  action: V5PositionAction;
+  amount: string;
+  balanceAfter: string | null;
+  rawEventName: SupportedEventName;
+}
+
+export interface V5TrancheRow {
+  id?: number;
+  wallet: string;
+  vaultAddress: string;
+  poolType: V5PoolType;
+  amount: string;
+  remainingAmount: string;
+  openedBlockNumber: number;
+  openedLogIndex: number;
+  openedAt: string;
+  openedTxHash: string;
+  startDrawId: number | null;
+  closedAt: string | null;
+  closedBlockNumber: number | null;
+  closedLogIndex: number | null;
+  closedTxHash: string | null;
 }

@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS wallet_rounds (
   principal_withdrawn TEXT NOT NULL DEFAULT '0',
   withdrawn_at TEXT,
   net_position TEXT NOT NULL DEFAULT '0',
+  v5_resolved_base REAL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (wallet, round_id, pool_address)
@@ -114,8 +115,8 @@ CREATE TABLE IF NOT EXISTS wallet_points (
   lifetime_points INTEGER NOT NULL DEFAULT 0,
   has_received_first_deposit_bonus INTEGER NOT NULL DEFAULT 0,
   has_received_first_win_bonus INTEGER NOT NULL DEFAULT 0,
-  has_received_on_the_double_bonus INTEGER NOT NULL DEFAULT 0,
   has_received_comeback_king_bonus INTEGER NOT NULL DEFAULT 0,
+  has_received_prize_patron_bonus INTEGER NOT NULL DEFAULT 0,
   highest_loss_streak_bonus_awarded INTEGER NOT NULL DEFAULT 0,
   highest_streak_milestone_awarded INTEGER NOT NULL DEFAULT 0,
   updated_at INTEGER NOT NULL
@@ -127,6 +128,7 @@ CREATE TABLE IF NOT EXISTS wallet_streaks (
   longest_streak_weeks INTEGER NOT NULL DEFAULT 0,
   last_checkpoint_unix INTEGER,
   consecutive_non_wins INTEGER NOT NULL DEFAULT 0,
+  consecutive_missed_draws INTEGER NOT NULL DEFAULT 0,
   updated_at INTEGER NOT NULL
 );
 
@@ -144,3 +146,44 @@ CREATE TABLE IF NOT EXISTS wallet_round_points (
 
 CREATE INDEX IF NOT EXISTS idx_wallet_round_points_wallet ON wallet_round_points(wallet);
 CREATE INDEX IF NOT EXISTS idx_wallet_points_lifetime ON wallet_points(lifetime_points DESC);
+
+CREATE TABLE IF NOT EXISTS v5_position_events (
+  tx_hash TEXT NOT NULL,
+  log_index INTEGER NOT NULL,
+  block_number INTEGER NOT NULL,
+  block_timestamp TEXT NOT NULL,
+  vault_address TEXT NOT NULL,
+  wallet TEXT NOT NULL,
+  pool_type TEXT NOT NULL CHECK (pool_type IN ('vault', 'degen')),
+  action TEXT NOT NULL CHECK (action IN ('deposit', 'withdraw')),
+  amount TEXT NOT NULL,
+  balance_after TEXT,
+  raw_event_name TEXT NOT NULL,
+  PRIMARY KEY (tx_hash, log_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_v5_position_events_wallet ON v5_position_events(wallet);
+CREATE INDEX IF NOT EXISTS idx_v5_position_events_vault_pool ON v5_position_events(vault_address, pool_type);
+CREATE INDEX IF NOT EXISTS idx_v5_position_events_order ON v5_position_events(block_number, log_index);
+
+CREATE TABLE IF NOT EXISTS v5_tranches (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  wallet TEXT NOT NULL,
+  vault_address TEXT NOT NULL,
+  pool_type TEXT NOT NULL CHECK (pool_type IN ('vault', 'degen')),
+  amount TEXT NOT NULL,
+  remaining_amount TEXT NOT NULL,
+  opened_block_number INTEGER NOT NULL,
+  opened_log_index INTEGER NOT NULL,
+  opened_at TEXT NOT NULL,
+  opened_tx_hash TEXT NOT NULL,
+  start_draw_id INTEGER,
+  closed_at TEXT,
+  closed_block_number INTEGER,
+  closed_log_index INTEGER,
+  closed_tx_hash TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_v5_tranches_opening_event ON v5_tranches(opened_tx_hash, opened_log_index);
+CREATE INDEX IF NOT EXISTS idx_v5_tranches_wallet_pool ON v5_tranches(wallet, vault_address, pool_type);
+CREATE INDEX IF NOT EXISTS idx_v5_tranches_open ON v5_tranches(wallet, vault_address, pool_type, remaining_amount);

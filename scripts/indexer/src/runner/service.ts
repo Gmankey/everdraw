@@ -8,6 +8,7 @@ import type { DeriveRoundsService } from '../services/deriveRounds.js';
 import type { DeriveWalletRoundsService } from '../services/deriveWalletRounds.js';
 import type { DeriveWalletStatsService } from '../services/deriveWalletStats.js';
 import type { DerivePointsService } from '../services/derivePoints.js';
+import type { DeriveV5TranchesService } from '../services/deriveV5Tranches.js';
 import type { RunnerConfig } from './config.js';
 import { POOL_EVENT_ABI } from './abi.js';
 
@@ -35,6 +36,21 @@ const SUPPORTED_EVENTS: SupportedEventName[] = [
   'RandomnessRequested',
   'RandomnessFulfilled',
   'EmergencyForceSettled',
+  'Deposit',
+  'Withdraw',
+  'BoostDeposit',
+  'BoostWithdraw',
+  'DrawStarted',
+  'DrawSkipped',
+  'SeedReceived',
+  'RootProposed',
+  'RootVetoed',
+  'RootFinalized',
+  'DrawEconomicsSnapshot',
+  'DistributionRegistered',
+  'ClaimPaid',
+  'ClaimDeferred',
+  'DeferredClaimPaid',
 ];
 
 export interface IndexerRunner {
@@ -50,9 +66,10 @@ export function createIndexerRunner(input: {
   deriveRoundsService: DeriveRoundsService;
   deriveWalletRoundsService: DeriveWalletRoundsService;
   deriveWalletStatsService: DeriveWalletStatsService;
+  deriveV5TranchesService?: DeriveV5TranchesService;
   derivePointsService?: DerivePointsService;
 }): IndexerRunner {
-  const { config, rawEventsRepo, indexerStateRepo, deriveRoundsService, deriveWalletRoundsService, deriveWalletStatsService, derivePointsService } = input;
+  const { config, rawEventsRepo, indexerStateRepo, deriveRoundsService, deriveWalletRoundsService, deriveWalletStatsService, deriveV5TranchesService, derivePointsService } = input;
   const provider = makeProvider(config.rpcUrl, config.rpcUrlFallback);
   const iface = new Interface(POOL_EVENT_ABI);
 
@@ -95,6 +112,7 @@ export function createIndexerRunner(input: {
       if (toBlock >= finalizedHead - 500) {
         deriveRoundsService.rebuildFromRaw();
         deriveWalletRoundsService.rebuildFromRaw();
+        deriveV5TranchesService?.rebuildFromRaw();
         deriveWalletStatsService.rebuild();
         derivePointsService?.rebuildSettlementPoints();
       }
@@ -149,7 +167,12 @@ async function fetchChunk(input: {
  );
 
  for (const log of rawLogs) {
- const parsed = iface.parseLog({ topics: [...log.topics], data: log.data });
+ let parsed;
+ try {
+ parsed = iface.parseLog({ topics: [...log.topics], data: log.data });
+ } catch {
+ continue;
+ }
  if (!parsed) continue;
  if (!SUPPORTED_EVENTS.includes(parsed.name as SupportedEventName)) continue;
 
@@ -184,12 +207,21 @@ function toRawEventRow(input: {
 }): RawEventRow {
   const { log, parsed, blockTimestamp } = input;
   const eventName = parsed.name as SupportedEventName;
-  const roundId = parsed.args.roundId != null ? Number(parsed.args.roundId) : null;
+  const roundId = parsed.args.roundId != null
+    ? Number(parsed.args.roundId)
+    : parsed.args.drawId != null
+      ? Number(parsed.args.drawId)
+      : parsed.name === 'DistributionRegistered' && parsed.args.sourceKey != null
+        ? Number(BigInt(parsed.args.sourceKey))
+      : null;
 
   let wallet: string | null = null;
   if (parsed.args.buyer) wallet = String(parsed.args.buyer).toLowerCase();
   else if (parsed.args.winner) wallet = String(parsed.args.winner).toLowerCase();
   else if (parsed.args.user) wallet = String(parsed.args.user).toLowerCase();
+  else if (parsed.args.recipient) wallet = String(parsed.args.recipient).toLowerCase();
+  else if (parsed.args.booster) wallet = String(parsed.args.booster).toLowerCase();
+  else if (parsed.args.account) wallet = String(parsed.args.account).toLowerCase();
 
   const amountMon = parsed.args.monPaid != null
     ? String(parsed.args.monPaid)
@@ -321,6 +353,111 @@ function normalizeArgs(eventName: SupportedEventName, args: any): Record<string,
 
     case 'EmergencyForceSettled':
       return { roundId: Number(args.roundId) };
+
+    // ── V5 PrizeVaultV5 ────────────────────────────────────────────────────
+    case 'Deposit':
+      return { recipient: String(args.recipient).toLowerCase(), amount: String(args.amount) };
+
+    case 'Withdraw':
+      return { recipient: String(args.recipient).toLowerCase(), amount: String(args.amount) };
+
+    case 'BoostDeposit':
+      return {
+        booster: String(args.booster).toLowerCase(),
+        amount: String(args.amount),
+        balance: String(args.balance),
+        timestamp: String(args.timestamp),
+      };
+
+    case 'BoostWithdraw':
+      return {
+        booster: String(args.booster).toLowerCase(),
+        amount: String(args.amount),
+        balance: String(args.balance),
+        timestamp: String(args.timestamp),
+      };
+
+    // ── V5 DrawManagerV5 ───────────────────────────────────────────────────
+    case 'DrawStarted':
+      return {
+        drawId: Number(args.drawId),
+        periodStart: String(args.periodStart),
+        periodEnd: String(args.periodEnd),
+        totalTwab: String(args.totalTwab),
+        totalPayout: String(args.totalPayout),
+        requestId: String(args.requestId),
+      };
+
+    case 'DrawSkipped':
+      return {
+        drawId: Number(args.drawId),
+        periodStart: String(args.periodStart),
+        periodEnd: String(args.periodEnd),
+        totalTwab: String(args.totalTwab),
+        availablePrize: String(args.availablePrize),
+        reason: String(args.reason),
+      };
+
+    case 'SeedReceived':
+      return { drawId: Number(args.drawId), requestId: String(args.requestId), seed: String(args.seed) };
+
+    case 'RootProposed':
+      return {
+        drawId: Number(args.drawId),
+        root: String(args.root),
+        winnerCount: Number(args.winnerCount),
+        totalPayout: String(args.totalPayout),
+        proposer: String(args.proposer).toLowerCase(),
+        algorithmVersion: String(args.algorithmVersion),
+        challengeEndsAt: String(args.challengeEndsAt),
+      };
+
+    case 'RootVetoed':
+      return {
+        drawId: Number(args.drawId),
+        root: String(args.root),
+        guardian: String(args.guardian).toLowerCase(),
+        proposeAfter: String(args.proposeAfter),
+      };
+
+    case 'RootFinalized':
+      return {
+        drawId: Number(args.drawId),
+        root: String(args.root),
+        winnerCount: Number(args.winnerCount),
+        totalPayout: String(args.totalPayout),
+      };
+
+    case 'DrawEconomicsSnapshot':
+      return {
+        drawId: Number(args.drawId),
+        grossYield: String(args.grossYield),
+        sponsorYield: String(args.sponsorYield),
+        feeAmount: String(args.feeAmount),
+        totalPayout: String(args.totalPayout),
+      };
+
+    // ── V5 ClaimManagerV5 ─────────────────────────────────────────────────
+    case 'DistributionRegistered':
+      return {
+        distributionId: String(args.distributionId),
+        source: String(args.source).toLowerCase(),
+        sourceKey: String(args.sourceKey),
+        root: String(args.root),
+        leafCount: Number(args.leafCount),
+        metadata: String(args.metadata),
+      };
+
+    case 'ClaimPaid':
+    case 'ClaimDeferred':
+    case 'DeferredClaimPaid':
+      return {
+        distributionId: String(args.distributionId),
+        leafIndex: String(args.leafIndex),
+        account: String(args.account).toLowerCase(),
+        token: String(args.token).toLowerCase(),
+        amount: String(args.amount),
+      };
 
     default:
       return { roundId: Number(args.roundId) };

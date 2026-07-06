@@ -6,10 +6,12 @@ import { createWalletRoundsRepo } from './repositories/walletRoundsRepo.js';
 import { createWalletStatsRepo } from './repositories/walletStatsRepo.js';
 import { createIndexerStateRepo } from './repositories/indexerStateRepo.js';
 import { createPointsRepo } from './repositories/pointsRepo.js';
+import { createV5TranchesRepo } from './repositories/v5TranchesRepo.js';
 import { createDeriveRoundsService } from './services/deriveRounds.js';
 import { createDeriveWalletRoundsService } from './services/deriveWalletRounds.js';
 import { createDeriveWalletStatsService } from './services/deriveWalletStats.js';
 import { createDerivePointsService } from './services/derivePoints.js';
+import { createDeriveV5TranchesService } from './services/deriveV5Tranches.js';
 import { getRunnerConfig } from './runner/config.js';
 import { createIndexerRunner } from './runner/service.js';
 import { createApiServer } from './server.js';
@@ -28,10 +30,12 @@ async function main(): Promise<void> {
   const walletStatsRepo = createWalletStatsRepo(db);
   const indexerStateRepo = createIndexerStateRepo(db);
   const pointsRepo = createPointsRepo(db);
+  const v5TranchesRepo = createV5TranchesRepo(db);
 
   const deriveRoundsService = createDeriveRoundsService(rawEventsRepo, roundsRepo);
   const deriveWalletRoundsService = createDeriveWalletRoundsService(rawEventsRepo, walletRoundsRepo);
   const deriveWalletStatsService = createDeriveWalletStatsService(walletRoundsRepo, walletStatsRepo);
+  const deriveV5TranchesService = createDeriveV5TranchesService(rawEventsRepo, v5TranchesRepo, walletRoundsRepo);
   const derivePointsService = createDerivePointsService({ pointsRepo, roundsRepo, walletRoundsRepo });
 
   const runner = createIndexerRunner({
@@ -41,6 +45,7 @@ async function main(): Promise<void> {
     deriveRoundsService,
     deriveWalletRoundsService,
     deriveWalletStatsService,
+    deriveV5TranchesService,
     derivePointsService,
   });
 
@@ -50,6 +55,7 @@ async function main(): Promise<void> {
     roundsRepo,
     walletRoundsRepo,
     pointsRepo,
+    v5TranchesRepo,
     startedAt,
   });
 

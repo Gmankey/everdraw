@@ -41,14 +41,35 @@ export function createDeriveRoundsService(
 
       const finalizedEvents = allEvents
         .filter((event) => event.finalized === 1)
-        .filter((event) => event.roundId != null)
         .sort(sortEvents);
+      const distributionDrawIds = new Map<string, { drawId: number; poolAddress: string }>();
+      for (const event of finalizedEvents) {
+        if (event.eventName !== 'DistributionRegistered' || event.roundId == null) continue;
+        const payload = parsePayload<{ distributionId: string; source?: string }>(event.payload);
+        distributionDrawIds.set(payload.distributionId.toLowerCase(), {
+          drawId: event.roundId,
+          poolAddress: (payload.source ?? event.contractAddress).toLowerCase(),
+        });
+      }
 
       const rounds = new Map<string, RoundAccumulator>();
 
       for (const event of finalizedEvents) {
-        const roundId = event.roundId!;
-        const acc = getOrCreate(rounds, event.contractAddress, roundId);
+        let roundId = event.roundId;
+        let poolAddress = event.contractAddress;
+        if (event.eventName === 'ClaimPaid' || event.eventName === 'ClaimDeferred' || event.eventName === 'DeferredClaimPaid') {
+          const payload = parsePayload<{ distributionId: string }>(event.payload);
+          const mapped = distributionDrawIds.get(payload.distributionId.toLowerCase());
+          if (mapped) {
+            roundId = mapped.drawId;
+            poolAddress = mapped.poolAddress;
+          }
+        } else if (event.eventName === 'DistributionRegistered') {
+          const payload = parsePayload<{ source?: string }>(event.payload);
+          if (payload.source) poolAddress = payload.source.toLowerCase();
+        }
+        if (roundId == null) continue;
+        const acc = getOrCreate(rounds, poolAddress, roundId);
 
         switch (event.eventName) {
           case 'RoundStarted': {
@@ -129,6 +150,64 @@ export function createDeriveRoundsService(
             // State will be updated to 'drawn' by the subsequent WinnerDrawn event
             break;
 
+          case 'DrawStarted': {
+            const payload = parsePayload<{
+              drawId: number;
+              periodStart: string | number;
+              periodEnd: string | number;
+              totalTwab: string | number;
+              totalPayout: string | number;
+            }>(event.payload);
+            acc.state = 'committed';
+            acc.openedAt = normalizeNumberishTimestamp(payload.periodStart);
+            acc.salesEndTime = normalizeNumberishTimestamp(payload.periodEnd);
+            acc.committedAt = event.blockTimestamp;
+            acc.ticketCount = Number(payload.totalTwab ?? 0);
+            acc.depositTotalMon = BigInt(stringifyNumberish(payload.totalTwab ?? '0'));
+            acc.yieldMon = stringifyNumberish(payload.totalPayout ?? '0');
+            break;
+          }
+
+          case 'SeedReceived':
+          case 'RootProposed':
+            acc.state = 'drawn';
+            acc.drawnAt = event.blockTimestamp;
+            break;
+
+          case 'RootFinalized': {
+            const payload = parsePayload<{
+              drawId: number;
+              winnerCount: number;
+              totalPayout: string | number;
+            }>(event.payload);
+            acc.state = 'settled';
+            acc.settledAt = event.blockTimestamp;
+            acc.yieldMon = stringifyNumberish(payload.totalPayout ?? acc.yieldMon);
+            break;
+          }
+
+          case 'DrawSkipped': {
+            const payload = parsePayload<{
+              drawId: number;
+              periodStart: string | number;
+              periodEnd: string | number;
+              totalTwab: string | number;
+              availablePrize: string | number;
+            }>(event.payload);
+            acc.state = 'skipped';
+            acc.isSkipped = 1;
+            acc.openedAt = normalizeNumberishTimestamp(payload.periodStart);
+            acc.salesEndTime = normalizeNumberishTimestamp(payload.periodEnd);
+            acc.settledAt = event.blockTimestamp;
+            acc.ticketCount = Number(payload.totalTwab ?? 0);
+            acc.depositTotalMon = BigInt(stringifyNumberish(payload.totalTwab ?? '0'));
+            acc.yieldMon = stringifyNumberish(payload.availablePrize ?? '0');
+            break;
+          }
+
+          case 'DistributionRegistered':
+            break;
+
           case 'TicketsBought':
           case 'TicketsPurchased': {
             // Both legacy and V2 payloads are normalized to { roundId, buyer, ticketCount, monPaid }
@@ -148,6 +227,14 @@ export function createDeriveRoundsService(
           case 'PrizeClaimed':
           case 'PrincipalWithdrawn':
             break;
+
+          case 'ClaimPaid': {
+            const payload = parsePayload<{ account: string; amount: string | number }>(event.payload);
+            acc.winner = payload.account.toLowerCase();
+            acc.winnerWallets.add(payload.account.toLowerCase());
+            acc.monReceived = stringifyNumberish(payload.amount ?? acc.monReceived);
+            break;
+          }
         }
       }
 
