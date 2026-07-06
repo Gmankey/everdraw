@@ -314,7 +314,7 @@ function hexChainIdToDec(hexId) {
 }
 
 function shortAddr(addr) {
-  if (!addr || addr === ethers.ZeroAddress) return '\u2014'
+  if (!addr || addr === ethers.ZeroAddress) return '—'
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`
 }
 
@@ -345,7 +345,6 @@ function bonusLabel(key) {
     .trim()
     .toLowerCase()
 }
-
 
 function vaultMultiplierForWeeks(weeks) {
   const n = Number(weeks || 0)
@@ -401,14 +400,14 @@ function PointsHeaderWidget({ account, points }) {
   return (
     <div className="points-header">
       <button className="points-pill" type="button" onClick={() => setOpen((v) => !v)} aria-label={`${lifetimePoints.toLocaleString()} points, ${streakWeeks} week streak`}>
-        <span className="points-pill-stat points-pill-points" title="Points"><span aria-hidden="true">{'\u2726'}</span>{lifetimePoints.toLocaleString()}</span>
-        <span className="points-pill-stat points-pill-streak" title="Weekly streak"><span aria-hidden="true">{'\u{1F525}'}</span>{streakWeeks}</span>
+        <span className="points-pill-stat points-pill-points" title="Points"><span aria-hidden="true">✦</span>{lifetimePoints.toLocaleString()}</span>
+        <span className="points-pill-stat points-pill-streak" title="Weekly streak"><span aria-hidden="true">🔥</span>{streakWeeks}</span>
       </button>
       {open ? (
         <div className="points-popover points-popover-simple">
           <div className="points-popover-kicker">Total points balance</div>
           <div className="points-popover-total">{lifetimePoints.toLocaleString()}</div>
-          <a href="#profile" className="points-profile-link">Show profile {'\u2192'}</a>
+          <a href="#profile" className="points-profile-link">Show profile →</a>
         </div>
       ) : null}
     </div>
@@ -422,7 +421,7 @@ function PointsBreakdown({ item }) {
   return (
     <div className="points-earned-line">
       +{item.total_points} points earned
-      <small>base {item.base_points}, streak {'\u00d7'}{(item.multiplier_x100 / 100).toFixed(2)}{bonusText ? `, ${bonusText}` : ''}</small>
+      <small>base {item.base_points}, streak ×{(item.multiplier_x100 / 100).toFixed(2)}{bonusText ? `, ${bonusText}` : ''}</small>
     </div>
   )
 }
@@ -436,21 +435,34 @@ function ProfilePage({ account, points, history, tranches, currentDrawId }) {
   const drawId = Number(currentDrawId || historyRows[0]?.round_id || 0)
   const streakWeeks = Number(points?.current_streak_weeks || 0)
   const tier = points?.current_tier || 'Bronze'
-  const accountMultiplierX100 = Number(points?.current_multiplier_x100 || 100)
-  const weighted = openTranches.reduce((acc, tranche) => {
-    const amount = trancheRemainingMon(tranche)
-    const weeks = trancheWeeks(tranche, drawId)
-    const multiplier = tranche.pool_type === 'degen' ? degenMultiplierForWeeks(weeks) : vaultMultiplierForWeeks(weeks)
-    return { amount: acc.amount + amount, weighted: acc.weighted + amount * multiplier }
-  }, { amount: 0, weighted: 0 })
-  const effectiveMultiplierX100 = weighted.amount > 0 ? Math.round(weighted.weighted / weighted.amount) : accountMultiplierX100
-  const oldestVault = vaultTranches.map((tranche) => ({ weeks: trancheWeeks(tranche, drawId), amount: trancheRemainingMon(tranche) })).filter((row) => row.amount > 0).sort((a, b) => b.weeks - a.weeks || b.amount - a.amount)[0]
-  const oldestDegen = degenTranches.map((tranche) => ({ weeks: trancheWeeks(tranche, drawId), amount: trancheRemainingMon(tranche) })).filter((row) => row.amount > 0).sort((a, b) => b.weeks - a.weeks || b.amount - a.amount)[0]
+  const dotCount = 52
+  const litDots = Math.max(0, Math.min(dotCount, streakWeeks))
+
+  // Main vault position: use the oldest open vault tranche's own tenure (per-tranche multiplier,
+  // §2b anti-gaming) rather than the account streak, falling back to the account rate if the
+  // wallet has no open tranche data yet (e.g. indexer not caught up).
+  const oldestVault = vaultTranches
+    .map((tranche) => ({ weeks: trancheWeeks(tranche, drawId), amount: trancheRemainingMon(tranche) }))
+    .filter((row) => row.amount > 0)
+    .sort((a, b) => b.weeks - a.weeks || b.amount - a.amount)[0]
+  const oldestDegen = degenTranches
+    .map((tranche) => ({ weeks: trancheWeeks(tranche, drawId), amount: trancheRemainingMon(tranche) }))
+    .filter((row) => row.amount > 0)
+    .sort((a, b) => b.weeks - a.weeks || b.amount - a.amount)[0]
+
+  const mainVaultMultiplierX100 = oldestVault ? vaultMultiplierForWeeks(oldestVault.weeks) : Number(points?.current_multiplier_x100 || 100)
+  const hasPatronPosition = Boolean(oldestDegen)
+  const patronVaultMultiplierX100 = oldestDegen ? degenMultiplierForWeeks(oldestDegen.weeks) : 200
+
   const nextVault = oldestVault ? nextVaultThreshold(oldestVault.weeks) : nextVaultThreshold(streakWeeks)
   const nextDegen = oldestDegen ? nextDegenThreshold(oldestDegen.weeks) : 2
-  const nextMultiplierCopy = oldestVault && nextVault ? `Your oldest vault deposit reaches ${formatMultiplier(vaultMultiplierForWeeks(nextVault))} in ${Math.max(1, nextVault - oldestVault.weeks)} draw${Math.max(1, nextVault - oldestVault.weeks) === 1 ? '' : 's'}.` : oldestVault ? 'Your oldest vault deposit is at the top multiplier tier.' : 'Deposit into the vault to start building your next multiplier.'
-  const degenMultiplierX100 = oldestDegen ? degenMultiplierForWeeks(oldestDegen.weeks) : 200
-  const degenProgressCopy = oldestDegen && nextDegen ? `${Math.max(1, nextDegen - oldestDegen.weeks)} more draw${Math.max(1, nextDegen - oldestDegen.weeks) === 1 ? '' : 's'} to ${formatMultiplier(degenMultiplierForWeeks(nextDegen))}` : oldestDegen ? 'At the 5x Patron Pool cap' : 'Starts at 2x and builds to 5x'
+  const nextMainVaultCopy = oldestVault && nextVault
+    ? `Reaches ${formatMultiplier(vaultMultiplierForWeeks(nextVault))} in ${Math.max(1, nextVault - oldestVault.weeks)} draw${Math.max(1, nextVault - oldestVault.weeks) === 1 ? '' : 's'}.`
+    : oldestVault ? 'At the top multiplier tier.' : 'Deposit into the vault to start building your multiplier.'
+  const nextPatronCopy = oldestDegen && nextDegen
+    ? `${Math.max(1, nextDegen - oldestDegen.weeks)} more draw${Math.max(1, nextDegen - oldestDegen.weeks) === 1 ? '' : 's'} to ${formatMultiplier(degenMultiplierForWeeks(nextDegen))}.`
+    : oldestDegen ? 'At the 5x Patron Pool cap.' : 'No Patron Pool position — starts at 2x and builds to 5x.'
+
   const highestMilestoneAwarded = Number(points?.highest_streak_milestone_awarded || 0)
   const noWinDraws = Number(points?.consecutive_non_wins || 0)
   const highestLossAwarded = Number(points?.highest_loss_streak_bonus_awarded || 0)
@@ -470,7 +482,7 @@ function ProfilePage({ account, points, history, tranches, currentDrawId }) {
   ].sort((a, b) => Number(b.unlocked) - Number(a.unlocked))
   const recentDraws = historyRows.slice(0, 12)
   const ensName = points?.ens && !ethers.isAddress(points.ens) && points.ens.toLowerCase() !== account.toLowerCase() ? points.ens : ''
-  const litDots = Math.max(0, Math.min(52, streakWeeks))
+
   return (
     <section className="participants-card points-page">
       <div className="points-page-head"><div><h2>{ensName || 'Your Points'}</h2><span>{shortAddr(account)}</span></div></div>
@@ -478,14 +490,73 @@ function ProfilePage({ account, points, history, tranches, currentDrawId }) {
         <div className="points-profile-summary points-profile-main-card rewards-main-card">
           <div className="points-popover-kicker rewards-kicker">Total points balance</div>
           <div className="points-profile-total rewards-total">{Number(points?.lifetime_points || 0).toLocaleString()}</div>
-          <div className="rewards-pill-row"><div className="points-multiplier-pill rewards-multiplier-pill"><span>Effective multiplier</span><strong>{formatMultiplier(effectiveMultiplierX100)}</strong></div><div className={`${tierClass(tier)} rewards-tier-pill`}>{tier}</div></div>
-          <div className="points-next-milestone points-next-multiplier">{nextMultiplierCopy}</div>
-          <div className="points-source-grid"><div className="points-source-row"><span>Vault entries</span><strong>{oldestVault ? formatMultiplier(vaultMultiplierForWeeks(oldestVault.weeks)) : formatMultiplier(accountMultiplierX100)}</strong><small>{oldestVault ? 'Multiplier follows each deposit tranche.' : 'Deposit to begin building tranche tenure.'}</small></div><div className="points-source-row degen-source-row"><span>Degen pool</span><strong>{formatMultiplier(degenMultiplierX100)} - builds to 5x</strong><small>No chance to win - {degenProgressCopy}</small></div></div>
-          <div className="points-streak-mini rewards-streak-block"><div><span className="points-popover-kicker">Weekly streak</span><strong>{streakWeeks} Week Streak</strong></div><div className="points-streak-dots points-streak-dots-52" aria-label={`${litDots} of 52 weeks active`}>{Array.from({ length: 52 }).map((_, i) => <span key={i + 1} className={i < litDots ? 'lit' : ''} />)}</div></div>
+
+          <div className="rewards-pill-row">
+            <div className="points-multiplier-pill rewards-multiplier-pill" title={nextMainVaultCopy}><span>Main vault multiplier</span><strong>{formatMultiplier(mainVaultMultiplierX100)}</strong></div>
+            <div className={`${tierClass(tier)} rewards-tier-pill`}>{tier}</div>
+          </div>
+          <div className="points-next-milestone points-next-multiplier">{nextMainVaultCopy}</div>
+
+          <div className="rewards-pill-row">
+            <div className={`points-multiplier-pill rewards-multiplier-pill degen-multiplier-pill ${hasPatronPosition ? '' : 'muted'}`} title={nextPatronCopy}><span>Patron vault multiplier</span><strong>{hasPatronPosition ? formatMultiplier(patronVaultMultiplierX100) : '—'}</strong></div>
+          </div>
+          <div className="points-next-milestone points-next-multiplier">{nextPatronCopy}</div>
+
+          <div className="points-streak-mini rewards-streak-block">
+            <div>
+              <span className="points-popover-kicker">Weekly streak</span>
+              <strong>{streakWeeks} Week Streak</strong>
+            </div>
+            <div className="points-streak-dots points-streak-dots-52" aria-label={`${litDots} of ${dotCount} weeks active`}>
+              {Array.from({ length: dotCount }).map((_, i) => {
+                const week = i + 1
+                return <span key={week} className={i < litDots ? 'lit' : ''} title={`Next multiplier: ${formatMultiplier(vaultMultiplierForWeeks(week))}`} />
+              })}
+            </div>
+          </div>
         </div>
-        <aside className="points-profile-side rewards-side-card"><div className="points-milestones-panel rewards-milestones-panel rewards-bonuses-panel"><h3>Bonuses</h3><div className="points-milestone-list rewards-bonus-list">{bonusRows.map((bonus) => <div className={`points-milestone-row rewards-bonus-row ${bonus.unlocked ? 'claimed' : 'locked'}`} key={bonus.key} title={`${bonus.label} +${bonus.points.toLocaleString()} points`}><span className="points-milestone-icon" aria-hidden="true">{bonus.unlocked ? '\u2713' : ''}</span><div><strong>{bonus.label}</strong><small>+{bonus.points.toLocaleString()} points</small></div><span className="points-milestone-status">{bonus.unlocked ? 'UNLOCKED' : 'Locked'}</span></div>)}</div></div></aside>
+
+        <aside className="points-profile-side rewards-side-card">
+          <div className="points-milestones-panel rewards-milestones-panel rewards-bonuses-panel">
+            <h3>Bonuses</h3>
+            <div className="points-milestone-list rewards-bonus-list">
+              {bonusRows.map((bonus) => (
+                <div className={`points-milestone-row rewards-bonus-row ${bonus.unlocked ? 'claimed' : 'locked'}`} key={bonus.key} title={`${bonus.label} +${bonus.points.toLocaleString()} points`}>
+                  <span className="points-milestone-icon" aria-hidden="true">{bonus.unlocked ? '✓' : ''}</span>
+                  <div>
+                    <strong>{bonus.label}</strong>
+                    <small>+{bonus.points.toLocaleString()} points</small>
+                  </div>
+                  <span className="points-milestone-status">{bonus.unlocked ? 'UNLOCKED' : 'Locked'}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </aside>
       </div>
-      <div className="points-recent-rounds"><h3>Recent draws</h3><div className="participants-table"><div className="participants-row participants-header points-rounds-row"><span>Draw</span><span>Your entry</span><span>Multiplier</span><span>Bonus</span><span>Total</span></div>{recentDraws.length === 0 ? <div className="points-empty-state">No draws yet. Deposit to start earning entries.</div> : recentDraws.map((h) => { const bonusEntries = Object.entries(h.bonuses_breakdown || {}).filter(([, value]) => Number(value) > 0); return <div className="participants-row points-rounds-row" key={`${h.pool_address}:${h.round_id}`}><span>#{h.round_id}</span><span>{Number(h.base_points || 0).toLocaleString()}</span><span>x{(Number(h.multiplier_x100 || 100) / 100).toFixed(2)}</span><span className="round-bonus-pills">{bonusEntries.map(([key]) => <span className="round-bonus-pill" key={key}>{bonusLabel(key)}</span>)}</span><span>+{Number(h.total_points || 0).toLocaleString()}</span></div> })}</div></div>
+
+      <div className="points-recent-rounds">
+        <h3>Recent draws</h3>
+        <div className="participants-table">
+          <div className="participants-row participants-header points-rounds-row"><span>Draw</span><span>Your entry</span><span>Multiplier</span><span>Bonus</span><span>Total</span></div>
+          {recentDraws.length === 0 ? (
+            <div className="points-empty-state">No draws yet. Deposit to start earning entries.</div>
+          ) : recentDraws.map((h) => {
+            const bonusEntries = Object.entries(h.bonuses_breakdown || {}).filter(([, value]) => Number(value) > 0)
+            return (
+              <div className="participants-row points-rounds-row" key={`${h.pool_address}:${h.round_id}`}>
+                <span>#{h.round_id}</span>
+                <span>{Number(h.base_points || 0).toLocaleString()}</span>
+                <span>x{(Number(h.multiplier_x100 || 100) / 100).toFixed(2)}</span>
+                <span className="round-bonus-pills">
+                  {bonusEntries.map(([key]) => <span className="round-bonus-pill" key={key}>{bonusLabel(key)}</span>)}
+                </span>
+                <span>+{Number(h.total_points || 0).toLocaleString()}</span>
+              </div>
+            )
+          })}
+        </div>
+      </div>
     </section>
   )
 }
@@ -507,7 +578,7 @@ function LeaderboardPage({ account }) {
       <div className="points-page-head"><h2>Leaderboard</h2><div><button className="max-btn" onClick={() => setPeriod('all')}>All time</button><button className="max-btn" onClick={() => setPeriod('month')}>This month</button></div></div>
       <div className="participants-table leaderboard-table">
         <div className="participants-row participants-header"><span>#</span><span>Wallet</span><span>Tier</span><span>Streak</span><span>Points</span></div>
-        {rows.map((r, i) => <div className="participants-row" key={r.wallet}><span>{i + 1}</span><span>{r.ens || shortAddr(r.wallet)}</span><span><span className={tierClass(r.current_tier)}>{r.current_tier}</span></span><span>streak {r.current_streak_weeks}w</span><span>{Number(period === 'month' ? r.month_points : r.lifetime_points).toLocaleString()}</span></div>)}
+        {rows.map((r, i) => <div className="participants-row" key={r.wallet}><span>{i + 1}</span><span>{r.ens || shortAddr(r.wallet)}</span><span><span className={tierClass(r.current_tier)}>{r.current_tier}</span></span><span>🔥 {r.current_streak_weeks}w</span><span>{Number(period === 'month' ? r.month_points : r.lifetime_points).toLocaleString()}</span></div>)}
       </div>
       {account && !currentRow ? <div className="leaderboard-sticky">Your wallet is currently outside the top 100. Keep cooking, boss.</div> : null}
     </section>
@@ -561,8 +632,8 @@ function normalizeError(e) {
   return msg
 }
 
-// Nonce fetch with retry -- rpc.monad.xyz occasionally 429s during heavy polling.
-// Ethers' internal nonce fetch silently returns undefined on 429 -> BigInt(undefined) throws.
+// Nonce fetch with retry — rpc.monad.xyz occasionally 429s during heavy polling.
+// Ethers' internal nonce fetch silently returns undefined on 429 → BigInt(undefined) throws.
 // We fetch it ourselves with exponential backoff so one rate-limit blip doesn't kill the tx.
 async function fetchNonceWithRetry(account, maxRetries = 6) {
   const BASE_MS = 250
@@ -616,13 +687,13 @@ async function ensureCorrectNetwork(provider, expectedChainId) {
 function FounderLaunchArticle() {
   return (
     <main className="article-page">
-      <a href="/" className="back-link article-back">{'\u2190'} Back to EverDraw</a>
+      <a href="/" className="back-link article-back">← Back to EverDraw</a>
       <article className="founder-article">
         <header className="article-hero">
           <div className="article-hero-glow" aria-hidden="true" />
           <div className="article-kicker">Founder Note</div>
           <h1>Drawn Back to DeFi: Why I Built EverDraw</h1>
-          <div className="article-meta">By Gman Â· May 13, 2026</div>
+          <div className="article-meta">By Gman · May 13, 2026</div>
           <div className="article-hero-tags" aria-label="EverDraw themes">
             <span>Principal protected</span>
             <span>Monad native</span>
@@ -632,7 +703,7 @@ function FounderLaunchArticle() {
 
         <section>
           <h2>When DeFi Felt Alive</h2>
-          <p>I came into DeFi through the same door as most. The yield farming, LP positions, ridiculous APYs, new communities, that was where crypto first felt alive to me. Back then, it almost felt like you could close your eyes, throw a dart at a new chain, and somehow still find a net profit. Ethereum, Polygon, Fantom, Avalanche; each ecosystem felt like another frontier, and if you were early enough, curious enough, and stubborn enough to learn, there was real opportunity waiting somewhere. Who still remembers the era of the "rebasing" token? Those were the days.</p>
+          <p>I came into DeFi through the same door as most. The yield farming, LP positions, ridiculous APYs, new communities, that was where crypto first felt alive to me. Back then, it almost felt like you could close your eyes, throw a dart at a new chain, and somehow still find a net profit. Ethereum, Polygon, Fantom, Avalanche; each ecosystem felt like another frontier, and if you were early enough, curious enough, and stubborn enough to learn, there was real opportunity waiting somewhere. Who still remembers the era of the “rebasing” token? Those were the days.</p>
           <p>Now there are more protocols than ever, but the rewards often feel smaller, more fragmented, and less worth the effort required to chase them. Users are not only spreading their liquidity across too many places; they are spreading their time and attention too.</p>
         </section>
 
@@ -652,13 +723,13 @@ function FounderLaunchArticle() {
             <img src="/everdraw-round-flow.png" alt="EverDraw round flow: deposits open, staked as shMON, vault locked, winner revealed, vault unlocks, redeem shMON, and new vault starts" />
           </figure>
           <p>That is the product in its simplest form. No liquidations. No impermanent loss. No active position management. No complicated strategy. You enter the draw, the yield does its work, and either you win the pot or you get back your original deposit.</p>
-          <p>EverDraw keeps the thing people still want -- a shot at meaningful upside -- while removing the part that usually makes that shot destructive.</p>
+          <p>EverDraw keeps the thing people still want — a shot at meaningful upside — while removing the part that usually makes that shot destructive.</p>
         </section>
 
         <section>
           <h2>The Everdraw Edge</h2>
-          <p>I also want to be honest about what EverDraw is and is not. Principal-protected prize savings is not a brand-new idea, and I am not interested in pretending otherwise. Versions of this concept have existed before, both in traditional finance and in crypto. The difference is in the specific combination EverDraw is building around: Monad staking yield through shMON, and a long-term vision where draws become engagement infrastructure rather than just a standalone vault. Let's talk about both.</p>
-          <p>First, the yield source. Most prize-savings products have to send user deposits into lending markets to generate yield. That can work, but it also means the prize is tied to lending demand, utilisation, borrow rates, and the risk assumptions of another protocol. EverDraw's first version works differently because it is built on Monad staking yield through shMON. The deposited MON becomes productive through staking, and that staking yield becomes the prize. This is one of the reasons EverDraw makes sense on Monad specifically: the chain gives us a native yield source that can be turned into a shared prize without depending on a third-party lending market or inflationary incentives that disappear when a campaign ends.</p>
+          <p>I also want to be honest about what EverDraw is and is not. Principal-protected prize savings is not a brand-new idea, and I am not interested in pretending otherwise. Versions of this concept have existed before, both in traditional finance and in crypto. The difference is in the specific combination EverDraw is building around: Monad staking yield through shMON, and a long-term vision where draws become engagement infrastructure rather than just a standalone vault. Let’s talk about both.</p>
+          <p>First, the yield source. Most prize-savings products have to send user deposits into lending markets to generate yield. That can work, but it also means the prize is tied to lending demand, utilisation, borrow rates, and the risk assumptions of another protocol. EverDraw’s first version works differently because it is built on Monad staking yield through shMON. The deposited MON becomes productive through staking, and that staking yield becomes the prize. This is one of the reasons EverDraw makes sense on Monad specifically: the chain gives us a native yield source that can be turned into a shared prize without depending on a third-party lending market or inflationary incentives that disappear when a campaign ends.</p>
           <p>Second, the vision. A simple prize-savings product is useful, but on its own it is still just a product. EverDraw starts with a simple user-facing vault because that is the cleanest way to prove the loop, but the larger idea is to turn the draw mechanic into an engagement layer for Monad. That means more assets, more draw formats, protocol campaigns, sponsored prize pools, and eventually tools that let other projects use recurring prize mechanics to distribute rewards.</p>
         </section>
 
@@ -700,7 +771,7 @@ function FounderLaunchArticle() {
   )
 }
 
-function Header({ account, onConnect, currentPage, points }) {
+function Header({ account, onConnect, currentPage, points, showDegen = false, onDegenClick, onVaultClick, onProfileClick }) {
   return (
     <header>
       <div className="logo">
@@ -708,9 +779,10 @@ function Header({ account, onConnect, currentPage, points }) {
         EverDraw
       </div>
       <nav className="nav-links">
-        <a href="/#vault" className={`nav-link ${currentPage === 'vault' ? 'active' : ''}`}>Vault</a>
+        <a href="/#vault" className={`nav-link ${currentPage === 'vault' ? 'active' : ''}`} onClick={onVaultClick}>Vault</a>
+        {showDegen ? <a href="#patron" className={`nav-link ${currentPage === 'degen' ? 'active' : ''}`} onClick={onDegenClick}>Patron</a> : null}
         <a href="/#stats" className={`nav-link ${currentPage === 'stats' ? 'active' : ''}`}>Stats</a>
-        <a href="/#profile" className={`nav-link ${currentPage === 'profile' ? 'active' : ''}`}>Profile</a>
+        <a href="/#profile" className={`nav-link ${currentPage === 'profile' ? 'active' : ''}`} onClick={onProfileClick}>Profile</a>
         <a href="/#leaderboard" className={`nav-link ${currentPage === 'leaderboard' ? 'active' : ''}`}>Leaderboard</a>
         <a href="/articles/drawn-back-to-defi" className={`nav-link ${currentPage === 'article' ? 'active' : ''}`}>Articles</a>
         <a href="https://docs.everdraw.xyz" target="_blank" rel="noopener noreferrer" className="nav-link">Docs</a>
@@ -751,7 +823,8 @@ function StatCard({ label, value, sub, icon }) {
   )
 }
 
-function ClaimFlowModal({ open, mode, busy, status, error, withdrawWarningText, onClose, onRedeemToWallet, onRedeemAndConvert, onBackFromRedirectWarning, confirmRedirectOpen, onConfirmRedirect, isV2 = false }) {
+function ClaimFlowModal({ open, mode, busy, status, error, onClose, onRedeemToWallet, onRedeemAndConvert, onBackFromRedirectWarning, confirmRedirectOpen, onConfirmRedirect, isV2 = false, headerNotice = '', withdrawWarningText = '' }) {
+  const noticeText = withdrawWarningText || headerNotice
   if (!open) return null
 
   const isWinner = mode === 'winner'
@@ -831,22 +904,21 @@ function ClaimFlowModal({ open, mode, busy, status, error, withdrawWarningText, 
     <div className="shmon-modal-backdrop claim-flow-backdrop" role="dialog" aria-modal="true" aria-labelledby="claim-flow-title">
       <div className={`card shmon-modal claim-flow-modal ${isWinner ? 'winner' : 'principal'}`}>
         <div className={`claim-flow-head ${confirmRedirectOpen ? 'compact' : ''}`}>
-          <button type="button" className="claim-flow-close" onClick={onClose} disabled={busy} aria-label="Close">x</button>
+          <button type="button" className="claim-flow-close" onClick={onClose} disabled={busy} aria-label="Close">×</button>
           {!confirmRedirectOpen ? (
             <div className="claim-flow-hero">
               {heroEyebrow ? <div className="claim-flow-eyebrow">{heroEyebrow}</div> : null}
               <div className="claim-flow-title" id="claim-flow-title">{heroTitle}</div>
+              {noticeText ? (
+                <div className="claim-flow-confirm-panel claim-flow-header-warning">
+                  <div className="claim-flow-eyebrow">HEADS UP</div>
+                  <div className="claim-flow-confirm-copy">{noticeText}</div>
+                </div>
+              ) : null}
               {heroBody ? <p className="claim-flow-body">{heroBody}</p> : null}
             </div>
           ) : null}
         </div>
-
-        {!confirmRedirectOpen && withdrawWarningText ? (
-          <div className="claim-flow-confirm-panel withdraw-streak-warning">
-            <div className="claim-flow-eyebrow">HEADS UP</div>
-            <div className="claim-flow-confirm-copy">{withdrawWarningText}</div>
-          </div>
-        ) : null}
 
         {confirmRedirectOpen ? (
           <div className="claim-flow-confirm">
@@ -1076,7 +1148,7 @@ function RoundProgressSteps({ state, settlementSecs, secondsRemaining, isV3 = fa
   const steps = [
     'Deposit',
     'Yield Accruing',
-    (isV3 && (state === 1 || state === 2)) ? 'Drawing Winner...' : 'Winner Revealed',
+    (isV3 && (state === 1 || state === 2)) ? 'Drawing Winner…' : 'Winner Revealed',
     'Claim / Withdraw',
   ]
   let activeStep = 0
@@ -1105,8 +1177,1091 @@ function RoundProgressSteps({ state, settlementSecs, secondsRemaining, isV3 = fa
   )
 }
 
+const V5_UAT_DEFAULTS = {
+  chainId: 10143,
+  rpcUrl: 'https://testnet-rpc.monad.xyz',
+  drawManager: '0x9eb6387EeA7daC93AF9585b5D25bfc7e0A3aD89c',
+  prizeVault: '0x76A1327c69f6f9f2571b131BB528D0c8ce1D6958',
+  twabController: '0x719F4EB6a4187DBAd1647d07F67573B80E5d0376',
+  claimManager: '0xF95e319f71B503e396295CD0A55550f56f5901eb',
+  shmon: '0x282BdDFF5e58793AcAb65438b257Dbd15A8745C9',
+}
+
+const V5_VAULT_ABI = [
+  'function deposit() payable returns (uint256)',
+  'function depositShmon(uint256 shares) returns (uint256)',
+  'function withdraw(uint256 amount) returns (uint256)',
+  'function withdrawShmon(uint256 amount) returns (uint256)',
+  'function boostDeposit() payable returns (uint256)',
+  'function boostDepositShmon(uint256 shares) returns (uint256)',
+  'function boostWithdraw(uint256 amount) returns (uint256)',
+  'function boostWithdrawShmon(uint256 amount) returns (uint256)',
+  'function strategy() view returns (address)',
+  'function principalOf(address) view returns (uint256)',
+  'function boosterPrincipalOf(address) view returns (uint256)',
+  'function totalPrincipal() view returns (uint256)',
+  'function totalParticipantPrincipal() view returns (uint256)',
+  'function totalBoosterPrincipal() view returns (uint256)',
+  'function availableYield() view returns (uint256)',
+  'function paused() view returns (bool)',
+  'function stoppedAt() view returns (uint64)',
+  'event Deposit(address indexed recipient, uint256 amount)',
+  'event Withdraw(address indexed recipient, uint256 amount)',
+  'event BoostDeposit(address indexed booster, uint256 amount, uint256 balance, uint64 timestamp)',
+  'event BoostWithdraw(address indexed booster, uint256 amount, uint256 balance, uint64 timestamp)',
+  'error ZeroAmount()',
+  'error DepositTooSmall()',
+  'error DepositCapExceeded()',
+  'error VaultIsStopped()',
+  'error InsufficientBalance()',
+]
+
+const V5_DRAW_MANAGER_ABI = [
+  'function currentDrawId() view returns (uint256)',
+  'function nextPeriodStart() view returns (uint64)',
+  'function drawPeriod() view returns (uint64)',
+  'function previewStartDraw() view returns (bool due,bool willSkip,uint256 requiredFee)',
+  'function draws(uint256) view returns (uint64 periodStart,uint64 periodEnd,uint64 randomnessRequestId,bytes32 seed,uint256 totalTwab,uint256 totalPayout,uint32 winnerCount,uint32 rewardLegCount,bytes32 root,uint64 proposedAt,address proposer,uint8 status,uint256 grossYield,uint256 sponsorYield,uint256 feeAmount)',
+  'event RootFinalized(uint256 indexed drawId, bytes32 indexed root, uint32 winnerCount, uint256 totalPayout)',
+]
+
+const V5_CLAIM_MANAGER_ABI = [
+  'function claimMany(tuple(bytes32 distributionId,uint256 leafIndex,address account,address token,uint256 amount)[] leaves, bytes32[][] proofs)',
+]
+
+const V5_SHMON_ABI = [
+  'function approve(address spender, uint256 value) returns (bool)',
+  'function balanceOf(address owner) view returns (uint256)',
+  'function convertToAssets(uint256 shares) view returns (uint256 assets)',
+  'function previewDeposit(uint256 assets) view returns (uint256 shares)',
+]
+
+const V5_DRAW_STATUS = ['Waiting', 'Awaiting seed', 'Seeded', 'Proposed', 'Finalized', 'Skipped']
+
+function v5EnvAddress(name, fallback) {
+  const value = import.meta.env[name] || fallback
+  return ethers.isAddress(value) ? value : fallback
+}
+
+function v5Config() {
+  return {
+    chainId: Number(import.meta.env.VITE_CHAIN_ID || V5_UAT_DEFAULTS.chainId),
+    rpcUrl: import.meta.env.VITE_RPC_URL || V5_UAT_DEFAULTS.rpcUrl,
+    drawManager: v5EnvAddress('VITE_V5_DRAW_MANAGER_ADDRESS', V5_UAT_DEFAULTS.drawManager),
+    prizeVault: v5EnvAddress('VITE_V5_PRIZE_VAULT_ADDRESS', V5_UAT_DEFAULTS.prizeVault),
+    twabController: v5EnvAddress('VITE_V5_TWAB_CONTROLLER_ADDRESS', V5_UAT_DEFAULTS.twabController),
+    claimManager: v5EnvAddress('VITE_V5_CLAIM_MANAGER_ADDRESS', V5_UAT_DEFAULTS.claimManager),
+    shmon: v5EnvAddress('VITE_SHMON_ADDRESS', V5_UAT_DEFAULTS.shmon),
+    claimProofUrl: import.meta.env.VITE_V5_CLAIM_PROOF_URL || '',
+  }
+}
+
+function formatV5Mon(value, digits = 4) {
+  try {
+    return Number(ethers.formatEther(value || 0n)).toFixed(digits)
+  } catch {
+    return Number(0).toFixed(digits)
+  }
+}
+
+function parseV5Mon(value) {
+  const clean = String(value || '').trim()
+  if (!clean || Number(clean) <= 0) throw new Error('Enter an amount greater than zero')
+  return ethers.parseEther(clean)
+}
+
+function formatV5Duration(totalSeconds) {
+  const seconds = Math.max(0, Number(totalSeconds || 0))
+  const days = Math.floor(seconds / 86400)
+  const hours = Math.floor((seconds % 86400) / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  if (days > 0) return `${days}d ${hours}h`
+  if (hours > 0) return `${hours}h ${minutes}m`
+  return `${minutes}m`
+}
+
+async function switchToV5Chain(provider, chainId, rpcUrl) {
+  const hexChainId = `0x${Number(chainId).toString(16)}`
+  try {
+    await provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: hexChainId }] })
+  } catch (err) {
+    if (err?.code !== 4902) throw err
+    await provider.request({
+      method: 'wallet_addEthereumChain',
+      params: [{
+        chainId: hexChainId,
+        chainName: 'Monad Testnet',
+        nativeCurrency: { name: 'MON', symbol: 'MON', decimals: 18 },
+        rpcUrls: [rpcUrl],
+        blockExplorerUrls: ['https://testnet.monadexplorer.com'],
+      }],
+    })
+  }
+}
+
+function v5ClaimUrl(template, account, cfg) {
+  if (!template) return ''
+  const encodedAccount = encodeURIComponent(account)
+  const join = template.includes('?') ? '&' : '?'
+  if (template.includes('{account}')) {
+    return template
+      .replaceAll('{account}', encodedAccount)
+      .replaceAll('{claimManager}', encodeURIComponent(cfg.claimManager))
+      .replaceAll('{vault}', encodeURIComponent(cfg.prizeVault))
+  }
+  return `${template}${join}account=${encodedAccount}&claimManager=${encodeURIComponent(cfg.claimManager)}&vault=${encodeURIComponent(cfg.prizeVault)}`
+}
+
+function normalizeV5ClaimPayload(payload) {
+  const leaves = payload?.leaves || payload?.claims || payload?.claim?.leaves || (payload?.leaf ? [payload.leaf] : [])
+  const proofs = payload?.proofs || payload?.claim?.proofs || leaves.map((leaf) => leaf.proof || [])
+  if (!Array.isArray(leaves) || leaves.length === 0) return null
+  return {
+    leaves: leaves.map((leaf) => ({
+      distributionId: leaf.distributionId,
+      leafIndex: leaf.leafIndex,
+      account: leaf.account,
+      token: leaf.token,
+      amount: leaf.amount,
+    })),
+    proofs,
+    total: payload?.total || payload?.amount || leaves.reduce((sum, leaf) => sum + BigInt(leaf.amount || 0), 0n).toString(),
+  }
+}
+
+function v5EventDate(block) {
+  if (!block?.timestamp) return '—'
+  return new Date(Number(block.timestamp) * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function v5ExplorerTx(hash) {
+  return hash ? `https://testnet.monadexplorer.com/tx/${hash}` : '#'
+}
+
+const V5_TICKETS_PER_MON_PER_MINUTE = 0.005
+
+function formatV5Tickets(value) {
+  const n = Number(value || 0)
+  if (!Number.isFinite(n) || n <= 0) return '0.00'
+  return n.toLocaleString(undefined, {
+    minimumFractionDigits: n >= 1000 ? 0 : 2,
+    maximumFractionDigits: n >= 1000 ? 2 : 2,
+  })
+}
+
+function v5MonNumber(value) {
+  try {
+    return Number(ethers.formatEther(BigInt(value || 0n)))
+  } catch {
+    return 0
+  }
+}
+
+function buildV5TicketModel({ state, account, nowMs }) {
+  const blockTime = Number(state?.block?.timestamp || 0)
+  const periodStart = Number(state?.nextPeriodStart || 0n)
+  const drawPeriod = Number(state?.drawPeriod || 0n)
+  const periodEnd = periodStart + drawPeriod
+  const principal = BigInt(state?.principal || 0n)
+  const events = Array.isArray(state?.periodAccountEvents) ? state.periodAccountEvents : []
+  const readAtMs = Number(state?.readAtMs || 0)
+  const liveDriftSeconds = readAtMs > 0 ? Math.max(0, (Number(nowMs || Date.now()) - readAtMs) / 1000) : 0
+  const now = Math.max(periodStart, Math.min((blockTime || periodStart) + liveDriftSeconds, periodEnd || periodStart))
+  const elapsedSeconds = Math.max(0, now - periodStart)
+  const totalSeconds = Math.max(1, drawPeriod)
+  const sortedEvents = events
+    .filter((event) => event.timestamp >= periodStart && event.timestamp <= now)
+    .sort((a, b) => a.timestamp - b.timestamp || a.blockNumber - b.blockNumber || a.transactionIndex - b.transactionIndex || a.index - b.index)
+  const netDelta = sortedEvents.reduce((sum, event) => {
+    const amount = BigInt(event.amount || 0n)
+    return event.type === 'deposit' ? sum + amount : sum - amount
+  }, 0n)
+  let balance = principal - netDelta
+  if (balance < 0n) balance = 0n
+  let cursor = periodStart
+  let balanceMinutes = 0
+
+  for (const event of sortedEvents) {
+    const eventTime = Math.max(periodStart, Math.min(Number(event.timestamp || periodStart), now))
+    if (eventTime > cursor) {
+      balanceMinutes += v5MonNumber(balance) * ((eventTime - cursor) / 60)
+      cursor = eventTime
+    }
+    const amount = BigInt(event.amount || 0n)
+    balance = event.type === 'deposit' ? balance + amount : balance - amount
+    if (balance < 0n) balance = 0n
+  }
+
+  if (now > cursor) {
+    balanceMinutes += v5MonNumber(principal) * ((now - cursor) / 60)
+  }
+
+  const balanceMon = v5MonNumber(principal)
+  const ticketsSoFar = balanceMinutes * V5_TICKETS_PER_MON_PER_MINUTE
+  const drawPeriodMinutes = totalSeconds / 60
+  const projectedTickets = balanceMon * V5_TICKETS_PER_MON_PER_MINUTE * drawPeriodMinutes
+  const liveTicketsPerMinute = balanceMon * V5_TICKETS_PER_MON_PER_MINUTE
+  const drawProgressPct = Math.max(0, Math.min(100, (elapsedSeconds / totalSeconds) * 100))
+
+  return {
+    hasAccount: Boolean(account),
+    hasPrincipal: principal > 0n,
+    ticketsSoFar,
+    projectedTickets,
+    liveTicketsPerMinute,
+    drawProgressPct,
+  }
+}
+
+function v5EventDateFromIso(iso) {
+  const ms = Date.parse(iso || '')
+  if (!Number.isFinite(ms)) return '—'
+  return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+// Reads from the indexer (not eth_getLogs): a fixed on-chain lookback window cannot span a
+// testnet vault's full lifetime once the chain head advances past it (Monad blocks are seconds
+// apart), so a direct queryFilter here silently returns nothing for real deposit history.
+async function v5BuildHistoryRows({ account, vault, manager }) {
+  if (!account) return []
+  const base = getIndexerBaseUrl()
+  const drawManagerLc = String(manager?.target || '').toLowerCase()
+  const [positionEvents, rounds] = await Promise.all([
+    fetch(`${base}/api/v5/wallets/${account}/position-events`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
+    fetch(`${base}/api/rounds`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
+  ])
+
+  const positionRows = (Array.isArray(positionEvents) ? positionEvents : []).map((ev) => {
+    const isDeposit = ev.action === 'deposit'
+    const isDegen = ev.pool_type === 'degen'
+    return {
+      key: `${ev.tx_hash}-${ev.log_index}`,
+      sortAt: Date.parse(ev.block_timestamp || '') || 0,
+      date: v5EventDateFromIso(ev.block_timestamp),
+      transaction: isDegen ? (isDeposit ? 'Patron Pool deposit' : 'Patron Pool withdraw') : (isDeposit ? 'Deposit' : 'Withdraw'),
+      result: isDegen ? 'Prize excluded' : (isDeposit ? 'Entered' : 'Exited'),
+      principal: `${isDeposit ? '+' : '-'}${formatV5Mon(ev.amount)} MON`,
+      prize: '—',
+      tx: ev.tx_hash,
+    }
+  })
+
+  const drawRows = (Array.isArray(rounds) ? rounds : [])
+    .filter((r) => String(r.poolAddress || '').toLowerCase() === drawManagerLc && r.state === 'settled')
+    .map((r) => ({
+      key: `draw-${r.roundId}`,
+      sortAt: Date.parse(r.settledAt || '') || 0,
+      date: v5EventDateFromIso(r.settledAt),
+      transaction: `Prize draw #${r.roundId}`,
+      result: 'Finalized',
+      principal: '—',
+      prize: `${formatV5Mon(r.yieldMon)} MON`,
+      tx: null,
+    }))
+
+  return [...positionRows, ...drawRows].sort((a, b) => b.sortAt - a.sortAt).slice(0, 24)
+}
+
+function V5ActionCard({
+  mode,
+  amount,
+  setAmount,
+  principal,
+  walletBalance,
+  shmonBalance,
+  depositAsset = 'MON',
+  setDepositAsset,
+  tickets,
+  actionMode = 'deposit',
+  setActionMode,
+  notice,
+  busy,
+  account,
+  boosterSupported,
+  onDeposit,
+  onWithdraw,
+  onConnect,
+}) {
+  const isDegen = mode === 'degen'
+  const isDeposit = actionMode === 'deposit'
+  const [tokenDropdownOpen, setTokenDropdownOpen] = useState(false)
+  const depositUsesShmon = isDeposit && depositAsset === 'shMON'
+  const balanceLabel = isDeposit
+    ? depositUsesShmon ? 'shMON balance' : 'Wallet balance'
+    : isDegen ? 'Patron Pool balance' : 'Deposited balance'
+  const balanceValue = isDeposit ? (depositUsesShmon ? shmonBalance : walletBalance) : principal
+  const balanceUnit = depositUsesShmon ? 'shMON' : 'MON'
+  const submitVerb = isDeposit ? (isDegen ? 'Deposit' : 'Deposit') : 'Withdraw'
+  const submitLabel = busy
+    ? 'Submitting...'
+    : !account
+      ? `Connect Wallet to ${isDeposit ? 'Deposit' : 'Withdraw'}`
+      : isDeposit ? `${submitVerb} with ${depositAsset}` : submitVerb
+
+  return (
+    <div className={`card v5-product-card${isDegen ? ' v5-degen-card' : ''}`}>
+      {isDegen ? (
+        <div className="card-header">
+          <div>
+            <div className="card-title">Patron Pool</div>
+          </div>
+        </div>
+      ) : null}
+
+      <section className="v5-action-pill" aria-label={isDegen ? 'Deposit to Patron Pool or withdraw' : 'Deposit or withdraw'}>
+        <button className={`v5-action-pill-btn ${isDeposit ? 'active' : ''}`} onClick={() => setActionMode('deposit')}>Deposit</button>
+        <div className="v5-action-pill-track">
+          <button
+            type="button"
+            className={`v5-action-pill-knob ${!isDeposit ? 'right' : ''}`}
+            onClick={() => setActionMode(isDeposit ? 'withdraw' : 'deposit')}
+            aria-label={isDeposit ? 'Switch to withdraw' : 'Switch to deposit'}
+          >
+            {isDeposit ? '+' : '-'}
+          </button>
+        </div>
+        <button className={`v5-action-pill-btn ${!isDeposit ? 'active' : ''}`} onClick={() => setActionMode('withdraw')}>Withdraw</button>
+      </section>
+
+      <div className="deposit-area">
+        <div className="input-group">
+          <div className="input-wrapper">
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+            />
+            <span className="currency-label">MON</span>
+          </div>
+          <div className="balance-info">
+            <span>{balanceLabel}</span>
+            <span className="v5-balance-actions">
+              <span>{formatV5Mon(balanceValue || 0n)} {balanceUnit}</span>
+              <button className="max-btn" onClick={() => setAmount(formatDepositMon(balanceValue || 0n))}>Max</button>
+            </span>
+          </div>
+        </div>
+
+        <div className="deposit-cta-wrap">
+          {isDeposit ? (
+            <div className="token-selector-wrap">
+              <div className="token-selector">
+                <button
+                  className="token-select-btn"
+                  type="button"
+                  onClick={() => setTokenDropdownOpen((open) => !open)}
+                >
+                  <img src={depositUsesShmon ? shmonIcon : monIcon} alt="" style={{ width: 20, height: 20, borderRadius: '50%', objectFit: 'cover' }} />
+                  <span>{depositAsset}</span>
+                  <span className="token-select-arrow">▾</span>
+                </button>
+                {tokenDropdownOpen ? (
+                  <div className="token-dropdown">
+                    <button
+                      className={`token-dropdown-item${depositAsset === 'MON' ? ' selected' : ''}`}
+                      onClick={() => { setDepositAsset('MON'); setTokenDropdownOpen(false) }}
+                    >
+                      <img src={monIcon} alt="" style={{ width: 18, height: 18, borderRadius: '50%', objectFit: 'cover', marginRight: 6, verticalAlign: 'middle' }} />
+                      MON
+                    </button>
+                    <button
+                      className={`token-dropdown-item${depositAsset === 'shMON' ? ' selected' : ''}`}
+                      onClick={() => { setDepositAsset('shMON'); setTokenDropdownOpen(false) }}
+                    >
+                      <img src={shmonIcon} alt="" style={{ width: 18, height: 18, borderRadius: '50%', objectFit: 'cover', marginRight: 6, verticalAlign: 'middle' }} />
+                      shMON
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+          <button
+            className="btn deposit-btn"
+            disabled={Boolean(busy) || (isDegen && !boosterSupported && Boolean(account))}
+            onClick={!account ? onConnect : isDeposit ? onDeposit : onWithdraw}
+          >
+            {submitLabel}
+          </button>
+          {notice ? <p className="deposit-caption">{notice}</p> : null}
+          {isDegen && !boosterSupported ? (
+            <p className="deposit-caption">This UAT vault needs the post-#167 redeploy before Patron Pool transactions can run.</p>
+          ) : null}
+        </div>
+
+        {!isDegen ? (
+          <div className="v5-tickets-panel">
+            <div className="participants-head v5-tickets-head">
+              <span>Your tickets · this draw</span>
+              <span title="Tickets are rebuilt each draw from your MON balance over time. Add more MON and they pile up faster; withdraw anytime.">Live</span>
+            </div>
+            <div className="v5-tickets-value">{formatV5Tickets(tickets?.ticketsSoFar || 0)}</div>
+            <div className="v5-tickets-rate">
+              +{formatV5Tickets(tickets?.liveTicketsPerMinute || 0)} tickets / min
+            </div>
+            <div className="v5-tickets-timeline" aria-label="Current draw ticket progress">
+              <div className="v5-tickets-fill" style={{ width: `${tickets?.drawProgressPct || 0}%` }} />
+            </div>
+            <div className="v5-tickets-scale">
+              <span>Start</span>
+              <span>Draw</span>
+            </div>
+            <p className="deposit-caption v5-tickets-copy">
+              {tickets?.hasPrincipal
+                ? 'Your tickets grow the longer your MON sits — add more and they pile up faster. New draw, your tickets rebuild.'
+                : 'Deposit to start building tickets for this draw. Each new draw starts fresh and rebuilds from your MON over time.'}
+            </p>
+          </div>
+        ) : (
+          <details className="v5-patron-details">
+            <summary>What is the Patron Pool?</summary>
+            <p>
+              Depositing in the Patron Pool gives you 0 entries into the weekly draw. Instead, you become a patron and contribute your yield to the prize pool. This noble sacrifice helps make the weekly prize larger for everyone while you earn boosted EverDraw points.
+            </p>
+            <p>
+              This pool is illiquid and deposits are not tradeable in DeFi. When you withdraw, you receive 100% of your initial MON deposit value back as shMON.
+            </p>
+          </details>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function V5PreviousRound({ state, onBack, onClaim, canClaimPrize, busy, status, error }) {
+  const draw = state?.draw
+  const drawId = state?.currentDrawId?.toString?.() || '0'
+  const winnerCount = Number(draw?.winnerCount ?? draw?.[6] ?? 0)
+  const prize = `${formatV5Mon(draw?.totalPayout ?? draw?.[5])} MON`
+  const statusLabel = draw ? V5_DRAW_STATUS[Number(draw?.status ?? draw?.[11])] || 'Unknown' : 'Warming up'
+
+  return (
+    <div className="winners-view-page">
+      <div className="winners-back-wrap">
+        <button className="back-link" onClick={onBack}>{'\u2190'} Back to Vault</button>
+      </div>
+
+      <div className="winners-hero">
+        <h2>Previous Round</h2>
+        <p className="round-label-hero">Draw {drawId}</p>
+      </div>
+
+      <div className="winner-spotlight-card">
+        <div className="winner-address">{winnerCount > 0 ? `${winnerCount} winner${winnerCount === 1 ? '' : 's'}` : 'No winner yet'}</div>
+        <div className="winner-stats">
+          <div>
+            <span>Prize Won</span>
+            <strong>{prize}</strong>
+          </div>
+          <div>
+            <span>Status</span>
+            <strong>{statusLabel}</strong>
+          </div>
+        </div>
+        <button className="btn" onClick={onClaim} disabled={Boolean(busy) || !canClaimPrize}>Claim Prize</button>
+      </div>
+
+      <div className="participants-card">
+        <div className="participants-head">
+          <span>All Participants</span>
+          <span>V5 UAT</span>
+        </div>
+        <div className="participants-table">
+          <div className="participants-row">
+            <span>{'\u2014'}</span><span>Winner data comes from the V5 claim indexer when a draw finalizes.</span><span>{winnerCount}</span><span>{statusLabel}</span><span>{prize}</span>
+          </div>
+        </div>
+      </div>
+
+      {status ? <p className="deposit-caption">{status}</p> : null}
+      {error ? <p className="deposit-caption" style={{ color: '#ff8ea1' }}>{error}</p> : null}
+    </div>
+  )
+}
+
+function V5HistoryTable({ account, rows }) {
+  return (
+    <section className="participants-card v5-history-card">
+      <div className="participants-head">
+        <span>My History</span>
+        <span>{account ? shortAddr(account) : 'Connect wallet'}</span>
+      </div>
+      <div className="participants-table">
+        <div className="participants-row participants-header v5-history-row">
+          <span>Date</span><span>Transaction</span><span>Result</span><span>Principal</span><span>Prize</span>
+        </div>
+        {!account ? (
+          <div className="points-empty-state">Connect a wallet to view your history.</div>
+        ) : rows.length === 0 ? (
+          <div className="points-empty-state">No V5 UAT history found yet.</div>
+        ) : rows.map((row) => (
+          <div className="participants-row v5-history-row" key={row.key}>
+            <span>{row.date}</span>
+            <span>{row.tx ? <a className="stats-winner-link" href={v5ExplorerTx(row.tx)} target="_blank" rel="noopener noreferrer">{row.transaction}</a> : row.transaction}</span>
+            <span>{row.result}</span>
+            <span>{row.principal}</span>
+            <span>{row.prize}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+export function V5UatExperience() {
+  initPosthog()
+  const cfg = useMemo(v5Config, [])
+  const [account, setAccount] = useState('')
+  const [playAmount, setPlayAmount] = useState('1')
+  const [degenAmount, setDegenAmount] = useState('1')
+  const [state, setState] = useState(null)
+  const [v5Page, setV5Page] = useState('vault')
+  const [playActionMode, setPlayActionMode] = useState('deposit')
+  const [degenActionMode, setDegenActionMode] = useState('deposit')
+  const [playDepositAsset, setPlayDepositAsset] = useState('MON')
+  const [degenDepositAsset, setDegenDepositAsset] = useState('MON')
+  const [playNotice, setPlayNotice] = useState('')
+  const [degenNotice, setDegenNotice] = useState('')
+  const [busy, setBusy] = useState('')
+  const [status, setStatus] = useState('')
+  const [error, setError] = useState('')
+  const [liveNowMs, setLiveNowMs] = useState(() => Date.now())
+  const [withdrawRequest, setWithdrawRequest] = useState(null)
+  const [withdrawChoiceOpen, setWithdrawChoiceOpen] = useState(false)
+  const [withdrawRedirectWarningOpen, setWithdrawRedirectWarningOpen] = useState(false)
+  const [pointsProfile, setPointsProfile] = useState(null)
+  const [pointsHistory, setPointsHistory] = useState([])
+  const [pointsTranches, setPointsTranches] = useState([])
+
+  const readProvider = useMemo(() => new ethers.JsonRpcProvider(cfg.rpcUrl), [cfg.rpcUrl])
+  const vault = useMemo(() => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, readProvider), [cfg.prizeVault, readProvider])
+  const manager = useMemo(() => new ethers.Contract(cfg.drawManager, V5_DRAW_MANAGER_ABI, readProvider), [cfg.drawManager, readProvider])
+  const shmon = useMemo(() => new ethers.Contract(cfg.shmon, V5_SHMON_ABI, readProvider), [cfg.shmon, readProvider])
+  const refreshFailureStreak = useRef(0)
+
+  const refresh = useCallback(async (targetAccount = account) => {
+    const attemptCoreReads = () => Promise.all([
+      readProvider.getBlock('latest'),
+      manager.currentDrawId(),
+      manager.nextPeriodStart(),
+      manager.drawPeriod(),
+      manager.previewStartDraw().catch(() => null),
+      vault.totalPrincipal(),
+      vault.totalParticipantPrincipal(),
+      vault.totalBoosterPrincipal().catch(() => null),
+      vault.availableYield(),
+      vault.paused(),
+      vault.stoppedAt(),
+      readProvider.getCode(cfg.prizeVault),
+    ])
+
+    // The shared public testnet RPC occasionally drops a single call (e.g. "missing revert
+    // data") with no on-chain cause. Retry once before surfacing anything, so one blip doesn't
+    // leave the whole page frozen on stale state until the next poll (or forever, if it keeps
+    // failing every tick).
+    let core
+    try {
+      core = await attemptCoreReads()
+    } catch (err) {
+      await new Promise((resolve) => setTimeout(resolve, 1500))
+      try {
+        core = await attemptCoreReads()
+      } catch (err2) {
+        refreshFailureStreak.current += 1
+        if (refreshFailureStreak.current >= 3) {
+          setError('Having trouble reaching the Monad testnet RPC — retrying automatically...')
+        }
+        throw err2
+      }
+    }
+    refreshFailureStreak.current = 0
+    setError('')
+
+    const [
+      block,
+      currentDrawId,
+      nextPeriodStart,
+      drawPeriod,
+      preview,
+      totalPrincipal,
+      totalParticipantPrincipal,
+      totalBoosterPrincipal,
+      availableYield,
+      paused,
+      stoppedAt,
+      vaultCode,
+    ] = core
+
+    const draw = currentDrawId > 0n ? await manager.draws(currentDrawId).catch(() => null) : null
+    const user = ethers.isAddress(targetAccount || '') ? targetAccount : ''
+    const [principal, boosterPrincipal, balance, shmonShares] = user ? await Promise.all([
+      vault.principalOf(user).catch(() => 0n),
+      vault.boosterPrincipalOf(user).catch(() => null),
+      readProvider.getBalance(user).catch(() => 0n),
+      shmon.balanceOf(user).catch(() => 0n),
+    ]) : [0n, 0n, 0n, 0n]
+    const shmonBalance = shmonShares > 0n ? await shmon.convertToAssets(shmonShares).catch(() => 0n) : 0n
+    const historyRows = await v5BuildHistoryRows({ account: user, block, vault, manager })
+    const periodStart = Number(nextPeriodStart || 0n)
+    const periodLogs = user && periodStart > 0 && block?.number ? await Promise.all([
+      vault.queryFilter(vault.filters.Deposit(user), Math.max(0, Number(block.number) - 200000), block.number).catch(() => []),
+      vault.queryFilter(vault.filters.Withdraw(user), Math.max(0, Number(block.number) - 200000), block.number).catch(() => []),
+    ]).then(async ([deposits, withdrawals]) => {
+      const logs = [
+        ...deposits.map((log) => ({ log, type: 'deposit' })),
+        ...withdrawals.map((log) => ({ log, type: 'withdraw' })),
+      ]
+      const blocks = new Map(await Promise.all([...new Set(logs.map((item) => item.log.blockNumber))].map(async (blockNumber) => [
+        blockNumber,
+        await readProvider.getBlock(blockNumber).catch(() => null),
+      ])))
+      return logs
+        .map((item) => ({
+          type: item.type,
+          amount: item.log.args?.amount?.toString?.() || '0',
+          blockNumber: item.log.blockNumber,
+          transactionIndex: item.log.transactionIndex || 0,
+          index: item.log.index || 0,
+          timestamp: Number(blocks.get(item.log.blockNumber)?.timestamp || 0),
+        }))
+        .filter((item) => item.timestamp >= periodStart)
+        .sort((a, b) => a.timestamp - b.timestamp || a.blockNumber - b.blockNumber || a.transactionIndex - b.transactionIndex || a.index - b.index)
+    }) : []
+
+    setState({
+      block,
+      currentDrawId,
+      nextPeriodStart,
+      drawPeriod,
+      preview,
+      draw,
+      totalPrincipal,
+      totalParticipantPrincipal,
+      totalBoosterPrincipal,
+      availableYield,
+      paused,
+      stoppedAt,
+      principal,
+      boosterPrincipal,
+      balance,
+      shmonBalance,
+      shmonShares,
+      historyRows,
+      periodAccountEvents: periodLogs,
+      readAtMs: Date.now(),
+      boosterSupported: vaultCode !== '0x' && totalBoosterPrincipal !== null && boosterPrincipal !== null,
+    })
+  }, [account, cfg.prizeVault, manager, readProvider, shmon, vault])
+
+  useEffect(() => {
+    const id = setInterval(() => setLiveNowMs(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [])
+
+  useEffect(() => {
+    trackPageView('/v5-uat', 'EverDraw V5 UAT')
+    refresh().catch((err) => setError(err?.message || String(err)))
+    const id = setInterval(() => refresh().catch(() => {}), 20_000)
+    return () => clearInterval(id)
+  }, [refresh])
+
+  useEffect(() => {
+    const ac = new AbortController()
+    if (!account) {
+      setPointsProfile(null)
+      setPointsHistory([])
+      setPointsTranches([])
+      return () => ac.abort()
+    }
+    Promise.all([
+      fetch(`${getIndexerBaseUrl()}/api/points/${account}`, { signal: ac.signal }).then((r) => r.ok ? r.json() : null),
+      fetch(`${getIndexerBaseUrl()}/api/points/${account}/history?limit=12`, { signal: ac.signal }).then((r) => r.ok ? r.json() : []),
+      fetch(`${getIndexerBaseUrl()}/api/v5/wallets/${account}/tranches`, { signal: ac.signal }).then((r) => r.ok ? r.json() : []),
+    ]).then(([profile, history, tranches]) => {
+      assertNotAborted(ac.signal)
+      setPointsProfile(profile)
+      setPointsHistory(Array.isArray(history) ? history : [])
+      setPointsTranches(Array.isArray(tranches) ? tranches : [])
+    }).catch((err) => {
+      if (!isAbortError(err)) {
+        setPointsProfile(null)
+        setPointsHistory([])
+        setPointsTranches([])
+      }
+    })
+    return () => ac.abort()
+  }, [account])
+
+  const connect = useCallback(async () => {
+    setError('')
+    await modal.open()
+    const provider = getWalletProvider()
+    if (!provider) return
+    const accounts = await provider.request({ method: 'eth_requestAccounts' })
+    await switchToV5Chain(provider, cfg.chainId, cfg.rpcUrl)
+    const next = accounts?.[0] || ''
+    setAccount(next)
+    await refresh(next)
+  }, [cfg.chainId, cfg.rpcUrl, refresh])
+
+  const transact = useCallback(async (label, fn, options = {}) => {
+    setBusy(label)
+    setStatus('')
+    setError('')
+    try {
+      const provider = getWalletProvider()
+      if (!provider) throw new Error('Connect wallet first')
+      await switchToV5Chain(provider, cfg.chainId, cfg.rpcUrl)
+      const browserProvider = new ethers.BrowserProvider(provider)
+      const signer = await browserProvider.getSigner()
+      const tx = await fn(signer)
+      options.afterSubmit?.()
+      setStatus(`${label} submitted. Waiting for confirmation...`)
+      const receipt = await tx.wait()
+      const nextAccount = await signer.getAddress()
+      setAccount(nextAccount)
+      setStatus('')
+      await refresh(nextAccount)
+      await options.afterConfirm?.({ signer, account: nextAccount, receipt })
+    } catch (err) {
+      setError(err?.shortMessage || err?.message || String(err))
+    } finally {
+      setBusy('')
+    }
+  }, [cfg.chainId, cfg.rpcUrl, refresh])
+
+  const claim = useCallback(async (signer) => {
+    if (!cfg.claimProofUrl) throw new Error('Claim proof source is not configured yet for this UAT build.')
+    const signerAccount = await signer.getAddress()
+    const res = await fetch(v5ClaimUrl(cfg.claimProofUrl, signerAccount, cfg), { headers: { accept: 'application/json' } })
+    if (!res.ok) throw new Error(`No claim found yet (${res.status})`)
+    const payload = normalizeV5ClaimPayload(await res.json())
+    if (!payload) throw new Error('No claimable prize found for this wallet yet.')
+    const claims = new ethers.Contract(cfg.claimManager, V5_CLAIM_MANAGER_ABI, signer)
+    return claims.claimMany(payload.leaves, payload.proofs)
+  }, [cfg])
+
+  const now = Number(state?.block?.timestamp || 0)
+  const nextPeriodStart = Number(state?.nextPeriodStart || 0n)
+  const drawPeriod = Number(state?.drawPeriod || 0n)
+  const periodEnd = nextPeriodStart + drawPeriod
+  const secondsRemaining = Math.max(0, periodEnd - now)
+  const countdown = formatV5Duration(secondsRemaining)
+  const previewCopy = state?.preview
+    ? state.preview.due ? (state.preview.willSkip ? 'Next draw pending keeper' : 'Next draw ready for keeper') : 'Next draw building'
+    : 'Keeper preview unavailable'
+  const ticketModel = buildV5TicketModel({ state, account, nowMs: liveNowMs })
+  const claimButton = () => transact('Claim prize', claim)
+  const openVaultPage = (event) => {
+    event?.preventDefault?.()
+    setStatus('')
+    setV5Page('vault')
+  }
+  const openDegenPage = (event) => {
+    event?.preventDefault?.()
+    setStatus('')
+    setV5Page('degen')
+  }
+  const openProfilePage = (event) => {
+    event?.preventDefault?.()
+    setStatus('')
+    setV5Page('profile')
+  }
+  const openPreviousRound = () => {
+    setStatus('')
+    setV5Page('previous')
+  }
+  const openHistoryPage = () => {
+    setStatus('')
+    setV5Page('history')
+  }
+  const withdrawWarningText = useMemo(() => {
+    if (!withdrawChoiceOpen || !withdrawRequest) return ''
+    const isDegen = withdrawRequest.kind === 'degen'
+    const drawId = Number(state?.currentDrawId || 0)
+    const poolTranches = (Array.isArray(pointsTranches) ? pointsTranches : [])
+      .filter((row) => row.pool_type === (isDegen ? 'degen' : 'vault') && trancheRemainingMon(row) > 0)
+    const oldest = poolTranches
+      .map((tranche) => ({ weeks: trancheWeeks(tranche, drawId), amount: trancheRemainingMon(tranche) }))
+      .sort((a, b) => b.weeks - a.weeks || b.amount - a.amount)[0]
+    const weeks = oldest ? oldest.weeks : 0
+    const multiplier = isDegen ? formatMultiplier(degenMultiplierForWeeks(weeks)) : formatMultiplier(vaultMultiplierForWeeks(weeks))
+    const poolLabel = isDegen ? 'Patron Pool' : 'vault'
+    return withdrawRequest.isFull
+      ? `Withdrawing everything from the ${poolLabel} resets its streak. You're on a ${weeks}-week streak at ${multiplier}; you'll rebuild from zero.`
+      : `This removes your most recent ${withdrawRequest.amountLabel} and its multiplier tenure. The rest of your ${poolLabel} position keeps its ${weeks}-week streak.`
+  }, [withdrawChoiceOpen, withdrawRequest, pointsTranches, state?.currentDrawId])
+  const afterPlayAction = async ({ account: nextAccount }) => {
+    setPlayAmount('')
+    const deposited = await vault.principalOf(nextAccount).catch(() => 0n)
+    setPlayNotice(`Total currently deposited: ${formatV5Mon(deposited)} MON`)
+  }
+  const afterDegenAction = async ({ account: nextAccount }) => {
+    setDegenAmount('')
+    const deposited = await vault.boosterPrincipalOf(nextAccount).catch(() => 0n)
+    setDegenNotice(`Total currently in Patron Pool: ${formatV5Mon(deposited)} MON`)
+  }
+  const clearPlayAmount = () => setPlayAmount('')
+  const clearDegenAmount = () => setDegenAmount('')
+  const depositV5Shmon = async (signer, amountValue, methodName) => {
+    const assets = parseV5Mon(amountValue)
+    const shmonWrite = new ethers.Contract(cfg.shmon, V5_SHMON_ABI, signer)
+    const vaultWrite = new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer)
+    const strategyAddress = await vaultWrite.strategy()
+    const shares = await shmonWrite.previewDeposit(assets)
+    if (shares <= 0n) throw new Error('shMON deposit amount is too small')
+    setStatus('Approving shMON...')
+    const approveTx = await shmonWrite.approve(strategyAddress, shares)
+    await approveTx.wait()
+    setStatus('Submitting shMON deposit...')
+    return vaultWrite[methodName](shares)
+  }
+  const closeWithdrawFlow = () => {
+    if (busy) return
+    setWithdrawRequest(null)
+    setWithdrawChoiceOpen(false)
+    setWithdrawRedirectWarningOpen(false)
+  }
+  const beginWithdrawFlow = ({ kind, amountValue, principal, label, methodName, clearAmount, afterConfirm }) => {
+    setError('')
+    setStatus('')
+    try {
+      const amount = parseV5Mon(amountValue)
+      if (amount > (principal || 0n)) throw new Error('Insufficient balance')
+      setWithdrawRequest({
+        kind,
+        amount,
+        amountValue,
+        amountLabel: `${formatV5Mon(amount)} MON`,
+        principal: principal || 0n,
+        isFull: amount >= (principal || 0n),
+        label,
+        methodName,
+        clearAmount,
+        afterConfirm,
+      })
+      setWithdrawChoiceOpen(true)
+    } catch (err) {
+      setError(err?.shortMessage || err?.message || String(err))
+    }
+  }
+  const withdrawToWallet = () => {
+    const request = withdrawRequest
+    if (!request) return
+    return transact(request.label, (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer)[request.methodName](request.amount), {
+      afterSubmit: request.clearAmount,
+      afterConfirm: async (ctx) => {
+        setWithdrawChoiceOpen(false)
+        setWithdrawRequest(null)
+        await request.afterConfirm?.(ctx)
+      },
+    })
+  }
+  const withdrawAndConvert = () => {
+    setWithdrawRedirectWarningOpen(true)
+  }
+  const confirmWithdrawAndConvert = () => {
+    const request = withdrawRequest
+    if (!request) return
+    const shmonadWindow = window.open('about:blank', '_blank')
+    try {
+      if (shmonadWindow) {
+        shmonadWindow.document.write('<!doctype html><title>Opening shmonad.xyz</title><body style="font-family:system-ui;background:#100d1e;color:#fff;display:grid;place-items:center;height:100vh;margin:0"><main style="text-align:center"><h1>Redeeming…</h1><p>shmonad.xyz will open after your wallet confirms. Then click Unstake.</p></main></body>')
+        shmonadWindow.document.close()
+      }
+    } catch {}
+    const openShmonad = () => {
+      try {
+        if (shmonadWindow && !shmonadWindow.closed) {
+          shmonadWindow.location.assign('https://shmonad.xyz')
+          shmonadWindow.focus?.()
+          return
+        }
+      } catch {}
+      window.location.assign('https://shmonad.xyz')
+    }
+    return transact(request.label, (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer)[request.methodName](request.amount), {
+      afterSubmit: request.clearAmount,
+      afterConfirm: async (ctx) => {
+        setWithdrawChoiceOpen(false)
+        setWithdrawRedirectWarningOpen(false)
+        setWithdrawRequest(null)
+        setStatus('Redeemed. Continue MON conversion in shmonad.xyz.')
+        openShmonad()
+        await request.afterConfirm?.(ctx)
+      },
+    })
+  }
+  const drawPayout = BigInt(state?.draw?.totalPayout ?? state?.draw?.[5] ?? 0n)
+  const canClaimPrize = Boolean(account && cfg.claimProofUrl && drawPayout > 0n)
+
+  return (
+    <div className="app-shell v5-uat-mode">
+      <div className="beta-corner-ribbon" title="Testnet UAT only"></div>
+      <div className="app-container">
+        <Header account={account} onConnect={connect} currentPage={v5Page === 'degen' ? 'degen' : v5Page === 'profile' ? 'profile' : 'vault'} points={pointsProfile} showDegen onDegenClick={openDegenPage} onVaultClick={openVaultPage} onProfileClick={openProfilePage} />
+        <div className="v5-uat-strip">TESTNET / UAT</div>
+
+        <h1>
+          Win the Pot.
+          <br />
+          Or keep your lot.
+        </h1>
+
+        <section className="vault-bar">
+          <button className={`vault-aux-btn ${v5Page === 'vault' ? 'active' : ''}`} onClick={openVaultPage}>Vault</button>
+          <button className={`vault-aux-btn ${v5Page === 'previous' || v5Page === 'winners' ? 'active' : ''}`} onClick={openPreviousRound}>Previous Round</button>
+          <button className={`vault-aux-btn ${v5Page === 'history' ? 'active' : ''}`} onClick={openHistoryPage}>My History</button>
+        </section>
+
+        {v5Page === 'degen' ? (
+          <section className="main-grid v5-single-card-page">
+            <V5ActionCard
+              mode="degen"
+              amount={degenAmount}
+              setAmount={setDegenAmount}
+              principal={state?.boosterPrincipal}
+              walletBalance={state?.balance || 0n}
+              shmonBalance={state?.shmonBalance || 0n}
+              depositAsset={degenDepositAsset}
+              setDepositAsset={setDegenDepositAsset}
+              actionMode={degenActionMode}
+              setActionMode={setDegenActionMode}
+              notice={degenNotice}
+              busy={busy}
+              account={account}
+              boosterSupported={Boolean(state?.boosterSupported)}
+              onConnect={connect}
+              onDeposit={() => transact('Patron Pool deposit', (signer) => (
+                degenDepositAsset === 'shMON'
+                  ? depositV5Shmon(signer, degenAmount, 'boostDepositShmon')
+                  : new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).boostDeposit({ value: parseV5Mon(degenAmount) })
+              ), { afterSubmit: clearDegenAmount, afterConfirm: afterDegenAction })}
+              onWithdraw={() => beginWithdrawFlow({
+                kind: 'degen',
+                amountValue: degenAmount,
+                principal: state?.boosterPrincipal || 0n,
+                label: 'Patron Pool withdraw',
+                methodName: 'boostWithdrawShmon',
+                clearAmount: clearDegenAmount,
+                afterConfirm: afterDegenAction,
+              })}
+            />
+            <section className="stats-grid v5-degen-position">
+              <StatCard label="Your current position" value={`${formatV5Mon(state?.boosterPrincipal || 0n)} MON`} sub="Patron Pool" icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 3l8 4v6c0 4.42-3.05 8.32-8 9-4.95-.68-8-4.58-8-9V7l8-4zm0 3.2L7 8.7V13c0 2.86 1.82 5.43 5 6.08 3.18-.65 5-3.22 5-6.08V8.7l-5-2.5z"/></svg>} />
+            </section>
+          </section>
+        ) : v5Page === 'profile' ? (
+          <ProfilePage account={account} points={pointsProfile} history={pointsHistory} tranches={pointsTranches} currentDrawId={state?.currentDrawId} />
+        ) : v5Page === 'winners' ? (
+          <V5PreviousRound
+            state={state}
+            onBack={openPreviousRound}
+            onClaim={claimButton}
+            canClaimPrize={canClaimPrize}
+            busy={busy}
+            status=""
+            error=""
+          />
+        ) : v5Page === 'history' ? (
+          <V5HistoryTable account={account} rows={state?.historyRows || []} />
+        ) : (
+        <>
+        <section className="main-grid">
+          <V5ActionCard
+            mode="play"
+            amount={playAmount}
+            setAmount={setPlayAmount}
+            principal={state?.principal || 0n}
+            walletBalance={state?.balance || 0n}
+            shmonBalance={state?.shmonBalance || 0n}
+            depositAsset={playDepositAsset}
+            setDepositAsset={setPlayDepositAsset}
+            tickets={ticketModel}
+            actionMode={playActionMode}
+            setActionMode={setPlayActionMode}
+            notice={playNotice}
+            busy={busy}
+            account={account}
+            boosterSupported
+            onConnect={connect}
+            onDeposit={() => transact('Deposit', (signer) => (
+              playDepositAsset === 'shMON'
+                ? depositV5Shmon(signer, playAmount, 'depositShmon')
+                : new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer).deposit({ value: parseV5Mon(playAmount) })
+            ), { afterSubmit: clearPlayAmount, afterConfirm: afterPlayAction })}
+            onWithdraw={() => beginWithdrawFlow({
+              kind: 'vault',
+              amountValue: playAmount,
+              principal: state?.principal || 0n,
+              label: 'Withdraw',
+              methodName: 'withdrawShmon',
+              clearAmount: clearPlayAmount,
+              afterConfirm: afterPlayAction,
+            })}
+          />
+
+          {v5Page === 'previous' ? (
+            <VaultAnimationTest onComplete={() => setV5Page('winners')} />
+          ) : (
+            <div className="card filled vault-card v5-vault-stage" id="vault-card">
+              <VaultDoorBackground progressPct={50} salesOpen={false} />
+              <div className="v5-next-draw-overlay">
+                <div className="card-header vault-layer">
+                  <div className="card-title">Next prize draw</div>
+                </div>
+                <div className="countdown-center vault-layer vault-center">
+                  <div className="countdown-value">{countdown}</div>
+                  <div className="countdown-sub">{previewCopy}</div>
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
+
+        <section className="stats-grid two-col">
+          <StatCard label="Total Entered" value={`${formatV5Mon(state?.totalParticipantPrincipal)} MON`} sub={`Draw #${state?.currentDrawId?.toString() || '0'}`} icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 7a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v2a2 2 0 0 0 0 4v2a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3v-2a2 2 0 0 0 0-4V7z"/></svg>} />
+          <StatCard label="Total TVL" value={`${formatV5Mon(state?.totalPrincipal)} MON`} sub="SHMON Deposited" icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>} />
+          <StatCard label="Winner" value="—" sub="Revealed after draw" icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M6 4h12v3a4 4 0 0 1-4 4h-1v2.08A4 4 0 0 1 16 17v2H8v-2a4 4 0 0 1 3-3.87V11h-1a4 4 0 0 1-4-4V4z"/></svg>} />
+          <StatCard label="Total Prize Pool" value={`${formatV5Mon(state?.availableYield)} MON`} sub="Estimated current yield" icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 17h2.59l3.7-3.71 3 3L17.59 11H20v2h-1.59l-6.12 6.12-3-3L7 18.41V21H3v-4zM14 3h7v7h-2V6.41l-5.29 5.3-1.42-1.42 5.3-5.29H14V3z"/></svg>} />
+        </section>
+
+        </>
+        )}
+
+        {error && v5Page !== 'winners' ? <p className="deposit-caption" style={{ color: '#ff8ea1' }}>{error}</p> : null}
+
+        <ClaimFlowModal
+          open={withdrawChoiceOpen}
+          mode="principal"
+          busy={Boolean(busy)}
+          status={status}
+          error={error}
+          onClose={closeWithdrawFlow}
+          onRedeemToWallet={withdrawToWallet}
+          onRedeemAndConvert={withdrawAndConvert}
+          onBackFromRedirectWarning={() => setWithdrawRedirectWarningOpen(false)}
+          confirmRedirectOpen={withdrawRedirectWarningOpen}
+          onConfirmRedirect={confirmWithdrawAndConvert}
+          withdrawWarningText={withdrawWarningText}
+        />
+
+        <footer className="site-footer" id="disclaimer">
+          <div className="disclaimer-box">
+            <div className="disclaimer-title">Testnet UAT</div>
+            <p>This isolated site is for EverDraw V5 user acceptance testing on Monad testnet. Use testnet funds only. Production everdraw.xyz and production Vercel envs are not used by this build.</p>
+          </div>
+        </footer>
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
   initPosthog()
+
   // Hash-based page routing
   const [currentPage, setCurrentPage] = useState(() => {
     if (window.location.pathname === '/blog/drawn-back-to-defi' || window.location.pathname === '/articles/drawn-back-to-defi') return 'article'
@@ -1271,7 +2426,6 @@ export default function App() {
   const [tokenDropdownOpen, setTokenDropdownOpen] = useState(false)
   const [pointsProfile, setPointsProfile] = useState(null)
   const [pointsHistory, setPointsHistory] = useState([])
-  const [pointsTranches, setPointsTranches] = useState([])
   const [pointsBanner, setPointsBanner] = useState(null)
 
   useEffect(() => {
@@ -1311,23 +2465,19 @@ export default function App() {
     if (!account) {
       setPointsProfile(null)
       setPointsHistory([])
-      setPointsTranches([])
       return () => ac.abort()
     }
     Promise.all([
       fetch(`${getIndexerBaseUrl()}/api/points/${account}`, { signal: ac.signal }).then((r) => r.ok ? r.json() : null),
       fetch(`${getIndexerBaseUrl()}/api/points/${account}/history?limit=12`, { signal: ac.signal }).then((r) => r.ok ? r.json() : []),
-      fetch(`${getIndexerBaseUrl()}/api/v5/wallets/${account}/tranches`, { signal: ac.signal }).then((r) => r.ok ? r.json() : []),
-    ]).then(([profile, history, tranches]) => {
+    ]).then(([profile, history]) => {
       assertNotAborted(ac.signal)
       setPointsProfile(profile)
       setPointsHistory(Array.isArray(history) ? history : [])
-      setPointsTranches(Array.isArray(tranches) ? tranches : [])
     }).catch((err) => {
       if (!isAbortError(err)) {
         setPointsProfile(null)
         setPointsHistory([])
-        setPointsTranches([])
       }
     })
     return () => ac.abort()
@@ -1809,7 +2959,7 @@ export default function App() {
       if (!currentSalesOpen) throw new Error('Deposits are closed for this round')
 
       const value = ticketPrice * BigInt(n)
-      if (value === 0n) throw new Error('Ticket price not loaded yet -- please wait a moment and try again')
+      if (value === 0n) throw new Error('Ticket price not loaded yet — please wait a moment and try again')
 
       const readProvider = await getReadProvider()
       const nativeBalance = await readProvider.getBalance(account)
@@ -1818,7 +2968,7 @@ export default function App() {
       }
       const feeData = await readProvider.getFeeData()
       const gasPrice = feeData.gasPrice ?? feeData.maxFeePerGas
-      if (!gasPrice) throw new Error('Gas price not available -- please try again in a moment')
+      if (!gasPrice) throw new Error('Gas price not available — please try again in a moment')
       const gasReserve = 650000n * gasPrice
       if (nativeBalance < value + gasReserve) {
         throw new Error(`Insufficient MON for deposit gas: need about ${Number(ethers.formatEther(value + gasReserve)).toFixed(4)} MON total, wallet has ${Number(ethers.formatEther(nativeBalance)).toFixed(4)} MON`)
@@ -1995,7 +3145,7 @@ export default function App() {
       return 'Deposits are closed for this round'
     }
     if (!account) return 'Connect wallet to deposit'
-    if (wrongNetwork) return 'Wrong network -- click Buy to switch automatically'
+    if (wrongNetwork) return 'Wrong network — click Buy to switch automatically'
     return ''
   }, [loading, vaultPaused, shownIsCurrentRound, shownSalesOpen, shownYieldAccruing, shownState, account, wrongNetwork])
 
@@ -2101,7 +3251,7 @@ export default function App() {
         return {
           heading: 'Vault Closed',
           value: formatCountdown(shownCommitAfterRemaining),
-          sub: 'Yield accruing -- deposits no longer accepted',
+          sub: 'Yield accruing — deposits no longer accepted',
           metaLabel: 'Next phase',
           metaValue: 'Drawing'
         }
@@ -2225,7 +3375,7 @@ export default function App() {
 
       return {
         heading: 'Winner Revealed',
-        value: 'Finalizing...',
+        value: 'Finalizing…',
         sub: targetBlock > 0 ? `Waiting for draw at block ${targetBlock.toLocaleString()}` : 'Round is being finalized',
         metaLabel: 'Next action',
         metaValue: shownIsCurrentRound ? (ACTION_LABELS[nextAction] ?? 'Claim / Redeem') : 'Claim / Redeem'
@@ -2249,7 +3399,7 @@ export default function App() {
 
       if (shownSettlementSecs > 86400) {
         return {
-          heading: 'Vault Locked -- Accumulating Yield',
+          heading: 'Vault Locked — Accumulating Yield',
           value: formatCountdown(shownSettlementSecs),
           sub: epochBased
             ? 'Yield window in progress'
@@ -2261,7 +3411,7 @@ export default function App() {
 
       return {
         heading: 'Winner Revealed',
-        value: 'Finalizing...',
+        value: 'Finalizing…',
         sub: targetBlock > 0 ? `Target block ${targetBlock.toLocaleString()}` : 'Round is being finalized',
         metaLabel: 'Next action',
         metaValue: shownIsCurrentRound ? (ACTION_LABELS[nextAction] ?? 'Claim / Redeem') : 'Claim / Redeem'
@@ -2334,7 +3484,7 @@ export default function App() {
   }, [winnersSource])
 
   const previousSettlementCountdown = useMemo(() => {
-    if (!previousRoundInfo) return '\u2014'
+    if (!previousRoundInfo) return '—'
     const st = Number(previousRoundInfo.state)
     if (isSettledState(st, isV2Pool)) return '00:00:00:00'
     if (salesOpen && secondsRemaining > 0) return formatCountdown(secondsRemaining)
@@ -2356,7 +3506,7 @@ export default function App() {
   const winnerTicketsDisplay = winnerParticipant
     ? winnerParticipant.tickets
     : Number(winnersSource?.info?.totalTickets ?? 0) > 0
-      ? '--'
+      ? '—'
       : 0
 
   const sfxTestMode = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('sfxtest') === '1'
@@ -2699,20 +3849,6 @@ export default function App() {
     })
   }, [poolAddress])
 
-
-  const withdrawWarningText = useMemo(() => {
-    if (!claimFlow.open || !claimFlow.withdrawPrincipal) return ''
-    const vaultOpenTotal = (Array.isArray(pointsTranches) ? pointsTranches : [])
-      .filter((row) => row.pool_type === 'vault')
-      .reduce((sum, row) => sum + trancheRemainingMon(row), 0)
-    const withdrawMon = Number(ethers.formatEther(BigInt(claimFlow.principalWei || 0n)))
-    const fullWithdraw = vaultOpenTotal <= 0 || withdrawMon >= Math.max(0, vaultOpenTotal - 0.000001)
-    const streak = Number(pointsProfile?.current_streak_weeks || 0)
-    const multiplier = formatMultiplier(pointsProfile?.current_multiplier_x100 || 100)
-    return fullWithdraw
-      ? `Withdrawing everything resets your streak. You're on a ${streak}-week streak at ${multiplier}; you'll rebuild from zero.`
-      : `This removes your most recent ${withdrawMon.toFixed(4)} MON and its multiplier tenure. The rest of your position keeps its ${streak}-week streak.`
-  }, [claimFlow.open, claimFlow.withdrawPrincipal, claimFlow.principalWei, pointsProfile, pointsTranches])
   const claimFlowIsV2 = useMemo(() => {
     const lc = String(claimFlow.poolAddr || '').toLowerCase()
     return poolAddressesV2.some((a) => a.toLowerCase() === lc)
@@ -2746,7 +3882,7 @@ export default function App() {
     const shmonadWindow = window.open('', '_blank')
     try {
       if (shmonadWindow) {
-        shmonadWindow.document.write('<!doctype html><title>Opening shmonad.xyz</title><body style="font-family:system-ui;background:#100d1e;color:#fff;display:grid;place-items:center;height:100vh;margin:0"><main style="text-align:center"><h1>Redeeming...</h1><p>shmonad.xyz will open after your wallet confirms. Then click Unstake.</p></main></body>')
+        shmonadWindow.document.write('<!doctype html><title>Opening shmonad.xyz</title><body style="font-family:system-ui;background:#100d1e;color:#fff;display:grid;place-items:center;height:100vh;margin:0"><main style="text-align:center"><h1>Redeeming…</h1><p>shmonad.xyz will open after your wallet confirms. Then click Unstake.</p></main></body>')
         shmonadWindow.document.close()
       }
     } catch {}
@@ -2967,7 +4103,7 @@ export default function App() {
             canRedeem={canRedeemWinnersRound}
             settlementLabel={
               isUnstaking
-                ? `Winner revealed -- ${formatCountdown(shownSettlementSecs)} remaining`
+                ? `Winner revealed — ${formatCountdown(shownSettlementSecs)} remaining`
                 : winnersTerminal
                   ? ''
                   : 'Winner Revealed'
@@ -2988,9 +4124,9 @@ export default function App() {
           <>
             <Header account={account} onConnect={connectWallet} currentPage={currentPage} points={pointsProfile} />
             {currentPage === 'article' ? <FounderLaunchArticle /> : null}
-            {currentPage !== 'article' && pointsBanner ? <div className="points-banner"><span>{pointsBanner}</span><button onClick={() => setPointsBanner(null)}>{'\u00d7'}</button></div> : null}
+            {currentPage !== 'article' && pointsBanner ? <div className="points-banner"><span>{pointsBanner}</span><button onClick={() => setPointsBanner(null)}>×</button></div> : null}
         {currentPage === 'stats' ? <StatsPage /> : null}
-            {currentPage === 'profile' ? <ProfilePage account={account} points={pointsProfile} history={pointsHistory} tranches={pointsTranches} currentDrawId={roundId} /> : null}
+            {currentPage === 'profile' ? <ProfilePage account={account} points={pointsProfile} history={pointsHistory} /> : null}
             {currentPage === 'leaderboard' ? <LeaderboardPage account={account} /> : null}
             {currentPage === 'vault' && (<>
 
@@ -3031,7 +4167,7 @@ export default function App() {
                         setMainView('current')
                       }}
                     >
-                      <div className={`vault-gear-knob ${vaultBPending || isOnB ? 'right' : ''}`}>{'\u2699'}</div>
+                      <div className={`vault-gear-knob ${vaultBPending || isOnB ? 'right' : ''}`}>⚙</div>
                     </div>
                     <button
                       className={`vault-label ${vaultBPending || isOnB ? 'active' : ''}`}
@@ -3054,7 +4190,7 @@ export default function App() {
             <>
               <button className={`vault-label ${mainView === 'vaultA' ? 'active' : ''}`} tabIndex={-1} onClick={() => setMainView('vaultA')}>VAULT A</button>
               <div className="vault-gear-track" onClick={() => setMainView(mainView === 'vaultA' ? 'vaultB' : 'vaultA')}>
-                <div className={`vault-gear-knob ${mainView === 'vaultB' ? 'right' : ''}`}>{'\u2699'}</div>
+                <div className={`vault-gear-knob ${mainView === 'vaultB' ? 'right' : ''}`}>⚙</div>
               </div>
               <button className={`vault-label ${mainView === 'vaultB' ? 'active' : ''}`} tabIndex={-1} onClick={() => setMainView('vaultB')}>VAULT B</button>
             </>
@@ -3083,7 +4219,7 @@ export default function App() {
               </div>
               {myRounds.length === 0 ? (
                 <div className="participants-row rounds-row">
-                  <span>--</span><span>No prior rounds found for this wallet</span><span>--</span><span>0.0000 MON</span><span>--</span><span className="action-cell">--</span>
+                  <span>—</span><span>No prior rounds found for this wallet</span><span>—</span><span>0.0000 MON</span><span>—</span><span className="action-cell">—</span>
                 </div>
               ) : myRounds.map((r, index) => {
                 const myRoundResultLabel = r.isV2
@@ -3097,11 +4233,11 @@ export default function App() {
                     ? 'Deposit'
                     : isTerminalRound(r.state, r.isV2)
                       ? 'Claimed'
-                      : '--'
+                      : '—'
                 const pendingActionLabel = actionLabel
                 const prizeLabel = r.isWinner
                   ? `${Number(ethers.formatEther(r.prizeWei || 0n)).toFixed(4)} MON`
-                  : '--'
+                  : '—'
                 const entryLabel = myRounds.length - index
                 return (
                 <div className="participants-row rounds-row" key={`${r.poolAddr}:${r.rid}`}>
@@ -3138,7 +4274,7 @@ export default function App() {
                       >
                         Deposit
                       </button>
-                    ) : isTerminalRound(r.state, r.isV2) && !canRedeemRound ? 'Claimed' : '--'}
+                    ) : isTerminalRound(r.state, r.isV2) && !canRedeemRound ? 'Claimed' : '—'}
                   </span>
                 </div>
               )})}
@@ -3159,7 +4295,7 @@ export default function App() {
                   <div className="card-title">Buy Tickets</div>
                   {shownRoundId && Number(shownRoundId) > 0 ? (
                     <div style={{ fontSize: '0.82rem', color: 'rgba(155,109,255,0.8)', marginTop: '2px' }}>
-                      {shownVaultLabel} Â· Round #{shownRoundId}
+                      {shownVaultLabel} · Round #{shownRoundId}
                     </div>
                   ) : null}
                 </div>
@@ -3214,7 +4350,7 @@ export default function App() {
                           >
                             <img src={buyWithShmon ? shmonIcon : monIcon} alt="" style={{ width: 20, height: 20, borderRadius: '50%', objectFit: 'cover' }} />
                             <span>{buyWithShmon ? 'shMON' : 'MON'}</span>
-                            <span className="token-select-arrow">{'\u25be'}</span>
+                            <span className="token-select-arrow">▾</span>
                           </button>
                           {tokenDropdownOpen && (
                             <div className="token-dropdown">
@@ -3245,7 +4381,7 @@ export default function App() {
                       {loading
                         ? 'Submitting...'
                         : isDeadRound
-                          ? 'Vault Cycling -- Next Round Soon'
+                          ? 'Vault Cycling — Next Round Soon'
                           : !shownIsCurrentRound
                             ? (mainView === 'previous' ? `Buy with ${(isV2Pool || isV4Pool) && buyWithShmon ? 'shMON' : 'MON'}` : 'This Vault is Locked')
                             : !salesOpen
@@ -3253,7 +4389,7 @@ export default function App() {
                               : !account
                                 ? 'Connect Wallet to Buy'
                                 : wrongNetwork
-                                  ? 'Wrong network -- click Buy to switch automatically'
+                                  ? 'Wrong network — click Buy to switch automatically'
                                   : (isV2Pool || isV4Pool)
                                     ? `Buy with ${buyWithShmon ? 'shMON' : 'MON'}`
                                     : canBuyTx
@@ -3262,7 +4398,7 @@ export default function App() {
                     </button>
                     {ticketLimitMessage ? <p className="deposit-caption">{ticketLimitMessage}</p> : null}
                     {(loading || wrongNetwork || !salesOpen || !account || !shownIsCurrentRound) && buyDisabledReason ? <p className="deposit-caption">{buyDisabledReason}</p> : null}
-                    {account ? <p className="deposit-caption">MetaMask may wrongly flag brand-new Monad contracts as "malicious" -- a known false positive we've reported to MetaMask. Other wallets aren't affected.</p> : null}
+                    {account ? <p className="deposit-caption">MetaMask may wrongly flag brand-new Monad contracts as "malicious" — a known false positive we've reported to MetaMask. Other wallets aren't affected.</p> : null}
                   </div>
 
                   {status ? <p className="deposit-caption">{status}</p> : null}
