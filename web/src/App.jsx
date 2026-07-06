@@ -406,28 +406,25 @@ function PatronStreakBar({ tranches, currentDrawId }) {
   const oldestDegen = oldestOpenTranche(tranches, 'degen', drawId)
   const degenWeeks = oldestDegen ? oldestDegen.weeks : 0
   const multiplierX100 = oldestDegen ? degenMultiplierForWeeks(degenWeeks) : 200
-  const dotCount = 6
-  const litDots = Math.max(0, Math.min(dotCount, degenWeeks))
-  const rampMilestones = [1, 2, 3, 4]
+  // 5 rungs = the 5 ramp states (start -> 2x -> 3x -> 4x -> 5x cap). Tenure buckets:
+  // 0/1 -> 2x, 2 -> 3x, 3 -> 4x, 4+ -> 5x.
+  const rungs = [0, 1, 2, 3, 4]
+  const litRungs = Math.max(0, Math.min(rungs.length - 1, degenWeeks))
 
   return (
-    <div className="points-streak-mini rewards-streak-block v5-patron-streak-bar">
+    <div className="v5-patron-ramp-card">
       <div>
         <span className="points-popover-kicker">Patron pool ramp</span>
         <strong>{oldestDegen ? `${formatMultiplier(multiplierX100)} multiplier` : 'No Patron Pool position'}</strong>
       </div>
-      <div className="points-streak-dots points-streak-dots-52" aria-label={`${litDots} of ${dotCount} draws in the ramp`}>
-        {Array.from({ length: dotCount }).map((_, i) => {
-          const draw = i + 1
-          const isMilestone = rampMilestones.includes(draw)
-          const milestoneClaimed = isMilestone && degenWeeks >= draw
-          const classes = [
-            i < litDots ? 'lit' : '',
-            isMilestone ? 'milestone-dot' : '',
-            milestoneClaimed ? 'claimed' : '',
-          ].filter(Boolean).join(' ')
-          return <span key={draw} className={classes} title={`Reaches ${formatMultiplier(degenMultiplierForWeeks(draw))} at draw ${draw}`} />
-        })}
+      <div className="v5-patron-ramp" aria-label={`ramp tenure ${degenWeeks} draws`}>
+        {rungs.map((tenure) => (
+          <span
+            key={tenure}
+            className={tenure <= litRungs ? 'lit' : ''}
+            title={`${formatMultiplier(degenMultiplierForWeeks(tenure))} at ${tenure === 0 ? 'the start' : `draw ${tenure}`}`}
+          />
+        ))}
       </div>
     </div>
   )
