@@ -818,8 +818,6 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
 .points-streak-dots span.lit { border-color: rgba(173,132,255,.75); background: #9b6dff; box-shadow: 0 0 14px rgba(155,109,255,.78); }
 .points-streak-dots-26 { width: 100%; display: grid; grid-template-columns: repeat(26, minmax(8px, 1fr)); gap: 7px; }
 .points-streak-dots-26 span { width: 100%; max-width: 16px; justify-self: center; aspect-ratio: 1; height: auto; }
-.points-next-milestone { padding: 11px 13px; border-radius: 14px; border: 1px dashed rgba(155,109,255,.22); color: rgba(244,239,255,.62); background: rgba(255,255,255,.025); font-size: .86rem; font-weight: 760; }
-.points-next-multiplier { margin: 4px 0 16px; text-align: left; }
 .degen-multiplier-pill { border-color: rgba(245,158,11,.34); background: rgba(120,53,15,.28); }
 .degen-multiplier-pill span { color: #fde68a; }
 .degen-multiplier-pill.muted { opacity: .55; }

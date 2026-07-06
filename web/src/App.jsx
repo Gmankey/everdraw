@@ -390,6 +390,49 @@ function nextDegenThreshold(weeks) {
   return [2, 3, 4].find((n) => Number(weeks || 0) < n) ?? null
 }
 
+function oldestOpenTranche(tranches, poolType, drawId) {
+  return (Array.isArray(tranches) ? tranches : [])
+    .filter((row) => row.pool_type === poolType && trancheRemainingMon(row) > 0)
+    .map((tranche) => ({ weeks: trancheWeeks(tranche, drawId), amount: trancheRemainingMon(tranche) }))
+    .filter((row) => row.amount > 0)
+    .sort((a, b) => b.weeks - a.weeks || b.amount - a.amount)[0]
+}
+
+// Patron/Degen pool ramp bar -- mirrors the vault's weekly-streak dots on the profile page, but
+// scaled to the 4-draw ramp to 5x (there is no calendar "week" concept for the degen ramp; it
+// advances one step per draw the position stays open).
+function PatronStreakBar({ tranches, currentDrawId }) {
+  const drawId = Number(currentDrawId || 0)
+  const oldestDegen = oldestOpenTranche(tranches, 'degen', drawId)
+  const degenWeeks = oldestDegen ? oldestDegen.weeks : 0
+  const multiplierX100 = oldestDegen ? degenMultiplierForWeeks(degenWeeks) : 200
+  const dotCount = 6
+  const litDots = Math.max(0, Math.min(dotCount, degenWeeks))
+  const rampMilestones = [1, 2, 3, 4]
+
+  return (
+    <div className="points-streak-mini rewards-streak-block v5-patron-streak-bar">
+      <div>
+        <span className="points-popover-kicker">Patron pool ramp</span>
+        <strong>{oldestDegen ? `${formatMultiplier(multiplierX100)} multiplier` : 'No Patron Pool position'}</strong>
+      </div>
+      <div className="points-streak-dots points-streak-dots-52" aria-label={`${litDots} of ${dotCount} draws in the ramp`}>
+        {Array.from({ length: dotCount }).map((_, i) => {
+          const draw = i + 1
+          const isMilestone = rampMilestones.includes(draw)
+          const milestoneClaimed = isMilestone && degenWeeks >= draw
+          const classes = [
+            i < litDots ? 'lit' : '',
+            isMilestone ? 'milestone-dot' : '',
+            milestoneClaimed ? 'claimed' : '',
+          ].filter(Boolean).join(' ')
+          return <span key={draw} className={classes} title={`Reaches ${formatMultiplier(degenMultiplierForWeeks(draw))} at draw ${draw}`} />
+        })}
+      </div>
+    </div>
+  )
+}
+
 function PointsHeaderWidget({ account, points }) {
   const [open, setOpen] = useState(false)
   if (!account) return null
@@ -456,6 +499,7 @@ function ProfilePage({ account, points, history, tranches, currentDrawId }) {
 
   const nextVault = oldestVault ? nextVaultThreshold(oldestVault.weeks) : nextVaultThreshold(streakWeeks)
   const nextDegen = oldestDegen ? nextDegenThreshold(oldestDegen.weeks) : 2
+  // Hover-only detail (title attribute) -- not rendered as persistent copy on the page.
   const nextMainVaultCopy = oldestVault && nextVault
     ? `Reaches ${formatMultiplier(vaultMultiplierForWeeks(nextVault))} in ${Math.max(1, nextVault - oldestVault.weeks)} draw${Math.max(1, nextVault - oldestVault.weeks) === 1 ? '' : 's'}.`
     : oldestVault ? 'At the top multiplier tier.' : 'Deposit into the vault to start building your multiplier.'
@@ -463,6 +507,7 @@ function ProfilePage({ account, points, history, tranches, currentDrawId }) {
     ? `${Math.max(1, nextDegen - oldestDegen.weeks)} more draw${Math.max(1, nextDegen - oldestDegen.weeks) === 1 ? '' : 's'} to ${formatMultiplier(degenMultiplierForWeeks(nextDegen))}.`
     : oldestDegen ? 'At the 5x Patron Pool cap.' : 'No Patron Pool position — starts at 2x and builds to 5x.'
 
+  const streakMilestoneWeeks = [2, 4, 13, 26, 52]
   const highestMilestoneAwarded = Number(points?.highest_streak_milestone_awarded || 0)
   const noWinDraws = Number(points?.consecutive_non_wins || 0)
   const highestLossAwarded = Number(points?.highest_loss_streak_bonus_awarded || 0)
@@ -493,14 +538,9 @@ function ProfilePage({ account, points, history, tranches, currentDrawId }) {
 
           <div className="rewards-pill-row">
             <div className="points-multiplier-pill rewards-multiplier-pill" title={nextMainVaultCopy}><span>Main vault multiplier</span><strong>{formatMultiplier(mainVaultMultiplierX100)}</strong></div>
+            <div className={`points-multiplier-pill rewards-multiplier-pill degen-multiplier-pill ${hasPatronPosition ? '' : 'muted'}`} title={nextPatronCopy}><span>Patron vault multiplier</span><strong>{hasPatronPosition ? formatMultiplier(patronVaultMultiplierX100) : '—'}</strong></div>
             <div className={`${tierClass(tier)} rewards-tier-pill`}>{tier}</div>
           </div>
-          <div className="points-next-milestone points-next-multiplier">{nextMainVaultCopy}</div>
-
-          <div className="rewards-pill-row">
-            <div className={`points-multiplier-pill rewards-multiplier-pill degen-multiplier-pill ${hasPatronPosition ? '' : 'muted'}`} title={nextPatronCopy}><span>Patron vault multiplier</span><strong>{hasPatronPosition ? formatMultiplier(patronVaultMultiplierX100) : '—'}</strong></div>
-          </div>
-          <div className="points-next-milestone points-next-multiplier">{nextPatronCopy}</div>
 
           <div className="points-streak-mini rewards-streak-block">
             <div>
@@ -510,7 +550,14 @@ function ProfilePage({ account, points, history, tranches, currentDrawId }) {
             <div className="points-streak-dots points-streak-dots-52" aria-label={`${litDots} of ${dotCount} weeks active`}>
               {Array.from({ length: dotCount }).map((_, i) => {
                 const week = i + 1
-                return <span key={week} className={i < litDots ? 'lit' : ''} title={`Next multiplier: ${formatMultiplier(vaultMultiplierForWeeks(week))}`} />
+                const isMilestone = streakMilestoneWeeks.includes(week)
+                const milestoneClaimed = isMilestone && (highestMilestoneAwarded >= week || streakWeeks >= week)
+                const classes = [
+                  i < litDots ? 'lit' : '',
+                  isMilestone ? 'milestone-dot' : '',
+                  milestoneClaimed ? 'claimed' : '',
+                ].filter(Boolean).join(' ')
+                return <span key={week} className={classes} title={`Next multiplier: ${formatMultiplier(vaultMultiplierForWeeks(week))}`} />
               })}
             </div>
           </div>
@@ -1542,6 +1589,12 @@ function V5ActionCard({
               <button className="max-btn" onClick={() => setAmount(formatDepositMon(balanceValue || 0n))}>Max</button>
             </span>
           </div>
+          {isDegen ? (
+            <div className="balance-info v5-current-position-line">
+              <span>Your current position</span>
+              <span>{formatV5Mon(principal || 0n)} MON</span>
+            </div>
+          ) : null}
         </div>
 
         <div className="deposit-cta-wrap">
@@ -2149,9 +2202,7 @@ export function V5UatExperience() {
                 afterConfirm: afterDegenAction,
               })}
             />
-            <section className="stats-grid v5-degen-position">
-              <StatCard label="Your current position" value={`${formatV5Mon(state?.boosterPrincipal || 0n)} MON`} sub="Patron Pool" icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 3l8 4v6c0 4.42-3.05 8.32-8 9-4.95-.68-8-4.58-8-9V7l8-4zm0 3.2L7 8.7V13c0 2.86 1.82 5.43 5 6.08 3.18-.65 5-3.22 5-6.08V8.7l-5-2.5z"/></svg>} />
-            </section>
+            <PatronStreakBar tranches={pointsTranches} currentDrawId={state?.currentDrawId} />
           </section>
         ) : v5Page === 'profile' ? (
           <ProfilePage account={account} points={pointsProfile} history={pointsHistory} tranches={pointsTranches} currentDrawId={state?.currentDrawId} />
