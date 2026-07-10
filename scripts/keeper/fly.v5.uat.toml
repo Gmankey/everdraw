@@ -1,0 +1,31 @@
+app = "everdraw-keeper-v5"
+primary_region = "sjc"
+
+[build]
+  # Resolved relative to this file's dir (scripts/keeper/). Deploy with the repo ROOT as the
+  # build context so scripts/, abi/, deployments/ are visible:
+  #   flyctl deploy . -c scripts/keeper/fly.v5.uat.toml
+  dockerfile = "Dockerfile.v5"
+
+[env]
+  NODE_ENV = "production"
+  RPC_URL = "https://testnet-rpc.monad.xyz"
+  DRAW_MANAGER_ADDRESS = "0x9eb6387EeA7daC93AF9585b5D25bfc7e0A3aD89c"
+  CLAIM_MANAGER_ADDRESS = "0xF95e319f71B503e396295CD0A55550f56f5901eb"
+  V5_KEEPER_FROM_BLOCK = "41820841"
+  DEPLOYMENT_FILE = "deployments/monad-testnet.json"
+  KEEPER_LOOP = "true"
+  KEEPER_INTERVAL_MS = "60000"
+  KEEPER_RECENT_CLAIM_WINDOW = "1000"
+  # PRIVATE_KEY is intentionally NOT set here. It is the primary-proposer key and must be set as
+  # a Fly secret by the operator (never committed, never held by the builder):
+  #   flyctl secrets set PRIVATE_KEY=0x<primary-proposer key> -c scripts/keeper/fly.v5.uat.toml
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+[deploy]
+  strategy = "immediate"
+
+# No [services] block: the keeper is a pure background worker with no inbound HTTP.
