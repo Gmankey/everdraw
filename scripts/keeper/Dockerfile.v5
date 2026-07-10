@@ -1,0 +1,26 @@
+FROM node:20-slim
+
+WORKDIR /app
+
+# python3 is required at runtime: keeper-v5.js spawns scripts/draw/compute_winners.py to
+# recompute the merkle root and assert JS/Python parity before proposing. compute_winners.py
+# implements keccak in pure Python (stdlib only), so no pip packages are needed.
+# make/g++ are kept for any native module in the (prod) dependency tree; curl for healthchecks.
+RUN apt-get update && apt-get install -y python3 make g++ curl && rm -rf /var/lib/apt/lists/*
+
+# Copy package manifests first for layer caching.
+COPY package*.json ./
+RUN npm ci --omit=dev --ignore-scripts
+
+# Build context must be the repo root (see fly.v5.uat.toml build.dockerfile), because keeper-v5
+# imports sibling scripts (scripts/draw/*) and reads abi/ + deployments/.
+COPY scripts/keeper-v5.js ./scripts/
+COPY scripts/draw/ ./scripts/draw/
+COPY scripts/keeper/entrypoint-v5.sh ./scripts/keeper/
+COPY abi/ ./abi/
+COPY deployments/ ./deployments/
+
+RUN mkdir -p /app/logs /app/draw-inputs \
+  && chmod +x ./scripts/keeper/entrypoint-v5.sh
+
+CMD ["./scripts/keeper/entrypoint-v5.sh"]
