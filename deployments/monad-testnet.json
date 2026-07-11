@@ -174,6 +174,50 @@
         "drawManagerAddressSecret": "DRAW_MANAGER_ADDRESS",
         "fromBlockSecret": "V5_WATCHER_FROM_BLOCK"
       }
+    },
+    {
+      "role": "V5 M8 testnet soak - ADR-0043 auto-compound redeploy (ClaimManagerV5 + DrawManagerV5 only)",
+      "status": "deployed-pending-soak",
+      "deployedAt": "2026-07-11T06:16:04.000Z",
+      "deployedBy": "0xd5cc1f1D7b78943bDF09541A2ace41B5c6D83431",
+      "source": "src/v5",
+      "deployCommit": "record-git-commit",
+      "adr": "decisions/0043-v5-prize-auto-compound.md",
+      "note": "Narrow redeploy: only ClaimManagerV5 + DrawManagerV5 were redeployed. prizeVault, twabController, and shmonStrategy are UNCHANGED (re-pointed via vault.setDrawManager). pythRandomnessOracle is UNCHANGED (reused from the prior record).",
+      "addresses": {
+        "twabController": "0x719F4EB6a4187DBAd1647d07F67573B80E5d0376",
+        "shmonStrategy": "0x92E9a5CCb8F3EBc4f80d23D1c41bDa0fC853DaD4",
+        "prizeVault": "0x76A1327c69f6f9f2571b131BB528D0c8ce1D6958",
+        "claimManager": "0x779A01A7cc19d5E811F4077BdE97F33e8a57D202",
+        "pythRandomnessOracle": "0x3AB2A899a9Aa99De62DB8005c940259A02930a0e",
+        "drawManager": "0x5BeF7B5c5B83D56cfF32F7c66DE6D7916e9aD509"
+      },
+      "deployTxs": {
+        "claimManager": "0x957987ef5b115226293c2ae90dcfbc4dcca45e6dbea765872989cecbad9af7cf",
+        "drawManager": "0x329333d5b1a41b3c99abb6959ad4a2581381248f7b135f63494b84e831ac9d24",
+        "claimAuthorizeManager": "0x8261cc0c432857aca6baf42d77048a5438ec4fc8af8a88578e2cf940e33ed993",
+        "claimSetCompoundVault": "0x03d4ac9d81c71f1c99f26ee8984bd2eaac2c4143648a7779a0ef90a39dd2840a",
+        "vaultSetDrawManager": "0x2149b99a056dcf1399670f9b2b619af6b77ce3208ba5902ca549d8d36a9333c4"
+      },
+      "startBlock": 43905882,
+      "constructorArgs": {
+        "guardian": "0xd5cc1f1D7b78943bDF09541A2ace41B5c6D83431",
+        "keeper": "0x629Bd7f323fD29E3dF75855C9BC542889c6c1268",
+        "firstPeriodStart": 1783753276,
+        "drawPeriod": 3600,
+        "proposerGrace": 300,
+        "challengeWindow": 900
+      },
+      "watcherSecrets": {
+        "drawManagerAddressSecret": "DRAW_MANAGER_ADDRESS",
+        "claimManagerAddressSecret": "CLAIM_MANAGER_ADDRESS",
+        "fromBlockSecret": "V5_WATCHER_FROM_BLOCK"
+      },
+      "priorAddresses": {
+        "claimManager": "0xF95e319f71B503e396295CD0A55550f56f5901eb",
+        "drawManager": "0x9eb6387EeA7daC93AF9585b5D25bfc7e0A3aD89c",
+        "note": "Prior ClaimManagerV5/DrawManagerV5 remain deployed and readable on-chain for any already-registered distributions / unclaimed escrow from before this redeploy; they are superseded, not destroyed. Winners with pre-redeploy deferred claims must still claim against the OLD ClaimManagerV5 address."
+      }
     }
   ]
 }
