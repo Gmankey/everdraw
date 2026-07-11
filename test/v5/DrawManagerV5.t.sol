@@ -106,7 +106,7 @@ contract DrawManagerV5Test is Test {
             CHALLENGE
         );
         claimManager.setAuthorizedSource(address(manager), true);
-        vault.setDrawManager(address(manager));
+        _activateDrawManager(address(manager));
     }
 
     function test_driftSimulationEmptyPeriodsAdvanceExactlyNPeriods() public {
@@ -261,8 +261,7 @@ contract DrawManagerV5Test is Test {
     }
 
     function test_oracleConsumerFixRequiresQueuedCommittedOracleBeforeStartDraw() public {
-        ConsumerBoundRandomnessOracle oldConsumerOracle =
-            new ConsumerBoundRandomnessOracle(makeAddr("oldDrawManager"));
+        ConsumerBoundRandomnessOracle oldConsumerOracle = new ConsumerBoundRandomnessOracle(makeAddr("oldDrawManager"));
         ClaimManagerV5 localClaimManager = new ClaimManagerV5();
         DrawManagerV5 localManager = new DrawManagerV5(
             address(vault),
@@ -277,7 +276,7 @@ contract DrawManagerV5Test is Test {
             CHALLENGE
         );
         localClaimManager.setAuthorizedSource(address(localManager), true);
-        vault.setDrawManager(address(localManager));
+        _activateDrawManager(address(localManager));
 
         ConsumerBoundRandomnessOracle replacementOracle = new ConsumerBoundRandomnessOracle(address(localManager));
         localManager.queueOracleChange(address(replacementOracle));
@@ -677,6 +676,10 @@ contract DrawManagerV5Test is Test {
         vault.withdrawSponsor(10 ether);
         assertEq(vault.sponsorPrincipalOf(sponsor), 0);
         assertEq(sponsor.balance, sponsorBefore + 10 ether);
+    }
+
+    function _activateDrawManager(address drawManager_) internal {
+        vm.store(address(vault), bytes32(uint256(5)), bytes32(uint256(uint160(drawManager_))));
     }
 
     function _depositAcrossFullPeriod(uint256 amount) internal {
