@@ -10,10 +10,44 @@ import {EverdrawTwabController} from "../../src/v5/twab/EverdrawTwabController.s
 import {MockERC20} from "../mocks/MockERC20.sol";
 import {MockERC4626YieldVault} from "../mocks/MockERC4626YieldVault.sol";
 import {MockRandomnessOracle} from "../mocks/MockRandomnessOracle.sol";
+import {IRandomnessOracle} from "../../src/interfaces/IRandomnessOracle.sol";
+import {IRandomnessOracleConsumer} from "../../src/interfaces/IRandomnessOracleConsumer.sol";
 
 contract RejectNativeFeeRecipient {
     receive() external payable {
         revert("reject native");
+    }
+}
+
+contract ConsumerBoundRandomnessOracle is IRandomnessOracle {
+    address public immutable consumer;
+    uint64 public nextRequestId = 1;
+    uint128 public fee;
+    mapping(uint64 => address) public consumerOf;
+
+    error OnlyConsumer();
+
+    constructor(address consumer_) {
+        consumer = consumer_;
+    }
+
+    function setFee(uint128 newFee) external {
+        fee = newFee;
+    }
+
+    function getFee() external view returns (uint128) {
+        return fee;
+    }
+
+    function requestRandomness(bytes calldata) external payable returns (uint64 requestId) {
+        if (msg.sender != consumer) revert OnlyConsumer();
+        require(msg.value >= fee, "fee");
+        requestId = nextRequestId++;
+        consumerOf[requestId] = msg.sender;
+    }
+
+    function fulfill(uint64 requestId, bytes32 randomNumber) external {
+        IRandomnessOracleConsumer(consumerOf[requestId]).onRandomnessReceived(requestId, randomNumber);
     }
 }
 
@@ -224,6 +258,46 @@ contract DrawManagerV5Test is Test {
         vm.expectRevert(DrawManagerV5.DrawNotSeeded.selector);
         vm.prank(keeper);
         manager.proposeRoot(1, bytes32(uint256(1)), 1, 10 ether);
+    }
+
+    function test_oracleConsumerFixRequiresQueuedCommittedOracleBeforeStartDraw() public {
+        ConsumerBoundRandomnessOracle oldConsumerOracle =
+            new ConsumerBoundRandomnessOracle(makeAddr("oldDrawManager"));
+        ClaimManagerV5 localClaimManager = new ClaimManagerV5();
+        DrawManagerV5 localManager = new DrawManagerV5(
+            address(vault),
+            address(twab),
+            address(localClaimManager),
+            address(oldConsumerOracle),
+            guardian,
+            keeper,
+            START,
+            PERIOD,
+            GRACE,
+            CHALLENGE
+        );
+        localClaimManager.setAuthorizedSource(address(localManager), true);
+        vault.setDrawManager(address(localManager));
+
+        ConsumerBoundRandomnessOracle replacementOracle = new ConsumerBoundRandomnessOracle(address(localManager));
+        localManager.queueOracleChange(address(replacementOracle));
+
+        vm.expectRevert(DrawManagerV5.TimelockNotElapsed.selector);
+        localManager.commitOracleChange();
+
+        _depositAcrossFullPeriod(10 ether);
+        shmon.setRate(2 ether);
+
+        vm.expectRevert(ConsumerBoundRandomnessOracle.OnlyConsumer.selector);
+        localManager.startDraw();
+
+        vm.warp(block.timestamp + localManager.ORACLE_CHANGE_DELAY());
+        localManager.commitOracleChange();
+        assertEq(address(localManager.randomnessOracle()), address(replacementOracle));
+
+        uint256 drawId = localManager.startDraw();
+        assertEq(drawId, 1);
+        assertEq(replacementOracle.nextRequestId(), 2);
     }
 
     function test_seedProposeVetoReproposeFinalize() public {
