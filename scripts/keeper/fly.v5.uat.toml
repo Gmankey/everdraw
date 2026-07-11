@@ -24,16 +24,12 @@ primary_region = "sjc"
 [env]
   NODE_ENV = "production"
   RPC_URL = "https://testnet-rpc.monad.xyz"
-  # TODO(ADR-0043 redeploy): replace with the new DrawManagerV5 address from
-  # scripts/redeploy-v5-claim-draw-managers.js's deployment record. Prior value (pre-redeploy,
-  # pre-auto-compound bytecode): 0x9eb6387EeA7daC93AF9585b5D25bfc7e0A3aD89c
-  DRAW_MANAGER_ADDRESS = "TODO_SET_AFTER_ADR_0043_REDEPLOY"
-  # TODO(ADR-0043 redeploy): replace with the new ClaimManagerV5 address from the same record.
-  # Prior value: 0xF95e319f71B503e396295CD0A55550f56f5901eb
-  CLAIM_MANAGER_ADDRESS = "TODO_SET_AFTER_ADR_0043_REDEPLOY"
-  # TODO(ADR-0043 redeploy): set to the `startBlock` recorded for the new deployment so the
-  # keeper's own event scan doesn't miss the first post-redeploy draw.
-  V5_KEEPER_FROM_BLOCK = "TODO_SET_AFTER_ADR_0043_REDEPLOY"
+  # ADR-0043 redeploy, executed 2026-07-11. Prior value (pre-redeploy, pre-auto-compound
+  # bytecode): 0x9eb6387EeA7daC93AF9585b5D25bfc7e0A3aD89c
+  DRAW_MANAGER_ADDRESS = "0x5BeF7B5c5B83D56cfF32F7c66DE6D7916e9aD509"
+  # ADR-0043 redeploy. Prior value: 0xF95e319f71B503e396295CD0A55550f56f5901eb
+  CLAIM_MANAGER_ADDRESS = "0x779A01A7cc19d5E811F4077BdE97F33e8a57D202"
+  V5_KEEPER_FROM_BLOCK = "43905882"
   DEPLOYMENT_FILE = "deployments/monad-testnet.json"
   KEEPER_LOOP = "true"
   KEEPER_INTERVAL_MS = "60000"
