@@ -16,10 +16,12 @@ const service = createDeriveV5TranchesService(rawEventsRepo, v5TranchesRepo);
 const vault = '0x0000000000000000000000000000000000000a11';
 const drawManager = '0x0000000000000000000000000000000000000d22';
 const wallet = '0x00000000000000000000000000000000000000aa';
+const compoundWallet = '0x00000000000000000000000000000000000000bb';
+const claimManager = '0x0000000000000000000000000000000000000c33';
 
 function raw(partial: Partial<RawEventRow> & Pick<RawEventRow, 'eventName' | 'logIndex' | 'payload'>): RawEventRow {
   return {
-    txHash: `0x${partial.logIndex.toString(16).padStart(64, '0')}`,
+    txHash: partial.txHash ?? `0x${partial.logIndex.toString(16).padStart(64, '0')}`,
     logIndex: partial.logIndex,
     blockNumber: partial.blockNumber ?? 100,
     blockHash: `0x${partial.logIndex.toString(16).padStart(64, '1')}`,
@@ -98,6 +100,43 @@ assert.deepEqual(events.map((event) => `${event.poolType}:${event.action}:${even
   'degen:deposit:40',
   'vault:withdraw:60',
 ]);
+
+const compoundTx = `0x${'abc'.padStart(64, '0')}`;
+rawEventsRepo.upsertMany([
+  raw({
+    eventName: 'PrizeCompounded',
+    logIndex: 9,
+    txHash: compoundTx,
+    contractAddress: claimManager,
+    wallet: compoundWallet,
+    payload: JSON.stringify({
+      distributionId: `0x${'da'.padStart(64, '0')}`,
+      leafIndex: '0',
+      account: compoundWallet,
+      amount: '25',
+    }),
+  }),
+  raw({
+    eventName: 'Deposit',
+    logIndex: 10,
+    txHash: compoundTx,
+    contractAddress: vault,
+    wallet: compoundWallet,
+    payload: JSON.stringify({ recipient: compoundWallet, amount: '25' }),
+  }),
+]);
+
+service.rebuildFromRaw();
+
+const compoundEvents = v5TranchesRepo.listPositionEvents(compoundWallet);
+assert.equal(compoundEvents.length, 1);
+assert.equal(compoundEvents[0].rawEventName, 'Deposit');
+assert.equal(compoundEvents[0].source, 'prize_compound');
+assert.equal(compoundEvents[0].amount, '25');
+const compoundTranches = v5TranchesRepo.listByWallet(compoundWallet);
+assert.equal(compoundTranches.length, 1);
+assert.equal(compoundTranches[0].remainingAmount, '25');
+assert.equal(compoundTranches[0].startDrawId, 7);
 
 rawEventsRepo.upsertMany([
   raw({

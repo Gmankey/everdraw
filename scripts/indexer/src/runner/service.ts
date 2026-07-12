@@ -475,6 +475,14 @@ function normalizeArgs(eventName: SupportedEventName, args: any): Record<string,
         amount: String(args.amount),
       };
 
+    case 'PrizeCompounded':
+      return {
+        distributionId: String(args.distributionId),
+        leafIndex: String(args.leafIndex),
+        account: String(args.account).toLowerCase(),
+        amount: String(args.amount),
+      };
+
     default:
       return { roundId: Number(args.roundId) };
   }

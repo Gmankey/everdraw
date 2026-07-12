@@ -193,6 +193,7 @@ export function createApiServer(params: {
       amount: row.amount,
       balance_after: row.balanceAfter,
       raw_event_name: row.rawEventName,
+      source: row.source,
     })));
   });
 

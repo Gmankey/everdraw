@@ -40,7 +40,8 @@ export type SupportedEventName =
   | 'DistributionRegistered'
   | 'ClaimPaid'
   | 'ClaimDeferred'
-  | 'DeferredClaimPaid';
+  | 'DeferredClaimPaid'
+  | 'PrizeCompounded';
 
 export interface RawEventRow {
   txHash: string;
@@ -154,6 +155,7 @@ export interface WalletRoundPointsRow {
 
 export type V5PoolType = 'vault' | 'degen';
 export type V5PositionAction = 'deposit' | 'withdraw';
+export type V5PositionEventSource = 'user' | 'prize_compound';
 
 export interface V5PositionEventRow {
   txHash: string;
@@ -167,6 +169,7 @@ export interface V5PositionEventRow {
   amount: string;
   balanceAfter: string | null;
   rawEventName: SupportedEventName;
+  source: V5PositionEventSource;
 }
 
 export interface V5TrancheRow {
