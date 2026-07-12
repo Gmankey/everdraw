@@ -1,12 +1,15 @@
 # Checking Results
 
-Settlement outcomes appear in the **Previous Vault** view shortly after a round's draw completes.
+Draw results appear after the weekly draw is finalized. Use the app's previous draw view to see the latest finalized draw and winner details.
 
-Use the current/previous toggle to open the most recent settled round. You'll see:
+You will see:
 
-- The winner(s) and their winning ticket(s)
-- Total tickets in the round
-- The prize amount (in shMON)
-- Your participation, claim status, and withdraw status
+- winner address or addresses
+- prize amount
+- draw status
+- your history for deposits, withdrawals, draws, and prizes
+- claim or restake actions when available
 
-If you open a vault while it's still locked, the app shows the countdown to the draw. Results appear automatically once the round settles. For vaults that pay multiple winners, every winning position is listed.
+Some catch-up draws can be skipped or carry only dust if the keeper is recovering a backlog. That is expected when the available prize was already captured by an earlier draw.
+
+Claimable prizes do not expire. The app should surface all unclaimed finalized prizes for your wallet, not only the most recent draw.

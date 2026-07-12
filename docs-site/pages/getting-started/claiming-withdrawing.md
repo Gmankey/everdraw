@@ -1,34 +1,38 @@
 # Claiming and Withdrawing
 
-Once a round settles, your principal and any prize are available from the "Previous Vault" view. Settlement happens within a few seconds of the lock period ending. There is no waiting queue inside EverDraw.
+V5 keeps principal and prizes separate. Your principal remains withdrawable, while prizes are paid from yield.
 
 ---
 
 ## If you won
 
-1. Open the previous vault view. Your address is in the winner spotlight.
-2. Click **Claim Prize** and confirm the transaction. The prize lands in your wallet as shMON.
-3. Click **Withdraw Principal** to receive your original deposit back, also in shMON. This is a separate transaction.
+The app shows available prize actions for your wallet. Depending on the draw and your settings, a prize may be claimable to your wallet or restaked into your vault principal.
 
-The two actions can also run in one signed batch from the redemption modal.
+If a prize is restaked, it becomes a new deposit tranche at tenure zero. It starts earning entries and points like any other fresh deposit.
 
 ---
 
-## If you didn't win
+## Withdrawing principal
 
-Click **Withdraw Principal** on the previous vault view. Your exact deposit is returned in shMON. No fees, no slippage, no loss.
+Use the withdraw tab anywhere a withdraw action appears. You can withdraw from the main vault or the Patron pool, and withdrawals are available anytime unless the vault is paused.
+
+A withdrawal can affect points:
+
+- **Full withdrawal:** resets that pool's streak and multiplier path.
+- **Partial withdrawal:** removes your newest tranche first; older remaining tranches keep their tenure.
+
+The app warns you before confirming withdrawal-sensitive actions.
 
 ---
 
-## Want raw MON instead of shMON?
+## Want MON instead of shMON?
 
-Choose **Withdraw and Convert** in the redemption modal. EverDraw releases your shMON and forwards you to shmonad.xyz, where you can unstake to MON. That conversion goes through Monad's epoch unstaking queue, which takes around 18 to 22 hours. The wait sits with shMonad, not with EverDraw.
+EverDraw's withdrawal path returns your principal value through shMON. If you want raw MON, choose the convert option in the redemption flow to continue on shmonad.xyz. That conversion follows shMonad's unstaking process and timing.
 
-Note that keeping your position in shMON means you can re-enter the next EverDraw round immediately, and your shMON keeps earning staking yield in the meantime.
+Keeping shMON means you can redeposit or continue earning normal shMON yield without waiting for the MON unstaking conversion.
 
 ---
 
 ## Timing
 
-The withdraw button is disabled with a countdown until the round settles. Once settled, the button is permanently active. There is no expiry on principal withdrawal and no expiry on prize claims. Funds sit in the contract until you action them.
-
+Claimable prizes and withdrawable principal do not expire. If the keeper is delayed, final draw results may arrive later, but principal accounting remains separate from prize finalization.

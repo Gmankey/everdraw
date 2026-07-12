@@ -1,7 +1,7 @@
 export default {
   index: 'Overview',
   'protocol-overview': 'Protocol Overview',
-  'round-lifecycle': 'Round Lifecycle',
+  'round-lifecycle': 'Draw Lifecycle',
   'winner-selection': 'Winner Selection',
   points: 'Points',
 }
