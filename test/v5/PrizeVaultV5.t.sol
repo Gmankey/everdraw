@@ -7,6 +7,8 @@ import {ShmonStrategy} from "../../src/v5/strategies/ShmonStrategy.sol";
 import {EverdrawTwabController} from "../../src/v5/twab/EverdrawTwabController.sol";
 import {MockERC4626YieldVault} from "../mocks/MockERC4626YieldVault.sol";
 
+contract DummyDrawManager {}
+
 contract PrizeVaultV5Test is Test {
     EverdrawTwabController twab;
     MockERC4626YieldVault shmon;
@@ -20,6 +22,8 @@ contract PrizeVaultV5Test is Test {
 
     event BoostDeposit(address indexed booster, uint256 amount, uint256 balance, uint64 timestamp);
     event BoostWithdraw(address indexed booster, uint256 amount, uint256 balance, uint64 timestamp);
+    event DrawManagerSet(address indexed drawManager);
+    event DrawManagerChangeQueued(address indexed drawManager, uint64 effectiveAt);
 
     function setUp() public {
         vm.warp(1_000_000);
@@ -505,6 +509,62 @@ contract PrizeVaultV5Test is Test {
         vault.commitStrategyChange();
 
         assertEq(address(vault.strategy()), address(next));
+    }
+
+    function test_setDrawManagerQueuesTimelockedChange() public {
+        DummyDrawManager next = new DummyDrawManager();
+        uint64 expectedEffectiveAt = uint64(block.timestamp + vault.STRATEGY_CHANGE_DELAY());
+
+        vm.expectEmit(true, false, false, true, address(vault));
+        emit DrawManagerChangeQueued(address(next), expectedEffectiveAt);
+        vault.setDrawManager(address(next));
+
+        assertEq(vault.drawManager(), address(0));
+        assertEq(vault.pendingDrawManager(), address(next));
+        assertEq(vault.pendingDrawManagerEffectiveAt(), expectedEffectiveAt);
+    }
+
+    function test_queueDrawManagerChangeRejectsNonOwner() public {
+        DummyDrawManager next = new DummyDrawManager();
+
+        vm.prank(alice);
+        vm.expectRevert(PrizeVaultV5.NotOwner.selector);
+        vault.queueDrawManagerChange(address(next));
+    }
+
+    function test_commitDrawManagerChangeBeforeDelayReverts() public {
+        DummyDrawManager next = new DummyDrawManager();
+
+        vault.queueDrawManagerChange(address(next));
+
+        vm.expectRevert(PrizeVaultV5.TimelockNotElapsed.selector);
+        vault.commitDrawManagerChange();
+    }
+
+    function test_commitDrawManagerChangeRejectsNonOwner() public {
+        DummyDrawManager next = new DummyDrawManager();
+
+        vault.queueDrawManagerChange(address(next));
+        vm.warp(block.timestamp + vault.STRATEGY_CHANGE_DELAY());
+
+        vm.prank(alice);
+        vm.expectRevert(PrizeVaultV5.NotOwner.selector);
+        vault.commitDrawManagerChange();
+    }
+
+    function test_commitDrawManagerChangeAfterDelaySetsManagerAndClearsPending() public {
+        DummyDrawManager next = new DummyDrawManager();
+
+        vault.queueDrawManagerChange(address(next));
+        vm.warp(block.timestamp + vault.STRATEGY_CHANGE_DELAY());
+
+        vm.expectEmit(true, false, false, true, address(vault));
+        emit DrawManagerSet(address(next));
+        vault.commitDrawManagerChange();
+
+        assertEq(vault.drawManager(), address(next));
+        assertEq(vault.pendingDrawManager(), address(0));
+        assertEq(vault.pendingDrawManagerEffectiveAt(), 0);
     }
 
     function test_strategyChangeMigratesSharesToNewStrategy() public {

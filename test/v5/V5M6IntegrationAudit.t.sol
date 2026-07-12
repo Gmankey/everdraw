@@ -55,7 +55,7 @@ contract V5M6IntegrationAuditTest is Test {
             CHALLENGE
         );
         claimManager.setAuthorizedSource(address(manager), true);
-        vault.setDrawManager(address(manager));
+        _activateDrawManager(address(manager));
     }
 
     function test_m6_fullLifecycleMixedMonAndShmonAcrossTwoDrawsClaimManyAndWithdraw() public {
@@ -236,5 +236,9 @@ contract V5M6IntegrationAuditTest is Test {
 
     function _status(uint256 drawId) internal view returns (DrawManagerV5.DrawStatus status) {
         (,,,,,,,,,,, status,,,) = manager.draws(drawId);
+    }
+
+    function _activateDrawManager(address drawManager_) internal {
+        vm.store(address(vault), bytes32(uint256(5)), bytes32(uint256(uint160(drawManager_))));
     }
 }

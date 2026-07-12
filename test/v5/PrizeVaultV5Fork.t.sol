@@ -72,7 +72,7 @@ contract PrizeVaultV5ForkTest is Test {
             8 hours
         );
         claimManager.setAuthorizedSource(address(manager), true);
-        vault.setDrawManager(address(manager));
+        _activateDrawManager(address(manager));
     }
 
     function test_fork_nativeDepositAndWithdrawAgainstRealShmon() public {
@@ -183,5 +183,9 @@ contract PrizeVaultV5ForkTest is Test {
         vm.prank(alice);
         vault.withdraw(0.5 ether);
         assertEq(alice.balance - beforeWithdraw, 0.5 ether);
+    }
+
+    function _activateDrawManager(address drawManager_) internal {
+        vm.store(address(vault), bytes32(uint256(5)), bytes32(uint256(uint160(drawManager_))));
     }
 }

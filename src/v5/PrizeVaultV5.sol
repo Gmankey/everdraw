@@ -35,6 +35,8 @@ contract PrizeVaultV5 {
 
     address public pendingStrategy;
     uint64 public pendingStrategyEffectiveAt;
+    address public pendingDrawManager;
+    uint64 public pendingDrawManagerEffectiveAt;
 
     mapping(address => uint256) public principalOf;
     mapping(address => uint256) public sponsorPrincipalOf;
@@ -57,6 +59,8 @@ contract PrizeVaultV5 {
     event Unpaused(address indexed by);
     event PauserSet(address indexed pauser);
     event DrawManagerSet(address indexed drawManager);
+    event DrawManagerChangeQueued(address indexed drawManager, uint64 effectiveAt);
+    event DrawManagerChangeCancelled();
     event YieldEscrowed(address indexed claimManager, uint256 amount);
     event VaultStopped(uint64 stoppedAt);
     event OwnershipTransferStarted(address indexed previousOwner, address indexed pendingOwner);
@@ -79,6 +83,7 @@ contract PrizeVaultV5 {
     error InsufficientAllowance();
     error AlreadyStopped();
     error NoPendingStrategyChange();
+    error NoPendingDrawManagerChange();
     error TimelockNotElapsed();
     error StrategyMigrationShortfall(uint256 beforeAssets, uint256 afterAssets);
     error NotDrawManager();
@@ -178,10 +183,29 @@ contract PrizeVaultV5 {
         emit PauserSet(newPauser);
     }
 
+    /// @notice Compatibility alias for the timelocked draw-manager change flow.
     function setDrawManager(address newDrawManager) external onlyOwner {
-        if (newDrawManager == address(0)) revert ZeroAddress();
-        drawManager = newDrawManager;
-        emit DrawManagerSet(newDrawManager);
+        _queueDrawManagerChange(newDrawManager);
+    }
+
+    function queueDrawManagerChange(address newDrawManager) external onlyOwner {
+        _queueDrawManagerChange(newDrawManager);
+    }
+
+    function commitDrawManagerChange() external onlyOwner {
+        if (pendingDrawManagerEffectiveAt == 0) revert NoPendingDrawManagerChange();
+        if (block.timestamp < pendingDrawManagerEffectiveAt) revert TimelockNotElapsed();
+        drawManager = pendingDrawManager;
+        pendingDrawManager = address(0);
+        pendingDrawManagerEffectiveAt = 0;
+        emit DrawManagerSet(drawManager);
+    }
+
+    function cancelDrawManagerChange() external onlyOwner {
+        if (pendingDrawManagerEffectiveAt == 0) revert NoPendingDrawManagerChange();
+        pendingDrawManager = address(0);
+        pendingDrawManagerEffectiveAt = 0;
+        emit DrawManagerChangeCancelled();
     }
 
     function transferOwnership(address newOwner) external onlyOwner {
@@ -397,6 +421,13 @@ contract PrizeVaultV5 {
         if (assets < minDeposit) revert DepositTooSmall();
         if (depositCap != 0 && totalPrincipal + assets > depositCap) revert DepositCapExceeded();
         if (shortfallMode) revert VaultIsStopped();
+    }
+
+    function _queueDrawManagerChange(address newDrawManager) internal {
+        if (newDrawManager == address(0) || newDrawManager.code.length == 0) revert ZeroAddress();
+        pendingDrawManager = newDrawManager;
+        pendingDrawManagerEffectiveAt = uint64(block.timestamp + STRATEGY_CHANGE_DELAY);
+        emit DrawManagerChangeQueued(newDrawManager, pendingDrawManagerEffectiveAt);
     }
 
     function _assetsDelta(uint256 assetsBefore) internal view returns (uint256 creditedAssets) {
