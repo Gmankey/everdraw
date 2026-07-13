@@ -29,7 +29,13 @@ primary_region = "sjc"
   DRAW_MANAGER_ADDRESS = "0x5BeF7B5c5B83D56cfF32F7c66DE6D7916e9aD509"
   # ADR-0043 redeploy. Prior value: 0xF95e319f71B503e396295CD0A55550f56f5901eb
   CLAIM_MANAGER_ADDRESS = "0x779A01A7cc19d5E811F4077BdE97F33e8a57D202"
-  V5_KEEPER_FROM_BLOCK = "43905882"
+  # Must be the PrizeVault's GENESIS block (41820841), NOT the ADR-0043 redeploy block. The vault
+  # + its deposit/TWAB history are unchanged by the redeploy; the keeper reconstructs per-account
+  # TWAB by replaying deposit events from this block, so it must cover the full vault history or
+  # buildDrawInput throws "TWAB mismatch ... account sum 0 != draw total". 41820841 also covers the
+  # new DrawManager's events (deployed later at 43905882+), so it is safe for both scans.
+  # (Regression note: this was briefly set to the redeploy block 43905882, which broke proposals.)
+  V5_KEEPER_FROM_BLOCK = "41820841"
   DEPLOYMENT_FILE = "deployments/monad-testnet.json"
   KEEPER_LOOP = "true"
   KEEPER_INTERVAL_MS = "60000"
