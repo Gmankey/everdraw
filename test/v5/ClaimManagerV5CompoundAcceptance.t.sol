@@ -8,6 +8,14 @@ import {ShmonStrategy} from "../../src/v5/strategies/ShmonStrategy.sol";
 import {EverdrawTwabController} from "../../src/v5/twab/EverdrawTwabController.sol";
 import {MockERC4626YieldVault} from "../mocks/MockERC4626YieldVault.sol";
 
+contract CompoundAcceptanceDrawManager {
+    address public immutable claimManager;
+
+    constructor(address _claimManager) {
+        claimManager = _claimManager;
+    }
+}
+
 /// @notice ADR-0043 acceptance criteria not covered elsewhere:
 /// (1) gas must never be deducted from the merkle-leaf amount -- the compounded credit must
 ///     equal the leaf amount exactly, even when the keeper pays a nonzero gas price to submit;
@@ -65,6 +73,22 @@ contract ClaimManagerV5CompoundAcceptanceTest is Test {
         assertEq(claims.reservedByToken(address(0)), 0, "reservation released for the full leaf amount, unreduced");
     }
 
+    function test_subMinimumNativePrizeCompoundsFromConfiguredClaimManager() public {
+        vault.setMinDeposit(1 ether);
+        _activateCompoundClaimManager();
+        uint256 leafAmount = 0.558 ether;
+        ClaimManagerV5.ClaimLeaf memory leaf = _leaf(0, winner, leafAmount);
+        _fundNativeAndRegister(leaf, leafAmount);
+
+        vm.expectEmit(true, true, true, true, address(claims));
+        emit ClaimManagerV5.PrizeCompounded(leaf.distributionId, leaf.leafIndex, winner, leafAmount);
+        claims.claim(leaf, new bytes32[](0));
+
+        assertEq(vault.principalOf(winner), leafAmount);
+        assertEq(vault.totalPrincipal(), leafAmount);
+        assertEq(claims.reservedByToken(address(0)), 0);
+    }
+
     /// @notice A compounded win must be additive on top of any existing principal, not a
     /// replacement or a scaled "extension" of it -- the contract has no notion of "inherit the
     /// old tranche's multiplier"; it just calls the same `_creditParticipant` path a plain
@@ -116,6 +140,13 @@ contract ClaimManagerV5CompoundAcceptanceTest is Test {
             token: address(0),
             amount: amount
         });
+    }
+
+    function _activateCompoundClaimManager() internal {
+        CompoundAcceptanceDrawManager drawManager = new CompoundAcceptanceDrawManager(address(claims));
+        vault.queueDrawManagerChange(address(drawManager));
+        vm.warp(block.timestamp + vault.STRATEGY_CHANGE_DELAY());
+        vault.commitDrawManagerChange();
     }
 
     function _fundNativeAndRegister(ClaimManagerV5.ClaimLeaf memory leaf, uint256 amount) internal {

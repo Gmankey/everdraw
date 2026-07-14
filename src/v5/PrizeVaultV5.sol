@@ -4,6 +4,10 @@ pragma solidity ^0.8.33;
 import {IYieldStrategyV5} from "./interfaces/IYieldStrategyV5.sol";
 import {EverdrawTwabController} from "./twab/EverdrawTwabController.sol";
 
+interface IDrawManagerV5ClaimManager {
+    function claimManager() external view returns (address);
+}
+
 /// @title PrizeVaultV5
 /// @notice Continuous V5 principal vault. Draw/claim logic lives outside this contract.
 contract PrizeVaultV5 {
@@ -265,33 +269,34 @@ contract PrizeVaultV5 {
 
     function deposit() external payable whenNotPaused nonReentrant returns (uint256 shares) {
         uint256 assets = msg.value;
-        _requireDepositAllowed(assets);
+        _requireDepositAllowed(assets, true);
         uint256 assetsBefore = strategy.totalAssets();
         shares = strategy.deposit{value: assets}(assets);
         _creditParticipant(msg.sender, _assetsDelta(assetsBefore));
     }
 
     /// @notice Deposit on behalf of another account (e.g. ADR-0043 prize auto-compound).
-    /// Permissionless like ERC4626's receiver-based deposit: crediting someone else's principal
-    /// is inherently benign, so this needs no special access control.
+    /// Ordinary third-party deposits still respect minDeposit; the configured ClaimManager
+    /// may compound sub-minimum prize amounts so ADR-0043 claims do not fall back to wallet payout.
     function depositFor(address recipient) external payable whenNotPaused nonReentrant returns (uint256 shares) {
         if (recipient == address(0)) revert ZeroAddress();
         uint256 assets = msg.value;
-        _requireDepositAllowed(assets);
+        _requireDepositAllowed(assets, !_isCurrentClaimManager(msg.sender));
+        uint256 assetsBefore = strategy.totalAssets();
         shares = strategy.deposit{value: assets}(assets);
-        _creditParticipant(recipient, assets);
+        _creditParticipant(recipient, _assetsDelta(assetsBefore));
     }
 
     function depositShmon(uint256 shares) external whenNotPaused nonReentrant returns (uint256 assets) {
         if (stoppedAt != 0) revert VaultIsStopped();
         assets = strategy.depositSharesFrom(msg.sender, shares);
-        _requireDepositAllowed(assets);
+        _requireDepositAllowed(assets, true);
         _creditParticipant(msg.sender, assets);
     }
 
     function sponsorDeposit() external payable whenNotPaused nonReentrant returns (uint256 shares) {
         uint256 assets = msg.value;
-        _requireDepositAllowed(assets);
+        _requireDepositAllowed(assets, true);
         uint256 assetsBefore = strategy.totalAssets();
         shares = strategy.deposit{value: assets}(assets);
         _creditSponsor(msg.sender, _assetsDelta(assetsBefore));
@@ -300,13 +305,13 @@ contract PrizeVaultV5 {
     function sponsorDepositShmon(uint256 shares) external whenNotPaused nonReentrant returns (uint256 assets) {
         if (stoppedAt != 0) revert VaultIsStopped();
         assets = strategy.depositSharesFrom(msg.sender, shares);
-        _requireDepositAllowed(assets);
+        _requireDepositAllowed(assets, true);
         _creditSponsor(msg.sender, assets);
     }
 
     function boostDeposit() external payable whenNotPaused nonReentrant returns (uint256 shares) {
         uint256 assets = msg.value;
-        _requireDepositAllowed(assets);
+        _requireDepositAllowed(assets, true);
         uint256 assetsBefore = strategy.totalAssets();
         shares = strategy.deposit{value: assets}(assets);
         _creditBooster(msg.sender, _assetsDelta(assetsBefore));
@@ -315,7 +320,7 @@ contract PrizeVaultV5 {
     function boostDepositShmon(uint256 shares) external whenNotPaused nonReentrant returns (uint256 assets) {
         if (stoppedAt != 0) revert VaultIsStopped();
         assets = strategy.depositSharesFrom(msg.sender, shares);
-        _requireDepositAllowed(assets);
+        _requireDepositAllowed(assets, true);
         _creditBooster(msg.sender, assets);
     }
 
@@ -414,13 +419,24 @@ contract PrizeVaultV5 {
         emit EmergencySharesRedeemed(msg.sender, principalAmount, shares);
     }
 
-    function _requireDepositAllowed(uint256 assets) internal {
+    function _requireDepositAllowed(uint256 assets, bool enforceMinDeposit) internal {
         _refreshShortfallMode();
         if (stoppedAt != 0) revert VaultIsStopped();
         if (assets == 0) revert ZeroAmount();
-        if (assets < minDeposit) revert DepositTooSmall();
+        if (enforceMinDeposit && assets < minDeposit) revert DepositTooSmall();
         if (depositCap != 0 && totalPrincipal + assets > depositCap) revert DepositCapExceeded();
         if (shortfallMode) revert VaultIsStopped();
+    }
+
+    function _isCurrentClaimManager(address caller) internal view returns (bool) {
+        address currentDrawManager = drawManager;
+        if (currentDrawManager == address(0) || caller == address(0)) return false;
+
+        try IDrawManagerV5ClaimManager(currentDrawManager).claimManager() returns (address currentClaimManager) {
+            return caller == currentClaimManager;
+        } catch {
+            return false;
+        }
     }
 
     function _queueDrawManagerChange(address newDrawManager) internal {
