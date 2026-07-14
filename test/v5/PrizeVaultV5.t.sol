@@ -504,6 +504,100 @@ contract PrizeVaultV5Test is Test {
         assertEq(strategy.sharesHeld(), 6 ether);
     }
 
+    function test_emergencyRedeemSharesCapsValueAtPrincipalAndPreservesYield() public {
+        vm.deal(alice, 10 ether);
+        vm.deal(bob, 10 ether);
+        vm.prank(alice);
+        vault.deposit{value: 2 ether}();
+        vm.prank(bob);
+        vault.deposit{value: 6 ether}();
+
+        shmon.setRate(2 ether);
+        uint256 yieldBefore = vault.availableYield();
+
+        vm.prank(alice);
+        uint256 shares = vault.emergencyRedeemShares(2 ether);
+
+        assertEq(shares, 1 ether);
+        assertEq(shmon.convertToAssets(shmon.balanceOf(alice)), 2 ether);
+        assertEq(vault.principalOf(alice), 0);
+        assertEq(vault.availableYield(), yieldBefore);
+    }
+
+    function test_emergencyRedeemSharesKeepsProRataShortfallValue() public {
+        vm.deal(alice, 10 ether);
+        vm.deal(bob, 10 ether);
+        vm.prank(alice);
+        vault.deposit{value: 4 ether}();
+        vm.prank(bob);
+        vault.deposit{value: 6 ether}();
+
+        shmon.setRate(0.5 ether);
+
+        vm.prank(alice);
+        uint256 shares = vault.emergencyRedeemShares(4 ether);
+
+        assertTrue(vault.shortfallMode());
+        assertEq(shares, 4 ether);
+        assertEq(shmon.convertToAssets(shmon.balanceOf(alice)), 2 ether);
+        assertEq(vault.principalOf(alice), 0);
+        assertEq(vault.totalPrincipal(), 6 ether);
+    }
+
+    function test_emergencyRedeemSponsorSharesCapsValueAtPrincipalAndPreservesYield() public {
+        vm.deal(sponsor, 10 ether);
+        vm.deal(alice, 10 ether);
+        vm.prank(sponsor);
+        vault.sponsorDeposit{value: 2 ether}();
+        vm.prank(alice);
+        vault.deposit{value: 6 ether}();
+
+        shmon.setRate(2 ether);
+        uint256 yieldBefore = vault.availableYield();
+
+        vm.prank(sponsor);
+        uint256 shares = vault.emergencyRedeemSponsorShares(2 ether);
+
+        assertEq(shares, 1 ether);
+        assertEq(shmon.convertToAssets(shmon.balanceOf(sponsor)), 2 ether);
+        assertEq(vault.sponsorPrincipalOf(sponsor), 0);
+        assertEq(vault.availableYield(), yieldBefore);
+    }
+
+    function test_standardWithdrawPathsStillPayParWithAccruedYield() public {
+        vm.deal(alice, 10 ether);
+        vm.deal(bob, 10 ether);
+        vm.prank(alice);
+        vault.deposit{value: 4 ether}();
+        vm.prank(bob);
+        vault.deposit{value: 4 ether}();
+
+        shmon.setRate(2 ether);
+
+        uint256 aliceBefore = alice.balance;
+        vm.prank(alice);
+        vault.withdraw(4 ether);
+        assertEq(alice.balance - aliceBefore, 4 ether);
+
+        vm.prank(bob);
+        uint256 shares = vault.withdrawShmon(4 ether);
+        assertEq(shares, 2 ether);
+        assertEq(shmon.convertToAssets(shmon.balanceOf(bob)), 4 ether);
+        assertEq(vault.availableYield(), 8 ether);
+    }
+
+    function test_emergencyRedeemSharesRevertsWhenStrategyHasNoAssets() public {
+        vm.deal(alice, 10 ether);
+        vm.prank(alice);
+        vault.deposit{value: 2 ether}();
+
+        vm.mockCall(address(strategy), abi.encodeWithSignature("totalAssets()"), abi.encode(0));
+
+        vm.prank(alice);
+        vm.expectRevert(PrizeVaultV5.NoStrategyAssets.selector);
+        vault.emergencyRedeemShares(2 ether);
+    }
+
     function test_emergencyRedeemLiveWhenPausedAndStopped() public {
         vm.deal(alice, 10 ether);
         vm.prank(alice);
