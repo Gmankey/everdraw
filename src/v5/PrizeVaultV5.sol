@@ -92,6 +92,7 @@ contract PrizeVaultV5 {
     error StrategyMigrationShortfall(uint256 beforeAssets, uint256 afterAssets);
     error NotDrawManager();
     error InsufficientYield(uint256 requested, uint256 available);
+    error NoStrategyAssets();
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -395,9 +396,7 @@ contract PrizeVaultV5 {
         if (principalAmount == 0) revert ZeroAmount();
         if (principalOf[msg.sender] < principalAmount) revert InsufficientBalance();
 
-        uint256 sharesBalance = _strategyShares();
-        uint256 principalBefore = totalPrincipal;
-        shares = (sharesBalance * principalAmount) / principalBefore;
+        shares = _emergencySharesForPrincipal(principalAmount);
         _debitParticipant(msg.sender, principalAmount);
         require(strategy.transferShares(msg.sender, shares), "share transfer failed");
 
@@ -409,9 +408,7 @@ contract PrizeVaultV5 {
         if (principalAmount == 0) revert ZeroAmount();
         if (sponsorPrincipalOf[msg.sender] < principalAmount) revert InsufficientBalance();
 
-        uint256 sharesBalance = _strategyShares();
-        uint256 principalBefore = totalPrincipal;
-        shares = (sharesBalance * principalAmount) / principalBefore;
+        shares = _emergencySharesForPrincipal(principalAmount);
         _debitSponsor(msg.sender, principalAmount);
         require(strategy.transferShares(msg.sender, shares), "share transfer failed");
 
@@ -540,6 +537,14 @@ contract PrizeVaultV5 {
         uint256 principal = totalPrincipal;
         if (principal == 0) return 0;
         return (principalAmount * strategy.totalAssets()) / principal;
+    }
+
+    function _emergencySharesForPrincipal(uint256 principalAmount) internal returns (uint256 shares) {
+        _refreshShortfallMode();
+        uint256 payoutAssets = _payoutAmount(principalAmount);
+        uint256 totalAssets = strategy.totalAssets();
+        if (totalAssets == 0) revert NoStrategyAssets();
+        shares = (_strategyShares() * payoutAssets) / totalAssets;
     }
 
     function _transferParticipant(address from, address to, uint256 amount) internal {
