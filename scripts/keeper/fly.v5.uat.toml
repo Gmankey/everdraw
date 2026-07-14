@@ -4,7 +4,8 @@ primary_region = "sjc"
 # ADR-0043 (V5 prize auto-compound) redeploy/rewire sequence:
 #   1. Operator runs `scripts/redeploy-v5-claim-draw-managers.js` against monadTestnet.
 #      It deploys new ClaimManagerV5 + DrawManagerV5 and queues the vault draw-manager change.
-#   2. Wait PrizeVaultV5.STRATEGY_CHANGE_DELAY, then run the same script with `--commit`.
+#   2. Wait PrizeVaultV5.STRATEGY_CHANGE_DELAY, then run:
+#        HARDHAT_NETWORK=monadTestnet node scripts/redeploy-v5-claim-draw-managers.js --commit
 #      Do not deploy this keeper against the new draw manager until vault.drawManager() verifies
 #      the committed address.
 #   3. Copy the committed drawManager/claimManager addresses out of deployments/monad-testnet.json.
@@ -34,8 +35,8 @@ primary_region = "sjc"
   # (Regression note: this was briefly set to the redeploy block 43905882, which broke proposals.)
   V5_KEEPER_FROM_BLOCK = "41820841"
   DEPLOYMENT_FILE = "deployments/monad-testnet.json"
-  # Local event checkpoint used by keeper-v5.js to avoid rescanning deposit/seed logs from genesis every loop.
-  V5_KEEPER_EVENT_CACHE_FILE = "draw-inputs/keeper-v5-event-cache.json"
+  # Persistent event checkpoint used by keeper-v5.js to avoid rescanning deposit/seed logs from genesis every loop.
+  V5_KEEPER_EVENT_CACHE_FILE = "/data/keeper-v5-event-cache.json"
   KEEPER_LOOP = "true"
   KEEPER_INTERVAL_MS = "60000"
   KEEPER_RECENT_CLAIM_WINDOW = "1000"
@@ -49,5 +50,9 @@ primary_region = "sjc"
 
 [deploy]
   strategy = "immediate"
+
+[mounts]
+  source = "everdraw_keeper_v5_cache"
+  destination = "/data"
 
 # No [services] block: the keeper is a pure background worker with no inbound HTTP.

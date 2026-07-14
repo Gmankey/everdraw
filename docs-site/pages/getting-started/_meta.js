@@ -1,6 +1,6 @@
 export default {
   index: 'Overview',
-  'buying-tickets': 'Depositing',
+  'depositing': 'Depositing',
   'checking-results': 'Checking Results',
   'claiming-withdrawing': 'Claiming & Withdrawing',
 }

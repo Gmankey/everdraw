@@ -8,4 +8,18 @@ const withNextra = nextra({
 
 export default withNextra({
   images: { unoptimized: true },
+  async redirects() {
+    return [
+      {
+        source: '/getting-started/buying-tickets',
+        destination: '/getting-started/depositing',
+        permanent: true,
+      },
+      {
+        source: '/how-it-works/round-lifecycle',
+        destination: '/how-it-works/draw-lifecycle',
+        permanent: true,
+      },
+    ]
+  },
 })

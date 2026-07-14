@@ -237,7 +237,7 @@ async function deployAndQueue() {
       effectiveAt: Number(pendingDrawManagerEffectiveAt),
       effectiveAtIso: isoFromTimestamp(pendingDrawManagerEffectiveAt),
       commitCommand:
-        "npx hardhat run scripts/redeploy-v5-claim-draw-managers.js --network monadTestnet -- --commit",
+        "HARDHAT_NETWORK=monadTestnet node scripts/redeploy-v5-claim-draw-managers.js --commit",
     },
     startBlock: Math.min(claimManager.blockNumber, drawManager.blockNumber),
     constructorArgs: {
@@ -276,7 +276,7 @@ async function deployAndQueue() {
   console.log(`- Vault pendingDrawManager=${pendingDrawManager}`);
   console.log(`- Wait until ${isoFromTimestamp(pendingDrawManagerEffectiveAt)} (${pendingDrawManagerEffectiveAt})`);
   console.log(
-    "- Then commit: npx hardhat run scripts/redeploy-v5-claim-draw-managers.js --network monadTestnet -- --commit",
+    "- Then commit: HARDHAT_NETWORK=monadTestnet node scripts/redeploy-v5-claim-draw-managers.js --commit",
   );
   console.log("- Do NOT re-point keeper, indexer, or frontend until the commit verifies vault.drawManager() == new DrawManagerV5.");
 }
