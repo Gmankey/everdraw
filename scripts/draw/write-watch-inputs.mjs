@@ -14,8 +14,10 @@ const FROM_BLOCK = process.env.V5_WATCHER_FROM_BLOCK || process.env.WATCHER_FROM
 // but rejects gas-bearing eth_calls — so we deliberately route each method to the RPC that
 // handles it. Override with WATCHER_LOGS_RPC_URL.
 const LOGS_RPC_URL = process.env.WATCHER_LOGS_RPC_URL || "https://monad-testnet.gateway.tenderly.co";
+const USE_CALLER_LOGS_PROVIDER = LOGS_RPC_URL === "provider";
 let _logsProvider;
-function logsProvider() {
+function logsProvider(provider) {
+  if (USE_CALLER_LOGS_PROVIDER) return provider;
   if (!_logsProvider) _logsProvider = new JsonRpcProvider(LOGS_RPC_URL);
   return _logsProvider;
 }
@@ -39,6 +41,7 @@ const LOG_TIMEOUT_MS = positiveIntEnv("WATCHER_LOG_TIMEOUT_MS", 30_000);
 // With a reliable RPC + 1000-block chunks this stays tolerable; an indexer is the long-term
 // path. Override to bound the scan only if you understand the correctness tradeoff.
 const MAX_LOG_LOOKBACK = positiveIntEnv("WATCHER_LOG_MAX_LOOKBACK", 50_000_000);
+const CACHE_VERSION = 1;
 
 const DRAW_MANAGER_ABI = [
   "function vault() view returns (address)",
@@ -125,7 +128,7 @@ async function getLogsRange(provider, filter, from, to) {
   let lastErr;
   for (let attempt = 0; attempt < 6; attempt++) {
     try {
-      return await getLogsWithTimeout(logsProvider(), filter, from, to, `logs fast ${from}-${to}`);
+      return await getLogsWithTimeout(logsProvider(provider), filter, from, to, `logs fast ${from}-${to}`);
     } catch (err) {
       lastErr = err;
       if (isRangeLimitError(err) && to > from) {
@@ -181,6 +184,138 @@ async function queryLogsChunked(provider, filter, fromBlock, toBlock, label = "l
   return logs;
 }
 
+
+function sortLogs(logs) {
+  return logs.sort((a, b) => {
+    if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber;
+    return (a.logIndex ?? a.index ?? 0) - (b.logIndex ?? b.index ?? 0);
+  });
+}
+
+function atomicWriteJson(file, value) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(value, null, 2) + "\n");
+  fs.renameSync(tmp, file);
+}
+
+export class DrawInputEventCache {
+  constructor({ file, drawManagerAddress } = {}) {
+    this.file = file || path.join(INPUT_DIR, "keeper-v5-event-cache.json");
+    this.drawManagerAddress = drawManagerAddress ? getAddress(drawManagerAddress) : "";
+    this.state = this.#read();
+  }
+
+  #read() {
+    if (!fs.existsSync(this.file)) return this.#fresh();
+    try {
+      const parsed = JSON.parse(fs.readFileSync(this.file, "utf8"));
+      if (parsed.version !== CACHE_VERSION) return this.#fresh();
+      if (this.drawManagerAddress && parsed.drawManagerAddress && getAddress(parsed.drawManagerAddress) !== this.drawManagerAddress) {
+        return this.#fresh();
+      }
+      return parsed;
+    } catch {
+      return this.#fresh();
+    }
+  }
+
+  #fresh() {
+    return {
+      version: CACHE_VERSION,
+      drawManagerAddress: this.drawManagerAddress || "",
+      vaultAddress: "",
+      fromBlock: 0,
+      deposits: { lastScannedBlock: 0, accounts: [] },
+      seeds: { lastScannedBlock: 0, blocks: {} },
+      updatedAt: "",
+    };
+  }
+
+  #ensureScope({ drawManagerAddress, vaultAddress, fromBlock }) {
+    const manager = getAddress(drawManagerAddress);
+    const vault = getAddress(vaultAddress);
+    const expectedStart = Math.max(0, Number(fromBlock) - 1);
+    const configuredFromBlock = Number(fromBlock);
+    if (
+      this.state.version !== CACHE_VERSION ||
+      (this.state.drawManagerAddress && getAddress(this.state.drawManagerAddress) !== manager) ||
+      (this.state.vaultAddress && getAddress(this.state.vaultAddress) !== vault) ||
+      !Number.isSafeInteger(Number(this.state.fromBlock)) ||
+      configuredFromBlock < Number(this.state.fromBlock)
+    ) {
+      this.state = this.#fresh();
+    }
+    this.state.drawManagerAddress = manager;
+    this.state.vaultAddress = vault;
+    this.state.fromBlock = this.state.fromBlock ? Math.min(Number(this.state.fromBlock), configuredFromBlock) : configuredFromBlock;
+    if (!Number.isSafeInteger(Number(this.state.deposits?.lastScannedBlock)) || this.state.deposits.lastScannedBlock < expectedStart) {
+      this.state.deposits = { lastScannedBlock: expectedStart, accounts: [] };
+    }
+    if (!Number.isSafeInteger(Number(this.state.seeds?.lastScannedBlock)) || this.state.seeds.lastScannedBlock < expectedStart) {
+      this.state.seeds = { lastScannedBlock: expectedStart, blocks: {} };
+    }
+  }
+
+  save() {
+    this.state.updatedAt = new Date().toISOString();
+    atomicWriteJson(this.file, this.state);
+  }
+
+  async syncDeposits({ provider, drawManagerAddress, vaultAddress, fromBlock, toBlock }) {
+    this.#ensureScope({ drawManagerAddress, vaultAddress, fromBlock });
+    const target = Number(toBlock);
+    const last = Number(this.state.deposits.lastScannedBlock || 0);
+    if (target <= last) return;
+
+    const iface = new Interface(VAULT_ABI);
+    const topic0 = iface.getEvent("Deposit").topicHash;
+    const from = last + 1;
+    const logs = await queryLogsChunked(provider, { address: getAddress(vaultAddress), topics: [topic0] }, from, target, "deposits:delta");
+    const accounts = new Set((this.state.deposits.accounts || []).map((account) => getAddress(account)));
+    for (const log of sortLogs(logs)) {
+      const parsed = iface.parseLog(log);
+      accounts.add(getAddress(parsed.args.recipient));
+    }
+    this.state.deposits = {
+      lastScannedBlock: target,
+      accounts: [...accounts].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase())),
+    };
+    this.save();
+  }
+
+  async syncSeeds({ provider, drawManagerAddress, vaultAddress, fromBlock, toBlock }) {
+    this.#ensureScope({ drawManagerAddress, vaultAddress, fromBlock });
+    const target = Number(toBlock);
+    const last = Number(this.state.seeds.lastScannedBlock || 0);
+    if (target <= last) return;
+
+    const iface = new Interface(DRAW_MANAGER_ABI);
+    const topic0 = iface.getEvent("SeedReceived").topicHash;
+    const from = last + 1;
+    const logs = await queryLogsChunked(provider, { address: getAddress(drawManagerAddress), topics: [topic0] }, from, target, "seeds:delta");
+    const blocks = { ...(this.state.seeds.blocks || {}) };
+    for (const log of sortLogs(logs)) {
+      const parsed = iface.parseLog(log);
+      blocks[parsed.args.drawId.toString()] = log.blockNumber;
+    }
+    this.state.seeds = { lastScannedBlock: target, blocks };
+    this.save();
+  }
+
+  async seedBlockFor({ provider, drawManagerAddress, vaultAddress, drawId, fromBlock, toBlock }) {
+    await this.syncSeeds({ provider, drawManagerAddress, vaultAddress, fromBlock, toBlock });
+    const block = this.state.seeds.blocks[BigInt(drawId).toString()];
+    if (!block) throw new Error(`No SeedReceived event found for draw ${drawId}`);
+    return Number(block);
+  }
+
+  async participantAccounts({ provider, drawManagerAddress, vaultAddress, fromBlock, toBlock }) {
+    await this.syncDeposits({ provider, drawManagerAddress, vaultAddress, fromBlock, toBlock });
+    return [...(this.state.deposits.accounts || [])];
+  }
+}
+
 async function seedBlockFor(provider, manager, drawId, fromBlock, toBlock) {
   // The seed for a draw always arrives shortly before now (after the draw's period). No need to
   // scan full history — search a recent window first, widening only if not found.
@@ -220,6 +355,7 @@ export async function buildDrawInput({
   drawId,
   fromBlock,
   toBlock,
+  eventCache,
 }) {
   const manager = new Contract(drawManagerAddress, DRAW_MANAGER_ABI, provider);
   const draw = await manager.draws(drawId);
@@ -231,9 +367,13 @@ export async function buildDrawInput({
 
   const vaultAddress = getAddress(await manager.vault());
   const twabAddress = getAddress(await manager.twabController());
-  const seedBlock = await seedBlockFor(provider, manager, drawId, fromBlock, toBlock);
+  const seedBlock = eventCache
+    ? await eventCache.seedBlockFor({ provider, drawManagerAddress, vaultAddress, drawId, fromBlock, toBlock })
+    : await seedBlockFor(provider, manager, drawId, fromBlock, toBlock);
   const twab = new Contract(twabAddress, TWAB_ABI, provider);
-  const accountSet = await participantAccounts(provider, vaultAddress, fromBlock, seedBlock);
+  const accountSet = eventCache
+    ? await eventCache.participantAccounts({ provider, drawManagerAddress, vaultAddress, fromBlock, toBlock: seedBlock })
+    : await participantAccounts(provider, vaultAddress, fromBlock, seedBlock);
   const accounts = [];
   for (const account of accountSet) {
     // getTwabBetween reverts (InsufficientHistory) for an account whose first observation is
@@ -306,7 +446,8 @@ async function main() {
 
   const provider = new JsonRpcProvider(RPC_URL);
   const toBlock = await provider.getBlockNumber();
-  const input = await buildDrawInput({ provider, drawManagerAddress, drawId, fromBlock, toBlock });
+  const eventCache = new DrawInputEventCache({ drawManagerAddress, file: process.env.WATCHER_EVENT_CACHE_FILE });
+  const input = await buildDrawInput({ provider, drawManagerAddress, drawId, fromBlock, toBlock, eventCache });
   fs.mkdirSync(INPUT_DIR, { recursive: true });
   const file = path.join(INPUT_DIR, `${drawId}.json`);
   fs.writeFileSync(file, JSON.stringify(input, null, 2) + "\n");

@@ -34,6 +34,8 @@ primary_region = "sjc"
   # (Regression note: this was briefly set to the redeploy block 43905882, which broke proposals.)
   V5_KEEPER_FROM_BLOCK = "41820841"
   DEPLOYMENT_FILE = "deployments/monad-testnet.json"
+  # Local event checkpoint used by keeper-v5.js to avoid rescanning deposit/seed logs from genesis every loop.
+  V5_KEEPER_EVENT_CACHE_FILE = "draw-inputs/keeper-v5-event-cache.json"
   KEEPER_LOOP = "true"
   KEEPER_INTERVAL_MS = "60000"
   KEEPER_RECENT_CLAIM_WINDOW = "1000"
