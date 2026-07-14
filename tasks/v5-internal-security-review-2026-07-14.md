@@ -59,8 +59,23 @@ Since `availableYield() = strategy.totalAssets() - totalPrincipal` is exactly th
 - **MetaMask/Blockaid** — post-deploy live-wallet check (above); submit V5 mainnet contracts for allowlisting + Sourcify verify.
 - **Pyth entropy / shMON / RPC** — verify mainnet addresses resolve on the live surface; real shMON (not the testnet mock) exercised via the fork test.
 
+---
+
+# Part 2 — JS/TS surface (indexer API, auth service, keeper, ops scripts)
+
+**Added 2026-07-14 (same review, second pass).** Surface: `scripts/indexer/src/**` (Express API, repositories, auth module), `scripts/keeper-v5.js`, `scripts/draw/**`, deploy/redeploy scripts. Checklist: injection (SQL/command), authn/authz, secrets, unsafe deserialization/eval — the categories that actually apply to JS/TS (vs. the Solidity-specific pass above).
+
+**Result: no HIGH or MEDIUM findings.** Details of what was checked and why it's clear:
+
+- **SQL injection — CLEAR.** All repositories use `better-sqlite3` prepared statements with bound parameters (`?` positional / `@named`), never string interpolation of request data (`walletRoundsRepo.ts`, `v5TranchesRepo.ts`, etc.). The one API string that reaches SQL without a format check — the `pool` query param on `/api/rounds/:roundId/participants` (`server.ts:220`) — is passed as a **bound parameter** to `listByRound` (`walletRoundsRepo.ts:176`), so it cannot alter the query. `db.exec(...)` calls (`db/database.ts`) are all static schema/DDL literals, no interpolation.
+- **API input validation — CLEAR.** Wallet path/query params are regex-gated (`/^0x[0-9a-fA-F]{40}$/`) before use; numeric params (`limit`, `tickets`, `roundId`) are `Number(...)` + `Number.isFinite` checked; `period` is whitelisted to `month`/`all`.
+- **Command injection — CLEAR.** Every `child_process` use is an argv-based variant with no shell — `spawnSync("python3", ["scripts/draw/compute_winners.py", tmp], …)` in `keeper-v5.js` (the `tmp` path is keeper-generated, and with no `shell:true` there is no shell to interpret metacharacters), `execFile`/`execFileSync` in keeper/deploy scripts. No `shell: true`, no `exec()` shell form, no `eval`/`new Function`. Inputs originate from on-chain events and operator config, not untrusted HTTP.
+- **Auth module (`src/auth/*`, separate `auth:start` server) — SOUND, and low-impact.** SIWE-style challenge/verify: 128-bit `randomBytes(16)` nonce; the signed message is reconstructed server-side and compared exactly; signature checked via `ethers.verifyMessage` (EIP-191 EOA recovery) against the claimed wallet; nonce is marked consumed (replay-protected) and expires. JWTs are HS256 signed with `AUTH_JWT_SECRET` (**required from env, no hardcoded/default fallback** — `config.ts:19-21`), and `verifyBearerToken` re-checks the server-side session for revocation/expiry/wallet-match (a symmetric key restricts `jose` to HMAC algs, so no `alg:none`/RS-confusion). **Impact note (not a vuln):** the auth service currently exposes only `challenge`/`verify`/`me`/`logout` — the token gates **no sensitive or state-changing operation** anywhere in this codebase, so even a token compromise grants no privilege here. **When it is eventually wired to protect a real resource**, (a) ensure the consuming endpoint actually verifies the JWT + session, and (b) ensure `AUTH_JWT_SECRET` is high-entropy (the code enforces presence, not strength).
+
+**Informational (LOW, non-blocking):** both servers use wide-open `cors()` — acceptable for a public read-only data API and a bearer-token (non-cookie) auth API, but tighten the allowed origins if either ever serves cookie-based sessions or non-public data.
+
 ## Follow-up
 
-1. **H-1** → builder ticket (gate or cap `emergencyRedeem*`), with a regression test.
-2. **JS/TS surface** (indexer / keeper / `web/` / redeploy scripts) was **not** covered here — run the `security-review` skill against a real `staging`-based diff for that surface (its injection/secrets/auth checklist fits JS/TS, not Solidity).
-3. Full external audit stays deferred to post-beta (#213); this internal pass is the pre-beta bar, and H-1 should be resolved before beta regardless.
+1. **H-1** → builder ticket (gate or cap `emergencyRedeem*`), with a regression test. **Only actionable finding in the whole review.**
+2. JS/TS surface (Part 2) — clean; no ticket needed. Re-review the auth module *if/when* it is wired to protect a real resource.
+3. Full external audit stays deferred to post-beta (#213); this internal pass (both parts) is the pre-beta bar, and H-1 should be resolved before beta regardless.
