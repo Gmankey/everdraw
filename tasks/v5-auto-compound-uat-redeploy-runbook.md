@@ -1,114 +1,141 @@
-# Runbook — ADR-0043 V5 prize auto-compound UAT redeploy + re-point
+# Runbook - ADR-0043 V5 prize auto-compound UAT redeploy + re-point
 
-**Implements:** ADR-0043 (`decisions/0043-v5-prize-auto-compound.md`), per the builder ticket at
-`tasks/v5-prize-auto-compound-builder-ticket.md`.
+**Implements:** ADR-0043 (`decisions/0043-v5-prize-auto-compound.md`) and the ADR-0042 timelocked draw-manager owner surface (`decisions/0042-degen-pool-security-hardening.md`).
 
-**Scope of this PR:** deploy/wiring tooling only — `scripts/redeploy-v5-claim-draw-managers.js`
-plus config placeholders. **No live deploy has been executed.** Everything below is what the
-operator/PM (with real key access) still needs to run manually, in order, to complete the
-redeploy on UAT. The contract source (PrizeVaultV5.depositFor, ClaimManagerV5 compound path +
-opt-out registry) is already merged via PR #196 / #201; only the deployed bytecode is stale.
+**Scope:** deploy/wiring tooling only - `scripts/redeploy-v5-claim-draw-managers.js` plus config placeholders. **No live deploy has been executed by this PR.** The operator/PM runs the commands below with the real signer and platform access.
 
 ## Why this redeploy is needed
 
-`DrawManagerV5.claimManager` is `immutable`. The currently-live UAT `ClaimManagerV5`
-(`0xF95e319f71B503e396295CD0A55550f56f5901eb`) predates the auto-compound logic, so a new
-`ClaimManagerV5` must be deployed — which forces a new `DrawManagerV5`
-(`0x9eb6387EeA7daC93AF9585b5D25bfc7e0A3aD89c` is superseded) even though `DrawManagerV5`'s own
-logic is unchanged. The vault (`0x76A1327c69f6f9f2571b131BB528D0c8ce1D6958`), TWAB controller, and
-shMON strategy are **not** redeployed — they hold live UAT deposits/tranches and must not be
-disturbed. They are re-pointed to the new `DrawManagerV5` via the vault's existing
-`setDrawManager` call.
+`DrawManagerV5.claimManager` is immutable. The pre-ADR-0043 UAT `ClaimManagerV5` predates auto-compound, so ADR-0043 requires a new `ClaimManagerV5`, which forces a new `DrawManagerV5` even though the draw-manager logic is otherwise unchanged.
 
-**Important correction vs. the original ticket assumption:** `setDrawManager` is **not**
-timelocked in the currently deployed `PrizeVaultV5.sol` (verified by reading the source — it's a
-single `onlyOwner` call with no queue/commit state). ADR-0042 §18 *recommends* adding a timelock
-here, but that hardening has not shipped. The redeploy script below therefore calls
-`setDrawManager` directly and takes effect in the same transaction. If a timelocked
-`setDrawManager` ships before this runbook is executed, **stop and re-derive this step** — do not
-assume the flow below still applies.
+The vault (`0x76A1327c69f6f9f2571b131BB528D0c8ce1D6958`), TWAB controller, and shMON strategy are not redeployed. They hold live UAT deposits/tranches and must not be disturbed.
 
-## Who needs a private key for which step
+## Important ADR-0042 change
 
-| Step | Requires a signer/key? | Who |
+`PrizeVaultV5.setDrawManager(address)` is now a compatibility alias for the timelocked draw-manager change flow. A redeploy is therefore **two-phase**:
+
+1. Deploy new `ClaimManagerV5` + `DrawManagerV5`, configure the claim manager, and queue the vault draw-manager change.
+2. Wait the vault delay (`STRATEGY_CHANGE_DELAY`, currently 24 hours), then commit the queued draw-manager change.
+
+Do not re-point the keeper, indexer, or frontend until phase 2 verifies `vault.drawManager() == <NEW_DRAW_MANAGER>`. If those services are pointed at the new manager before the vault commit, the system is half-wired.
+
+## Who needs a key or platform access
+
+| Step | Requires signer/key? | Who |
 |---|---|---|
-| 1. Run the redeploy script | **Yes** — must be the current `PrizeVaultV5` owner's key (`setDrawManager` is `onlyOwner`), and pays gas for 2 contract deployments + 3 setup txs | Operator |
-| 2. Update `deployments/monad-testnet.json` | No — the script does this automatically | n/a |
-| 3. Re-point keeper (`fly.v5.uat.toml` + `flyctl deploy`) | No key, but needs Fly deploy access | Operator/PM |
-| 4. Re-point indexer (`flyctl secrets set -a everdraw-indexer-uat ...`) | No key, but needs Fly access | Operator/PM |
-| 5. Re-point frontend (Vercel env + redeploy) | No key, but needs Vercel access | Operator/PM |
-| 6. Verification (all steps below) | No | Anyone |
+| 1. Deploy new claim/draw managers + queue vault change | Yes - current `PrizeVaultV5` owner key, pays gas for 2 deployments + setup txs + queue tx | Operator |
+| 2. Commit the queued vault draw-manager change | Yes - current `PrizeVaultV5` owner key, after the delay | Operator |
+| 3. Re-point keeper (`fly.v5.uat.toml` + Fly deploy) | No private key in command, but needs Fly deploy access. Keeper private key remains a Fly secret set by operator | Operator/PM |
+| 4. Re-point indexer (`flyctl secrets set -a everdraw-indexer-uat ...`) | No private key, but needs Fly access | Operator/PM |
+| 5. Re-point frontend (Vercel env + redeploy) | No private key, but needs Vercel access | Operator/PM |
+| 6. Verification | No | Anyone |
 
-Steps 2–6 are pure config/infra and safe for anyone with the relevant platform access to run once
-step 1's addresses exist. Step 1 is the only step that touches funds/ownership.
+This runbook never asks the builder to generate, paste, inspect, or hold a private key.
 
 ---
 
-## Step 1 — Deploy new ClaimManagerV5 + DrawManagerV5, re-point the vault
+## Step 1 - Deploy new ClaimManagerV5 + DrawManagerV5 and queue the vault re-point
+
+Preflight: the selected vault must expose pendingDrawManager() and pendingDrawManagerEffectiveAt(). The script checks this before deploying anything and aborts if the vault bytecode predates PR #207. Do not run this two-phase flow against an older vault without re-deriving the runbook.
 
 ```bash
 # From repo root. Requires PRIVATE_KEY (the PrizeVaultV5 owner's key) and
-# MONAD_TESTNET_RPC_URL set in the environment (same mechanism hardhat.config.js already uses
-# for scripts/deploy-v5-testnet.js -- not changed by this script).
+# MONAD_TESTNET_RPC_URL set in the environment through hardhat.config.js.
 npx hardhat run scripts/redeploy-v5-claim-draw-managers.js --network monadTestnet
 ```
 
-What it does (see the script's header comment for full detail):
-1. Reads the current live V5 record from `deployments/monad-testnet.json` (vault, TWAB
-   controller, oracle — all reused unchanged).
-2. Deploys a new `ClaimManagerV5`.
-3. Deploys a new `DrawManagerV5` wired to that new `ClaimManagerV5` (immutable ctor arg) and the
-   **existing** vault/TWAB/oracle.
-4. `claimManager.setAuthorizedSource(newDrawManager, true)` — lets the new draw manager register
-   distributions.
-5. `claimManager.setCompoundVault(newDrawManager, existingVault)` — turns on ADR-0043
-   auto-compound-by-default for this distribution source, targeting the existing vault.
-6. `vault.setDrawManager(newDrawManager)` — takes effect immediately (see the timelock note
-   above).
-7. Appends a new record to `deployments/monad-testnet.json` with the new addresses under
-   `addresses`, and the OLD claim/draw manager addresses preserved under `priorAddresses` (nothing
-   is overwritten or lost — old records in the `contracts` array stay intact too).
+What the script does:
 
-**Verification (CLAUDE.md rule 6 — do this before moving on):**
+1. Reads the current live V5 record from `deployments/monad-testnet.json`.
+2. Reuses the existing vault, TWAB controller, shMON strategy, and oracle.
+3. Deploys a new `ClaimManagerV5`.
+4. Deploys a new `DrawManagerV5` wired to the new claim manager and existing vault/TWAB/oracle.
+5. Calls `claimManager.setAuthorizedSource(newDrawManager, true)`.
+6. Calls `claimManager.setCompoundVault(newDrawManager, existingVault)`.
+7. Calls `vault.queueDrawManagerChange(newDrawManager)`.
+8. Appends a deployment record with `status: "deployed-draw-manager-queued"`, the new addresses, `drawManagerTimelock.effectiveAt`, and the commit command.
+
+**Verification before waiting:**
+
 ```bash
-# Confirm the vault actually points at the new draw manager on-chain, not just in the JSON file:
+cast call <PRIZE_VAULT_ADDRESS> "pendingDrawManager()(address)" --rpc-url https://testnet-rpc.monad.xyz
+cast call <PRIZE_VAULT_ADDRESS> "pendingDrawManagerEffectiveAt()(uint64)" --rpc-url https://testnet-rpc.monad.xyz
 cast call <PRIZE_VAULT_ADDRESS> "drawManager()(address)" --rpc-url https://testnet-rpc.monad.xyz
-# Should equal the new DrawManagerV5 address from the script's console output / deployment record.
-
-# Confirm the new ClaimManagerV5 has the new source authorized and compound vault set:
-cast call <NEW_CLAIM_MANAGER> "authorizedSource(address)(bool)" <NEW_DRAW_MANAGER> --rpc-url https://testnet-rpc.monad.xyz
-cast call <NEW_CLAIM_MANAGER> "compoundVaultFor(address)(address)" <NEW_DRAW_MANAGER> --rpc-url https://testnet-rpc.monad.xyz
 ```
-Record the new `drawManager` and `claimManager` addresses and the record's `startBlock` — you
-need them for every step below.
+
+Expected:
+
+- `pendingDrawManager()` equals the new `DrawManagerV5`.
+- `pendingDrawManagerEffectiveAt()` matches the timestamp recorded by the script.
+- `drawManager()` still equals the previous active draw manager until Step 2 commits.
+
+Stop here until the effective timestamp has passed.
 
 ---
 
-## Step 2 — Re-point the keeper
+## Step 2 - Commit the queued draw-manager change after the delay
 
-`scripts/keeper/fly.v5.uat.toml` now has `TODO_SET_AFTER_ADR_0043_REDEPLOY` placeholders for
-`DRAW_MANAGER_ADDRESS`, `CLAIM_MANAGER_ADDRESS`, and `V5_KEEPER_FROM_BLOCK`. Fill them in with the
-Step 1 output, then:
+Run this only after `pendingDrawManagerEffectiveAt` has passed:
+
+```bash
+npx hardhat run scripts/redeploy-v5-claim-draw-managers.js --network monadTestnet -- --commit
+```
+
+What the commit mode does:
+
+1. Reads the latest V5 deployment record.
+2. Verifies the signer is the vault owner.
+3. Verifies `pendingDrawManager()` equals the draw manager in the deployment record.
+4. Refuses to run if the timelock has not elapsed.
+5. Calls `vault.commitDrawManagerChange()`.
+6. Verifies `vault.drawManager()` equals the new draw manager.
+7. Appends a commit record with `status: "draw-manager-committed"`.
+
+**Verification before re-pointing anything else:**
+
+```bash
+cast call <PRIZE_VAULT_ADDRESS> "drawManager()(address)" --rpc-url https://testnet-rpc.monad.xyz
+cast call <PRIZE_VAULT_ADDRESS> "pendingDrawManager()(address)" --rpc-url https://testnet-rpc.monad.xyz
+cast call <PRIZE_VAULT_ADDRESS> "pendingDrawManagerEffectiveAt()(uint64)" --rpc-url https://testnet-rpc.monad.xyz
+```
+
+Expected:
+
+- `drawManager()` equals the new `DrawManagerV5`.
+- `pendingDrawManager()` is zero.
+- `pendingDrawManagerEffectiveAt()` is zero.
+
+Only after this verification should keeper, indexer, and frontend be re-pointed.
+
+---
+
+## Step 3 - Re-point the keeper
+
+Update `scripts/keeper/fly.v5.uat.toml` with the committed addresses:
+
+- `DRAW_MANAGER_ADDRESS` = new committed `DrawManagerV5`
+- `CLAIM_MANAGER_ADDRESS` = new `ClaimManagerV5`
+- `V5_KEEPER_FROM_BLOCK` remains the vault genesis block unless a future keeper ticket changes that rule. For the current UAT vault this is `41820841`.
+
+Then deploy the managed keeper:
 
 ```bash
 flyctl deploy . -c scripts/keeper/fly.v5.uat.toml
 ```
 
 **Verification:**
+
 ```bash
 flyctl logs -a everdraw-keeper-v5 -f
-# Confirm it boots against the NEW draw/claim manager addresses (log line at startup) and, once a
-# draw finalizes, that it executes compounds (not just wallet claims) for non-opted-out winners.
 ```
+
+Confirm it boots against the new draw/claim manager addresses and advances draws without `NotDrawManager`, `OnlyConsumer`, or claim-manager source authorization errors.
 
 ---
 
-## Step 3 — Re-point the indexer + backfill
+## Step 4 - Re-point the indexer + backfill
 
-`everdraw-indexer-uat` config is Fly-secret-authoritative (no committed per-env toml — see
-`scripts/indexer/README.md`, new "ADR-0043" section added in this PR). `POOL_ADDRESSES` must
-contain all three V5 contract addresses (vault + draw manager + claim manager); only the draw
-manager and claim manager entries change.
+`everdraw-indexer-uat` config is Fly-secret-authoritative. `POOL_ADDRESSES` must include the vault, committed draw manager, and new claim manager.
 
 ```bash
 flyctl secrets set -a everdraw-indexer-uat \
@@ -116,83 +143,56 @@ flyctl secrets set -a everdraw-indexer-uat \
   START_BLOCK="<startBlock from the Step 1 deployment record>"
 ```
 
-Setting a Fly secret restarts the machine, which will start a full backfill from `START_BLOCK`
-(the indexer has no incremental "just the new contracts" mode — it re-scans its whole configured
-range on `POOL_ADDRESSES` change since the confirmed-head cursor is keyed to the deployment, not
-per-address). On UAT's block volume this should be a fast backfill; confirm before assuming it's
-instant.
+Setting a Fly secret restarts the machine. Confirm backfill before assuming the API is fresh:
 
-**Verification:**
 ```bash
 curl -s https://everdraw-indexer-uat.fly.dev/api/health
 flyctl logs -a everdraw-indexer-uat -f
-# Confirm "lastScannedBlock" advances past the new startBlock and event counts are non-zero once
-# there's on-chain activity against the new contracts.
 ```
 
-**Known gap, not fixed by this PR:** `scripts/indexer/src/runner/abi.ts`'s `POOL_EVENT_ABI` does
-not yet include ClaimManagerV5's `PrizeCompounded` event, so the indexer will ingest a compounded
-prize as a plain `Deposit` (correct for points/tranche math) but cannot yet label it "prize
-restaked" in history. Flagged as a follow-up, not blocking this redeploy.
+`POOL_EVENT_ABI` now includes `PrizeCompounded`, so compounded prizes should appear as deposit-equivalent tranches with `source/reason = "prize_compound"` in history.
 
 ---
 
-## Step 4 — Re-point the frontend
+## Step 5 - Re-point the frontend
 
-Vercel project `everdraw-v5-uat` (site: `everdraw-v5-uat.vercel.app`). Update:
-- `VITE_V5_DRAW_MANAGER_ADDRESS` → new draw manager address
-- `VITE_V5_CLAIM_MANAGER_ADDRESS` → new claim manager address
-- Leave `VITE_V5_PRIZE_VAULT_ADDRESS` and `VITE_V5_TWAB_CONTROLLER_ADDRESS` unchanged.
+Vercel project: `everdraw-v5-uat` (`https://everdraw-v5-uat.vercel.app`). Update:
 
-Then **redeploy** — Vite bakes `VITE_*` vars in at build time, so changing the env var alone does
-not update the live bundle (this is exactly the CDN/env-resolution failure mode CLAUDE.md rule 6
-calls out). Either push a commit that touches `web/` or trigger a manual redeploy from the Vercel
-dashboard / `vercel --prod`.
+- `VITE_V5_DRAW_MANAGER_ADDRESS` -> new committed draw manager
+- `VITE_V5_CLAIM_MANAGER_ADDRESS` -> new claim manager
+- Leave `VITE_V5_PRIZE_VAULT_ADDRESS` and `VITE_V5_TWAB_CONTROLLER_ADDRESS` unchanged
 
-**Verification (CLAUDE.md rule 6 — check the LIVE bundle, not just the dashboard):**
-```bash
-curl -s https://everdraw-v5-uat.vercel.app/ | grep -o 'assets/index-[^"]*\.js' | head -1
-# fetch that bundle and confirm the new draw/claim manager addresses appear in it, e.g.:
-curl -s https://everdraw-v5-uat.vercel.app/assets/index-<hash>.js | grep -o '<NEW_DRAW_MANAGER>'
-```
-Or simpler: load the site, open devtools, and inspect whatever the app surfaces the configured
-`drawManager`/`claimManager` addresses as (network calls to the indexer, on-chain read targets,
-etc.) to confirm they match the new addresses, not the old ones.
+Then redeploy. Vite bakes `VITE_*` variables into the bundle, so changing env vars alone is not enough.
+
+**Live bundle verification:** fetch the deployed JS bundle and confirm the new draw/claim manager addresses are present.
 
 ---
 
-## Step 5 — End-to-end UAT verification (per the builder ticket's acceptance criteria)
+## Step 6 - End-to-end UAT verification
 
-Only after all of steps 1–4 are verified independently:
+Only after Steps 1-5 are independently verified:
+
 1. Run a paying draw end-to-end on UAT.
-2. Confirm a non-opted-out winner's `principalOf` grew by the prize amount and a fresh tranche
-   opened at tenure 0 (query the vault / indexer, not just the UI).
-3. Confirm points derive on that tranche at the base multiplier (no inherited multiplier from an
-   older tranche).
-4. Confirm the frontend shows the "you won — automatically restaked" surfacing.
-5. Confirm an opted-out wallet (`claimManager.setCompoundOptOut(true)` beforehand) still receives
-   MON to wallet, not a vault credit.
-6. Then: ADR-0042 scoped review of the new ClaimManager⇄Vault path, and a full UAT re-soak, per
-   the builder ticket — before any mainnet plan.
+2. Confirm a non-opted-out winner's `principalOf` grew by the prize amount and a fresh tranche opened at tenure 0.
+3. Confirm points derive on that tranche at the base multiplier.
+4. Confirm the frontend shows the win as automatically restaked.
+5. Confirm an opted-out wallet still receives MON to wallet, not a vault credit.
+6. Complete the ADR-0042 scoped review of the ClaimManager -> Vault path and run the full UAT soak before any mainnet plan.
 
 ## Rollback
 
-If something is wrong post-redeploy: the OLD `ClaimManagerV5` / `DrawManagerV5` are not
-destroyed, just superseded (see `priorAddresses` in the new deployment record). Re-running
-`vault.setDrawManager(<old DrawManagerV5 address>)` from the owner key repoints the vault back.
-Any distributions already registered against the new `ClaimManagerV5` remain claimable there
-independently of which `DrawManagerV5` the vault currently points to — winners are not stranded
-either way. Any winners with pre-redeploy deferred claims against the OLD `ClaimManagerV5` must
-still claim against that OLD address (its escrow is untouched by this redeploy).
+Rollback is also timelocked now. To repoint the vault back to a prior draw manager, the owner must:
 
-## External dependencies (CLAUDE.md rule 5)
+1. `queueDrawManagerChange(<OLD_DRAW_MANAGER>)`
+2. Wait `STRATEGY_CHANGE_DELAY`
+3. `commitDrawManagerChange()`
 
-- **Monad testnet RPC** — deploy script and all `cast`/verification calls depend on it; if it's
-  down, nothing above can proceed (no on-chain fallback).
-- **Fly** (keeper + indexer hosting) — `flyctl deploy`/`flyctl secrets set` require Fly platform
-  availability; a Fly outage delays re-pointing but doesn't corrupt state (old config keeps
-  running against old addresses).
-- **Vercel** (frontend hosting) — same shape of dependency for the frontend re-point.
-- **PrizeVaultV5 owner key** — the single point of failure for step 1; if it's lost, the vault can
-  never be re-pointed to a new draw manager again (see ADR-0042 for the broader owner-key risk
-  discussion).
+Old `ClaimManagerV5` / `DrawManagerV5` contracts remain deployed and readable. Any distributions already registered against a claim manager remain claimable there independently of the vault's active draw manager.
+
+## External dependencies
+
+- **Monad testnet RPC** - deploy script and verification calls depend on it.
+- **Fly** - keeper and indexer deployment/config depend on Fly availability.
+- **Vercel** - frontend re-point and redeploy depend on Vercel availability.
+- **PrizeVaultV5 owner key** - required for queue and commit; if lost, the vault cannot be re-pointed.
+- **Pyth oracle wiring** - the reused oracle must be valid for the committed draw manager, or a separate oracle consumer fix/runbook must be executed before keeper soak.

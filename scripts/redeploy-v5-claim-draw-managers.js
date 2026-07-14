@@ -13,24 +13,19 @@ const { ethers } = hre;
 //   - DrawManagerV5  (claimManager is `immutable` there, so a new ClaimManagerV5 forces a new
 //     DrawManagerV5 even though DrawManagerV5's own logic is unchanged)
 //
-// It then re-wires the EXISTING PrizeVaultV5 to the new DrawManagerV5.
-//
-// IMPORTANT — setDrawManager is NOT timelocked in the currently deployed/compiled
-// PrizeVaultV5.sol. ADR-0042 (§18) *recommends* adding a timelock (queue/commit, mirroring
-// STRATEGY_CHANGE_DELAY) to setDrawManager, but that hardening has not been implemented in
-// src/v5/PrizeVaultV5.sol as of this script (verified by reading the source: setDrawManager is
-// a single onlyOwner call, no pending/effectiveAt state). This script therefore calls
-// `vault.setDrawManager(newDrawManager)` directly — it does NOT invent a two-step timelock API
-// that doesn't exist on-chain. If a timelocked setDrawManager ships before this script is run,
-// this script must be updated to queue + wait + commit instead, and this comment corrected.
+// It then queues the EXISTING PrizeVaultV5 to the new DrawManagerV5. That re-wire is timelocked
+// under ADR-0042: the operator must run this script once to deploy+queue, wait the vault's
+// STRATEGY_CHANGE_DELAY, then run this script again with commit mode to activate the new
+// DrawManagerV5. Do not re-point keeper/indexer/frontend until the commit verifies on-chain.
 //
 // This script does not generate, hardcode, or print any private key. It reads a signer the
-// same way scripts/deploy-v5-testnet.js already does: via hardhat's network `accounts` config,
+// same way scripts/deploy-v5-testnet.js already does: via hardhat network accounts config,
 // which is populated from the PRIVATE_KEY env var in hardhat.config.js. That mechanism is not
 // touched here.
 
 const DEPLOYMENT_FILE = "deployments/monad-testnet.json";
 const TESTNET_CHAIN_ID = 10143n;
+const COMMIT_MODE = process.argv.includes("--commit");
 
 function readDeploymentFile() {
   return JSON.parse(fs.readFileSync(DEPLOYMENT_FILE, "utf8"));
@@ -44,6 +39,26 @@ function required(name, fallback = "") {
   const value = process.env[name] || fallback;
   if (!value) throw new Error(`Missing ${name} env var`);
   return value;
+}
+
+function sameAddress(a, b) {
+  return a?.toLowerCase() === b?.toLowerCase();
+}
+
+function isoFromTimestamp(timestamp) {
+  return new Date(Number(timestamp) * 1000).toISOString();
+}
+
+async function assertTimelockedDrawManagerFlow(vault) {
+  try {
+    await vault.pendingDrawManager();
+    await vault.pendingDrawManagerEffectiveAt();
+  } catch (err) {
+    throw new Error(
+      "PrizeVaultV5 at the selected address does not expose the ADR-0042 timelocked draw-manager flow. " +
+        "Abort before deploying new claim/draw managers; use a vault deployed from post-#207 bytecode or re-derive the runbook.",
+    );
+  }
 }
 
 async function deploy(name, args = []) {
@@ -73,7 +88,7 @@ function findCurrentV5Record(data) {
   return v5Records[v5Records.length - 1];
 }
 
-async function main() {
+async function preflightNetworkAndSigner() {
   if (hre.network.name !== "monadTestnet") {
     throw new Error("This script is testnet-only; use --network monadTestnet");
   }
@@ -85,6 +100,11 @@ async function main() {
 
   const [deployer] = await ethers.getSigners();
   if (!deployer) throw new Error("No signer configured; operator must run with PRIVATE_KEY set (see hardhat.config.js)");
+  return deployer;
+}
+
+async function deployAndQueue() {
+  const deployer = await preflightNetworkAndSigner();
 
   const deploymentData = readDeploymentFile();
   const current = findCurrentV5Record(deploymentData);
@@ -93,13 +113,14 @@ async function main() {
     throw new Error(`Existing V5 record missing prizeVault/twabController: ${JSON.stringify(current.addresses)}`);
   }
 
-  // Existing PrizeVaultV5 owner must be this signer, or setDrawManager will revert with NotOwner.
+  // Existing PrizeVaultV5 owner must be this signer, or queueDrawManagerChange will revert with NotOwner.
   const vault = await ethers.getContractAt("PrizeVaultV5", prizeVault);
+  await assertTimelockedDrawManagerFlow(vault);
   const vaultOwner = await vault.owner();
-  if (vaultOwner.toLowerCase() !== deployer.address.toLowerCase()) {
+  if (!sameAddress(vaultOwner, deployer.address)) {
     throw new Error(
       `Signer ${deployer.address} is not the PrizeVaultV5 owner (${vaultOwner}). ` +
-        `setDrawManager will revert; run with the vault owner's key or transfer ownership first.`,
+        `queueDrawManagerChange will revert; run with the vault owner's key or transfer ownership first.`,
     );
   }
 
@@ -161,8 +182,9 @@ async function main() {
   // 3. Wiring, in dependency order:
   //    a) authorize the new DrawManagerV5 as a ClaimManagerV5 distribution source
   //    b) enable auto-compound for that source, targeting the existing vault (ADR-0043 default)
-  //    c) point the existing vault at the new DrawManagerV5 (setDrawManager -- see the NOT
-  //       TIMELOCKED note at the top of this file)
+  //    c) queue the existing vault to point at the new DrawManagerV5. This is timelocked under
+  //       ADR-0042; it does NOT become active until commitDrawManagerChange is called after
+  //       pendingDrawManagerEffectiveAt.
   const setupTxs = {
     claimAuthorizeManager: await send(
       "claimManager.setAuthorizedSource",
@@ -172,15 +194,21 @@ async function main() {
       "claimManager.setCompoundVault",
       claimManager.contract.setCompoundVault(drawManager.address, prizeVault),
     ),
-    vaultSetDrawManager: await send(
-      "vault.setDrawManager (NOT timelocked in current source -- instant onlyOwner call)",
-      vault.setDrawManager(drawManager.address),
+    vaultQueueDrawManagerChange: await send(
+      "vault.queueDrawManagerChange (timelocked; run --commit after delay)",
+      vault.queueDrawManagerChange(drawManager.address),
     ),
   };
 
+  const pendingDrawManager = await vault.pendingDrawManager();
+  const pendingDrawManagerEffectiveAt = await vault.pendingDrawManagerEffectiveAt();
+  if (!sameAddress(pendingDrawManager, drawManager.address)) {
+    throw new Error(`Pending draw manager mismatch: expected ${drawManager.address}, got ${pendingDrawManager}`);
+  }
+
   const record = {
     role: "V5 M8 testnet soak - ADR-0043 auto-compound redeploy (ClaimManagerV5 + DrawManagerV5 only)",
-    status: "deployed-pending-soak",
+    status: "deployed-draw-manager-queued",
     deployedAt: new Date().toISOString(),
     deployedBy: deployer.address,
     source: "src/v5",
@@ -188,7 +216,8 @@ async function main() {
     adr: "decisions/0043-v5-prize-auto-compound.md",
     note:
       "Narrow redeploy: only ClaimManagerV5 + DrawManagerV5 were redeployed. prizeVault, " +
-      "twabController, and shmonStrategy are UNCHANGED (re-pointed via vault.setDrawManager). " +
+      "twabController, and shmonStrategy are UNCHANGED. The prizeVault draw-manager change was " +
+      "queued through the ADR-0042 timelock and is not active until commitDrawManagerChange succeeds. " +
       "pythRandomnessOracle is UNCHANGED (reused from the prior record).",
     addresses: {
       twabController,
@@ -202,6 +231,13 @@ async function main() {
       claimManager: claimManager.tx,
       drawManager: drawManager.tx,
       ...setupTxs,
+    },
+    drawManagerTimelock: {
+      pendingDrawManager,
+      effectiveAt: Number(pendingDrawManagerEffectiveAt),
+      effectiveAtIso: isoFromTimestamp(pendingDrawManagerEffectiveAt),
+      commitCommand:
+        "npx hardhat run scripts/redeploy-v5-claim-draw-managers.js --network monadTestnet -- --commit",
     },
     startBlock: Math.min(claimManager.blockNumber, drawManager.blockNumber),
     constructorArgs: {
@@ -237,11 +273,107 @@ async function main() {
   console.log("Operator next steps (see tasks/v5-auto-compound-uat-redeploy-runbook.md):");
   console.log(`- New DRAW_MANAGER_ADDRESS=${drawManager.address}`);
   console.log(`- New CLAIM_MANAGER_ADDRESS=${claimManager.address}`);
-  console.log(`- Re-point keeper (scripts/keeper/fly.v5.uat.toml) + flyctl deploy`);
-  console.log(`- Re-point indexer (everdraw-indexer-uat POOL_ADDRESSES/START_BLOCK) + backfill`);
-  console.log(`- Re-point frontend (Vercel everdraw-v5-uat VITE_V5_DRAW_MANAGER_ADDRESS / VITE_V5_CLAIM_MANAGER_ADDRESS) + redeploy`);
+  console.log(`- Vault pendingDrawManager=${pendingDrawManager}`);
+  console.log(`- Wait until ${isoFromTimestamp(pendingDrawManagerEffectiveAt)} (${pendingDrawManagerEffectiveAt})`);
+  console.log(
+    "- Then commit: npx hardhat run scripts/redeploy-v5-claim-draw-managers.js --network monadTestnet -- --commit",
+  );
+  console.log("- Do NOT re-point keeper, indexer, or frontend until the commit verifies vault.drawManager() == new DrawManagerV5.");
 }
 
+async function commitQueuedDrawManagerChange() {
+  const deployer = await preflightNetworkAndSigner();
+  const deploymentData = readDeploymentFile();
+  const current = findCurrentV5Record(deploymentData);
+  const { prizeVault, drawManager, claimManager } = current.addresses;
+  if (!prizeVault || !drawManager || !claimManager) {
+    throw new Error(`Latest V5 record missing prizeVault/drawManager/claimManager: ${JSON.stringify(current.addresses)}`);
+  }
+
+  const vault = await ethers.getContractAt("PrizeVaultV5", prizeVault);
+  await assertTimelockedDrawManagerFlow(vault);
+  const vaultOwner = await vault.owner();
+  if (!sameAddress(vaultOwner, deployer.address)) {
+    throw new Error(
+      `Signer ${deployer.address} is not the PrizeVaultV5 owner (${vaultOwner}). ` +
+        `commitDrawManagerChange will revert; run with the vault owner's key or transfer ownership first.`,
+    );
+  }
+
+  const activeDrawManager = await vault.drawManager();
+  if (sameAddress(activeDrawManager, drawManager)) {
+    console.log(`Vault already points at ${drawManager}; nothing to commit.`);
+    return;
+  }
+
+  const pendingDrawManager = await vault.pendingDrawManager();
+  const pendingDrawManagerEffectiveAt = await vault.pendingDrawManagerEffectiveAt();
+  if (!sameAddress(pendingDrawManager, drawManager)) {
+    throw new Error(`Pending draw manager mismatch: expected ${drawManager}, got ${pendingDrawManager}`);
+  }
+
+  const latest = await ethers.provider.getBlock("latest");
+  if (BigInt(latest.timestamp) < pendingDrawManagerEffectiveAt) {
+    throw new Error(
+      `Timelock not elapsed. pendingDrawManagerEffectiveAt=${pendingDrawManagerEffectiveAt} ` +
+        `(${isoFromTimestamp(pendingDrawManagerEffectiveAt)}), latest=${latest.timestamp} (${isoFromTimestamp(latest.timestamp)}).`,
+    );
+  }
+
+  const commitTx = await send("vault.commitDrawManagerChange", vault.commitDrawManagerChange());
+  const verifiedDrawManager = await vault.drawManager();
+  if (!sameAddress(verifiedDrawManager, drawManager)) {
+    throw new Error(`Commit verification failed: expected vault.drawManager()=${drawManager}, got ${verifiedDrawManager}`);
+  }
+
+  const record = {
+    role: "V5 M8 testnet soak - ADR-0043 draw-manager timelock commit",
+    status: "draw-manager-committed",
+    committedAt: new Date().toISOString(),
+    committedBy: deployer.address,
+    source: "src/v5",
+    deployCommit: process.env.DEPLOY_COMMIT || "record-git-commit",
+    adr: "decisions/0043-v5-prize-auto-compound.md",
+    note:
+      "Commit record for the ADR-0043 redeploy queued in a prior deployment record. The vault now " +
+      "points at the new DrawManagerV5; keeper/indexer/frontend may be re-pointed after verifying this record.",
+    addresses: {
+      twabController: current.addresses.twabController,
+      shmonStrategy: current.addresses.shmonStrategy,
+      prizeVault,
+      claimManager,
+      pythRandomnessOracle: current.addresses.pythRandomnessOracle,
+      drawManager,
+    },
+    deployTxs: {
+      vaultCommitDrawManagerChange: commitTx,
+    },
+    startBlock: current.startBlock,
+    constructorArgs: current.constructorArgs,
+    watcherSecrets: current.watcherSecrets,
+    priorAddresses: current.priorAddresses,
+  };
+
+  const data = readDeploymentFile();
+  data.contracts = data.contracts || [];
+  data.contracts.push(record);
+  writeDeploymentFile(data);
+
+  console.log(`Recorded ADR-0043 draw-manager commit in ${DEPLOYMENT_FILE}`);
+  console.log(`Verified vault.drawManager()=${verifiedDrawManager}`);
+  console.log("Operator next steps (see tasks/v5-auto-compound-uat-redeploy-runbook.md):");
+  console.log(`- Re-point keeper DRAW_MANAGER_ADDRESS=${drawManager} CLAIM_MANAGER_ADDRESS=${claimManager}`);
+  console.log("- Re-point indexer (everdraw-indexer-uat POOL_ADDRESSES/START_BLOCK) + backfill");
+  console.log("- Re-point frontend (Vercel everdraw-v5-uat VITE_V5_DRAW_MANAGER_ADDRESS / VITE_V5_CLAIM_MANAGER_ADDRESS) + redeploy");
+}
+
+async function main() {
+  if (COMMIT_MODE) {
+    await commitQueuedDrawManagerChange();
+  } else {
+    await deployAndQueue();
+  }
+}
 main().catch((err) => {
   console.error(err);
   process.exit(1);
