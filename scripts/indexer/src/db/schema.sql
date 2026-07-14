@@ -159,6 +159,7 @@ CREATE TABLE IF NOT EXISTS v5_position_events (
   amount TEXT NOT NULL,
   balance_after TEXT,
   raw_event_name TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'user' CHECK (source IN ('user', 'prize_compound')),
   PRIMARY KEY (tx_hash, log_index)
 );
 

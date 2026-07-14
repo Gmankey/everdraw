@@ -110,6 +110,7 @@ function ensureV5TrancheTables(db: Database.Database): void {
       amount TEXT NOT NULL,
       balance_after TEXT,
       raw_event_name TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'user' CHECK (source IN ('user', 'prize_compound')),
       PRIMARY KEY (tx_hash, log_index)
     );
 
@@ -139,4 +140,10 @@ function ensureV5TrancheTables(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_v5_tranches_wallet_pool ON v5_tranches(wallet, vault_address, pool_type);
     CREATE INDEX IF NOT EXISTS idx_v5_tranches_open ON v5_tranches(wallet, vault_address, pool_type, remaining_amount);
   `);
+
+  const positionEventColumns = db.prepare("PRAGMA table_info(v5_position_events)").all() as Array<{ name: string }>;
+  const positionEventNames = new Set(positionEventColumns.map((column) => column.name));
+  if (positionEventColumns.length > 0 && !positionEventNames.has('source')) {
+    db.exec("ALTER TABLE v5_position_events ADD COLUMN source TEXT NOT NULL DEFAULT 'user' CHECK (source IN ('user', 'prize_compound'))");
+  }
 }

@@ -28,10 +28,10 @@ export function createV5TranchesRepo(db: Database.Database): V5TranchesRepo {
   const insertPositionEventStmt = db.prepare(`
     INSERT INTO v5_position_events (
       tx_hash, log_index, block_number, block_timestamp, vault_address, wallet,
-      pool_type, action, amount, balance_after, raw_event_name
+      pool_type, action, amount, balance_after, raw_event_name, source
     ) VALUES (
       @txHash, @logIndex, @blockNumber, @blockTimestamp, LOWER(@vaultAddress), LOWER(@wallet),
-      @poolType, @action, @amount, @balanceAfter, @rawEventName
+      @poolType, @action, @amount, @balanceAfter, @rawEventName, @source
     )
     ON CONFLICT(tx_hash, log_index) DO UPDATE SET
       block_number = excluded.block_number,
@@ -42,7 +42,8 @@ export function createV5TranchesRepo(db: Database.Database): V5TranchesRepo {
       action = excluded.action,
       amount = excluded.amount,
       balance_after = excluded.balance_after,
-      raw_event_name = excluded.raw_event_name
+      raw_event_name = excluded.raw_event_name,
+      source = excluded.source
   `);
 
   const insertTrancheStmt = db.prepare(`
@@ -126,7 +127,8 @@ export function createV5TranchesRepo(db: Database.Database): V5TranchesRepo {
       action,
       amount,
       balance_after AS balanceAfter,
-      raw_event_name AS rawEventName
+      raw_event_name AS rawEventName,
+      source
     FROM v5_position_events
     WHERE LOWER(wallet) = LOWER(?)
     ORDER BY block_number ASC, log_index ASC

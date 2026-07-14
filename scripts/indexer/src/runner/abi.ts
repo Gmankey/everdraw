@@ -56,4 +56,5 @@ export const POOL_EVENT_ABI = [
   'event ClaimPaid(bytes32 indexed distributionId, uint256 indexed leafIndex, address indexed account, address token, uint256 amount)',
   'event ClaimDeferred(bytes32 indexed distributionId, uint256 indexed leafIndex, address indexed account, address token, uint256 amount)',
   'event DeferredClaimPaid(bytes32 indexed distributionId, uint256 indexed leafIndex, address indexed account, address token, uint256 amount)',
+  'event PrizeCompounded(bytes32 indexed distributionId, uint256 indexed leafIndex, address indexed account, uint256 amount)',
 ] as const;
