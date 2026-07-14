@@ -181,15 +181,32 @@ async function main() {
       "claimManager.setAuthorizedSource",
       claimManager.contract.setAuthorizedSource(manager.address, true),
     ),
-    vaultSetDrawManager: await send("vault.setDrawManager", vault.contract.setDrawManager(manager.address)),
+    claimSetCompoundVault: await send(
+      "claimManager.setCompoundVault",
+      claimManager.contract.setCompoundVault(manager.address, vault.address),
+    ),
+    vaultQueueDrawManagerChange: await send(
+      "vault.queueDrawManagerChange",
+      vault.contract.queueDrawManagerChange(manager.address),
+    ),
   };
   if (pauser) {
     setupTxs.vaultSetPauser = await send("vault.setPauser", vault.contract.setPauser(pauser));
   }
 
+  const pendingDrawManager = await vault.contract.pendingDrawManager();
+  const pendingDrawManagerEffectiveAt = await vault.contract.pendingDrawManagerEffectiveAt();
+  const configuredCompoundVault = await claimManager.contract.compoundVaultFor(manager.address);
+  if (pendingDrawManager.toLowerCase() !== manager.address.toLowerCase()) {
+    throw new Error(`Pending draw manager mismatch: expected ${manager.address}, got ${pendingDrawManager}`);
+  }
+  if (configuredCompoundVault.toLowerCase() !== vault.address.toLowerCase()) {
+    throw new Error(`Compound vault mismatch: expected ${vault.address}, got ${configuredCompoundVault}`);
+  }
+
   const record = {
     role: "V5 M8 testnet soak",
-    status: "deployed-pending-soak",
+    status: "deployed-draw-manager-queued",
     deployedAt: new Date().toISOString(),
     deployedBy: deployer.address,
     source: "src/v5",
@@ -231,13 +248,23 @@ async function main() {
       drawManagerAddressSecret: "DRAW_MANAGER_ADDRESS",
       fromBlockSecret: "V5_WATCHER_FROM_BLOCK",
     },
+    activation: {
+      pendingDrawManager,
+      effectiveAt: Number(pendingDrawManagerEffectiveAt),
+      effectiveAtIso: new Date(Number(pendingDrawManagerEffectiveAt) * 1000).toISOString(),
+      commitCommand:
+        "HARDHAT_NETWORK=monadTestnet node scripts/redeploy-v5-claim-draw-managers.js --commit",
+    },
   };
 
   writeDeploymentRecord(record);
   console.log(`Recorded V5 M8 testnet deployment in ${DEPLOYMENT_FILE}`);
   console.log("Operator next steps:");
-  console.log(`- Set GitHub Actions secret DRAW_MANAGER_ADDRESS=${manager.address}`);
-  console.log(`- Set GitHub Actions secret or var V5_WATCHER_FROM_BLOCK=${record.startBlock}`);
+  console.log(`- Wait until ${record.activation.effectiveAtIso} (${pendingDrawManagerEffectiveAt})`);
+  console.log("- Commit: HARDHAT_NETWORK=monadTestnet node scripts/redeploy-v5-claim-draw-managers.js --commit");
+  console.log("- Do not re-point keeper, indexer, or frontend until the commit verifies on-chain.");
+  console.log(`- After commit, set DRAW_MANAGER_ADDRESS=${manager.address}`);
+  console.log(`- After commit, set V5_WATCHER_FROM_BLOCK=${record.startBlock}`);
 }
 
 main().catch((err) => {

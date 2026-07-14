@@ -26,7 +26,15 @@ export DRAW_PERIOD_SEC=3600
 export FIRST_PERIOD_DELAY_SEC=0
 npx hardhat compile && npx hardhat run scripts/deploy-v5-testnet.js --network monadTestnet
 ```
-Paste me the output. **I verify** alignment (`remainder 0`), `previewStartDraw` exists on the new DrawManager, and wiring.
+The deploy queues `PrizeVaultV5.queueDrawManagerChange`; it does **not** activate the new DrawManager immediately. Keep the keeper, indexer, and frontend on the prior deployment until the printed `pendingDrawManagerEffectiveAt` has elapsed. Then run the commit using the same owner key:
+
+```bash
+HARDHAT_NETWORK=monadTestnet node scripts/redeploy-v5-claim-draw-managers.js --commit
+```
+
+The commit script must verify `vault.drawManager() == new DrawManagerV5` before any service is re-pointed. The deploy also configures and verifies `claimManager.compoundVaultFor(newDrawManager) == prizeVault`.
+
+Paste me both outputs. **I verify** alignment (`remainder 0`), `previewStartDraw` exists on the new DrawManager, the timelock commit, and all wiring.
 
 ### C. Yield for a paying draw (to confirm at execution)
 The deployed shMON mock `0x282B`'s yield lever is opaque (repo source is a stub). **Decision:** at execution, either (a) confirm `0x282B`'s lever and bump assets-per-share, or (b) redeploy the soak against a `setRate`-capable mock (`test/mocks/MockERC4626YieldVault`) via the `SHMON` env override so we can mint yield on demand. I'll nail this when we get here; if it needs a deploy step, it's a small builder ask. **Skips don't need this — only the paying-draw gate does.**
