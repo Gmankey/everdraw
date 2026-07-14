@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { AbiCoder, Contract, JsonRpcProvider, Wallet, ZeroAddress, getAddress, keccak256 } from "ethers";
-import { buildDrawInput } from "./draw/write-watch-inputs.mjs";
+import { DrawInputEventCache, buildDrawInput } from "./draw/write-watch-inputs.mjs";
 import { compute } from "./draw/compute-winners.js";
 
 const DEPLOYMENT_FILE = process.env.DEPLOYMENT_FILE || "deployments/monad-testnet.json";
@@ -23,6 +23,7 @@ const RPC_RETRIES = Number(process.env.KEEPER_RPC_RETRIES || 2);
 const RPC_BACKOFF_MS = Number(process.env.KEEPER_RPC_BACKOFF_MS || 1_000);
 const HEALTHCHECK_TIMEOUT_MS = Number(process.env.KEEPER_HEALTHCHECK_TIMEOUT_MS || 5_000);
 const RECENT_CLAIM_WINDOW = Number(process.env.KEEPER_RECENT_CLAIM_WINDOW || 5);
+const KEEPER_EVENT_CACHE_FILE = process.env.V5_KEEPER_EVENT_CACHE_FILE || process.env.WATCHER_EVENT_CACHE_FILE;
 const abi = AbiCoder.defaultAbiCoder();
 
 const DRAW_MANAGER_ABI = [
@@ -85,6 +86,14 @@ export function firstRecentDrawId(currentDrawId, window = RECENT_CLAIM_WINDOW) {
   const size = BigInt(window);
   if (size <= 0n) throw new Error(`Invalid recent draw window: ${window}`);
   return current > size ? current - size + 1n : 1n;
+}
+
+export function claimDrawIds(finalizedThisCycle, firstDrawToClaim, currentDrawId) {
+  const first = BigInt(firstDrawToClaim);
+  const current = BigInt(currentDrawId);
+  const ids = new Set((finalizedThisCycle || []).map((id) => BigInt(id).toString()));
+  for (let drawId = first; drawId <= current; drawId++) ids.add(drawId.toString());
+  return [...ids].map((id) => BigInt(id)).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
 function sleep(ms) {
@@ -190,11 +199,29 @@ function computeWithPythonParity(input) {
   return result;
 }
 
-async function buildAndPersistInput(provider, drawManagerAddress, drawId, fromBlock) {
-  const toBlock = await rpcRead("provider.getBlockNumber", () => provider.getBlockNumber());
-  const input = await buildDrawInput({ provider, drawManagerAddress, drawId: BigInt(drawId), fromBlock, toBlock });
+function readCachedInput(inputFile, drawManagerAddress, drawId) {
+  if (!fs.existsSync(inputFile)) return null;
+  try {
+    const input = JSON.parse(fs.readFileSync(inputFile, "utf8"));
+    if (BigInt(input.drawId) !== BigInt(drawId)) return null;
+    if (getAddress(input.drawManager) !== getAddress(drawManagerAddress)) return null;
+    return input;
+  } catch {
+    return null;
+  }
+}
+
+async function buildAndPersistInput(provider, drawManagerAddress, drawId, fromBlock, eventCache) {
   fs.mkdirSync(DRAW_INPUT_DIR, { recursive: true });
   const inputFile = path.join(DRAW_INPUT_DIR, `${drawId}.json`);
+  const cached = readCachedInput(inputFile, drawManagerAddress, drawId);
+  if (cached) {
+    console.log(`using cached draw input ${inputFile} (${cached.accounts?.length || 0} accounts, seedBlock=${cached.seedBlock})`);
+    return { input: cached, inputFile };
+  }
+
+  const toBlock = await rpcRead("provider.getBlockNumber", () => provider.getBlockNumber());
+  const input = await buildDrawInput({ provider, drawManagerAddress, drawId: BigInt(drawId), fromBlock, toBlock, eventCache });
   fs.writeFileSync(inputFile, JSON.stringify(input, null, 2) + "\n");
   return { input, inputFile };
 }
@@ -264,7 +291,7 @@ async function maybeRerequestSeed({ manager, signer, provider, drawId, draw }) {
   return true;
 }
 
-async function maybePropose({ manager, signer, provider, drawManagerAddress, drawId, fromBlock }) {
+async function maybePropose({ manager, signer, provider, drawManagerAddress, drawId, fromBlock, eventCache }) {
   const draw = await rpcRead(`manager.draws(${drawId})`, () => manager.draws(drawId));
   if (Number(draw.status) !== 2) return false;
   const primaryProposer = getAddress(await rpcRead("manager.primaryProposer", () => manager.primaryProposer()));
@@ -273,7 +300,7 @@ async function maybePropose({ manager, signer, provider, drawManagerAddress, dra
     return false;
   }
 
-  const { input, inputFile } = await buildAndPersistInput(provider, drawManagerAddress, drawId, fromBlock);
+  const { input, inputFile } = await buildAndPersistInput(provider, drawManagerAddress, drawId, fromBlock, eventCache);
   const result = computeWithPythonParity(input);
   if (result.leaves.length === 0) throw new Error(`draw ${drawId} computed zero leaves`);
   await send(
@@ -298,10 +325,10 @@ async function maybeFinalize({ manager, signer, provider, drawId }) {
   return true;
 }
 
-async function maybeClaim({ manager, signer, provider, drawManagerAddress, claimManagerAddress, drawId, fromBlock }) {
+async function maybeClaim({ manager, signer, provider, drawManagerAddress, claimManagerAddress, drawId, fromBlock, eventCache }) {
   const draw = await rpcRead(`manager.draws(${drawId})`, () => manager.draws(drawId));
   if (Number(draw.status) !== 4) return false;
-  const { input, inputFile } = await buildAndPersistInput(provider, drawManagerAddress, drawId, fromBlock);
+  const { input, inputFile } = await buildAndPersistInput(provider, drawManagerAddress, drawId, fromBlock, eventCache);
   const result = computeWithPythonParity(input);
   const claimManager = new Contract(claimManagerAddress, CLAIM_MANAGER_ABI, provider);
   const distributionId = distributionIdFor(drawManagerAddress, drawId);
@@ -331,18 +358,18 @@ async function maybeClaim({ manager, signer, provider, drawManagerAddress, claim
   return true;
 }
 
-async function reconcileLifecycleDraw({ manager, signer, provider, drawManagerAddress, claimManagerAddress, drawId, draw, fromBlock }) {
+async function reconcileLifecycleDraw({ manager, signer, provider, drawManagerAddress, claimManagerAddress, drawId, draw, fromBlock, eventCache }) {
   const status = Number(draw.status);
   if (status === 1) {
     return await maybeRerequestSeed({ manager, signer, provider, drawId, draw });
   }
   if (status === 2) {
-    return await maybePropose({ manager, signer, provider, drawManagerAddress, drawId, fromBlock });
+    return await maybePropose({ manager, signer, provider, drawManagerAddress, drawId, fromBlock, eventCache });
   }
   if (status === 3) {
     const finalized = await maybeFinalize({ manager, signer, provider, drawId });
     if (!finalized) return false;
-    await maybeClaim({ manager, signer, provider, drawManagerAddress, claimManagerAddress, drawId, fromBlock });
+    await maybeClaim({ manager, signer, provider, drawManagerAddress, claimManagerAddress, drawId, fromBlock, eventCache });
     return true;
   }
   return false;
@@ -359,6 +386,10 @@ async function runOnce() {
   const readProvider = new JsonRpcProvider(READ_RPC_URL);
   const signer = new Wallet(PRIVATE_KEY, writeProvider);
   const manager = new Contract(drawManagerAddress, DRAW_MANAGER_ABI, readProvider);
+  const eventCache = new DrawInputEventCache({
+    file: KEEPER_EVENT_CACHE_FILE || path.join(DRAW_INPUT_DIR, "keeper-v5-event-cache.json"),
+    drawManagerAddress,
+  });
   const network = await rpcRead("readProvider.getNetwork", () => readProvider.getNetwork());
   if (network.chainId !== 10143n) throw new Error(`wrong chain id ${network.chainId}; expected Monad testnet 10143`);
   const writeNetwork = await rpcRead("writeProvider.getNetwork", () => writeProvider.getNetwork());
@@ -366,17 +397,36 @@ async function runOnce() {
   const balance = await rpcRead(`writeProvider.getBalance(${signer.address})`, () => writeProvider.getBalance(signer.address));
   if (balance < LOW_BALANCE_WEI) throw new Error(`keeper balance low: ${signer.address} balance=${balance}`);
 
-  let acted = await maybeStartDraw({ manager, provider: readProvider, signer, fromBlock });
+  let acted = false;
   const currentDrawId = await rpcRead("manager.currentDrawId", () => manager.currentDrawId());
   if (currentDrawId === 0n) {
     console.log("no draw exists yet");
+    acted = await maybeStartDraw({ manager, provider: readProvider, signer, fromBlock });
+    await ping(true);
     return acted;
   }
+
+  const finalizedThisCycle = [];
   for (let drawId = 1n; drawId <= currentDrawId; drawId++) {
     const draw = await rpcRead(`manager.draws(${drawId})`, () => manager.draws(drawId));
-    if (![1, 2, 3].includes(Number(draw.status))) continue;
+    if (Number(draw.status) !== 3) continue;
+    console.log(`finalize pass draw ${drawId} status=${statusName(draw.status)}`);
+    const finalized = await maybeFinalize({ manager, signer, provider: readProvider, drawId });
+    if (finalized) {
+      finalizedThisCycle.push(drawId);
+      acted = true;
+    }
+  }
+
+  acted = await maybeStartDraw({ manager, provider: readProvider, signer, fromBlock }) || acted;
+  const afterStartDrawId = await rpcRead("manager.currentDrawId", () => manager.currentDrawId());
+  let proposedThisCycle = false;
+  for (let drawId = 1n; drawId <= afterStartDrawId; drawId++) {
+    const draw = await rpcRead(`manager.draws(${drawId})`, () => manager.draws(drawId));
+    if (![1, 2].includes(Number(draw.status))) continue;
+    if (Number(draw.status) === 2 && proposedThisCycle) continue;
     console.log(`outstanding draw ${drawId} status=${statusName(draw.status)}`);
-    acted = await reconcileLifecycleDraw({
+    const didAct = await reconcileLifecycleDraw({
       manager,
       signer,
       provider: readProvider,
@@ -385,11 +435,15 @@ async function runOnce() {
       drawId,
       draw,
       fromBlock,
-    }) || acted;
+      eventCache,
+    });
+    acted = didAct || acted;
+    if (didAct && Number(draw.status) === 2) proposedThisCycle = true;
   }
 
-  const firstDrawToClaim = firstRecentDrawId(currentDrawId);
-  for (let drawId = firstDrawToClaim; drawId <= currentDrawId; drawId++) {
+  const firstDrawToClaim = firstRecentDrawId(afterStartDrawId);
+  const claimDraws = claimDrawIds(finalizedThisCycle, firstDrawToClaim, afterStartDrawId);
+  for (const drawId of claimDraws) {
     const draw = await rpcRead(`manager.draws(${drawId})`, () => manager.draws(drawId));
     console.log(`recent draw ${drawId} status=${statusName(draw.status)}`);
     if (Number(draw.status) === 4) {
@@ -401,6 +455,7 @@ async function runOnce() {
         claimManagerAddress,
         drawId,
         fromBlock,
+        eventCache,
       }) || acted;
     }
   }
