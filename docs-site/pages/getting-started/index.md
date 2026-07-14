@@ -1,7 +1,7 @@
 # Getting Started
 
-Everything you need to start using EverDraw.
+Everything you need to start using EverDraw V5.
 
-* [Buying Tickets](buying-tickets.md). Connect your wallet, deposit MON, enter the draw.
-* [Checking Results](checking-results.md). Find out who won.
-* [Claiming and Withdrawing](claiming-withdrawing.md). Get your prize or principal back.
+* [Depositing](buying-tickets.md). Connect your wallet, deposit MON or shMON, and start earning entries.
+* [Checking Results](checking-results.md). See draw winners and your history.
+* [Claiming and Withdrawing](claiming-withdrawing.md). Claim prizes, restake winnings, or withdraw principal.

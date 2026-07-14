@@ -1,78 +1,94 @@
 # Points
 
-Points are EverDraw's way of recognising loyal participants. They accrue automatically when you take part in a round and grow faster the longer you keep playing.
+EverDraw points recognise participation and consistency. They do not have a stated cash or token value, and they do not change your odds of winning a draw.
 
-You can see your balance in the top right of the app, or open your profile page for a full breakdown.
+You can see your balance in the app header and open your profile page for a full breakdown.
 
 ---
 
 ## How points are earned
 
-Points are awarded when a round you participated in **settles**, not when you deposit. If you bought tickets and the round settles, you get points. If a round is skipped (no tickets sold) or fails (rare keeper edge case), no points are awarded for that round.
-
-The formula:
+V5 base points come from the entries that actually draw:
 
 ```
-round_points = (tickets × streak_multiplier) + bonuses
+base_points = 0.005 x balance in MON x minutes held in the draw period
 ```
 
-- **Tickets:** 1 ticket equals 1 MON equals 1 base point.
-- **Streak multiplier:** see below.
-- **Bonuses:** additional points for winning, hitting milestones, or playing both vaults in a week.
+A steady 500 MON balance over a full weekly draw earns about 25,200 base entries before multipliers. If you join halfway through a draw, you earn only the post-deposit slice for that draw, then full-period entries from the next draw if you keep holding.
 
-Example. You bought 5 tickets in a round, you are on a 6-week streak (×1.10), you did not win, and you don't hold a position in another vault that week. Round points = `(5 × 1.10) + 0 = 5.5`, rounded.
+Skipped or dust draws can still count for participation and streak logic when you held a position. The important distinction is whether you were present, not whether the prize was large.
 
 ---
 
-## Streak
+## Tranche-based multipliers
 
-Your streak is the number of consecutive weeks you held an active deposit in any vault. The system checks once per weekly cycle: if you have at least one open or locked position in any vault, your streak goes up by 1. If you don't, it resets to 0.
+Multipliers attach to each deposit tranche, not your whole wallet. Fresh money starts at the base rung, even if you have older deposits with higher tenure. This prevents someone from keeping a tiny old deposit and applying its multiplier to a large new deposit.
 
-You don't need to deposit in more than one vault each week. One is enough.
+Withdrawals consume the newest tranche first:
+
+- **Partial withdrawal:** removes the newest portion and its tenure; older remaining tranches keep their tenure.
+- **Full withdrawal:** closes that pool position and resets that pool's streak/multiplier path.
+
+Vault and Patron pool tranches are independent.
+
+---
+
+## Vault streak tiers
+
+Vault deposits follow the weekly streak curve:
+
+| Weekly streak | Tier | Multiplier |
+|---|---|---|
+| 0-3 | Bronze | 1.00x |
+| 4-7 | Silver | 1.10x |
+| 8-12 | Gold | 1.25x |
+| 13-25 | Platinum | 1.50x |
+| 26+ | Diamond | 2.00x |
+
+The app may show an effective blended multiplier when you have several tranches at different tenure levels. Your tier badge is separate from win odds.
+
+---
+
+## Patron pool points
+
+Patron pool deposits earn boosted EverDraw points but receive zero draw entries and no chance to win. The Patron multiplier ramps by consecutive weekly participation in that pool:
+
+| Patron weeks | Patron multiplier |
+|---|---|
+| 1 | 2x |
+| 2 | 3x |
+| 3 | 4x |
+| 4+ | 5x |
+
+Patron points use the Patron ramp, not the vault streak multiplier.
+
 ---
 
 ## Bonuses
 
-These layer on top of the base × multiplier. Below are only some of the bonuses. (There may be other hidden bonuses)
+Bonuses are added on top of base points and multipliers.
 
-### One-time bonuses
+- **First Deposit:** +25,000 once per wallet.
+- **Win:** +25,000 when you win a draw.
+- **Comeback King:** +100,000 when you rejoin after missing two or more consecutive draws.
+- **Prize Patron:** +25,000 on your first Patron pool deposit.
+- **Loss Streak:** bonuses at 10, 26, and 52 consecutive non-winning draws.
+- **Streak Milestones:** bonuses at selected weekly streak milestones.
 
-Awarded once per wallet.
-
-- **First deposit:** +25 points the first time you ever buy a ticket.
-- **Comeback King:** +100 points the first time you win after having made a prior deposit. If your first-ever deposit wins immediately, it does not trigger this bonus.
-- **On the Double:** +50 points the first time you have active positions in two vaults.
-- **Loss-streak thresholds:** one-time bonuses at 10, 26, and 52 consecutive non-winning settled rounds. Skipped rounds do not count and do not reset the counter.
-- **Streak milestones:** +50 at 4 weeks, and a few more at certain milestones (which you can find out by maintaining your streak). Each one fires the first time you reach that streak length.
-
-### Recurring bonuses
-
-- **Win bonus:** +25 points every round you win.
-
-There is no recurring both-vault or loss-streak multiplier. That keeps the system harder to farm with tiny side deposits or permanent consolation boosts. Boring but useful, which is annoyingly often the right answer.
-
----
-
-## Tiers
-
-Tiers are visual. They reflect your current streak length and unlock the matching multiplier. You start off in Bronze. Your tier badge is shown next to your points balance.
-
-Tiers do not change your odds. The win odds are strictly your tickets divided by total tickets in the round, the same for everyone.
+There is no On The Double bonus in V5.
 
 ---
 
 ## Where you see points
 
-- **Header.** Top right of the app. Shows your total points and current streak with a flame icon.
-- **Deposit preview.** Below the buy button. Estimated points you'll earn for this round.
-- **Settlement card.** When a round settles, the previous vault view shows the points you earned for that round.
-- **Profile page.** Lifetime balance, current streak with progress bar to the next tier, recent rounds, and bonuses earned.
-- **Leaderboard.** Top 100 by lifetime points, with your rank shown if you're outside the top 100.
+- **Header:** total points, streak, and tier summary.
+- **Profile page:** lifetime points, bonuses, recent draws, your entry, and next multiplier progress.
+- **Patron pool:** boosted points source and ramp progress.
 
 ---
 
 ## Things to know
 
-- **Sybil splitting doesn't help.** 5 wallets each with 1 ticket earn the same as 1 wallet with 5 tickets, since base points are linear in your deposit size.
-- **Whales don't dominate.** Points multipliers are about consistency not size. Large deposits are already rewarded from base points awards. 
-- **shMonad points stack with EverDraw points.** Two separate programs, both running on the same activity. You earn from both at once.
+- Splitting one position across several wallets does not create extra base points; base points are linear in balance over time.
+- Large deposits earn more base entries, but the multiplier is earned by each tranche's own tenure.
+- shMonad may run its own points program separately from EverDraw points.

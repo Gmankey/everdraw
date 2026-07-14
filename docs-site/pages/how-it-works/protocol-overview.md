@@ -1,54 +1,55 @@
 # Protocol Overview
 
-EverDraw is a no-loss prize protocol. You deposit, your deposit earns staking yield while a round runs, and at the end of the round that pooled yield is paid out as a prize to one or more winning tickets. Everyone else gets their full deposit back. Nobody loses principal — the prize is funded entirely by yield, never by other depositors.
+EverDraw is a no-loss prize protocol. You deposit MON or shMON, the vault stakes it as shMON, and the staking yield funds weekly prizes. Your principal stays withdrawable; the prize comes from yield, not from other depositors.
 
 ## The core loop
 
 ```
-Deposit MON to buy tickets in an open round
-  ↓
-Your deposit is held as shMON, earning Monad staking yield
-  ↓
-The deposit window closes; the round locks while yield accrues
-  ↓
-At the end of the lock, a verifiable random draw selects the winner(s)
-  ↓
-Winners receive the yield prize; everyone else withdraws full principal
-  ↓
-The vault's next round opens, and the cycle repeats
+Deposit MON or shMON into the vault
+  ->
+Your balance is staked as shMON and starts earning yield
+  ->
+During each weekly draw period, your time-weighted balance earns entries
+  ->
+At the draw, verifiable randomness selects winner(s) from those entries
+  ->
+Yield is paid as the prize; your principal remains yours
+  ->
+The next weekly draw period continues from the live balances
 ```
+
+Deposits and withdrawals are continuous. There is no user-facing sales window where deposits lock. If you deposit halfway through a weekly draw period, only the time after your deposit counts for that draw. If you withdraw before the draw, you keep the entries already earned for that draw and stop earning future entries on the withdrawn amount.
 
 ## The no-loss guarantee
 
-Put 1 MON in, get at least 1 MON back — win or lose. While a round runs, your deposit earns staking yield. At settlement, that yield is pooled into the prize and paid to the winning ticket(s). Every non-winning ticket redeems for its full face value. The prize comes from yield, never from anyone's principal.
+Put 1 MON of principal in, get 1 MON of principal value back when you withdraw. Your deposit is tracked separately from prize yield. Winning or not winning does not reduce your principal.
 
-This is enforced in the contract. Principal and prize are tracked as separate state, and there is no privileged function that can move depositor principal. The worst outcome of any round is simply: you got your money back and didn't win this time.
+Withdrawals return the principal value through EverDraw's shMON path. If you want raw MON, the app can send you to shMonad to convert; that conversion follows shMonad's own unstaking process.
 
-## How a round is structured
+## Entries and odds
 
-Every vault runs in repeating rounds. Each round has:
+EverDraw V5 uses time-weighted entries, not fixed tickets bought at a deadline. Entries accrue from your balance over time:
 
-1. **A deposit window** — the period during which you can buy tickets.
-2. **A lock (yield period)** — deposits are closed and the pooled stake earns yield. This accruing yield *is* the prize.
-3. **A draw** — a verifiable random selection picks the winner(s).
-4. **Claim & withdrawal** — winners claim their prize, everyone else withdraws their principal, and the vault's next round opens.
+```
+entries = 0.005 x balance in MON x minutes held in the draw period
+```
 
-The exact window and lock durations are set per vault. The protocol runs more than one vault on staggered schedules, so there is regularly a draw approaching across the protocol rather than a single recurring event.
+A steady 1,000 MON balance over a full weekly draw earns about 50,400 entries for that draw. Joining late earns fewer entries for that draw, then a full-period balance earns full entries from the next draw onward.
 
-[Full round lifecycle →](round-lifecycle.md)
+Odds are proportional to entries in that draw. Points tiers, streaks, and Patron boosts do not increase win odds.
 
-## Tickets, winners, and odds
+## Patron pool
 
-Each vault sets a ticket price (for example, 1 MON per ticket). Your chance of winning a given prize position is simply your tickets divided by the total tickets in that round — 100 of 1,000 tickets is a 10% chance. There is no house edge and no boosted tier.
+The Patron pool is separate from the main vault position. Patron deposits add yield to the prize and earn boosted EverDraw points, but they receive zero entries and cannot win the weekly draw.
 
-A vault can pay a single winner or split its prize across several winning positions by a fixed allocation set when the vault is created (for example, a larger first prize plus smaller runner-up prizes). The draw selects distinct winning tickets; the allocation determines how the pooled yield is divided among them.
+Patron pool points ramp with consecutive weekly participation: 2x in the first week, then 3x, 4x, and 5x from week four onward. Patron deposits are withdrawable, but they are not tradeable DeFi receipts while inside EverDraw.
 
-## Sponsored prizes
+## Prize funding
 
-Beyond depositor yield, anyone can add to a round's prize pool by sponsoring it. Sponsored funds are deposited into the same yield source, so they earn yield alongside the round and increase what winners receive. If a round ends up with no participants, sponsors can reclaim their contribution.
+The prize is the yield available in the vault at draw time. Main-vault deposits and Patron deposits both increase the total yield source, so both can make the weekly prize larger. The app shows the currently accrued prize and an estimated projection for the draw.
 
 ## Keepers and liveness
 
-Rounds advance through public functions — committing a draw, settling it, and opening the next round. A keeper runs these on schedule as a convenience, but the functions are permissionless: anyone can call them. Depositor funds are never at risk if a keeper goes offline, and the randomness has a built-in timeout so no round can be permanently stuck.
+A keeper advances draws on schedule: starts the draw, requests randomness, proposes the result, and finalizes it. The protocol is designed so depositor principal is not at risk if the keeper is delayed. If a draw has no yield to pay, it can be skipped rather than forcing an empty prize.
 
-[How winners are selected →](winner-selection.md)
+[How winners are selected ->](winner-selection.md)

@@ -1,36 +1,37 @@
-# Buying Tickets
+# Depositing
 
 ## What you need
 
-A wallet on Monad mainnet and some MON (or shMON). That's it.
+A wallet on Monad mainnet and some MON or shMON.
 
 ---
 
 ## Steps
 
-**1. Open the app.** Go to [everdraw.xyz](https://everdraw.xyz). The current open vault is the landing view.
+**1. Open the app.** Go to [everdraw.xyz](https://everdraw.xyz). The vault view shows the current prize, your position, your entries for this draw, and the countdown to the next prize draw.
 
-**2. Connect your wallet.** Click "Connect Wallet" and approve. If your wallet isn't on Monad, EverDraw prompts you to switch. If Monad isn't configured, it prompts to add the network.
+**2. Connect your wallet.** Click Connect Wallet and approve. If your wallet is not on Monad, EverDraw prompts you to switch or add the network.
 
-**3. Check the vault state.**
+**3. Choose deposit asset.** You can deposit MON or shMON. MON is staked through the vault path; shMON can enter directly if you already hold it.
 
-- **Green ring**: the vault is open, deposits accepted, with a countdown showing time left in the deposit window.
-- **Purple ring**: the vault is locked, yield accruing, with a countdown to the draw.
-- **Closed**: the vault is temporarily paused or between rounds; deposits aren't open right now.
+**4. Enter an amount.** Use the deposit tab, enter the amount, or click Max. The app shows the wallet balance for deposits and your deposited balance for withdrawals.
 
-**4. Buy.** Enter how many tickets you want. The buy form shows the current price per ticket. Click "Buy Tickets" and sign the transaction. Your MON is staked as shMON the moment the transaction confirms, and your ticket count appears on the stat cards.
+**5. Confirm.** Sign the transaction. Once confirmed, your balance starts earning entries for the current weekly draw from that moment onward.
 
-You can also pay with shMON if you already hold it — toggle the deposit asset on the buy form.
+---
 
-**5. Wait for the draw.** The round runs itself. When the deposit window and lock both end, the draw runs and the winner(s) are recorded on-chain. Results show up under "Previous Vault" once the round settles.
+## Patron pool
+
+The Patron pool is separate from the main vault. Depositing there contributes yield to the prize and earns boosted EverDraw points, but gives zero entries and no chance to win.
+
+Use the Patron page if your goal is to support the prize pool and earn boosted points rather than enter the draw.
 
 ---
 
 ## Things to know
 
-- You can buy multiple times in the same round — your ticket counts add up.
-- You can hold positions in more than one vault at once. Each vault is independent.
-- Your odds for any prize are your tickets divided by the total tickets in the round.
-- Each vault sets its own ticket price; the buy form always shows the live price.
-- Buys are blocked in the final seconds before the deposit window closes, to avoid transactions reverting on the boundary.
-- You cannot withdraw mid-round. Plan your deposit timing.
+- Deposits and withdrawals are open anytime unless the vault is paused.
+- The countdown is for the next prize draw, not a deposit deadline.
+- Entries are time-weighted. Earlier deposits count for more of the current draw period.
+- Withdrawing keeps entries already earned for the current draw and stops future entries on the withdrawn amount.
+- Full withdrawals can reset points streaks for that pool.
