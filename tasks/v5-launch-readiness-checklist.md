@@ -42,7 +42,7 @@ Long poles = the soak and the security review; start both as soon as the auto-co
 ## C. Decisions
 - [x] **Auto-compound (ADR-0043)** — IN launch scope (operator, 2026-07-07). Sequenced per above.
 - [x] **V4.1-B (ADR-0044)** — withdraw-only sunset, no forced migration, points nudge to V5. PM call, 2026-07-07.
-- [ ] **Security review scope — OPEN, operator decides.** ADR-0042 was honest that there is **no external audit yet**. With real funds — and especially with auto-compound adding a new ClaimManager⇄Vault call path — decide: full external audit, scoped review, or bug-bounty-only. This gates a real-money launch and is a budget decision. The auto-compound diff (PR #196) is the reviewable artifact.
+- [x] **Security review scope — DECIDED (operator, 2026-07-14): full external audit is deferred to AFTER beta**, once the product has real users exercising it. Rationale: audit spend is committed against a validated, in-use system rather than a pre-beta target. No scoped review or bug-bounty is being run in the interim unless the operator says otherwise. **This means beta launches WITHOUT an external audit** — an accepted risk for the beta phase, revisited before any broad / high-TVL launch. ADR-0042 remains the honest record that there is no external audit yet; the auto-compound diff (PR #196) plus the ADR-0042 `setDrawManager` timelock (PR #207) are the reviewable artifacts when the audit is commissioned.
 
 ## Priority order
 1. Keeper→fly (A) · 2. Auto-compound redeploy on UAT (A) · 3. Security-review decision + kickoff (C) · 4. Soak (A) with monitoring (B) · 5. Paid RPC (B) · 6. Indexer→mainnet, frontend cutover, allowlist (B).
