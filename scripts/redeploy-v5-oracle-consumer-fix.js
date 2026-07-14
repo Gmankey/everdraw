@@ -162,7 +162,7 @@ async function queueFix() {
   console.log("IMPORTANT: ORACLE_CHANGE_DELAY is 24 hours. Do not call commitOracleChange until:");
   console.log(`  ${record.oracleChange.commitRequiredAfter}`);
   console.log("After the delay, run:");
-  console.log("  npx hardhat run scripts/redeploy-v5-oracle-consumer-fix.js --network monadTestnet -- --commit");
+  console.log("  HARDHAT_NETWORK=monadTestnet node scripts/redeploy-v5-oracle-consumer-fix.js --commit");
 }
 
 async function commitFix() {

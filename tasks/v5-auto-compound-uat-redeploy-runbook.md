@@ -78,7 +78,7 @@ Stop here until the effective timestamp has passed.
 Run this only after `pendingDrawManagerEffectiveAt` has passed:
 
 ```bash
-npx hardhat run scripts/redeploy-v5-claim-draw-managers.js --network monadTestnet -- --commit
+HARDHAT_NETWORK=monadTestnet node scripts/redeploy-v5-claim-draw-managers.js --commit
 ```
 
 What the commit mode does:
