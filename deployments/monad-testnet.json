@@ -218,6 +218,54 @@
         "drawManager": "0x9eb6387EeA7daC93AF9585b5D25bfc7e0A3aD89c",
         "note": "Prior ClaimManagerV5/DrawManagerV5 remain deployed and readable on-chain for any already-registered distributions / unclaimed escrow from before this redeploy; they are superseded, not destroyed. Winners with pre-redeploy deferred claims must still claim against the OLD ClaimManagerV5 address."
       }
+    },
+    {
+      "role": "V5 M8 testnet soak",
+      "status": "deployed-pending-soak",
+      "deployedAt": "2026-07-14T12:33:38.618Z",
+      "deployedBy": "0xd5cc1f1D7b78943bDF09541A2ace41B5c6D83431",
+      "source": "src/v5",
+      "deployCommit": "1220f37a82730e56520457159913bdbfda0f93ed",
+      "addresses": {
+        "twabController": "0xEdc61B38c39db34DD425593599b4018D1B961C5D",
+        "shmonStrategy": "0x61c7B54B6bBeDC978Ff9F66d41e7B7a0678a67E6",
+        "prizeVault": "0xD8Ce4E0EDB5bea9A2FCd4e18732d070c28E7765B",
+        "claimManager": "0x6014854995Ce9A76990929d5342dE2fa0b70D5a3",
+        "pythRandomnessOracle": "0xF2E3BE0146f96f039f759F393ceDA2B4Fa8fb618",
+        "drawManager": "0xAf59241d0c360f311357e0277b0542d76afe0734"
+      },
+      "deployTxs": {
+        "twabController": "0x4f8d7d242ea398eda6937f13e77d52ab27cbc4c91a465a68cf0bd11187c2308c",
+        "shmonStrategy": "0xca397e414e25962ee9e724825d1a9a33c7dddfeb5e7fb688cc79a1b8b0dfcdf4",
+        "prizeVault": "0x265bc73b8e3e7ef7c93ff9e7abb68dbd9a0f369ace026acd54e8341051c7470b",
+        "claimManager": "0x1d26fbf2fc673832674ceb9126dc3564794d2a00fb5d2c3304f145243400928e",
+        "pythRandomnessOracle": "0xf101f18fc76422e56563dae58d3f8d558bc5eb3f5bc419df4788875f3a2f5674",
+        "drawManager": "0xc42cd1e8bfcdf5d4710ae62553eddcf848577654004df59a7c080327182ddf0c",
+        "strategySetVault": "0x6c5844dc4ba61e0376a696b36b0e3d01fc0a631bebe57faff34848baf1f0c73b",
+        "twabRegisterVault": "0xe0bb893ecc426b1cf9773464e47f606af56a5d7c689f49feed25ddde80f7c11f",
+        "claimAuthorizeManager": "0xb41415ccad3383ea8e02b4568eff1c7f7e5054da51c8018d2e104632a6aae498",
+        "vaultSetDrawManager": "0xb87b3191ba4de4346e2c80fa82bddf360f59a23ef1103f041c62111f12292419"
+      },
+      "startBlock": 44838701,
+      "constructorArgs": {
+        "shmon": "0x282BdDFF5e58793AcAb65438b257Dbd15A8745C9",
+        "entropy": "0x825c0390f379c631f3cf11a82a37d20bddf93c07",
+        "entropyProvider": "0x6CC14824Ea2918f5De5C2f75A9Da968ad4BD6344",
+        "guardian": "0xd5cc1f1D7b78943bDF09541A2ace41B5c6D83431",
+        "keeper": "0x629Bd7f323fD29E3dF75855C9BC542889c6c1268",
+        "firstPeriodStart": 1784032396,
+        "twabPeriodLength": 3600,
+        "twabPeriodOffset": 1784032396,
+        "drawPeriod": 3600,
+        "proposerGrace": 300,
+        "challengeWindow": 900,
+        "depositCap": "25000000000000000000000",
+        "symbol": "EVRDRAW-V5-MON"
+      },
+      "watcherSecrets": {
+        "drawManagerAddressSecret": "DRAW_MANAGER_ADDRESS",
+        "fromBlockSecret": "V5_WATCHER_FROM_BLOCK"
+      }
     }
   ]
 }
