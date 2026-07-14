@@ -7,7 +7,19 @@ import {ShmonStrategy} from "../../src/v5/strategies/ShmonStrategy.sol";
 import {EverdrawTwabController} from "../../src/v5/twab/EverdrawTwabController.sol";
 import {MockERC4626YieldVault} from "../mocks/MockERC4626YieldVault.sol";
 
-contract DummyDrawManager {}
+contract DummyClaimManager {
+    function compound(PrizeVaultV5 vault, address recipient) external payable returns (uint256 shares) {
+        return vault.depositFor{value: msg.value}(recipient);
+    }
+}
+
+contract DummyDrawManager {
+    address public claimManager;
+
+    function setClaimManager(address _claimManager) external {
+        claimManager = _claimManager;
+    }
+}
 
 contract PrizeVaultV5Test is Test {
     EverdrawTwabController twab;
@@ -63,6 +75,21 @@ contract PrizeVaultV5Test is Test {
         assertEq(twab.balanceOf(address(vault), alice), 5 ether);
     }
 
+    function test_depositForCreditsStrategyAssetDelta() public {
+        shmon.setRate(3 ether);
+        address relayer = makeAddr("relayer");
+        vm.deal(relayer, 1 ether);
+
+        vm.prank(relayer);
+        vault.depositFor{value: 1 ether}(alice);
+
+        uint256 creditedAssets = shmon.convertToAssets(shmon.balanceOf(address(strategy)));
+        assertEq(vault.principalOf(alice), creditedAssets);
+        assertEq(vault.totalPrincipal(), creditedAssets);
+        assertEq(twab.balanceOf(address(vault), alice), creditedAssets);
+        assertLt(creditedAssets, 1 ether);
+    }
+
     function test_depositForRevertsOnZeroRecipient() public {
         vm.deal(address(this), 1 ether);
         vm.expectRevert(PrizeVaultV5.ZeroAddress.selector);
@@ -74,6 +101,34 @@ contract PrizeVaultV5Test is Test {
         vm.deal(address(this), 1 ether);
         vm.expectRevert("paused");
         vault.depositFor{value: 1 ether}(alice);
+    }
+
+    function test_depositForThirdPartyStillRespectsMinDeposit() public {
+        vault.setMinDeposit(1 ether);
+        address relayer = makeAddr("relayer");
+        vm.deal(relayer, 1 ether);
+
+        vm.prank(relayer);
+        vm.expectRevert(PrizeVaultV5.DepositTooSmall.selector);
+        vault.depositFor{value: 0.5 ether}(alice);
+    }
+
+    function test_depositForFromCurrentClaimManagerCanCompoundSubMinimumPrize() public {
+        vault.setMinDeposit(1 ether);
+        shmon.setRate(2 ether);
+        DummyClaimManager compounder = new DummyClaimManager();
+        DummyDrawManager next = new DummyDrawManager();
+        next.setClaimManager(address(compounder));
+        vault.queueDrawManagerChange(address(next));
+        vm.warp(block.timestamp + vault.STRATEGY_CHANGE_DELAY());
+        vault.commitDrawManagerChange();
+
+        uint256 amount = 0.558 ether;
+        compounder.compound{value: amount}(vault, alice);
+
+        assertEq(vault.principalOf(alice), amount);
+        assertEq(vault.totalPrincipal(), amount);
+        assertEq(twab.balanceOf(address(vault), alice), amount);
     }
 
     function test_transferMovesParticipantSharesAndUpdatesTwab() public {

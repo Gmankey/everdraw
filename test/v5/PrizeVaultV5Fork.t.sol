@@ -93,6 +93,23 @@ contract PrizeVaultV5ForkTest is Test {
         assertEq(vault.principalOf(alice), 0.75 ether);
     }
 
+    function test_fork_claimManagerNativePrizeCompoundAgainstRealShmonBypassesMinDeposit() public {
+        uint256 amount = 0.558 ether;
+        vault.setMinDeposit(1 ether);
+        vm.deal(address(claimManager), amount);
+
+        uint256 assetsBefore = strategy.totalAssets();
+        vm.prank(address(claimManager));
+        uint256 shares = vault.depositFor{value: amount}(alice);
+        uint256 creditedAssets = strategy.totalAssets() - assetsBefore;
+
+        assertGt(shares, 0);
+        assertGt(creditedAssets, 0);
+        assertEq(vault.principalOf(alice), creditedAssets);
+        assertEq(vault.totalPrincipal(), creditedAssets);
+        assertEq(twab.balanceOf(address(vault), alice), creditedAssets);
+    }
+
     function test_fork_liveV4NativeBuyPathStillEmulates() public {
         vm.deal(alice, 2 ether);
         vm.prank(alice, alice);
