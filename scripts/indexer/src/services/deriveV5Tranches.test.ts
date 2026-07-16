@@ -104,8 +104,16 @@ assert.deepEqual(events.map((event) => `${event.poolType}:${event.action}:${even
 const compoundTx = `0x${'abc'.padStart(64, '0')}`;
 rawEventsRepo.upsertMany([
   raw({
-    eventName: 'PrizeCompounded',
+    eventName: 'Deposit',
     logIndex: 9,
+    txHash: compoundTx,
+    contractAddress: vault,
+    wallet: compoundWallet,
+    payload: JSON.stringify({ recipient: compoundWallet, amount: '24' }),
+  }),
+  raw({
+    eventName: 'PrizeCompounded',
+    logIndex: 10,
     txHash: compoundTx,
     contractAddress: claimManager,
     wallet: compoundWallet,
@@ -118,25 +126,38 @@ rawEventsRepo.upsertMany([
   }),
   raw({
     eventName: 'Deposit',
-    logIndex: 10,
+    logIndex: 11,
     txHash: compoundTx,
     contractAddress: vault,
     wallet: compoundWallet,
-    payload: JSON.stringify({ recipient: compoundWallet, amount: '25' }),
+    payload: JSON.stringify({ recipient: compoundWallet, amount: '14' }),
+  }),
+  raw({
+    eventName: 'PrizeCompounded',
+    logIndex: 12,
+    txHash: compoundTx,
+    contractAddress: claimManager,
+    wallet: compoundWallet,
+    payload: JSON.stringify({
+      distributionId: `0x${'db'.padStart(64, '0')}`,
+      leafIndex: '1',
+      account: compoundWallet,
+      amount: '15',
+    }),
   }),
 ]);
 
 service.rebuildFromRaw();
 
 const compoundEvents = v5TranchesRepo.listPositionEvents(compoundWallet);
-assert.equal(compoundEvents.length, 1);
-assert.equal(compoundEvents[0].rawEventName, 'Deposit');
-assert.equal(compoundEvents[0].source, 'prize_compound');
-assert.equal(compoundEvents[0].amount, '25');
+assert.equal(compoundEvents.length, 2);
+assert.equal(compoundEvents.every((event) => event.rawEventName === 'Deposit'), true);
+assert.equal(compoundEvents.every((event) => event.source === 'prize_compound'), true);
+assert.deepEqual(compoundEvents.map((event) => event.amount), ['24', '14']);
 const compoundTranches = v5TranchesRepo.listByWallet(compoundWallet);
-assert.equal(compoundTranches.length, 1);
-assert.equal(compoundTranches[0].remainingAmount, '25');
-assert.equal(compoundTranches[0].startDrawId, 7);
+assert.equal(compoundTranches.length, 2);
+assert.deepEqual(compoundTranches.map((tranche) => tranche.remainingAmount), ['24', '14']);
+assert.equal(compoundTranches.every((tranche) => tranche.startDrawId === 7), true);
 
 rawEventsRepo.upsertMany([
   raw({
