@@ -8,6 +8,7 @@ import type { PointsRepo } from './repositories/pointsRepo.js';
 import type { V5TranchesRepo } from './repositories/v5TranchesRepo.js';
 import { calculateRoundPoints, getMultiplierX100, getTier, lossStreakThresholdBonus, nextMilestone, nextTierThreshold } from './services/pointsMath.js';
 import { firstFullWeightDrawId } from './services/deriveV5Tranches.js';
+import { normalizeVaultQuery, scopeRowsByVault } from './vaultFilter.js';
 
 export interface ApiServer {
   start(): Promise<Server>;
@@ -152,7 +153,13 @@ export function createApiServer(params: {
       res.status(400).json({ error: 'invalid wallet address' });
       return;
     }
-    res.json(v5TranchesRepo.listByWallet(wallet).map((row) => ({
+    const vault = normalizeVaultQuery(req.query.vault);
+    if (!vault.valid) {
+      res.status(400).json({ error: 'invalid vault address' });
+      return;
+    }
+    const tranches = scopeRowsByVault(v5TranchesRepo.listByWallet(wallet), vault.address);
+    res.json(tranches.map((row) => ({
       wallet: row.wallet,
       vault_address: row.vaultAddress,
       pool_type: row.poolType,
@@ -181,7 +188,13 @@ export function createApiServer(params: {
       res.status(400).json({ error: 'invalid wallet address' });
       return;
     }
-    res.json(v5TranchesRepo.listPositionEvents(wallet).map((row) => ({
+    const vault = normalizeVaultQuery(req.query.vault);
+    if (!vault.valid) {
+      res.status(400).json({ error: 'invalid vault address' });
+      return;
+    }
+    const positionEvents = scopeRowsByVault(v5TranchesRepo.listPositionEvents(wallet), vault.address);
+    res.json(positionEvents.map((row) => ({
       tx_hash: row.txHash,
       log_index: row.logIndex,
       block_number: row.blockNumber,

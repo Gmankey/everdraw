@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "test:rpc-cache": "node --test src/rpcCache.test.js",
     "test:draw-health": "node --test src/v5DrawHealth.test.js",
+    "test:vault-scope": "node --test src/v5VaultScope.test.js",
     "preview": "vite preview"
   },
   "dependencies": {
