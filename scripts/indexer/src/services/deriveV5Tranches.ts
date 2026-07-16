@@ -23,7 +23,6 @@ type PositionPayload = {
 
 type PrizeCompoundedPayload = {
   account?: string;
-  amount?: string | number;
 };
 
 export interface DeriveV5TranchesService {
@@ -62,7 +61,7 @@ export function createDeriveV5TranchesService(
         if (window) drawManagerByDrawId.set(window.drawId, event.contractAddress.toLowerCase());
       }
 
-      const prizeCompoundMarkers = buildPrizeCompoundMarkers(finalizedEvents);
+      const prizeCompoundDeposits = buildPrizeCompoundDeposits(finalizedEvents);
 
       v5TranchesRepo.deleteAll();
 
@@ -82,7 +81,7 @@ export function createDeriveV5TranchesService(
           amount: position.amount.toString(),
           balanceAfter: position.balanceAfter?.toString() ?? null,
           rawEventName: event.eventName,
-          source: sourceForPositionEvent(event, position, prizeCompoundMarkers),
+          source: sourceForPositionEvent(event, position, prizeCompoundDeposits),
         });
 
         if (position.action === 'deposit') {
@@ -130,35 +129,51 @@ export function createDeriveV5TranchesService(
   };
 }
 
-function buildPrizeCompoundMarkers(events: RawEventRow[]): Map<string, number> {
-  const markers = new Map<string, number>();
+function buildPrizeCompoundDeposits(events: RawEventRow[]): Set<string> {
+  const pendingDeposits = new Map<string, RawEventRow[]>();
+  const compoundedDeposits = new Set<string>();
+
   for (const event of events) {
+    if (event.eventName === 'Deposit') {
+      const position = toPositionEvent(event);
+      if (!position || position.poolType !== 'vault' || position.action !== 'deposit') continue;
+      const key = prizeCompoundKey(event.txHash, position.wallet);
+      const queue = pendingDeposits.get(key) ?? [];
+      queue.push(event);
+      pendingDeposits.set(key, queue);
+      continue;
+    }
+
     if (event.eventName !== 'PrizeCompounded') continue;
     const payload = JSON.parse(event.payload) as PrizeCompoundedPayload;
     const account = String(payload.account ?? event.wallet ?? '').toLowerCase();
-    if (!/^0x[0-9a-f]{40}$/.test(account) || payload.amount == null) continue;
-    const key = prizeCompoundKey(event.txHash, account, BigInt(String(payload.amount)));
-    markers.set(key, (markers.get(key) ?? 0) + 1);
+    if (!/^0x[0-9a-f]{40}$/.test(account)) continue;
+    const key = prizeCompoundKey(event.txHash, account);
+    const queue = pendingDeposits.get(key);
+    const deposit = queue?.shift();
+    if (!deposit) continue;
+    compoundedDeposits.add(positionEventKey(deposit));
+    if (queue?.length === 0) pendingDeposits.delete(key);
   }
-  return markers;
+
+  return compoundedDeposits;
 }
 
 function sourceForPositionEvent(
   event: RawEventRow,
   position: { wallet: string; poolType: V5PoolType; action: V5PositionAction; amount: bigint },
-  prizeCompoundMarkers: Map<string, number>
+  prizeCompoundDeposits: Set<string>
 ): V5PositionEventSource {
   if (event.eventName !== 'Deposit' || position.action !== 'deposit' || position.poolType !== 'vault') return 'user';
-  const key = prizeCompoundKey(event.txHash, position.wallet, position.amount);
-  const count = prizeCompoundMarkers.get(key) ?? 0;
-  if (count <= 0) return 'user';
-  if (count === 1) prizeCompoundMarkers.delete(key);
-  else prizeCompoundMarkers.set(key, count - 1);
-  return 'prize_compound';
+  return prizeCompoundDeposits.has(positionEventKey(event)) ? 'prize_compound' : 'user';
 }
 
-function prizeCompoundKey(txHash: string, wallet: string, amount: bigint): string {
-  return `${txHash.toLowerCase()}:${wallet.toLowerCase()}:${amount.toString()}`;
+function prizeCompoundKey(txHash: string, wallet: string): string {
+  return `${txHash.toLowerCase()}:${wallet.toLowerCase()}`;
+}
+
+function positionEventKey(event: RawEventRow): string {
+  return `${event.txHash.toLowerCase()}:${event.logIndex}`;
 }
 
 function assertBalanceAfter(input: {
