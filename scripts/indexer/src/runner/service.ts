@@ -14,7 +14,7 @@ import { POOL_EVENT_ABI } from './abi.js';
 
 const LAST_FINALIZED_BLOCK_KEY = 'last_finalized_block';
 const LAST_POINTS_CHECKPOINT_UNIX_KEY = 'last_points_checkpoint_unix';
-const SUPPORTED_EVENTS: SupportedEventName[] = [
+export const SUPPORTED_EVENTS: SupportedEventName[] = [
   // Shared
   'RoundStarted',
   'RoundSettled',
@@ -52,6 +52,7 @@ const SUPPORTED_EVENTS: SupportedEventName[] = [
   'ClaimPaid',
   'ClaimDeferred',
   'DeferredClaimPaid',
+  'PrizeCompounded',
 ];
 
 export interface IndexerRunner {
