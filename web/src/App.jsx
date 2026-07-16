@@ -10,6 +10,7 @@ import shmonIcon from './assets/shmon.png'
 import { _cached, assertNotAborted, getCachedRoundInfo, isAbortError, withAbort } from './rpcCache.js'
 import './App.css'
 import { buildV5DrawHealth } from './v5DrawHealth.js'
+import { scopeV5RowsToVault } from './v5VaultScope.js'
 import './shmon.css'
 
 // Vercel build-ignore guard markers for production deploys: points/preview, setMaxTickets.
@@ -467,10 +468,11 @@ function PointsBreakdown({ item }) {
   )
 }
 
-function ProfilePage({ account, points, history, tranches, currentDrawId }) {
+function ProfilePage({ account, points, history, tranches, currentDrawId, currentVault }) {
   if (!account) return <section className="participants-card points-page"><h2>Your Points</h2><p>Connect a wallet to view your EverDraw points profile.</p></section>
   const historyRows = Array.isArray(history) ? history : []
-  const openTranches = (Array.isArray(tranches) ? tranches : []).filter((row) => trancheRemainingMon(row) > 0)
+  const scopedTranches = currentVault ? scopeV5RowsToVault(tranches, currentVault) : (Array.isArray(tranches) ? tranches : [])
+  const openTranches = scopedTranches.filter((row) => trancheRemainingMon(row) > 0)
   const vaultTranches = openTranches.filter((row) => row.pool_type === 'vault')
   const degenTranches = openTranches.filter((row) => row.pool_type === 'degen')
   const drawId = Number(currentDrawId || historyRows[0]?.round_id || 0)
@@ -1471,12 +1473,14 @@ async function v5BuildHistoryRows({ account, vault, manager }) {
   if (!account) return []
   const base = getIndexerBaseUrl()
   const drawManagerLc = String(manager?.target || '').toLowerCase()
+  const vaultAddress = String(vault?.target || '')
+  const vaultQuery = encodeURIComponent(vaultAddress)
   const [positionEvents, rounds] = await Promise.all([
-    fetch(`${base}/api/v5/wallets/${account}/position-events`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
+    fetch(`${base}/api/v5/wallets/${account}/position-events?vault=${vaultQuery}`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
     fetch(`${base}/api/rounds`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
   ])
 
-  const positionRows = (Array.isArray(positionEvents) ? positionEvents : []).map((ev) => {
+  const positionRows = scopeV5RowsToVault(positionEvents, vaultAddress).map((ev) => {
     const isDeposit = ev.action === 'deposit'
     const isDegen = ev.pool_type === 'degen'
     return {
@@ -1931,12 +1935,12 @@ export function V5UatExperience() {
     Promise.all([
       fetch(`${getIndexerBaseUrl()}/api/points/${account}`, { signal: ac.signal }).then((r) => r.ok ? r.json() : null),
       fetch(`${getIndexerBaseUrl()}/api/points/${account}/history?limit=12`, { signal: ac.signal }).then((r) => r.ok ? r.json() : []),
-      fetch(`${getIndexerBaseUrl()}/api/v5/wallets/${account}/tranches`, { signal: ac.signal }).then((r) => r.ok ? r.json() : []),
+      fetch(`${getIndexerBaseUrl()}/api/v5/wallets/${account}/tranches?vault=${encodeURIComponent(cfg.prizeVault)}`, { signal: ac.signal }).then((r) => r.ok ? r.json() : []),
     ]).then(([profile, history, tranches]) => {
       assertNotAborted(ac.signal)
       setPointsProfile(profile)
       setPointsHistory(Array.isArray(history) ? history : [])
-      setPointsTranches(Array.isArray(tranches) ? tranches : [])
+      setPointsTranches(scopeV5RowsToVault(tranches, cfg.prizeVault))
     }).catch((err) => {
       if (!isAbortError(err)) {
         setPointsProfile(null)
@@ -1945,7 +1949,7 @@ export function V5UatExperience() {
       }
     })
     return () => ac.abort()
-  }, [account])
+  }, [account, cfg.prizeVault])
 
   const connect = useCallback(async () => {
     setError('')
@@ -2040,7 +2044,7 @@ export function V5UatExperience() {
     if (!withdrawChoiceOpen || !withdrawRequest) return ''
     const isDegen = withdrawRequest.kind === 'degen'
     const drawId = Number(state?.currentDrawId || 0)
-    const poolTranches = (Array.isArray(pointsTranches) ? pointsTranches : [])
+    const poolTranches = scopeV5RowsToVault(pointsTranches, cfg.prizeVault)
       .filter((row) => row.pool_type === (isDegen ? 'degen' : 'vault') && trancheRemainingMon(row) > 0)
     const oldest = poolTranches
       .map((tranche) => ({ weeks: trancheWeeks(tranche, drawId), amount: trancheRemainingMon(tranche) }))
@@ -2051,7 +2055,7 @@ export function V5UatExperience() {
     return withdrawRequest.isFull
       ? `Withdrawing everything from the ${poolLabel} resets its streak. You're on a ${weeks}-week streak at ${multiplier}; you'll rebuild from zero.`
       : `This removes your most recent ${withdrawRequest.amountLabel} and its multiplier tenure. The rest of your ${poolLabel} position keeps its ${weeks}-week streak.`
-  }, [withdrawChoiceOpen, withdrawRequest, pointsTranches, state?.currentDrawId])
+  }, [withdrawChoiceOpen, withdrawRequest, pointsTranches, state?.currentDrawId, cfg.prizeVault])
   const afterPlayAction = async ({ account: nextAccount }) => {
     setPlayAmount('')
     const deposited = await vault.principalOf(nextAccount).catch(() => 0n)
@@ -2219,7 +2223,7 @@ export function V5UatExperience() {
             <PatronStreakBar tranches={pointsTranches} currentDrawId={state?.currentDrawId} />
           </section>
         ) : v5Page === 'profile' ? (
-          <ProfilePage account={account} points={pointsProfile} history={pointsHistory} tranches={pointsTranches} currentDrawId={state?.currentDrawId} />
+          <ProfilePage account={account} points={pointsProfile} history={pointsHistory} tranches={pointsTranches} currentDrawId={state?.currentDrawId} currentVault={cfg.prizeVault} />
         ) : v5Page === 'winners' ? (
           <V5PreviousRound
             state={state}
