@@ -8,10 +8,12 @@ primary_region = "sjc"
 #        HARDHAT_NETWORK=monadTestnet node scripts/redeploy-v5-claim-draw-managers.js --commit
 #      Do not deploy this keeper against the new draw manager until vault.drawManager() verifies
 #      the committed address.
-#   3. Copy the committed drawManager/claimManager addresses out of deployments/monad-testnet.json.
-#   4. Fill in DRAW_MANAGER_ADDRESS / CLAIM_MANAGER_ADDRESS / V5_KEEPER_FROM_BLOCK below.
-#   5. `flyctl deploy . -c scripts/keeper/fly.v5.uat.toml` to pick up the new env.
-#   6. Re-point the indexer and frontend after the commit; see
+#   3. Copy the committed drawManager/claimManager addresses and vault deploy block out of
+#      deployments/monad-testnet.json.
+#   4. Re-point DRAW_MANAGER_ADDRESS / CLAIM_MANAGER_ADDRESS / V5_KEEPER_FROM_BLOCK with
+#      `flyctl secrets set -a everdraw-keeper-v5 ...`. These runtime targets are Fly secrets;
+#      do not add competing values to [env].
+#   5. Re-point the indexer and frontend after the commit; see
 #      tasks/v5-auto-compound-uat-redeploy-runbook.md for the full ordered sequence.
 [build]
   # Resolved relative to this file's dir (scripts/keeper/). Deploy with the repo ROOT as the
@@ -22,18 +24,9 @@ primary_region = "sjc"
 [env]
   NODE_ENV = "production"
   RPC_URL = "https://testnet-rpc.monad.xyz"
-  # ADR-0043 redeploy, executed 2026-07-11. Prior value (pre-redeploy, pre-auto-compound
-  # bytecode): 0x9eb6387EeA7daC93AF9585b5D25bfc7e0A3aD89c
-  DRAW_MANAGER_ADDRESS = "0x5BeF7B5c5B83D56cfF32F7c66DE6D7916e9aD509"
-  # ADR-0043 redeploy. Prior value: 0xF95e319f71B503e396295CD0A55550f56f5901eb
-  CLAIM_MANAGER_ADDRESS = "0x779A01A7cc19d5E811F4077BdE97F33e8a57D202"
-  # Must be the PrizeVault's GENESIS block (41820841), NOT the ADR-0043 redeploy block. The vault
-  # + its deposit/TWAB history are unchanged by the redeploy; the keeper reconstructs per-account
-  # TWAB by replaying deposit events from this block, so it must cover the full vault history or
-  # buildDrawInput throws "TWAB mismatch ... account sum 0 != draw total". 41820841 also covers the
-  # new DrawManager's events (deployed later at 43905882+), so it is safe for both scans.
-  # (Regression note: this was briefly set to the redeploy block 43905882, which broke proposals.)
-  V5_KEEPER_FROM_BLOCK = "41820841"
+  # DRAW_MANAGER_ADDRESS, CLAIM_MANAGER_ADDRESS, and V5_KEEPER_FROM_BLOCK are intentionally
+  # omitted. They are runtime Fly secrets set together by the re-point runbook. Keeping addresses
+  # here is misleading because an existing secret silently overrides the TOML [env] value.
   DEPLOYMENT_FILE = "deployments/monad-testnet.json"
   # Persistent event checkpoint used by keeper-v5.js to avoid rescanning deposit/seed logs from genesis every loop.
   V5_KEEPER_EVENT_CACHE_FILE = "/data/keeper-v5-event-cache.json"

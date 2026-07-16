@@ -25,7 +25,7 @@ Do not re-point the keeper, indexer, or frontend until phase 2 verifies `vault.d
 |---|---|---|
 | 1. Deploy new claim/draw managers + queue vault change | Yes - current `PrizeVaultV5` owner key, pays gas for 2 deployments + setup txs + queue tx | Operator |
 | 2. Commit the queued vault draw-manager change | Yes - current `PrizeVaultV5` owner key, after the delay | Operator |
-| 3. Re-point keeper (`fly.v5.uat.toml` + Fly deploy) | No private key in command, but needs Fly deploy access. Keeper private key remains a Fly secret set by operator | Operator/PM |
+| 3. Re-point keeper (Fly secrets) | No private key in command, but needs Fly access. Keeper private key remains a separate Fly secret set by operator | Operator/PM |
 | 4. Re-point indexer (`flyctl secrets set -a everdraw-indexer-uat ...`) | No private key, but needs Fly access | Operator/PM |
 | 5. Re-point frontend (Vercel env + redeploy) | No private key, but needs Vercel access | Operator/PM |
 | 6. Verification | No | Anyone |
@@ -111,22 +111,30 @@ Only after this verification should keeper, indexer, and frontend be re-pointed.
 
 ## Step 3 - Re-point the keeper
 
-Update `scripts/keeper/fly.v5.uat.toml` with the committed addresses:
+The target addresses are Fly **secrets**, not `fly.v5.uat.toml` values. Fly secrets override `[env]`; editing the TOML and deploying does not replace an existing secret.
 
-- `DRAW_MANAGER_ADDRESS` = new committed `DrawManagerV5`
-- `CLAIM_MANAGER_ADDRESS` = new `ClaimManagerV5`
-- `V5_KEEPER_FROM_BLOCK` remains the vault genesis block unless a future keeper ticket changes that rule. For the current UAT vault this is `41820841`.
+Choose `V5_KEEPER_FROM_BLOCK` correctly:
 
-Then deploy the managed keeper:
+- Fresh full-stack deploy with a new vault: use the new vault's deploy block.
+- Partial manager redeploy that keeps an existing vault: use that vault's original genesis block so the keeper can reconstruct its full deposit/TWAB history.
+
+Set all three target values together:
 
 ```bash
-flyctl deploy . -c scripts/keeper/fly.v5.uat.toml
+flyctl secrets set -a everdraw-keeper-v5 \
+  DRAW_MANAGER_ADDRESS="<NEW_COMMITTED_DRAW_MANAGER>" \
+  CLAIM_MANAGER_ADDRESS="<NEW_CLAIM_MANAGER>" \
+  V5_KEEPER_FROM_BLOCK="<VAULT_DEPLOY_BLOCK>"
 ```
 
-**Verification:**
+Setting the secrets restarts the managed keeper automatically. Do not run `flyctl deploy` merely to re-point addresses; deploy only when the keeper image or non-secret TOML config changed. `PRIVATE_KEY` remains an independently managed Fly secret and must not be printed or replaced during re-pointing.
+
+**Verification (the log command exits after 90 seconds):**
 
 ```bash
-flyctl logs -a everdraw-keeper-v5 -f
+flyctl secrets list -a everdraw-keeper-v5
+flyctl status -a everdraw-keeper-v5
+timeout 90s flyctl logs -a everdraw-keeper-v5
 ```
 
 Confirm it boots against the new draw/claim manager addresses and advances draws without `NotDrawManager`, `OnlyConsumer`, or claim-manager source authorization errors.
@@ -147,7 +155,7 @@ Setting a Fly secret restarts the machine. Confirm backfill before assuming the 
 
 ```bash
 curl -s https://everdraw-indexer-uat.fly.dev/api/health
-flyctl logs -a everdraw-indexer-uat -f
+timeout 90s flyctl logs -a everdraw-indexer-uat
 ```
 
 `POOL_EVENT_ABI` now includes `PrizeCompounded`, so compounded prizes should appear as deposit-equivalent tranches with `source/reason = "prize_compound"` in history.
@@ -156,15 +164,18 @@ flyctl logs -a everdraw-indexer-uat -f
 
 ## Step 5 - Re-point the frontend
 
-Vercel project: `everdraw-v5-uat` (`https://everdraw-v5-uat.vercel.app`). Update:
+Vercel project: `everdraw-v5-uat` (`https://everdraw-v5-uat.vercel.app`). This is a separate project from production `everdraw`; do not change the production project's variables or domain.
 
+Set all four public contract variables for the UAT project's Production environment:
+
+- `VITE_V5_PRIZE_VAULT_ADDRESS` -> active prize vault
 - `VITE_V5_DRAW_MANAGER_ADDRESS` -> new committed draw manager
 - `VITE_V5_CLAIM_MANAGER_ADDRESS` -> new claim manager
-- Leave `VITE_V5_PRIZE_VAULT_ADDRESS` and `VITE_V5_TWAB_CONTROLLER_ADDRESS` unchanged
+- `VITE_V5_TWAB_CONTROLLER_ADDRESS` -> active TWAB controller
 
-Then redeploy. Vite bakes `VITE_*` variables into the bundle, so changing env vars alone is not enough.
+Use the Vercel dashboard or CLI, then redeploy the exact `everdraw-v5-uat` project. Vite bakes `VITE_*` variables into the bundle, so changing env vars alone is not enough.
 
-**Live bundle verification:** fetch the deployed JS bundle and confirm the new draw/claim manager addresses are present.
+**Live bundle verification:** fetch the deployed JS bundle and confirm all four active addresses are present and the obsolete addresses are absent.
 
 ---
 
