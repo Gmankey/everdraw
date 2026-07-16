@@ -9,6 +9,7 @@ import monIcon from './assets/MON.png'
 import shmonIcon from './assets/shmon.png'
 import { _cached, assertNotAborted, getCachedRoundInfo, isAbortError, withAbort } from './rpcCache.js'
 import './App.css'
+import { buildV5DrawHealth } from './v5DrawHealth.js'
 import './shmon.css'
 
 // Vercel build-ignore guard markers for production deploys: points/preview, setMaxTickets.
@@ -1224,10 +1225,10 @@ function RoundProgressSteps({ state, settlementSecs, secondsRemaining, isV3 = fa
 const V5_UAT_DEFAULTS = {
   chainId: 10143,
   rpcUrl: 'https://testnet-rpc.monad.xyz',
-  drawManager: '0x5BeF7B5c5B83D56cfF32F7c66DE6D7916e9aD509',
-  prizeVault: '0x76A1327c69f6f9f2571b131BB528D0c8ce1D6958',
-  twabController: '0x719F4EB6a4187DBAd1647d07F67573B80E5d0376',
-  claimManager: '0x779A01A7cc19d5E811F4077BdE97F33e8a57D202',
+  drawManager: '0xC184369eb29b0Ba514e697Fb95A193CCA38B01b5',
+  prizeVault: '0xF3c85b45FCb7e74142124f9082A03e7e49E85eA4',
+  twabController: '0xF2f593E1b1Ef401e1a281D809F1b870f98F0cDCe',
+  claimManager: '0x78D0f6d7ab945590eC5e8fAffC773893f33528b7',
   shmon: '0x282BdDFF5e58793AcAb65438b257Dbd15A8745C9',
 }
 
@@ -1522,6 +1523,7 @@ function V5ActionCard({
   busy,
   account,
   boosterSupported,
+  depositsDisabled = false,
   onDeposit,
   onWithdraw,
   onConnect,
@@ -1540,7 +1542,8 @@ function V5ActionCard({
     ? 'Submitting...'
     : !account
       ? `Connect Wallet to ${isDeposit ? 'Deposit' : 'Withdraw'}`
-      : isDeposit ? `${submitVerb} with ${depositAsset}` : submitVerb
+      : isDeposit && depositsDisabled ? 'Deposits paused'
+        : isDeposit ? `${submitVerb} with ${depositAsset}` : submitVerb
 
   return (
     <div className={`card v5-product-card${isDegen ? ' v5-degen-card' : ''}`}>
@@ -1630,7 +1633,7 @@ function V5ActionCard({
           ) : null}
           <button
             className="btn deposit-btn"
-            disabled={Boolean(busy) || (isDegen && !boosterSupported && Boolean(account))}
+            disabled={Boolean(busy) || (Boolean(account) && isDeposit && depositsDisabled) || (isDegen && !boosterSupported && Boolean(account))}
             onClick={!account ? onConnect : isDeposit ? onDeposit : onWithdraw}
           >
             {submitLabel}
@@ -1993,15 +1996,21 @@ export function V5UatExperience() {
     return claims.claimMany(payload.leaves, payload.proofs)
   }, [cfg])
 
-  const now = Number(state?.block?.timestamp || 0)
-  const nextPeriodStart = Number(state?.nextPeriodStart || 0n)
-  const drawPeriod = Number(state?.drawPeriod || 0n)
-  const periodEnd = nextPeriodStart + drawPeriod
-  const secondsRemaining = Math.max(0, periodEnd - now)
-  const countdown = formatV5Duration(secondsRemaining)
-  const previewCopy = state?.preview
-    ? state.preview.due ? (state.preview.willSkip ? 'Next draw pending keeper' : 'Next draw ready for keeper') : 'Next draw building'
-    : 'Keeper preview unavailable'
+  const drawHealth = buildV5DrawHealth({ state, nowMs: liveNowMs })
+  const countdown = drawHealth.isLoading
+    ? 'Loading draw…'
+    : drawHealth.isStalled
+    ? 'Draws paused'
+    : drawHealth.isStarting
+      ? 'Next draw starting…'
+      : formatV5Duration(drawHealth.secondsRemaining)
+  const previewCopy = drawHealth.isLoading
+    ? 'Checking draw schedule'
+    : drawHealth.isStalled
+    ? 'Waiting for draw service recovery'
+    : drawHealth.isStarting
+      ? 'Settling the current draw'
+      : 'Next draw building'
   const ticketModel = buildV5TicketModel({ state, account, nowMs: liveNowMs })
   const claimButton = () => transact('Claim prize', claim)
   const openVaultPage = (event) => {
@@ -2166,6 +2175,13 @@ export function V5UatExperience() {
           <button className={`vault-aux-btn ${v5Page === 'history' ? 'active' : ''}`} onClick={openHistoryPage}>My History</button>
         </section>
 
+        {drawHealth.isStalled && (v5Page === 'vault' || v5Page === 'degen') ? (
+          <div className="claim-flow-confirm-panel v5-draw-health-banner" role="alert">
+            <div className="claim-flow-eyebrow">DRAWS ARE PAUSED</div>
+            <div className="claim-flow-confirm-copy">Your principal is safe and withdrawable anytime, but new deposits won't earn draw entries until draws resume.</div>
+          </div>
+        ) : null}
+
         {v5Page === 'degen' ? (
           <section className="main-grid v5-single-card-page">
             <V5ActionCard
@@ -2183,6 +2199,7 @@ export function V5UatExperience() {
               busy={busy}
               account={account}
               boosterSupported={Boolean(state?.boosterSupported)}
+              depositsDisabled={drawHealth.isStalled}
               onConnect={connect}
               onDeposit={() => transact('Patron Pool deposit', (signer) => (
                 degenDepositAsset === 'shMON'
@@ -2234,6 +2251,7 @@ export function V5UatExperience() {
             busy={busy}
             account={account}
             boosterSupported
+            depositsDisabled={drawHealth.isStalled}
             onConnect={connect}
             onDeposit={() => transact('Deposit', (signer) => (
               playDepositAsset === 'shMON'

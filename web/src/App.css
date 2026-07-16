@@ -1509,6 +1509,17 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
   letter-spacing: 0.1em;
 }
 
+.v5-draw-health-banner {
+  margin: 0 0 var(--space-lg);
+  border-radius: 8px;
+}
+
+.v5-draw-health-banner .claim-flow-confirm-copy {
+  text-transform: none;
+  letter-spacing: 0;
+  line-height: 1.45;
+}
+
 .v5-product-copy {
   color: rgba(196, 181, 253, 0.66);
   font-size: 0.95rem;
