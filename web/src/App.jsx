@@ -11,6 +11,7 @@ import { _cached, assertNotAborted, getCachedRoundInfo, isAbortError, withAbort 
 import './App.css'
 import { buildV5DrawHealth } from './v5DrawHealth.js'
 import { scopeV5RowsToVault } from './v5VaultScope.js'
+import { buildV5PrizeWins, newestWithdrawablePrize } from './v5PrizeWins.js'
 import './shmon.css'
 
 // Vercel build-ignore guard markers for production deploys: points/preview, setMaxTickets.
@@ -870,7 +871,7 @@ function StatCard({ label, value, sub, icon }) {
   )
 }
 
-function ClaimFlowModal({ open, mode, busy, status, error, onClose, onRedeemToWallet, onRedeemAndConvert, onBackFromRedirectWarning, confirmRedirectOpen, onConfirmRedirect, isV2 = false, headerNotice = '', withdrawWarningText = '' }) {
+function ClaimFlowModal({ open, mode, busy, status, error, onClose, onRedeemToWallet, onRedeemAndConvert, onBackFromRedirectWarning, confirmRedirectOpen, onConfirmRedirect, isV2 = false, headerNotice = '', withdrawWarningText = '', v5 = false, actionDisabled = false, prizeAmountLabel = '' }) {
   const noticeText = withdrawWarningText || headerNotice
   if (!open) return null
 
@@ -879,7 +880,24 @@ function ClaimFlowModal({ open, mode, busy, status, error, onClose, onRedeemToWa
   const heroTitle = 'How do you want to claim this round?'
   const heroBody = ''
 
-  const options = isV2
+  const options = v5
+    ? [
+        {
+          kicker: busy ? 'Working...' : 'REDEEM',
+          title: 'Redeem to wallet as shMON',
+          body: '',
+          onClick: onRedeemToWallet,
+          tone: 'primary',
+        },
+        {
+          kicker: busy ? 'Working...' : 'REDEEM AND CONVERT',
+          title: 'Redeem as shMON and convert to MON',
+          body: '',
+          onClick: onRedeemAndConvert,
+          tone: 'default',
+        },
+      ]
+    : isV2
     ? (isWinner
       ? [
           {
@@ -962,6 +980,7 @@ function ClaimFlowModal({ open, mode, busy, status, error, onClose, onRedeemToWa
                   <div className="claim-flow-confirm-copy">{noticeText}</div>
                 </div>
               ) : null}
+              {prizeAmountLabel ? <p className="claim-flow-prize-amount">{prizeAmountLabel}</p> : null}
               {heroBody ? <p className="claim-flow-body">{heroBody}</p> : null}
             </div>
           ) : null}
@@ -992,7 +1011,7 @@ function ClaimFlowModal({ open, mode, busy, status, error, onClose, onRedeemToWa
                 type="button"
                 className={`claim-option-card ${option.tone === 'primary' ? 'primary' : ''}`}
                 onClick={option.onClick}
-                disabled={busy}
+                disabled={busy || actionDisabled}
               >
                 <span className="claim-option-kicker">{option.kicker}</span>
                 <strong className="claim-option-title">{option.title}</strong>
@@ -1475,40 +1494,68 @@ async function v5BuildHistoryRows({ account, vault, manager }) {
   const drawManagerLc = String(manager?.target || '').toLowerCase()
   const vaultAddress = String(vault?.target || '')
   const vaultQuery = encodeURIComponent(vaultAddress)
-  const [positionEvents, rounds] = await Promise.all([
+  const [positionEvents, rounds, tranches] = await Promise.all([
     fetch(`${base}/api/v5/wallets/${account}/position-events?vault=${vaultQuery}`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
     fetch(`${base}/api/rounds`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
+    fetch(`${base}/api/v5/wallets/${account}/tranches?vault=${vaultQuery}`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
   ])
 
-  const positionRows = scopeV5RowsToVault(positionEvents, vaultAddress).map((ev) => {
-    const isDeposit = ev.action === 'deposit'
-    const isDegen = ev.pool_type === 'degen'
-    return {
-      key: `${ev.tx_hash}-${ev.log_index}`,
-      sortAt: Date.parse(ev.block_timestamp || '') || 0,
-      date: v5EventDateFromIso(ev.block_timestamp),
-      transaction: isDegen ? (isDeposit ? 'Patron Pool deposit' : 'Patron Pool withdraw') : (isDeposit ? 'Deposit' : 'Withdraw'),
-      result: isDegen ? 'Prize excluded' : (isDeposit ? 'Entered' : 'Exited'),
-      principal: `${isDeposit ? '+' : '-'}${formatV5Mon(ev.amount)} MON`,
-      prize: '—',
-      tx: ev.tx_hash,
-    }
-  })
+  const scopedEvents = scopeV5RowsToVault(positionEvents, vaultAddress)
+  const scopedTranches = scopeV5RowsToVault(tranches, vaultAddress)
+  const prizeWins = buildV5PrizeWins(scopedEvents, scopedTranches)
+  const prizeByDraw = new Map(prizeWins.filter((win) => win.drawId != null).map((win) => [win.drawId, win]))
 
+  const positionRows = scopedEvents
+    .filter((ev) => ev.source !== 'prize_compound')
+    .map((ev) => {
+      const isDeposit = ev.action === 'deposit'
+      const isDegen = ev.pool_type === 'degen'
+      return {
+        key: `${ev.tx_hash}-${ev.log_index}`,
+        sortAt: Date.parse(ev.block_timestamp || '') || 0,
+        date: v5EventDateFromIso(ev.block_timestamp),
+        transaction: isDegen ? (isDeposit ? 'Patron Pool deposit' : 'Patron Pool withdraw') : (isDeposit ? 'Deposit' : 'Withdraw'),
+        result: isDegen ? 'Prize excluded' : (isDeposit ? 'Entered' : 'Exited'),
+        principal: `${isDeposit ? '+' : '-'}${formatV5Mon(ev.amount)} MON`,
+        prize: '\u2014',
+        tx: ev.tx_hash,
+      }
+    })
+
+  const matchedPrizeKeys = new Set()
   const drawRows = (Array.isArray(rounds) ? rounds : [])
     .filter((r) => String(r.poolAddress || '').toLowerCase() === drawManagerLc && r.state === 'settled')
-    .map((r) => ({
-      key: `draw-${r.roundId}`,
-      sortAt: Date.parse(r.settledAt || '') || 0,
-      date: v5EventDateFromIso(r.settledAt),
-      transaction: `Prize draw #${r.roundId}`,
-      result: 'Finalized',
-      principal: '—',
-      prize: `${formatV5Mon(r.yieldMon)} MON`,
+    .map((r) => {
+      const prizeWin = prizeByDraw.get(Number(r.roundId)) || null
+      if (prizeWin) matchedPrizeKeys.add(prizeWin.key)
+      return {
+        key: `draw-${r.roundId}`,
+        sortAt: Date.parse(r.settledAt || '') || 0,
+        date: v5EventDateFromIso(r.settledAt),
+        transaction: `Prize draw #${r.roundId}`,
+        result: prizeWin ? 'WINNER' : 'Finalized',
+        principal: '\u2014',
+        prize: prizeWin ? `${formatV5Mon(prizeWin.compoundedAmount)} MON` : `${formatV5Mon(r.yieldMon)} MON`,
+        tx: null,
+        prizeWin,
+      }
+    })
+
+  const unmatchedPrizeRows = prizeWins
+    .filter((win) => !matchedPrizeKeys.has(win.key))
+    .map((win) => ({
+      key: win.key,
+      sortAt: Date.parse(win.blockTimestamp || '') || 0,
+      date: v5EventDateFromIso(win.blockTimestamp),
+      transaction: win.drawId == null ? 'Prize draw' : `Prize draw #${win.drawId}`,
+      result: 'WINNER',
+      principal: '\u2014',
+      prize: `${formatV5Mon(win.compoundedAmount)} MON`,
       tx: null,
+      prizeWin: win,
     }))
 
-  return [...positionRows, ...drawRows].sort((a, b) => b.sortAt - a.sortAt).slice(0, 24)
+  return [...positionRows, ...drawRows, ...unmatchedPrizeRows].sort((a, b) => b.sortAt - a.sortAt).slice(0, 24)
 }
 
 function V5ActionCard({
@@ -1687,12 +1734,13 @@ function V5ActionCard({
   )
 }
 
-function V5PreviousRound({ state, onBack, onClaim, canClaimPrize, busy, status, error }) {
+function V5PreviousRound({ state, onBack, onClaim, prizeWin, busy, status, error }) {
   const draw = state?.draw
-  const drawId = state?.currentDrawId?.toString?.() || '0'
-  const winnerCount = Number(draw?.winnerCount ?? draw?.[6] ?? 0)
-  const prize = `${formatV5Mon(draw?.totalPayout ?? draw?.[5])} MON`
-  const statusLabel = draw ? V5_DRAW_STATUS[Number(draw?.status ?? draw?.[11])] || 'Unknown' : 'Warming up'
+  const drawId = prizeWin?.drawId?.toString?.() || state?.currentDrawId?.toString?.() || '0'
+  const winnerCount = prizeWin ? Math.max(1, Number(draw?.winnerCount ?? draw?.[6] ?? 0)) : Number(draw?.winnerCount ?? draw?.[6] ?? 0)
+  const prize = `${formatV5Mon(prizeWin?.compoundedAmount ?? draw?.totalPayout ?? draw?.[5])} MON`
+  const canWithdrawPrize = Boolean(prizeWin && BigInt(prizeWin.remainingAmount || '0') > 0n)
+  const statusLabel = prizeWin ? 'Finalized' : draw ? V5_DRAW_STATUS[Number(draw?.status ?? draw?.[11])] || 'Unknown' : 'Warming up'
 
   return (
     <div className="winners-view-page">
@@ -1717,7 +1765,7 @@ function V5PreviousRound({ state, onBack, onClaim, canClaimPrize, busy, status, 
             <strong>{statusLabel}</strong>
           </div>
         </div>
-        <button className="btn" onClick={onClaim} disabled={Boolean(busy) || !canClaimPrize}>Claim Prize</button>
+        <button className="btn" onClick={() => onClaim(prizeWin)} disabled={Boolean(busy) || !canWithdrawPrize}>Claim Prize</button>
       </div>
 
       <div className="participants-card">
@@ -1738,7 +1786,7 @@ function V5PreviousRound({ state, onBack, onClaim, canClaimPrize, busy, status, 
   )
 }
 
-function V5HistoryTable({ account, rows }) {
+function V5HistoryTable({ account, rows, onPrizeClick }) {
   return (
     <section className="participants-card v5-history-card">
       <div className="participants-head">
@@ -1757,7 +1805,7 @@ function V5HistoryTable({ account, rows }) {
           <div className="participants-row v5-history-row" key={row.key}>
             <span>{row.date}</span>
             <span>{row.tx ? <a className="stats-winner-link" href={v5ExplorerTx(row.tx)} target="_blank" rel="noopener noreferrer">{row.transaction}</a> : row.transaction}</span>
-            <span>{row.result}</span>
+            <span>{row.prizeWin ? <button type="button" className="v5-history-winner" onClick={() => onPrizeClick(row.prizeWin)}>WINNER</button> : row.result}</span>
             <span>{row.principal}</span>
             <span>{row.prize}</span>
           </div>
@@ -1787,7 +1835,6 @@ export function V5UatExperience() {
   const [liveNowMs, setLiveNowMs] = useState(() => Date.now())
   const [withdrawRequest, setWithdrawRequest] = useState(null)
   const [withdrawChoiceOpen, setWithdrawChoiceOpen] = useState(false)
-  const [withdrawRedirectWarningOpen, setWithdrawRedirectWarningOpen] = useState(false)
   const [pointsProfile, setPointsProfile] = useState(null)
   const [pointsHistory, setPointsHistory] = useState([])
   const [pointsTranches, setPointsTranches] = useState([])
@@ -1989,17 +2036,6 @@ export function V5UatExperience() {
     }
   }, [cfg.chainId, cfg.rpcUrl, refresh])
 
-  const claim = useCallback(async (signer) => {
-    if (!cfg.claimProofUrl) throw new Error('Claim proof source is not configured yet for this UAT build.')
-    const signerAccount = await signer.getAddress()
-    const res = await fetch(v5ClaimUrl(cfg.claimProofUrl, signerAccount, cfg), { headers: { accept: 'application/json' } })
-    if (!res.ok) throw new Error(`No claim found yet (${res.status})`)
-    const payload = normalizeV5ClaimPayload(await res.json())
-    if (!payload) throw new Error('No claimable prize found for this wallet yet.')
-    const claims = new ethers.Contract(cfg.claimManager, V5_CLAIM_MANAGER_ABI, signer)
-    return claims.claimMany(payload.leaves, payload.proofs)
-  }, [cfg])
-
   const drawHealth = buildV5DrawHealth({ state, nowMs: liveNowMs })
   const countdown = drawHealth.isLoading
     ? 'Loading draw…'
@@ -2016,7 +2052,6 @@ export function V5UatExperience() {
       ? 'Settling the current draw'
       : 'Next draw building'
   const ticketModel = buildV5TicketModel({ state, account, nowMs: liveNowMs })
-  const claimButton = () => transact('Claim prize', claim)
   const openVaultPage = (event) => {
     event?.preventDefault?.()
     setStatus('')
@@ -2040,22 +2075,11 @@ export function V5UatExperience() {
     setStatus('')
     setV5Page('history')
   }
-  const withdrawWarningText = useMemo(() => {
-    if (!withdrawChoiceOpen || !withdrawRequest) return ''
-    const isDegen = withdrawRequest.kind === 'degen'
-    const drawId = Number(state?.currentDrawId || 0)
-    const poolTranches = scopeV5RowsToVault(pointsTranches, cfg.prizeVault)
-      .filter((row) => row.pool_type === (isDegen ? 'degen' : 'vault') && trancheRemainingMon(row) > 0)
-    const oldest = poolTranches
-      .map((tranche) => ({ weeks: trancheWeeks(tranche, drawId), amount: trancheRemainingMon(tranche) }))
-      .sort((a, b) => b.weeks - a.weeks || b.amount - a.amount)[0]
-    const weeks = oldest ? oldest.weeks : 0
-    const multiplier = isDegen ? formatMultiplier(degenMultiplierForWeeks(weeks)) : formatMultiplier(vaultMultiplierForWeeks(weeks))
-    const poolLabel = isDegen ? 'Patron Pool' : 'vault'
-    return withdrawRequest.isFull
-      ? `Withdrawing everything from the ${poolLabel} resets its streak. You're on a ${weeks}-week streak at ${multiplier}; you'll rebuild from zero.`
-      : `This removes your most recent ${withdrawRequest.amountLabel} and its multiplier tenure. The rest of your ${poolLabel} position keeps its ${weeks}-week streak.`
-  }, [withdrawChoiceOpen, withdrawRequest, pointsTranches, state?.currentDrawId, cfg.prizeVault])
+  const withdrawWarningText = !withdrawChoiceOpen || !withdrawRequest
+    ? ''
+    : withdrawRequest.kind === 'prize'
+      ? 'Your winnings have been automatically added to your vault position. Withdrawing your prize now will also end the autocompounding on it.'
+      : 'Are you sure? If you withdraw, you risk losing your streak and multipliers.'
   const afterPlayAction = async ({ account: nextAccount }) => {
     setPlayAmount('')
     const deposited = await vault.principalOf(nextAccount).catch(() => 0n)
@@ -2085,9 +2109,8 @@ export function V5UatExperience() {
     if (busy) return
     setWithdrawRequest(null)
     setWithdrawChoiceOpen(false)
-    setWithdrawRedirectWarningOpen(false)
   }
-  const beginWithdrawFlow = ({ kind, amountValue, principal, label, methodName, clearAmount, afterConfirm }) => {
+  const beginWithdrawFlow = ({ kind, amountValue, principal, label, walletMethodName, convertMethodName, clearAmount, afterConfirm }) => {
     setError('')
     setStatus('')
     try {
@@ -2101,7 +2124,8 @@ export function V5UatExperience() {
         principal: principal || 0n,
         isFull: amount >= (principal || 0n),
         label,
-        methodName,
+        walletMethodName,
+        convertMethodName,
         clearAmount,
         afterConfirm,
       })
@@ -2113,7 +2137,7 @@ export function V5UatExperience() {
   const withdrawToWallet = () => {
     const request = withdrawRequest
     if (!request) return
-    return transact(request.label, (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer)[request.methodName](request.amount), {
+    return transact(request.label, (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer)[request.walletMethodName](request.amount), {
       afterSubmit: request.clearAmount,
       afterConfirm: async (ctx) => {
         setWithdrawChoiceOpen(false)
@@ -2123,42 +2147,40 @@ export function V5UatExperience() {
     })
   }
   const withdrawAndConvert = () => {
-    setWithdrawRedirectWarningOpen(true)
-  }
-  const confirmWithdrawAndConvert = () => {
     const request = withdrawRequest
     if (!request) return
-    const shmonadWindow = window.open('about:blank', '_blank')
-    try {
-      if (shmonadWindow) {
-        shmonadWindow.document.write('<!doctype html><title>Opening shmonad.xyz</title><body style="font-family:system-ui;background:#100d1e;color:#fff;display:grid;place-items:center;height:100vh;margin:0"><main style="text-align:center"><h1>Redeeming…</h1><p>shmonad.xyz will open after your wallet confirms. Then click Unstake.</p></main></body>')
-        shmonadWindow.document.close()
-      }
-    } catch {}
-    const openShmonad = () => {
-      try {
-        if (shmonadWindow && !shmonadWindow.closed) {
-          shmonadWindow.location.assign('https://shmonad.xyz')
-          shmonadWindow.focus?.()
-          return
-        }
-      } catch {}
-      window.location.assign('https://shmonad.xyz')
-    }
-    return transact(request.label, (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer)[request.methodName](request.amount), {
+    return transact(request.label, (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer)[request.convertMethodName](request.amount), {
       afterSubmit: request.clearAmount,
       afterConfirm: async (ctx) => {
         setWithdrawChoiceOpen(false)
-        setWithdrawRedirectWarningOpen(false)
         setWithdrawRequest(null)
-        setStatus('Redeemed. Continue MON conversion in shmonad.xyz.')
-        openShmonad()
         await request.afterConfirm?.(ctx)
       },
     })
   }
-  const drawPayout = BigInt(state?.draw?.totalPayout ?? state?.draw?.[5] ?? 0n)
-  const canClaimPrize = Boolean(account && cfg.claimProofUrl && drawPayout > 0n)
+  const prizeWins = (state?.historyRows || []).flatMap((row) => row.prizeWin ? [row.prizeWin] : [])
+  const latestPrizeWin = newestWithdrawablePrize(prizeWins)
+  const previousPrizeWin = latestPrizeWin || prizeWins[0] || null
+  const openPrizeFlow = (prizeWin) => {
+    if (!prizeWin) return
+    const amount = BigInt(prizeWin.remainingAmount || '0')
+    setError('')
+    setStatus('')
+    setWithdrawRequest({
+      kind: 'prize',
+      amount,
+      amountValue: ethers.formatEther(amount),
+      amountLabel: `${formatV5Mon(amount)} MON`,
+      principal: state?.principal || 0n,
+      isFull: false,
+      label: 'Prize withdrawal',
+      walletMethodName: 'withdrawShmon',
+      convertMethodName: 'withdraw',
+      clearAmount: null,
+      afterConfirm: null,
+    })
+    setWithdrawChoiceOpen(true)
+  }
 
   return (
     <div className="app-shell v5-uat-mode">
@@ -2215,7 +2237,8 @@ export function V5UatExperience() {
                 amountValue: degenAmount,
                 principal: state?.boosterPrincipal || 0n,
                 label: 'Patron Pool withdraw',
-                methodName: 'boostWithdrawShmon',
+                walletMethodName: 'boostWithdrawShmon',
+                convertMethodName: 'boostWithdraw',
                 clearAmount: clearDegenAmount,
                 afterConfirm: afterDegenAction,
               })}
@@ -2228,14 +2251,14 @@ export function V5UatExperience() {
           <V5PreviousRound
             state={state}
             onBack={openPreviousRound}
-            onClaim={claimButton}
-            canClaimPrize={canClaimPrize}
+            onClaim={openPrizeFlow}
+            prizeWin={previousPrizeWin}
             busy={busy}
             status=""
             error=""
           />
         ) : v5Page === 'history' ? (
-          <V5HistoryTable account={account} rows={state?.historyRows || []} />
+          <V5HistoryTable account={account} rows={state?.historyRows || []} onPrizeClick={openPrizeFlow} />
         ) : (
         <>
         <section className="main-grid">
@@ -2267,7 +2290,8 @@ export function V5UatExperience() {
               amountValue: playAmount,
               principal: state?.principal || 0n,
               label: 'Withdraw',
-              methodName: 'withdrawShmon',
+              walletMethodName: 'withdrawShmon',
+              convertMethodName: 'withdraw',
               clearAmount: clearPlayAmount,
               afterConfirm: afterPlayAction,
             })}
@@ -2305,17 +2329,20 @@ export function V5UatExperience() {
 
         <ClaimFlowModal
           open={withdrawChoiceOpen}
-          mode="principal"
+          mode={withdrawRequest?.kind === 'prize' ? 'winner' : 'principal'}
           busy={Boolean(busy)}
           status={status}
           error={error}
           onClose={closeWithdrawFlow}
           onRedeemToWallet={withdrawToWallet}
           onRedeemAndConvert={withdrawAndConvert}
-          onBackFromRedirectWarning={() => setWithdrawRedirectWarningOpen(false)}
-          confirmRedirectOpen={withdrawRedirectWarningOpen}
-          onConfirmRedirect={confirmWithdrawAndConvert}
+          onBackFromRedirectWarning={() => {}}
+          confirmRedirectOpen={false}
+          onConfirmRedirect={() => {}}
           withdrawWarningText={withdrawWarningText}
+          v5
+          actionDisabled={withdrawRequest?.kind === 'prize' && withdrawRequest.amount <= 0n}
+          prizeAmountLabel={withdrawRequest?.kind === 'prize' ? `Prize: ${formatV5Mon(withdrawRequest.amount)} MON` : ''}
         />
 
         <footer className="site-footer" id="disclaimer">
