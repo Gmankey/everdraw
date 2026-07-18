@@ -1776,3 +1776,33 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
     grid-template-columns: 1fr;
   }
 }
+
+.claim-flow-prize-amount {
+  margin: 4px 0 0;
+  color: #ede8ff;
+  font-size: 1.15rem;
+  font-weight: 800;
+}
+
+.v5-history-winner {
+  border: 0;
+  padding: 2px 0;
+  background: linear-gradient(90deg, #ff5f6d, #f6b73c, #64d98b, #5ac8fa, #9b6dff, #ff5fba);
+  background-size: 240% 100%;
+  background-clip: text;
+  color: transparent;
+  font: inherit;
+  font-size: 1.15rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  cursor: pointer;
+  animation: v5-winner-rainbow 4s linear infinite;
+}
+
+.v5-history-winner:hover {
+  filter: brightness(1.2);
+}
+
+@keyframes v5-winner-rainbow {
+  to { background-position: 240% 0; }
+}
