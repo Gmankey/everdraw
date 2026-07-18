@@ -1771,6 +1771,10 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
   grid-template-columns: minmax(96px, 1fr) minmax(150px, 1.6fr) minmax(90px, 0.9fr) minmax(110px, 1fr) minmax(96px, 0.9fr);
 }
 
+.participants-row.v5-previous-participants-row {
+  grid-template-columns: 40px minmax(220px, 1fr) minmax(100px, .35fr);
+}
+
 @media (max-width: 900px) {
   .v5-action-grid {
     grid-template-columns: 1fr;
@@ -1792,9 +1796,10 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
   background-clip: text;
   color: transparent;
   font: inherit;
-  font-size: 1.15rem;
-  font-weight: 900;
+  font-size: 1.35rem;
+  font-weight: 950;
   letter-spacing: 0;
+  text-shadow: 0 0 18px rgba(155,109,255,.42);
   cursor: pointer;
   animation: v5-winner-rainbow 4s linear infinite;
 }
@@ -1806,3 +1811,13 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
 @keyframes v5-winner-rainbow {
   to { background-position: 240% 0; }
 }
+
+/* V5 points reconciliation */
+.points-milestone-awards { border-top: 1px solid rgba(155,109,255,.12); }
+.points-milestone-award-row { display: grid; grid-template-columns: 120px 1fr auto; align-items: center; gap: 12px; padding: 12px 20px; border-bottom: 1px solid rgba(155,109,255,.07); color: #c4b5fd; font-size: .85rem; }
+.points-milestone-award-row strong { color: #fff; }
+.rewards-total-bronze { color: #cd7f32 !important; }
+.rewards-total-silver { color: #e5e7eb !important; }
+.rewards-total-gold { color: #fde68a !important; }
+.rewards-total-platinum { color: #bfdbfe !important; }
+.rewards-total-diamond { color: #c4b5fd !important; }
