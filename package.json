@@ -30,6 +30,7 @@
     "keeper:install-systemd": "bash scripts/keeper-install-systemd.sh",
     "keeper:v5": "KEEPER_LOOP=true node scripts/keeper-v5.js",
     "keeper:v5:once": "node scripts/keeper-v5.js",
+    "keeper:v5:alert-policy-test": "node --test scripts/keeper/v5-runtime-alert-policy.test.mjs scripts/keeper/v5-runtime-supervisor.test.mjs",
     "keeper:deploy": "flyctl deploy . -c scripts/keeper/fly.toml --ha=false",
     "keeper:logs": "flyctl logs -a everdraw-keeper",
     "keeper:status": "flyctl status -a everdraw-keeper",

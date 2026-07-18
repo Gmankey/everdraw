@@ -33,6 +33,16 @@ primary_region = "sjc"
   KEEPER_LOOP = "true"
   KEEPER_INTERVAL_MS = "60000"
   KEEPER_RECENT_CLAIM_WINDOW = "1000"
+  KEEPER_CHAIN_ID = "10143"
+  KEEPER_LOW_BALANCE_WEI = "500000000000000000"
+  KEEPER_LOW_BALANCE_WARN_WEI = "750000000000000000"
+  KEEPER_CRASH_ALERT_THRESHOLD = "3"
+  KEEPER_CRASH_ALERT_WINDOW_MS = "60000"
+  KEEPER_ALERT_REPEAT_MS = "3600000"
+  TELEGRAM_TIMEOUT_MS = "8000"
+  TELEGRAM_RETRIES = "2"
+  # TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, and KEEPER_HEALTHCHECK_FAIL_URL are
+  # runtime Fly secrets. Configure at least one alert transport before relying on this keeper.
   # PRIVATE_KEY is intentionally NOT set here. It is the primary-proposer key and must be set as
   # a Fly secret by the operator (never committed, never held by the builder):
   #   flyctl secrets set PRIVATE_KEY=0x<primary-proposer key> -c scripts/keeper/fly.v5.uat.toml

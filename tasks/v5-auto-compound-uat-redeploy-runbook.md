@@ -129,6 +129,20 @@ flyctl secrets set -a everdraw-keeper-v5 \
 
 Setting the secrets restarts the managed keeper automatically. Do not run `flyctl deploy` merely to re-point addresses; deploy only when the keeper image or non-secret TOML config changed. `PRIVATE_KEY` remains an independently managed Fly secret and must not be printed or replaced during re-pointing.
 
+Alert routing is also Fly-secret-authoritative. Before deploying the supervisor image, configure
+Telegram and the independent dead-man failure endpoint on `everdraw-keeper-v5` (values are supplied
+interactively by the operator and must not be pasted into tickets or committed files):
+
+```bash
+flyctl secrets set -a everdraw-keeper-v5 \
+  TELEGRAM_BOT_TOKEN='<operator bot token>' \
+  TELEGRAM_CHAT_ID='<operator chat id>' \
+  KEEPER_HEALTHCHECK_FAIL_URL='<dead-man failure URL>'
+```
+
+The supervisor logs whether each route is configured without printing either secret. Treat
+`alert transport is disabled` as a failed deployment gate.
+
 **Verification (the log command exits after 90 seconds):**
 
 ```bash
