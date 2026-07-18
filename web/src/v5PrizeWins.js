@@ -21,7 +21,3 @@ export function buildV5PrizeWins(positionEvents, tranches) {
     })
     .sort((a, b) => Date.parse(b.blockTimestamp || '') - Date.parse(a.blockTimestamp || ''))
 }
-
-export function newestWithdrawablePrize(prizeWins) {
-  return (Array.isArray(prizeWins) ? prizeWins : []).find((win) => BigInt(win.remainingAmount || '0') > 0n) || null
-}
