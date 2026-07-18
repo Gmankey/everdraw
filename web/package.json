@@ -13,7 +13,8 @@
     "test:prize-wins": "node --test src/v5PrizeWins.test.js",
     "preview": "vite preview",
     "test:points-view": "node --test src/v5PointsView.test.js",
-    "test:previous-draw": "node --test src/v5PreviousDraw.test.js"
+    "test:previous-draw": "node --test src/v5PreviousDraw.test.js",
+    "test:history-result": "node --test src/v5HistoryResult.test.js"
   },
   "dependencies": {
     "@web3modal/ethers": "5.1.11",
