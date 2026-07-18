@@ -17,6 +17,8 @@ const INTERVAL_MS = Number(process.env.KEEPER_INTERVAL_MS || 60_000);
 const CLAIM_BATCH_SIZE = Number(process.env.CLAIM_BATCH_SIZE || 50);
 const HEALTHCHECK_URL = process.env.KEEPER_HEALTHCHECK_URL;
 const LOW_BALANCE_WEI = BigInt(process.env.KEEPER_LOW_BALANCE_WEI || "500000000000000000");
+const LOW_BALANCE_WARN_WEI = BigInt(process.env.KEEPER_LOW_BALANCE_WARN_WEI || "750000000000000000");
+const EXPECTED_CHAIN_ID = BigInt(process.env.KEEPER_CHAIN_ID || "10143");
 const RPC_TIMEOUT_MS = Number(process.env.KEEPER_RPC_TIMEOUT_MS || 15_000);
 const TX_TIMEOUT_MS = Number(process.env.KEEPER_TX_TIMEOUT_MS || 180_000);
 const RPC_RETRIES = Number(process.env.KEEPER_RPC_RETRIES || 2);
@@ -391,10 +393,13 @@ async function runOnce() {
     drawManagerAddress,
   });
   const network = await rpcRead("readProvider.getNetwork", () => readProvider.getNetwork());
-  if (network.chainId !== 10143n) throw new Error(`wrong chain id ${network.chainId}; expected Monad testnet 10143`);
+  if (network.chainId !== EXPECTED_CHAIN_ID) throw new Error(`wrong chain id ${network.chainId}; expected ${EXPECTED_CHAIN_ID}`);
   const writeNetwork = await rpcRead("writeProvider.getNetwork", () => writeProvider.getNetwork());
-  if (writeNetwork.chainId !== 10143n) throw new Error(`wrong write chain id ${writeNetwork.chainId}; expected Monad testnet 10143`);
+  if (writeNetwork.chainId !== EXPECTED_CHAIN_ID) throw new Error(`wrong write chain id ${writeNetwork.chainId}; expected ${EXPECTED_CHAIN_ID}`);
   const balance = await rpcRead(`writeProvider.getBalance(${signer.address})`, () => writeProvider.getBalance(signer.address));
+  if (balance < LOW_BALANCE_WARN_WEI) {
+    console.warn(`[keeper-v5] LOW_BALANCE_WARNING address=${signer.address} balanceWei=${balance} warningWei=${LOW_BALANCE_WARN_WEI} floorWei=${LOW_BALANCE_WEI}`);
+  }
   if (balance < LOW_BALANCE_WEI) throw new Error(`keeper balance low: ${signer.address} balance=${balance}`);
 
   let acted = false;

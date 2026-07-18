@@ -200,16 +200,29 @@ KEEPER_LOOP = "true"
 KEEPER_INTERVAL_MS = "60000"
 KEEPER_RECENT_CLAIM_WINDOW = "1000"
 KEEPER_PREFLIGHT = "true"
-KEEPER_LOW_BALANCE_MON = "<operator threshold>"
-KEEPER_ERROR_ALERT_THRESHOLD = "<operator threshold>"
-KEEPER_HEARTBEAT_LOG_EVERY_TICKS = "<operator threshold>"
+KEEPER_CHAIN_ID = "143"
+KEEPER_LOW_BALANCE_WEI = "<hard-stop floor in wei>"
+KEEPER_LOW_BALANCE_WARN_WEI = "<higher warning threshold in wei>"
+KEEPER_CRASH_ALERT_THRESHOLD = "3"
+KEEPER_CRASH_ALERT_WINDOW_MS = "60000"
+KEEPER_ALERT_REPEAT_MS = "3600000"
+TELEGRAM_TIMEOUT_MS = "8000"
+TELEGRAM_RETRIES = "2"
 ```
 
-Set the proposer key only as a Fly secret:
+Set the proposer key and alert routes only as Fly secrets. Configure Telegram plus the independent
+healthcheck-failure route so a Fly crash loop cannot fail silently in the same channel:
 
 ```bash
-flyctl secrets set -a everdraw-keeper-v5-mainnet PRIVATE_KEY=0x<primary-proposer-key>
+flyctl secrets set -a everdraw-keeper-v5-mainnet \
+  PRIVATE_KEY=0x<primary-proposer-key> \
+  TELEGRAM_BOT_TOKEN='<operator bot token>' \
+  TELEGRAM_CHAT_ID='<operator chat id>' \
+  KEEPER_HEALTHCHECK_FAIL_URL='<dead-man failure URL>'
 ```
+
+The runtime supervisor alerts before `KEEPER_LOW_BALANCE_WEI` is reached and after repeated
+non-zero exits. A 5-second restart loop is deduplicated by `KEEPER_ALERT_REPEAT_MS`, not hidden.
 
 Deploy from repo root:
 
@@ -294,7 +307,7 @@ Before opening deposits, confirm alerts are live for:
 - cap/min-deposit changes
 - vault solvency/shortfall
 
-Run one low-balance alert test on the keeper app and confirm the alert reaches the expected channel.
+Run one low-balance warning test and one repeated-exit test on the keeper app. Confirm both reach Telegram and the independent healthcheck alert channel.
 
 ## Step 9 - Final launch gate
 

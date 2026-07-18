@@ -17,6 +17,8 @@ RUN npm ci --omit=dev --ignore-scripts
 COPY scripts/keeper-v5.js ./scripts/
 COPY scripts/draw/ ./scripts/draw/
 COPY scripts/keeper/entrypoint-v5.sh ./scripts/keeper/
+COPY scripts/keeper/v5-runtime-supervisor.mjs ./scripts/keeper/
+COPY scripts/keeper/v5-runtime-alert-policy.mjs ./scripts/keeper/
 COPY abi/ ./abi/
 COPY deployments/ ./deployments/
 
