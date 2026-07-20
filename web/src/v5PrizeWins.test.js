@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { buildV5PrizeWins, newestWithdrawablePrize } from './v5PrizeWins.js'
+import { buildV5PrizeWins } from './v5PrizeWins.js'
 
 test('joins a prize compound to its credited tranche and winning draw', () => {
   const wins = buildV5PrizeWins([
@@ -27,7 +27,6 @@ test('joins a prize compound to its credited tranche and winning draw', () => {
   assert.equal(wins[0].drawId, 28)
   assert.equal(wins[0].compoundedAmount, '79487845611576211')
   assert.equal(wins[0].remainingAmount, '70000000000000000')
-  assert.equal(newestWithdrawablePrize(wins)?.txHash, '0xcompound')
 })
 
 test('keeps a withdrawn win discoverable but does not select it for withdrawal', () => {
@@ -38,5 +37,5 @@ test('keeps a withdrawn win discoverable but does not select it for withdrawal',
   ])
 
   assert.equal(wins[0].drawId, 3)
-  assert.equal(newestWithdrawablePrize(wins), null)
+  assert.equal(wins[0].remainingAmount, '0')
 })

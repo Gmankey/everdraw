@@ -11,7 +11,10 @@ import { _cached, assertNotAborted, getCachedRoundInfo, isAbortError, withAbort 
 import './App.css'
 import { buildV5DrawHealth } from './v5DrawHealth.js'
 import { scopeV5RowsToVault } from './v5VaultScope.js'
-import { buildV5PrizeWins, newestWithdrawablePrize } from './v5PrizeWins.js'
+import { buildV5PrizeWins } from './v5PrizeWins.js'
+import { v5HistoryResult } from './v5HistoryResult.js'
+import { awardedMilestones, tierName } from './v5PointsView.js'
+import { latestSettledDraw, participantRowsForDraw } from './v5PreviousDraw.js'
 import './shmon.css'
 
 // Vercel build-ignore guard markers for production deploys: points/preview, setMaxTickets.
@@ -474,7 +477,6 @@ function ProfilePage({ account, points, history, tranches, currentDrawId, curren
   const historyRows = Array.isArray(history) ? history : []
   const scopedTranches = currentVault ? scopeV5RowsToVault(tranches, currentVault) : (Array.isArray(tranches) ? tranches : [])
   const openTranches = scopedTranches.filter((row) => trancheRemainingMon(row) > 0)
-  const vaultTranches = openTranches.filter((row) => row.pool_type === 'vault')
   const degenTranches = openTranches.filter((row) => row.pool_type === 'degen')
   const drawId = Number(currentDrawId || historyRows[0]?.round_id || 0)
   const streakWeeks = Number(points?.current_streak_weeks || 0)
@@ -482,34 +484,28 @@ function ProfilePage({ account, points, history, tranches, currentDrawId, curren
   const dotCount = 52
   const litDots = Math.max(0, Math.min(dotCount, streakWeeks))
 
-  // Main vault position: use the oldest open vault tranche's own tenure (per-tranche multiplier,
-  // §2b anti-gaming) rather than the account streak, falling back to the account rate if the
-  // wallet has no open tranche data yet (e.g. indexer not caught up).
-  const oldestVault = vaultTranches
-    .map((tranche) => ({ weeks: trancheWeeks(tranche, drawId), amount: trancheRemainingMon(tranche) }))
-    .filter((row) => row.amount > 0)
-    .sort((a, b) => b.weeks - a.weeks || b.amount - a.amount)[0]
   const oldestDegen = degenTranches
     .map((tranche) => ({ weeks: trancheWeeks(tranche, drawId), amount: trancheRemainingMon(tranche) }))
     .filter((row) => row.amount > 0)
     .sort((a, b) => b.weeks - a.weeks || b.amount - a.amount)[0]
 
-  const mainVaultMultiplierX100 = oldestVault ? vaultMultiplierForWeeks(oldestVault.weeks) : Number(points?.current_multiplier_x100 || 100)
+  const mainVaultMultiplierX100 = Number(points?.current_multiplier_x100 || 100)
   const hasPatronPosition = Boolean(oldestDegen)
   const patronVaultMultiplierX100 = oldestDegen ? degenMultiplierForWeeks(oldestDegen.weeks) : 200
 
-  const nextVault = oldestVault ? nextVaultThreshold(oldestVault.weeks) : nextVaultThreshold(streakWeeks)
+  const nextVault = nextVaultThreshold(streakWeeks)
   const nextDegen = oldestDegen ? nextDegenThreshold(oldestDegen.weeks) : 2
   // Hover-only detail (title attribute) -- not rendered as persistent copy on the page.
-  const nextMainVaultCopy = oldestVault && nextVault
-    ? `Reaches ${formatMultiplier(vaultMultiplierForWeeks(nextVault))} in ${Math.max(1, nextVault - oldestVault.weeks)} draw${Math.max(1, nextVault - oldestVault.weeks) === 1 ? '' : 's'}.`
-    : oldestVault ? 'At the top multiplier tier.' : 'Deposit into the vault to start building your multiplier.'
+  const nextMainVaultCopy = nextVault
+    ? `Reaches ${formatMultiplier(vaultMultiplierForWeeks(nextVault))} in ${Math.max(1, nextVault - streakWeeks)} draw${Math.max(1, nextVault - streakWeeks) === 1 ? '' : 's'}.`
+    : 'At the top multiplier tier.'
   const nextPatronCopy = oldestDegen && nextDegen
     ? `${Math.max(1, nextDegen - oldestDegen.weeks)} more draw${Math.max(1, nextDegen - oldestDegen.weeks) === 1 ? '' : 's'} to ${formatMultiplier(degenMultiplierForWeeks(nextDegen))}.`
     : oldestDegen ? 'At the 5x Patron Pool cap.' : 'No Patron Pool position — starts at 2x and builds to 5x.'
 
   const streakMilestoneWeeks = [2, 4, 13, 26, 52]
   const highestMilestoneAwarded = Number(points?.highest_streak_milestone_awarded || 0)
+  const milestoneAwards = awardedMilestones(points)
   const noWinDraws = Number(points?.consecutive_non_wins || 0)
   const highestLossAwarded = Number(points?.highest_loss_streak_bonus_awarded || 0)
   const bonusRows = [
@@ -535,7 +531,7 @@ function ProfilePage({ account, points, history, tranches, currentDrawId, curren
       <div className="points-profile-layout points-profile-layout-rewards">
         <div className="points-profile-summary points-profile-main-card rewards-main-card">
           <div className="points-popover-kicker rewards-kicker">Total points balance</div>
-          <div className="points-profile-total rewards-total">{Number(points?.lifetime_points || 0).toLocaleString()}</div>
+          <div className={`points-profile-total rewards-total rewards-total-${tierName(points)}`}>{Number(points?.lifetime_points || 0).toLocaleString()}</div>
 
           <div className="rewards-pill-row">
             <div className="points-multiplier-pill rewards-multiplier-pill" title={nextMainVaultCopy}><span>Main vault multiplier</span><strong>{formatMultiplier(mainVaultMultiplierX100)}</strong></div>
@@ -569,11 +565,11 @@ function ProfilePage({ account, points, history, tranches, currentDrawId, curren
             <h3>Bonuses</h3>
             <div className="points-milestone-list rewards-bonus-list">
               {bonusRows.map((bonus) => (
-                <div className={`points-milestone-row rewards-bonus-row ${bonus.unlocked ? 'claimed' : 'locked'}`} key={bonus.key} title={`${bonus.label} +${bonus.points.toLocaleString()} points`}>
+                <div className={`points-milestone-row rewards-bonus-row ${bonus.unlocked ? 'claimed' : 'locked'}`} key={bonus.key} title={bonus.unlocked ? `${bonus.label} +${bonus.points.toLocaleString()} points` : '???'}>
                   <span className="points-milestone-icon" aria-hidden="true">{bonus.unlocked ? '✓' : ''}</span>
                   <div>
-                    <strong>{bonus.label}</strong>
-                    <small>+{bonus.points.toLocaleString()} points</small>
+                    <strong>{bonus.unlocked ? bonus.label : '???'}</strong>
+                    <small>{bonus.unlocked ? `+${bonus.points.toLocaleString()} points` : '???'}</small>
                   </div>
                   <span className="points-milestone-status">{bonus.unlocked ? 'UNLOCKED' : 'Locked'}</span>
                 </div>
@@ -586,7 +582,7 @@ function ProfilePage({ account, points, history, tranches, currentDrawId, curren
       <div className="points-recent-rounds">
         <h3>Recent draws</h3>
         <div className="participants-table">
-          <div className="participants-row participants-header points-rounds-row"><span>Draw</span><span>Your entry</span><span>Multiplier</span><span>Bonus</span><span>Total</span></div>
+          <div className="participants-row participants-header points-rounds-row"><span>Draw</span><span>Your entry</span><span>Bonus</span><span>Total</span></div>
           {recentDraws.length === 0 ? (
             <div className="points-empty-state">No draws yet. Deposit to start earning entries.</div>
           ) : recentDraws.map((h) => {
@@ -595,7 +591,6 @@ function ProfilePage({ account, points, history, tranches, currentDrawId, curren
               <div className="participants-row points-rounds-row" key={`${h.pool_address}:${h.round_id}`}>
                 <span>#{h.round_id}</span>
                 <span>{Number(h.base_points || 0).toLocaleString()}</span>
-                <span>x{(Number(h.multiplier_x100 || 100) / 100).toFixed(2)}</span>
                 <span className="round-bonus-pills">
                   {bonusEntries.map(([key]) => <span className="round-bonus-pill" key={key}>{bonusLabel(key)}</span>)}
                 </span>
@@ -604,6 +599,17 @@ function ProfilePage({ account, points, history, tranches, currentDrawId, curren
             )
           })}
         </div>
+        {milestoneAwards.length > 0 ? (
+          <div className="points-milestone-awards" aria-label="Milestone awards">
+            {milestoneAwards.map((award) => (
+              <div className="points-milestone-award-row" key={award.week}>
+                <span className="round-bonus-pill">MILESTONE</span>
+                <span>{award.week} week streak</span>
+                <strong>+{award.points.toLocaleString()}</strong>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
     </section>
   )
@@ -1527,15 +1533,16 @@ async function v5BuildHistoryRows({ account, vault, manager }) {
     .filter((r) => String(r.poolAddress || '').toLowerCase() === drawManagerLc && r.state === 'settled')
     .map((r) => {
       const prizeWin = prizeByDraw.get(Number(r.roundId)) || null
+      const walletResult = v5HistoryResult(prizeWin)
       if (prizeWin) matchedPrizeKeys.add(prizeWin.key)
       return {
         key: `draw-${r.roundId}`,
         sortAt: Date.parse(r.settledAt || '') || 0,
         date: v5EventDateFromIso(r.settledAt),
         transaction: `Prize draw #${r.roundId}`,
-        result: prizeWin ? 'WINNER' : 'Finalized',
+        result: walletResult.result,
         principal: '\u2014',
-        prize: prizeWin ? `${formatV5Mon(prizeWin.compoundedAmount)} MON` : `${formatV5Mon(r.yieldMon)} MON`,
+        prize: walletResult.prizeAmount ? `${formatV5Mon(walletResult.prizeAmount)} MON` : '\u2014',
         tx: null,
         prizeWin,
       }
@@ -1556,6 +1563,17 @@ async function v5BuildHistoryRows({ account, vault, manager }) {
     }))
 
   return [...positionRows, ...drawRows, ...unmatchedPrizeRows].sort((a, b) => b.sortAt - a.sortAt).slice(0, 24)
+}
+
+async function v5LoadPreviousDraw(drawManagerAddress) {
+  const base = getIndexerBaseUrl()
+  const rounds = await fetch(`${base}/api/rounds`).then((response) => (response.ok ? response.json() : [])).catch(() => [])
+  const draw = latestSettledDraw(rounds, drawManagerAddress)
+  if (!draw) return { draw: null, participants: [] }
+  const participants = await fetch(`${base}/api/rounds/${draw.roundId}/participants?pool=${encodeURIComponent(drawManagerAddress)}`)
+    .then((response) => (response.ok ? response.json() : []))
+    .catch(() => [])
+  return { draw, participants: participantRowsForDraw(participants, drawManagerAddress) }
 }
 
 function V5ActionCard({
@@ -1734,13 +1752,12 @@ function V5ActionCard({
   )
 }
 
-function V5PreviousRound({ state, onBack, onClaim, prizeWin, busy, status, error }) {
-  const draw = state?.draw
-  const drawId = prizeWin?.drawId?.toString?.() || state?.currentDrawId?.toString?.() || '0'
-  const winnerCount = prizeWin ? Math.max(1, Number(draw?.winnerCount ?? draw?.[6] ?? 0)) : Number(draw?.winnerCount ?? draw?.[6] ?? 0)
-  const prize = `${formatV5Mon(prizeWin?.compoundedAmount ?? draw?.totalPayout ?? draw?.[5])} MON`
-  const canWithdrawPrize = Boolean(prizeWin && BigInt(prizeWin.remainingAmount || '0') > 0n)
-  const statusLabel = prizeWin ? 'Finalized' : draw ? V5_DRAW_STATUS[Number(draw?.status ?? draw?.[11])] || 'Unknown' : 'Warming up'
+function V5PreviousRound({ state, onBack, status, error }) {
+  const previous = state?.previousDraw?.draw || null
+  const participants = state?.previousDraw?.participants || []
+  const drawId = previous?.roundId?.toString?.() || '0'
+  const winnerAddress = previous?.winner || ''
+  const prize = `${formatV5Mon(previous?.yieldMon)} MON`
 
   return (
     <div className="winners-view-page">
@@ -1754,7 +1771,7 @@ function V5PreviousRound({ state, onBack, onClaim, prizeWin, busy, status, error
       </div>
 
       <div className="winner-spotlight-card">
-        <div className="winner-address">{winnerCount > 0 ? `${winnerCount} winner${winnerCount === 1 ? '' : 's'}` : 'No winner yet'}</div>
+        <div className="winner-address" title={winnerAddress || undefined}>{winnerAddress ? shortAddr(winnerAddress) : 'No winner yet'}</div>
         <div className="winner-stats">
           <div>
             <span>Prize Won</span>
@@ -1762,21 +1779,34 @@ function V5PreviousRound({ state, onBack, onClaim, prizeWin, busy, status, error
           </div>
           <div>
             <span>Status</span>
-            <strong>{statusLabel}</strong>
+            <strong>{previous ? 'Finalized' : 'Warming up'}</strong>
           </div>
         </div>
-        <button className="btn" onClick={() => onClaim(prizeWin)} disabled={Boolean(busy) || !canWithdrawPrize}>Claim Prize</button>
       </div>
 
       <div className="participants-card">
         <div className="participants-head">
           <span>All Participants</span>
-          <span>V5 UAT</span>
+          <span>{participants.length} Wallets</span>
         </div>
         <div className="participants-table">
-          <div className="participants-row">
-            <span>{'\u2014'}</span><span>Winner data comes from the V5 claim indexer when a draw finalizes.</span><span>{winnerCount}</span><span>{statusLabel}</span><span>{prize}</span>
+          <div className="participants-row participants-header v5-previous-participants-row">
+            <span>#</span><span>Wallet</span><span>Result</span>
           </div>
+          {participants.length === 0 ? (
+            <div className="participants-row v5-previous-participants-row">
+              <span>{'\u2014'}</span><span>No participants indexed yet</span><span>{'\u2014'}</span>
+            </div>
+          ) : participants.map((participant, index) => {
+            const isWinner = winnerAddress && participant.wallet === winnerAddress.toLowerCase()
+            return (
+              <div className={`participants-row v5-previous-participants-row${isWinner ? ' winner-row' : ''}`} key={participant.wallet}>
+                <span>{index + 1}</span>
+                <span title={participant.wallet}>{shortAddr(participant.wallet)}</span>
+                <span>{isWinner ? 'WINNER' : 'No win'}</span>
+              </div>
+            )
+          })}
         </div>
       </div>
 
@@ -1786,7 +1816,7 @@ function V5PreviousRound({ state, onBack, onClaim, prizeWin, busy, status, error
   )
 }
 
-function V5HistoryTable({ account, rows, onPrizeClick }) {
+function V5HistoryTable({ account, rows }) {
   return (
     <section className="participants-card v5-history-card">
       <div className="participants-head">
@@ -1805,7 +1835,7 @@ function V5HistoryTable({ account, rows, onPrizeClick }) {
           <div className="participants-row v5-history-row" key={row.key}>
             <span>{row.date}</span>
             <span>{row.tx ? <a className="stats-winner-link" href={v5ExplorerTx(row.tx)} target="_blank" rel="noopener noreferrer">{row.transaction}</a> : row.transaction}</span>
-            <span>{row.prizeWin ? <button type="button" className="v5-history-winner" onClick={() => onPrizeClick(row.prizeWin)}>WINNER</button> : row.result}</span>
+            <span>{row.prizeWin ? <span className="v5-history-winner">WINNER</span> : row.result}</span>
             <span>{row.principal}</span>
             <span>{row.prize}</span>
           </div>
@@ -1907,7 +1937,10 @@ export function V5UatExperience() {
       shmon.balanceOf(user).catch(() => 0n),
     ]) : [0n, 0n, 0n, 0n]
     const shmonBalance = shmonShares > 0n ? await shmon.convertToAssets(shmonShares).catch(() => 0n) : 0n
-    const historyRows = await v5BuildHistoryRows({ account: user, block, vault, manager })
+    const [historyRows, previousDraw] = await Promise.all([
+      v5BuildHistoryRows({ account: user, block, vault, manager }),
+      v5LoadPreviousDraw(manager.target),
+    ])
     const periodStart = Number(nextPeriodStart || 0n)
     const periodLogs = user && periodStart > 0 && block?.number ? await Promise.all([
       vault.queryFilter(vault.filters.Deposit(user), Math.max(0, Number(block.number) - 200000), block.number).catch(() => []),
@@ -1953,6 +1986,7 @@ export function V5UatExperience() {
       shmonBalance,
       shmonShares,
       historyRows,
+      previousDraw,
       periodAccountEvents: periodLogs,
       readAtMs: Date.now(),
       boosterSupported: vaultCode !== '0x' && totalBoosterPrincipal !== null && boosterPrincipal !== null,
@@ -2077,9 +2111,7 @@ export function V5UatExperience() {
   }
   const withdrawWarningText = !withdrawChoiceOpen || !withdrawRequest
     ? ''
-    : withdrawRequest.kind === 'prize'
-      ? 'Your winnings have been automatically added to your vault position. Withdrawing your prize now will also end the autocompounding on it.'
-      : 'Are you sure? If you withdraw, you risk losing your streak and multipliers.'
+    : 'Are you sure? If you withdraw, you risk losing your streak and multipliers.'
   const afterPlayAction = async ({ account: nextAccount }) => {
     setPlayAmount('')
     const deposited = await vault.principalOf(nextAccount).catch(() => 0n)
@@ -2158,30 +2190,6 @@ export function V5UatExperience() {
       },
     })
   }
-  const prizeWins = (state?.historyRows || []).flatMap((row) => row.prizeWin ? [row.prizeWin] : [])
-  const latestPrizeWin = newestWithdrawablePrize(prizeWins)
-  const previousPrizeWin = latestPrizeWin || prizeWins[0] || null
-  const openPrizeFlow = (prizeWin) => {
-    if (!prizeWin) return
-    const amount = BigInt(prizeWin.remainingAmount || '0')
-    setError('')
-    setStatus('')
-    setWithdrawRequest({
-      kind: 'prize',
-      amount,
-      amountValue: ethers.formatEther(amount),
-      amountLabel: `${formatV5Mon(amount)} MON`,
-      principal: state?.principal || 0n,
-      isFull: false,
-      label: 'Prize withdrawal',
-      walletMethodName: 'withdrawShmon',
-      convertMethodName: 'withdraw',
-      clearAmount: null,
-      afterConfirm: null,
-    })
-    setWithdrawChoiceOpen(true)
-  }
-
   return (
     <div className="app-shell v5-uat-mode">
       <div className="beta-corner-ribbon" title="Testnet UAT only"></div>
@@ -2251,14 +2259,11 @@ export function V5UatExperience() {
           <V5PreviousRound
             state={state}
             onBack={openPreviousRound}
-            onClaim={openPrizeFlow}
-            prizeWin={previousPrizeWin}
-            busy={busy}
             status=""
             error=""
           />
         ) : v5Page === 'history' ? (
-          <V5HistoryTable account={account} rows={state?.historyRows || []} onPrizeClick={openPrizeFlow} />
+          <V5HistoryTable account={account} rows={state?.historyRows || []} />
         ) : (
         <>
         <section className="main-grid">
@@ -2329,7 +2334,7 @@ export function V5UatExperience() {
 
         <ClaimFlowModal
           open={withdrawChoiceOpen}
-          mode={withdrawRequest?.kind === 'prize' ? 'winner' : 'principal'}
+          mode="principal"
           busy={Boolean(busy)}
           status={status}
           error={error}
@@ -2341,8 +2346,6 @@ export function V5UatExperience() {
           onConfirmRedirect={() => {}}
           withdrawWarningText={withdrawWarningText}
           v5
-          actionDisabled={withdrawRequest?.kind === 'prize' && withdrawRequest.amount <= 0n}
-          prizeAmountLabel={withdrawRequest?.kind === 'prize' ? `Prize: ${formatV5Mon(withdrawRequest.amount)} MON` : ''}
         />
 
         <footer className="site-footer" id="disclaimer">
