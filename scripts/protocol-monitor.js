@@ -2,6 +2,7 @@
 import 'dotenv/config'
 import { JsonRpcProvider, Contract, formatEther } from 'ethers'
 import { loadCanonicalKeeperPools } from './keeper-active-pools.mjs'
+import { lowReserveFailure } from './protocol-monitor-policy.mjs'
 
 const RPC_URL = process.env.RPC_URL || process.env.MONAD_MAINNET_RPC_URL || 'https://rpc.monad.xyz'
 const EXPECTED_CHAIN_ID = Number(process.env.PROTOCOL_MONITOR_CHAIN_ID || '143')
@@ -99,9 +100,8 @@ async function inspectPool(provider, address) {
 
   const failures = []
   if (!code || code === '0x') failures.push('no runtime bytecode')
-  if (reserveMon < VRF_LOW_THRESHOLD_MON) {
-    failures.push(`VRF reserve ${reserveMon.toFixed(4)} MON below ${VRF_LOW_THRESHOLD_MON}`)
-  }
+  const reserveFailure = lowReserveFailure({ reserveMon, stoppedAt, thresholdMon: VRF_LOW_THRESHOLD_MON })
+  if (reserveFailure) failures.push(reserveFailure)
   if (ALERT_ON_ACTIONABLE && action !== 0 && Number(stoppedAt) === 0 && !paused) {
     failures.push(`keeper action pending: round=${nextRid} action=${ACTION_NAMES[action] || action}`)
   }
