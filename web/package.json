@@ -14,7 +14,10 @@
     "preview": "vite preview",
     "test:points-view": "node --test src/v5PointsView.test.js",
     "test:previous-draw": "node --test src/v5PreviousDraw.test.js",
-    "test:history-result": "node --test src/v5HistoryResult.test.js"
+    "test:history-result": "node --test src/v5HistoryResult.test.js",
+    "test:rpc-read": "node --test src/v5RpcRead.test.js",
+    "test:v5-navigation": "node --test src/v5Navigation.test.js",
+    "test:draw-participation": "node --test src/v5DrawParticipation.test.js"
   },
   "dependencies": {
     "@web3modal/ethers": "5.1.11",

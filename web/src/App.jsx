@@ -12,6 +12,9 @@ import './App.css'
 import { buildV5DrawHealth } from './v5DrawHealth.js'
 import { scopeV5RowsToVault } from './v5VaultScope.js'
 import { buildV5PrizeWins } from './v5PrizeWins.js'
+import { walletParticipatedInDraw } from './v5DrawParticipation.js'
+import { v5PageFromHash } from './v5Navigation.js'
+import { V5_NETWORK_RETRY_MESSAGE, v5UserError, withRpcReadRetry } from './v5RpcRead.js'
 import { v5HistoryResult } from './v5HistoryResult.js'
 import { awardedMilestones, tierName } from './v5PointsView.js'
 import { latestSettledDraw, participantRowsForDraw } from './v5PreviousDraw.js'
@@ -21,6 +24,10 @@ import './shmon.css'
 
 function getWalletProvider() {
   return modal.getWalletProvider() || window.ethereum || null
+}
+
+function openUnifiedWalletModal() {
+  return modal.open({ view: 'Connect' })
 }
 
 function getInjectedWalletProviders() {
@@ -436,7 +443,7 @@ function PatronStreakBar({ tranches, currentDrawId }) {
   )
 }
 
-function PointsHeaderWidget({ account, points }) {
+function PointsHeaderWidget({ account, points, onProfileClick }) {
   const [open, setOpen] = useState(false)
   if (!account) return null
   const p = points || {}
@@ -445,7 +452,7 @@ function PointsHeaderWidget({ account, points }) {
 
   return (
     <div className="points-header">
-      <button className="points-pill" type="button" onClick={() => setOpen((v) => !v)} aria-label={`${lifetimePoints.toLocaleString()} points, ${streakWeeks} week streak`}>
+      <button className="points-pill" type="button" onClick={(event) => onProfileClick ? onProfileClick(event) : setOpen((v) => !v)} aria-label={`${lifetimePoints.toLocaleString()} points, ${streakWeeks} week streak`}>
         <span className="points-pill-stat points-pill-points" title="Points"><span aria-hidden="true">✦</span>{lifetimePoints.toLocaleString()}</span>
         <span className="points-pill-stat points-pill-streak" title="Weekly streak"><span aria-hidden="true">🔥</span>{streakWeeks}</span>
       </button>
@@ -825,7 +832,7 @@ function FounderLaunchArticle() {
   )
 }
 
-function Header({ account, onConnect, currentPage, points, showDegen = false, onDegenClick, onVaultClick, onProfileClick }) {
+function Header({ account, onConnect, currentPage, points, showDegen = false, onDegenClick, onVaultClick, onStatsClick, onProfileClick, onLeaderboardClick }) {
   return (
     <header>
       <div className="logo">
@@ -835,9 +842,9 @@ function Header({ account, onConnect, currentPage, points, showDegen = false, on
       <nav className="nav-links">
         <a href="/#vault" className={`nav-link ${currentPage === 'vault' ? 'active' : ''}`} onClick={onVaultClick}>Vault</a>
         {showDegen ? <a href="#patron" className={`nav-link ${currentPage === 'degen' ? 'active' : ''}`} onClick={onDegenClick}>Patron</a> : null}
-        <a href="/#stats" className={`nav-link ${currentPage === 'stats' ? 'active' : ''}`}>Stats</a>
+        <a href="/#stats" className={`nav-link ${currentPage === 'stats' ? 'active' : ''}`} onClick={onStatsClick}>Stats</a>
         <a href="/#profile" className={`nav-link ${currentPage === 'profile' ? 'active' : ''}`} onClick={onProfileClick}>Profile</a>
-        <a href="/#leaderboard" className={`nav-link ${currentPage === 'leaderboard' ? 'active' : ''}`}>Leaderboard</a>
+        <a href="/#leaderboard" className={`nav-link ${currentPage === 'leaderboard' ? 'active' : ''}`} onClick={onLeaderboardClick}>Leaderboard</a>
         <a href="/articles/drawn-back-to-defi" className={`nav-link ${currentPage === 'article' ? 'active' : ''}`}>Articles</a>
         <a href="https://docs.everdraw.xyz" target="_blank" rel="noopener noreferrer" className="nav-link">Docs</a>
         <a href="https://x.com/everdrawing" target="_blank" rel="noopener noreferrer" className="nav-link nav-link-x" aria-label="X / Twitter">
@@ -846,7 +853,7 @@ function Header({ account, onConnect, currentPage, points, showDegen = false, on
           </svg>
         </a>
       </nav>
-      <PointsHeaderWidget account={account} points={points} />
+      <PointsHeaderWidget account={account} points={points} onProfileClick={onProfileClick} />
       <div className="header-actions">
         {account ? (
           <button className="btn" onClick={onConnect} title="Switch wallet or account">
@@ -1531,6 +1538,7 @@ async function v5BuildHistoryRows({ account, vault, manager }) {
   const matchedPrizeKeys = new Set()
   const drawRows = (Array.isArray(rounds) ? rounds : [])
     .filter((r) => String(r.poolAddress || '').toLowerCase() === drawManagerLc && r.state === 'settled')
+    .filter((r) => walletParticipatedInDraw(r, scopedTranches, prizeByDraw.get(Number(r.roundId)) || null))
     .map((r) => {
       const prizeWin = prizeByDraw.get(Number(r.roundId)) || null
       const walletResult = v5HistoryResult(prizeWin)
@@ -1852,7 +1860,7 @@ export function V5UatExperience() {
   const [playAmount, setPlayAmount] = useState('1')
   const [degenAmount, setDegenAmount] = useState('1')
   const [state, setState] = useState(null)
-  const [v5Page, setV5Page] = useState('vault')
+  const [v5Page, setV5Page] = useState(() => v5PageFromHash(window.location.hash))
   const [playActionMode, setPlayActionMode] = useState('deposit')
   const [degenActionMode, setDegenActionMode] = useState('deposit')
   const [playDepositAsset, setPlayDepositAsset] = useState('MON')
@@ -1890,18 +1898,24 @@ export function V5UatExperience() {
       vault.stoppedAt(),
       readProvider.getCode(cfg.prizeVault),
     ])
+    const attemptCoreReadsWithRetry = () => withRpcReadRetry(attemptCoreReads, {
+      attempts: 4,
+      baseDelayMs: 500,
+      onRetry: () => setError(V5_NETWORK_RETRY_MESSAGE),
+    })
+
 
     // The shared public testnet RPC occasionally drops a single call (e.g. "missing revert
-    // data") with no on-chain cause. Retry once before surfacing anything, so one blip doesn't
+    // data") with no on-chain cause. Retry with backoff before surfacing anything, so one blip doesn't
     // leave the whole page frozen on stale state until the next poll (or forever, if it keeps
     // failing every tick).
     let core
     try {
-      core = await attemptCoreReads()
-    } catch (err) {
+      core = await attemptCoreReadsWithRetry()
+    } catch {
       await new Promise((resolve) => setTimeout(resolve, 1500))
       try {
-        core = await attemptCoreReads()
+        core = await attemptCoreReadsWithRetry()
       } catch (err2) {
         refreshFailureStreak.current += 1
         if (refreshFailureStreak.current >= 3) {
@@ -1999,8 +2013,14 @@ export function V5UatExperience() {
   }, [])
 
   useEffect(() => {
+    const onHashChange = () => setV5Page(v5PageFromHash(window.location.hash))
+    window.addEventListener('hashchange', onHashChange)
+    return () => window.removeEventListener('hashchange', onHashChange)
+  }, [])
+
+  useEffect(() => {
     trackPageView('/v5-uat', 'EverDraw V5 UAT')
-    refresh().catch((err) => setError(err?.message || String(err)))
+    refresh().catch((err) => setError(v5UserError(err)))
     const id = setInterval(() => refresh().catch(() => {}), 20_000)
     return () => clearInterval(id)
   }, [refresh])
@@ -2034,14 +2054,18 @@ export function V5UatExperience() {
 
   const connect = useCallback(async () => {
     setError('')
-    await modal.open()
-    const provider = getWalletProvider()
-    if (!provider) return
-    const accounts = await provider.request({ method: 'eth_requestAccounts' })
-    await switchToV5Chain(provider, cfg.chainId, cfg.rpcUrl)
-    const next = accounts?.[0] || ''
-    setAccount(next)
-    await refresh(next)
+    try {
+      await openUnifiedWalletModal()
+      const provider = getWalletProvider()
+      if (!provider) return
+      const accounts = await provider.request({ method: 'eth_requestAccounts' })
+      await switchToV5Chain(provider, cfg.chainId, cfg.rpcUrl)
+      const next = accounts?.[0] || ''
+      setAccount(next)
+      await refresh(next)
+    } catch (err) {
+      setError(v5UserError(err, 'Wallet connection failed. Please try again.'))
+    }
   }, [cfg.chainId, cfg.rpcUrl, refresh])
 
   const transact = useCallback(async (label, fn, options = {}) => {
@@ -2064,7 +2088,7 @@ export function V5UatExperience() {
       await refresh(nextAccount)
       await options.afterConfirm?.({ signer, account: nextAccount, receipt })
     } catch (err) {
-      setError(err?.shortMessage || err?.message || String(err))
+      setError(v5UserError(err, `${label} could not be completed. Please try again.`))
     } finally {
       setBusy('')
     }
@@ -2089,17 +2113,32 @@ export function V5UatExperience() {
   const openVaultPage = (event) => {
     event?.preventDefault?.()
     setStatus('')
+    window.history.pushState(null, '', '#vault')
     setV5Page('vault')
   }
   const openDegenPage = (event) => {
     event?.preventDefault?.()
     setStatus('')
+    window.history.pushState(null, '', '#patron')
     setV5Page('degen')
   }
   const openProfilePage = (event) => {
     event?.preventDefault?.()
     setStatus('')
+    window.history.pushState(null, '', '#profile')
     setV5Page('profile')
+  }
+  const openStatsPage = (event) => {
+    event?.preventDefault?.()
+    setStatus('')
+    window.history.pushState(null, '', '#stats')
+    setV5Page('stats')
+  }
+  const openLeaderboardPage = (event) => {
+    event?.preventDefault?.()
+    setStatus('')
+    window.history.pushState(null, '', '#leaderboard')
+    setV5Page('leaderboard')
   }
   const openPreviousRound = () => {
     setStatus('')
@@ -2163,7 +2202,7 @@ export function V5UatExperience() {
       })
       setWithdrawChoiceOpen(true)
     } catch (err) {
-      setError(err?.shortMessage || err?.message || String(err))
+      setError(v5UserError(err, 'Unable to prepare that withdrawal. Please try again.'))
     }
   }
   const withdrawToWallet = () => {
@@ -2194,7 +2233,18 @@ export function V5UatExperience() {
     <div className="app-shell v5-uat-mode">
       <div className="beta-corner-ribbon" title="Testnet UAT only"></div>
       <div className="app-container">
-        <Header account={account} onConnect={connect} currentPage={v5Page === 'degen' ? 'degen' : v5Page === 'profile' ? 'profile' : 'vault'} points={pointsProfile} showDegen onDegenClick={openDegenPage} onVaultClick={openVaultPage} onProfileClick={openProfilePage} />
+        <Header
+          account={account}
+          onConnect={connect}
+          currentPage={['degen', 'profile', 'stats', 'leaderboard'].includes(v5Page) ? v5Page : 'vault'}
+          points={pointsProfile}
+          showDegen
+          onDegenClick={openDegenPage}
+          onVaultClick={openVaultPage}
+          onStatsClick={openStatsPage}
+          onProfileClick={openProfilePage}
+          onLeaderboardClick={openLeaderboardPage}
+        />
         <div className="v5-uat-strip">TESTNET / UAT</div>
 
         <h1>
@@ -2216,7 +2266,11 @@ export function V5UatExperience() {
           </div>
         ) : null}
 
-        {v5Page === 'degen' ? (
+        {v5Page === 'stats' ? (
+          <StatsPage />
+        ) : v5Page === 'leaderboard' ? (
+          <LeaderboardPage account={account} />
+        ) : v5Page === 'degen' ? (
           <section className="main-grid v5-single-card-page">
             <V5ActionCard
               mode="degen"
@@ -2897,7 +2951,7 @@ export default function App() {
 
   const connectWallet = useCallback(async () => {
     try {
-      await modal.open()
+      await openUnifiedWalletModal()
     } catch (e) {
       setError(normalizeError(e) || 'Wallet connection failed')
     }
