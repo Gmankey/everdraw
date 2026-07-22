@@ -42,7 +42,7 @@ contract PrizeVaultV5InvariantHandler is Test {
 
         uint256 assets = bound(amount, 1, balance);
         vm.prank(account);
-        vault.withdraw(assets);
+        vault.withdrawShmon(assets);
     }
 
     function sponsorDeposit(uint96 amount) external {
@@ -60,7 +60,7 @@ contract PrizeVaultV5InvariantHandler is Test {
 
         uint256 assets = bound(amount, 1, balance);
         vm.prank(SPONSOR);
-        vault.withdrawSponsor(assets);
+        vault.withdrawSponsorShmon(assets);
     }
 
     function boostDeposit(uint96 amount) external {
@@ -78,7 +78,7 @@ contract PrizeVaultV5InvariantHandler is Test {
 
         uint256 assets = bound(amount, 1, balance);
         vm.prank(BOOSTER);
-        vault.boostWithdraw(assets);
+        vault.boostWithdrawShmon(assets);
     }
 
     function participant(uint256 index) external view returns (address) {

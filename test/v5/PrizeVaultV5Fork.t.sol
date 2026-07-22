@@ -42,6 +42,7 @@ contract PrizeVaultV5ForkTest is Test {
     address guardian = makeAddr("guardian");
 
     function setUp() public {
+        // This suite requires an archive-capable mainnet RPC; public rpc.monad.xyz returns NotActivated.
         string memory rpcUrl = vm.envOr("MONAD_MAINNET_RPC_URL", string(""));
         vm.skip(bytes(rpcUrl).length == 0);
 
@@ -72,6 +73,7 @@ contract PrizeVaultV5ForkTest is Test {
             8 hours
         );
         claimManager.setAuthorizedSource(address(manager), true);
+        claimManager.setCompoundVault(address(manager), address(vault));
         _activateDrawManager(address(manager));
     }
 
@@ -85,11 +87,11 @@ contract PrizeVaultV5ForkTest is Test {
         assertGt(shares, 0);
         assertGt(IShmonRead(MAINNET_SHMON).previewRedeem(shares), 0);
 
-        uint256 before = alice.balance;
+        uint256 before = IShmonRead(MAINNET_SHMON).balanceOf(alice);
         vm.prank(alice);
-        vault.withdraw(0.25 ether);
+        uint256 withdrawnShares = vault.withdrawShmon(0.25 ether);
 
-        assertEq(alice.balance - before, 0.25 ether);
+        assertEq(IShmonRead(MAINNET_SHMON).balanceOf(alice) - before, withdrawnShares);
         assertEq(vault.principalOf(alice), 0.75 ether);
     }
 
@@ -152,11 +154,11 @@ contract PrizeVaultV5ForkTest is Test {
         assertEq(IShmonRead(MAINNET_SHMON).balanceOf(address(strategy)), shares);
         assertEq(vault.principalOf(alice), IShmonRead(MAINNET_SHMON).previewRedeem(shares));
 
-        uint256 before = alice.balance;
+        uint256 before = IShmonRead(MAINNET_SHMON).balanceOf(alice);
         vm.prank(alice);
-        vault.withdraw(0.25 ether);
+        uint256 withdrawnShares = vault.withdrawShmon(0.25 ether);
 
-        assertEq(alice.balance - before, 0.25 ether);
+        assertEq(IShmonRead(MAINNET_SHMON).balanceOf(alice) - before, withdrawnShares);
     }
 
     function test_fork_fullLifecycleMixedAssetsDrawClaimManyWithdrawAgainstRealShmon() public {
@@ -192,14 +194,14 @@ contract PrizeVaultV5ForkTest is Test {
         bytes32[][] memory proofs = new bytes32[][](1);
         proofs[0] = new bytes32[](0);
 
-        uint256 beforeClaim = alice.balance;
+        uint256 principalBeforeClaim = vault.principalOf(alice);
         claimManager.claimMany(leaves, proofs);
-        assertEq(alice.balance - beforeClaim, leaf.amount);
+        assertEq(vault.principalOf(alice), principalBeforeClaim + IShmonRead(MAINNET_SHMON).previewRedeem(leaf.amount));
 
-        uint256 beforeWithdraw = alice.balance;
+        uint256 beforeWithdraw = IShmonRead(MAINNET_SHMON).balanceOf(alice);
         vm.prank(alice);
-        vault.withdraw(0.5 ether);
-        assertEq(alice.balance - beforeWithdraw, 0.5 ether);
+        uint256 withdrawnShares = vault.withdrawShmon(0.5 ether);
+        assertEq(IShmonRead(MAINNET_SHMON).balanceOf(alice) - beforeWithdraw, withdrawnShares);
     }
 
     function _activateDrawManager(address drawManager_) internal {

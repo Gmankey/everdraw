@@ -144,6 +144,10 @@ contract PrizeVaultV5 {
         return totalParticipantPrincipal;
     }
 
+    function payoutToken() external view returns (address) {
+        return strategy.shareToken();
+    }
+
     function approve(address spender, uint256 amount) external returns (bool) {
         if (spender == address(0)) revert ZeroAddress();
         allowance[msg.sender][spender] = amount;
@@ -295,6 +299,20 @@ contract PrizeVaultV5 {
         _creditParticipant(msg.sender, assets);
     }
 
+    /// @notice Credit ClaimManager-held shMON shares as a fresh participant tranche.
+    function depositShmonFor(address recipient, uint256 shares)
+        external
+        whenNotPaused
+        nonReentrant
+        returns (uint256 assets)
+    {
+        if (recipient == address(0)) revert ZeroAddress();
+        if (!_isCurrentClaimManager(msg.sender)) revert NotDrawManager();
+        assets = strategy.depositSharesFrom(msg.sender, shares);
+        _requireDepositAllowed(assets, false);
+        _creditParticipant(recipient, assets);
+    }
+
     function sponsorDeposit() external payable whenNotPaused nonReentrant returns (uint256 shares) {
         uint256 assets = msg.value;
         _requireDepositAllowed(assets, true);
@@ -331,22 +349,19 @@ contract PrizeVaultV5 {
         return assets - totalPrincipal;
     }
 
-    function escrowYield(address claimManager, uint256 amount) external onlyDrawManager nonReentrant {
+    function escrowYield(address claimManager, uint256 amount)
+        external
+        onlyDrawManager
+        nonReentrant
+        returns (uint256 shares)
+    {
         if (claimManager == address(0)) revert ZeroAddress();
         uint256 available = availableYield();
         if (amount > available) revert InsufficientYield(amount, available);
         if (amount != 0) {
-            strategy.withdraw(amount, claimManager);
+            shares = strategy.withdrawShares(amount, claimManager);
         }
-        emit YieldEscrowed(claimManager, amount);
-    }
-
-    function withdraw(uint256 amount) external nonReentrant returns (uint256 assetsPaid) {
-        if (amount == 0) revert ZeroAmount();
-        if (principalOf[msg.sender] < amount) revert InsufficientBalance();
-        _refreshShortfallMode();
-        assetsPaid = _withdrawParticipant(msg.sender, amount);
-        emit Withdraw(msg.sender, assetsPaid);
+        emit YieldEscrowed(claimManager, shares);
     }
 
     function withdrawShmon(uint256 amount) external nonReentrant returns (uint256 shares) {
@@ -358,14 +373,6 @@ contract PrizeVaultV5 {
         emit SharesWithdrawn(msg.sender, amount, shares);
     }
 
-    function withdrawSponsor(uint256 amount) external nonReentrant returns (uint256 assetsPaid) {
-        if (amount == 0) revert ZeroAmount();
-        if (sponsorPrincipalOf[msg.sender] < amount) revert InsufficientBalance();
-        _refreshShortfallMode();
-        assetsPaid = _withdrawSponsor(msg.sender, amount);
-        emit SponsorWithdraw(msg.sender, assetsPaid);
-    }
-
     function withdrawSponsorShmon(uint256 amount) external nonReentrant returns (uint256 shares) {
         if (amount == 0) revert ZeroAmount();
         if (sponsorPrincipalOf[msg.sender] < amount) revert InsufficientBalance();
@@ -373,14 +380,6 @@ contract PrizeVaultV5 {
         shares = _withdrawSponsorShares(msg.sender, amount);
         emit SponsorWithdraw(msg.sender, amount);
         emit SharesWithdrawn(msg.sender, amount, shares);
-    }
-
-    function boostWithdraw(uint256 amount) external nonReentrant returns (uint256 assetsPaid) {
-        if (amount == 0) revert ZeroAmount();
-        if (boosterPrincipalOf[msg.sender] < amount) revert InsufficientBalance();
-        _refreshShortfallMode();
-        assetsPaid = _withdrawBooster(msg.sender, amount);
-        emit BoostWithdraw(msg.sender, amount, boosterPrincipalOf[msg.sender], uint64(block.timestamp));
     }
 
     function boostWithdrawShmon(uint256 amount) external nonReentrant returns (uint256 shares) {
@@ -474,34 +473,16 @@ contract PrizeVaultV5 {
         emit BoostDeposit(booster, assets, boosterPrincipalOf[booster], uint64(block.timestamp));
     }
 
-    function _withdrawParticipant(address account, uint256 principalAmount) internal returns (uint256 assetsPaid) {
-        assetsPaid = _payoutAmount(principalAmount);
-        _debitParticipant(account, principalAmount);
-        strategy.withdraw(assetsPaid, account);
-    }
-
     function _withdrawParticipantShares(address account, uint256 principalAmount) internal returns (uint256 shares) {
         uint256 assetsPaid = _payoutAmount(principalAmount);
         _debitParticipant(account, principalAmount);
         shares = strategy.withdrawShares(assetsPaid, account);
     }
 
-    function _withdrawSponsor(address sponsor, uint256 principalAmount) internal returns (uint256 assetsPaid) {
-        assetsPaid = _payoutAmount(principalAmount);
-        _debitSponsor(sponsor, principalAmount);
-        strategy.withdraw(assetsPaid, sponsor);
-    }
-
     function _withdrawSponsorShares(address sponsor, uint256 principalAmount) internal returns (uint256 shares) {
         uint256 assetsPaid = _payoutAmount(principalAmount);
         _debitSponsor(sponsor, principalAmount);
         shares = strategy.withdrawShares(assetsPaid, sponsor);
-    }
-
-    function _withdrawBooster(address booster, uint256 principalAmount) internal returns (uint256 assetsPaid) {
-        assetsPaid = _payoutAmount(principalAmount);
-        _debitBooster(booster, principalAmount);
-        strategy.withdraw(assetsPaid, booster);
     }
 
     function _withdrawBoosterShares(address booster, uint256 principalAmount) internal returns (uint256 shares) {

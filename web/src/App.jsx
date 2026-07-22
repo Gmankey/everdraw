@@ -1003,7 +1003,7 @@ function ClaimFlowModal({ open, mode, busy, status, error, onClose, onRedeemToWa
           <div className="claim-flow-confirm">
             <div className="claim-flow-confirm-panel">
               <div className="claim-flow-eyebrow">HEADS UP</div>
-              <div className="claim-flow-confirm-copy">You will be redirected to shmonad.xyz to finish MON conversion</div>
+              <div className="claim-flow-confirm-copy">You'll receive shMON now. Convert to MON on shmonad.xyz — unstaking takes ~18–22 hours.</div>
             </div>
             <div className="claim-flow-confirm-actions">
               <button type="button" className="claim-option-card claim-confirm-btn" onClick={onBackFromRedirectWarning} disabled={busy}>
@@ -1269,11 +1269,9 @@ const V5_UAT_DEFAULTS = {
 const V5_VAULT_ABI = [
   'function deposit() payable returns (uint256)',
   'function depositShmon(uint256 shares) returns (uint256)',
-  'function withdraw(uint256 amount) returns (uint256)',
   'function withdrawShmon(uint256 amount) returns (uint256)',
   'function boostDeposit() payable returns (uint256)',
   'function boostDepositShmon(uint256 shares) returns (uint256)',
-  'function boostWithdraw(uint256 amount) returns (uint256)',
   'function boostWithdrawShmon(uint256 amount) returns (uint256)',
   'function strategy() view returns (address)',
   'function principalOf(address) view returns (uint256)',
@@ -2220,12 +2218,29 @@ export function V5UatExperience() {
   const withdrawAndConvert = () => {
     const request = withdrawRequest
     if (!request) return
+    const shmonadWindow = window.open('', '_blank')
+    try {
+      if (shmonadWindow) {
+        shmonadWindow.document.write('<!doctype html><title>Opening shmonad.xyz</title><body style="font-family:system-ui;background:#100d1e;color:#fff;display:grid;place-items:center;height:100vh;margin:0"><main style="text-align:center"><h1>Withdrawing shMON…</h1><p>shmonad.xyz will open after your wallet confirms.</p></main></body>')
+        shmonadWindow.document.close()
+      }
+    } catch {}
     return transact(request.label, (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer)[request.convertMethodName](request.amount), {
       afterSubmit: request.clearAmount,
       afterConfirm: async (ctx) => {
         setWithdrawChoiceOpen(false)
         setWithdrawRequest(null)
         await request.afterConfirm?.(ctx)
+        try {
+          if (shmonadWindow && !shmonadWindow.closed) {
+            shmonadWindow.location.assign('https://shmonad.xyz')
+            shmonadWindow.focus?.()
+          } else {
+            window.location.assign('https://shmonad.xyz')
+          }
+        } catch {
+          window.location.assign('https://shmonad.xyz')
+        }
       },
     })
   }
@@ -2300,7 +2315,7 @@ export function V5UatExperience() {
                 principal: state?.boosterPrincipal || 0n,
                 label: 'Patron Pool withdraw',
                 walletMethodName: 'boostWithdrawShmon',
-                convertMethodName: 'boostWithdraw',
+                convertMethodName: 'boostWithdrawShmon',
                 clearAmount: clearDegenAmount,
                 afterConfirm: afterDegenAction,
               })}
@@ -2350,7 +2365,7 @@ export function V5UatExperience() {
               principal: state?.principal || 0n,
               label: 'Withdraw',
               walletMethodName: 'withdrawShmon',
-              convertMethodName: 'withdraw',
+              convertMethodName: 'withdrawShmon',
               clearAmount: clearPlayAmount,
               afterConfirm: afterPlayAction,
             })}

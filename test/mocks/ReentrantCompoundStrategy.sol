@@ -54,7 +54,13 @@ contract ReentrantCompoundStrategy is IYieldStrategyV5 {
         _replayProof = proof;
     }
 
-    function deposit(uint256 /* assets */ ) external payable returns (uint256 shares) {
+    function deposit(
+        uint256 /* assets */
+    )
+        external
+        payable
+        returns (uint256 shares)
+    {
         if (reenterVault) {
             vaultReentrancyAttempted = true;
             try IPrizeVaultV5ForReentrancy(vault).depositFor{value: 0}(attacker) returns (uint256) {
@@ -86,6 +92,10 @@ contract ReentrantCompoundStrategy is IYieldStrategyV5 {
 
     function withdrawShares(uint256, address) external pure returns (uint256) {
         return 0;
+    }
+
+    function shareToken() external view returns (address) {
+        return address(this);
     }
 
     function totalAssets() external view returns (uint256) {

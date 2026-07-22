@@ -168,6 +168,17 @@ export function createDeriveRoundsService(
             break;
           }
 
+          case 'DrawEconomicsSnapshot': {
+            const payload = parsePayload<{
+              drawId: number;
+              grossYield: string | number;
+            }>(event.payload);
+            // ADR-0045 totalPayout is a fixed shMON share count. User-facing prize history
+            // remains MON-equivalent and comes from the asset-denominated economics snapshot.
+            acc.yieldMon = stringifyNumberish(payload.grossYield ?? '0');
+            break;
+          }
+
           case 'SeedReceived':
           case 'RootProposed':
             acc.state = 'drawn';
@@ -182,7 +193,6 @@ export function createDeriveRoundsService(
             }>(event.payload);
             acc.state = 'settled';
             acc.settledAt = event.blockTimestamp;
-            acc.yieldMon = stringifyNumberish(payload.totalPayout ?? acc.yieldMon);
             break;
           }
 

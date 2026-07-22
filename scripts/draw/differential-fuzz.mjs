@@ -43,6 +43,7 @@ function makeCase(caseId) {
     drawManager: addr(0xd00d0000 + caseId),
     seed: hex(BigInt(caseId + 1) * 0x9e3779b97f4a7c15n, 32),
     accounts,
+    totalPayout: String(1_000_000_000_000_000_000n + BigInt(caseId)),
     prizeLegs: [
       { token: addr(0), amount: String(1_000_000_000_000_000_000n + BigInt(caseId)) },
       { token: addr(0xfeed + caseId), amount: String(123_456_789n + BigInt(caseId % 1000)) },

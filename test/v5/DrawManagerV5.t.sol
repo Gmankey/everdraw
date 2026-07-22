@@ -250,14 +250,14 @@ contract DrawManagerV5Test is Test {
 
         manager.startDraw();
 
-        assertEq(address(claimManager).balance, 10 ether);
+        assertEq(shmon.balanceOf(address(claimManager)), 5 ether);
         assertEq(vault.availableYield(), 0);
         assertEq(oracle.nextRequestId(), 2);
         assertEq(uint8(_status(1)), uint8(DrawManagerV5.DrawStatus.AwaitingSeed));
 
         vm.expectRevert(DrawManagerV5.DrawNotSeeded.selector);
         vm.prank(keeper);
-        manager.proposeRoot(1, bytes32(uint256(1)), 1, 10 ether);
+        manager.proposeRoot(1, bytes32(uint256(1)), 1, 5 ether);
     }
 
     function test_oracleConsumerFixRequiresQueuedCommittedOracleBeforeStartDraw() public {
@@ -303,7 +303,7 @@ contract DrawManagerV5Test is Test {
         _startSeededDraw();
 
         vm.prank(keeper);
-        manager.proposeRoot(1, bytes32(uint256(0xabc)), 3, 10 ether);
+        manager.proposeRoot(1, bytes32(uint256(0xabc)), 3, 5 ether);
         assertEq(uint8(_status(1)), uint8(DrawManagerV5.DrawStatus.Proposed));
 
         vm.prank(guardian);
@@ -314,11 +314,11 @@ contract DrawManagerV5Test is Test {
             abi.encodeWithSelector(DrawManagerV5.VetoCooldownActive.selector, uint64(block.timestamp + 1 hours))
         );
         vm.prank(keeper);
-        manager.proposeRoot(1, bytes32(uint256(0xdef)), 3, 10 ether);
+        manager.proposeRoot(1, bytes32(uint256(0xdef)), 3, 5 ether);
 
         vm.warp(block.timestamp + 1 hours);
         vm.prank(keeper);
-        manager.proposeRoot(1, bytes32(uint256(0xdef)), 3, 10 ether);
+        manager.proposeRoot(1, bytes32(uint256(0xdef)), 3, 5 ether);
 
         vm.expectRevert(DrawManagerV5.ChallengeWindowActive.selector);
         manager.finalizeRoot(1);
@@ -337,11 +337,11 @@ contract DrawManagerV5Test is Test {
 
         vm.prank(fallbackProposer);
         vm.expectRevert(DrawManagerV5.ProposerGraceActive.selector);
-        manager.proposeRoot(1, bytes32(uint256(0x123)), 1, 10 ether);
+        manager.proposeRoot(1, bytes32(uint256(0x123)), 1, 5 ether);
 
         vm.warp(START + PERIOD + GRACE);
         vm.prank(fallbackProposer);
-        manager.proposeRoot(1, bytes32(uint256(0x123)), 1, 10 ether);
+        manager.proposeRoot(1, bytes32(uint256(0x123)), 1, 5 ether);
 
         (,,,,,,,,,, address proposer,,,,) = manager.draws(1);
         assertEq(proposer, fallbackProposer);
@@ -351,8 +351,8 @@ contract DrawManagerV5Test is Test {
         _startSeededDraw();
 
         vm.prank(keeper);
-        vm.expectRevert(abi.encodeWithSelector(DrawManagerV5.BadPayout.selector, 10 ether, 9 ether));
-        manager.proposeRoot(1, bytes32(uint256(0xabc)), 1, 9 ether);
+        vm.expectRevert(abi.encodeWithSelector(DrawManagerV5.BadPayout.selector, 5 ether, 4 ether));
+        manager.proposeRoot(1, bytes32(uint256(0xabc)), 1, 4 ether);
     }
 
     function test_feeConfigEnforcesRecipientCapAndTotalCap() public {
@@ -406,7 +406,8 @@ contract DrawManagerV5Test is Test {
         uint256 halfPeriod = uint256(PERIOD) / 2;
         uint256 expectedSponsorYield =
             (grossYield * (10 ether * halfPeriod)) / (10 ether * uint256(PERIOD) + 10 ether * halfPeriod);
-        uint256 expectedFee = ((grossYield - expectedSponsorYield) * 1_000) / 10_000;
+        uint256 feeAssets = ((grossYield - expectedSponsorYield) * 1_000) / 10_000;
+        uint256 expectedFee = (shmon.previewWithdraw(grossYield) * feeAssets) / grossYield;
         assertEq(grossYield, 20 ether);
         assertEq(sponsorYield, expectedSponsorYield);
         assertEq(feeAmount, expectedFee);
@@ -436,7 +437,7 @@ contract DrawManagerV5Test is Test {
         assertEq(totalTwab, 10 ether);
         assertEq(grossYield, 20 ether);
         assertEq(sponsorYield, 0);
-        assertEq(feeAmount, 1 ether);
+        assertEq(feeAmount, 0.5 ether);
     }
 
     function test_feeRecipientLeavesAreDeterministicAndDeferredIfNativeTransferReverts() public {
@@ -454,15 +455,15 @@ contract DrawManagerV5Test is Test {
         leaves[0] = manager.plannedClaimLeafAt(1, 0, alice);
         leaves[1] = manager.plannedClaimLeafAt(1, 1, alice);
         assertEq(leaves[0].account, alice);
-        assertEq(leaves[0].token, address(0));
-        assertEq(leaves[0].amount, 9 ether);
+        assertEq(leaves[0].token, address(shmon));
+        assertEq(leaves[0].amount, 4.5 ether);
         assertEq(leaves[1].account, address(rejectingRecipient));
-        assertEq(leaves[1].token, address(0));
-        assertEq(leaves[1].amount, 1 ether);
+        assertEq(leaves[1].token, address(shmon));
+        assertEq(leaves[1].amount, 0.5 ether);
 
         bytes32[] memory hashes = _hashLeaves(leaves);
         vm.prank(keeper);
-        manager.proposeRoot(1, _root2(hashes[0], hashes[1]), 2, 10 ether);
+        manager.proposeRoot(1, _root2(hashes[0], hashes[1]), 2, 5 ether);
         vm.warp(block.timestamp + CHALLENGE);
         manager.finalizeRoot(1);
 
@@ -471,11 +472,8 @@ contract DrawManagerV5Test is Test {
         proofs[1] = _proof1(hashes[0]);
         claimManager.claimMany(leaves, proofs);
 
-        assertEq(alice.balance, 9 ether);
-        (address account, address token, uint256 amount) = claimManager.deferredClaims(leaves[1].distributionId, 1);
-        assertEq(account, address(rejectingRecipient));
-        assertEq(token, address(0));
-        assertEq(amount, 1 ether);
+        assertEq(shmon.balanceOf(alice), 4.5 ether);
+        assertEq(shmon.balanceOf(address(rejectingRecipient)), 0.5 ether);
     }
 
     function test_plannedFeeLeavesSnapshotConfigAtDrawStart() public {
@@ -494,7 +492,7 @@ contract DrawManagerV5Test is Test {
         ClaimManagerV5.ClaimLeaf memory feeLeaf = manager.plannedClaimLeafAt(1, 1, alice);
         assertEq(manager.plannedClaimLeafCount(1), 2);
         assertEq(feeLeaf.account, feeRecipient);
-        assertEq(feeLeaf.amount, 1 ether);
+        assertEq(feeLeaf.amount, 0.5 ether);
     }
 
     function test_fundPrizeCancelUnstartedRefundsUnreservedTokens() public {
@@ -529,12 +527,12 @@ contract DrawManagerV5Test is Test {
         assertEq(amount, 5 ether);
 
         vm.prank(keeper);
-        manager.proposeRoot(1, bytes32(uint256(0xabc)), 2, 10 ether);
+        manager.proposeRoot(1, bytes32(uint256(0xabc)), 2, 5 ether);
         vm.warp(block.timestamp + CHALLENGE);
         manager.finalizeRoot(1);
 
         bytes32 distributionId = claimManager.distributionIdFor(address(manager), bytes32(uint256(1)));
-        assertEq(claimManager.distributionTokenTotal(distributionId, address(0)), 10 ether);
+        assertEq(claimManager.distributionTokenTotal(distributionId, address(shmon)), 5 ether);
         assertEq(claimManager.distributionTokenTotal(distributionId, address(reward)), 5 ether);
     }
 
@@ -584,11 +582,11 @@ contract DrawManagerV5Test is Test {
             leaves[i] = manager.plannedClaimLeafAt(1, i, alice);
         }
         assertEq(leaves[0].account, alice);
-        assertEq(leaves[0].token, address(0));
-        assertEq(leaves[0].amount, 9 ether);
+        assertEq(leaves[0].token, address(shmon));
+        assertEq(leaves[0].amount, 4.5 ether);
         assertEq(leaves[1].account, feeRecipient);
-        assertEq(leaves[1].token, address(0));
-        assertEq(leaves[1].amount, 1 ether);
+        assertEq(leaves[1].token, address(shmon));
+        assertEq(leaves[1].amount, 0.5 ether);
         assertEq(leaves[2].account, alice);
         assertEq(leaves[2].token, address(reward));
         assertEq(leaves[2].amount, 9 ether);
@@ -598,13 +596,13 @@ contract DrawManagerV5Test is Test {
 
         bytes32[] memory hashes = _hashLeaves(leaves);
         vm.prank(keeper);
-        manager.proposeRoot(1, _root4(hashes), 4, 10 ether);
+        manager.proposeRoot(1, _root4(hashes), 4, 5 ether);
         vm.warp(block.timestamp + CHALLENGE);
         manager.finalizeRoot(1);
         claimManager.claimMany(leaves, _proofs4(hashes));
 
-        assertEq(alice.balance, 9 ether);
-        assertEq(feeRecipient.balance, 1 ether);
+        assertEq(shmon.balanceOf(alice), 4.5 ether);
+        assertEq(shmon.balanceOf(feeRecipient), 0.5 ether);
         assertEq(reward.balanceOf(alice), 9 ether);
         assertEq(reward.balanceOf(feeRecipient), 1 ether);
     }
@@ -654,8 +652,8 @@ contract DrawManagerV5Test is Test {
         for (uint256 i = 0; i < leaves.length; i++) {
             leaves[i] = manager.plannedClaimLeafAt(1, i, alice);
         }
-        assertEq(leaves[0].token, address(0));
-        assertEq(leaves[0].amount, 20 ether);
+        assertEq(leaves[0].token, address(shmon));
+        assertEq(leaves[0].amount, 10 ether);
         assertEq(leaves[1].token, address(reward));
         assertEq(leaves[1].amount, 3 ether);
         assertEq(leaves[2].token, address(0));
@@ -663,19 +661,19 @@ contract DrawManagerV5Test is Test {
 
         bytes32[] memory hashes = _hashLeaves(leaves);
         vm.prank(keeper);
-        manager.proposeRoot(1, _root3(hashes), 3, 20 ether);
+        manager.proposeRoot(1, _root3(hashes), 3, 10 ether);
         vm.warp(block.timestamp + CHALLENGE);
         manager.finalizeRoot(1);
         claimManager.claimMany(leaves, _proofs3(hashes));
 
-        assertEq(alice.balance, 22 ether);
+        assertEq(alice.balance, 2 ether);
+        assertEq(shmon.balanceOf(alice), 10 ether);
         assertEq(reward.balanceOf(alice), 3 ether);
 
-        uint256 sponsorBefore = sponsor.balance;
         vm.prank(sponsor);
-        vault.withdrawSponsor(10 ether);
+        vault.withdrawSponsorShmon(10 ether);
         assertEq(vault.sponsorPrincipalOf(sponsor), 0);
-        assertEq(sponsor.balance, sponsorBefore + 10 ether);
+        assertEq(shmon.balanceOf(sponsor), 5 ether);
     }
 
     function _activateDrawManager(address drawManager_) internal {

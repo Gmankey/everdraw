@@ -75,6 +75,7 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     PrizeVaultV5 public immutable vault;
     EverdrawTwabController public immutable twabController;
     ClaimManagerV5 public immutable claimManager;
+    address public immutable payoutToken;
 
     address public owner;
     address public pendingOwner;
@@ -230,6 +231,7 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
         vault = PrizeVaultV5(payable(_vault));
         twabController = twab;
         claimManager = ClaimManagerV5(payable(_claimManager));
+        payoutToken = vault.payoutToken();
         randomnessOracle = IRandomnessOracle(_randomnessOracle);
         nextPeriodStart = _firstPeriodStart;
         drawPeriod = _drawPeriod;
@@ -482,7 +484,7 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
         uint256 boosterYield = totalPrincipalTwab == 0 ? 0 : (grossYield * boosterTwab) / totalPrincipalTwab;
         uint256 feeExemptYield = sponsorYield + boosterYield;
         uint256 feeBaseAmount = feeBase == FeeBase.PARTICIPANT_YIELD_ONLY ? grossYield - feeExemptYield : grossYield;
-        uint256 feeAmount = (feeBaseAmount * totalFeeBps) / 10_000;
+        uint256 feeAssets = (feeBaseAmount * totalFeeBps) / 10_000;
         uint256 availablePrize = grossYield;
 
         if (totalTwab == 0) {
@@ -494,7 +496,8 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
             return drawId;
         }
 
-        vault.escrowYield(address(claimManager), availablePrize);
+        uint256 payoutShares = vault.escrowYield(address(claimManager), availablePrize);
+        uint256 feeAmount = (payoutShares * feeAssets) / availablePrize;
         uint128 fee = randomnessOracle.getFee();
         require(msg.value >= fee, "insufficient oracle fee");
         uint64 requestId = randomnessOracle.requestRandomness{value: fee}(abi.encode(bytes32(drawId)));
@@ -508,7 +511,7 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
         draw.periodEnd = periodEnd;
         draw.randomnessRequestId = requestId;
         draw.totalTwab = totalTwab;
-        draw.totalPayout = availablePrize;
+        draw.totalPayout = payoutShares;
         draw.grossYield = grossYield;
         draw.sponsorYield = sponsorYield;
         draw.feeAmount = feeAmount;
@@ -518,8 +521,8 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
         drawIdByRequestId[requestId] = drawId;
         seedRequestedAt[drawId] = uint64(block.timestamp);
 
-        emit DrawStarted(drawId, periodStart, periodEnd, totalTwab, availablePrize, requestId);
-        emit DrawEconomicsSnapshot(drawId, grossYield, sponsorYield, feeAmount, availablePrize);
+        emit DrawStarted(drawId, periodStart, periodEnd, totalTwab, payoutShares, requestId);
+        emit DrawEconomicsSnapshot(drawId, grossYield, sponsorYield, feeAmount, payoutShares);
     }
 
     function rerequestSeed(uint256 drawId) external payable {
@@ -627,7 +630,7 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     function _registerDistribution(uint256 drawId, Draw storage draw) internal {
         ClaimManagerV5.TokenTotal[] memory totalsScratch =
             new ClaimManagerV5.TokenTotal[](1 + drawRewardLegs[drawId].length);
-        uint256 tokenCount = _addTokenTotal(totalsScratch, 0, NATIVE_TOKEN, draw.totalPayout);
+        uint256 tokenCount = _addTokenTotal(totalsScratch, 0, payoutToken, draw.totalPayout);
         for (uint256 i = 0; i < drawRewardLegs[drawId].length; i++) {
             RewardLeg memory leg = drawRewardLegs[drawId][i];
             tokenCount = _addTokenTotal(totalsScratch, tokenCount, leg.token, leg.amount);
@@ -647,7 +650,7 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     {
         Draw storage draw = draws[drawId];
         if (legIndex == 0) {
-            return (NATIVE_TOKEN, draw.totalPayout, draw.feeAmount);
+            return (payoutToken, draw.totalPayout, draw.feeAmount);
         }
         RewardLeg memory leg = drawRewardLegs[drawId][legIndex - 1];
         uint256 legFee = (leg.amount * drawTotalFeeBps[drawId]) / 10_000;

@@ -72,7 +72,7 @@ contract MockERC4626YieldVault {
         assets = (shares * rate) / 1e18;
     }
 
-    function redeem(uint256 shares, address receiver, address owner) external returns (uint256 assets) {
+    function redeem(uint256 shares, address receiver, address owner) external virtual returns (uint256 assets) {
         require(!transfersPaused, "paused");
         if (owner != msg.sender) {
             uint256 allowed = allowance[owner][msg.sender];

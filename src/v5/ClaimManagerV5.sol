@@ -3,10 +3,14 @@ pragma solidity ^0.8.33;
 
 interface IERC20ClaimManagerV5 {
     function balanceOf(address account) external view returns (uint256);
+    function approve(address spender, uint256 amount) external returns (bool);
 }
 
 interface IPrizeVaultV5Compound {
     function depositFor(address recipient) external payable returns (uint256 shares);
+    function depositShmonFor(address recipient, uint256 shares) external returns (uint256 assets);
+    function payoutToken() external view returns (address);
+    function strategy() external view returns (address);
 }
 
 /// @title ClaimManagerV5
@@ -95,10 +99,7 @@ contract ClaimManagerV5 {
         uint256 amount
     );
     event PrizeCompounded(
-        bytes32 indexed distributionId,
-        uint256 indexed leafIndex,
-        address indexed account,
-        uint256 amount
+        bytes32 indexed distributionId, uint256 indexed leafIndex, address indexed account, uint256 amount
     );
     event CompoundVaultSet(address indexed source, address indexed vault);
     event CompoundOptOutSet(address indexed account, bool optedOut);
@@ -174,9 +175,10 @@ contract ClaimManagerV5 {
     }
 
     function hashLeaf(ClaimLeaf memory leaf) public pure returns (bytes32) {
-        return keccak256(
-            abi.encode(LEAF_DOMAIN, leaf.distributionId, leaf.leafIndex, leaf.account, leaf.token, leaf.amount)
-        );
+        return
+            keccak256(
+                abi.encode(LEAF_DOMAIN, leaf.distributionId, leaf.leafIndex, leaf.account, leaf.token, leaf.amount)
+            );
     }
 
     function isClaimed(bytes32 distributionId, uint256 leafIndex) public view returns (bool) {
@@ -259,11 +261,7 @@ contract ClaimManagerV5 {
                 delete deferredClaims[distributionIds[i]][leafIndexes[i]];
                 reservedByToken[pending.token] -= pending.amount;
                 emit DeferredClaimPaid(
-                    distributionIds[i],
-                    leafIndexes[i],
-                    pending.account,
-                    pending.token,
-                    pending.amount
+                    distributionIds[i], leafIndexes[i], pending.account, pending.token, pending.amount
                 );
             }
         }
@@ -292,8 +290,7 @@ contract ClaimManagerV5 {
         if (accounted > distributionTokenTotal[leaf.distributionId][leaf.token]) revert TokenBudgetExceeded();
         distributionTokenAccounted[leaf.distributionId][leaf.token] = accounted;
 
-        (bool paid, bool compounded) =
-            _tryCompoundOrPay(distribution.source, leaf.token, leaf.account, leaf.amount);
+        (bool paid, bool compounded) = _tryCompoundOrPay(distribution.source, leaf.token, leaf.account, leaf.amount);
         if (paid) {
             reservedByToken[leaf.token] -= leaf.amount;
             emit ClaimPaid(leaf.distributionId, leaf.leafIndex, leaf.account, leaf.token, leaf.amount);
@@ -307,27 +304,47 @@ contract ClaimManagerV5 {
         }
     }
 
-    /// @notice ADR-0043: for native-token claims with a compound vault configured for this
-    /// distribution's source, and the winner hasn't opted out, restake the prize into the
-    /// winner's vault principal (a fresh tranche at tenure 0) instead of paying their wallet.
-    /// Falls back to a direct wallet payout if the vault call reverts (e.g. paused), and falls
-    /// back further to the existing deferred-claim path if even that fails -- a winner's claim
-    /// is never bricked by this feature; at worst it behaves exactly as it did before ADR-0043.
+    /// @notice Auto-compound the configured vault's canonical prize token as a fresh tranche.
+    /// Native-token support remains for legacy distributions. Any compound failure falls through
+    /// to direct payment, then the existing deferred-claim path, so claims never brick.
     function _tryCompoundOrPay(address source, address token, address account, uint256 amount)
         internal
         returns (bool paid, bool compounded)
     {
-        if (token == NATIVE_TOKEN && !compoundOptOut[account]) {
+        if (!compoundOptOut[account]) {
             address vault = compoundVaultFor[source];
             if (vault != address(0)) {
-                try IPrizeVaultV5Compound(vault).depositFor{value: amount}(account) returns (uint256) {
-                    return (true, true);
-                } catch {
-                    // Vault paused/reverted -- fall through to a direct wallet payout below.
+                if (token == NATIVE_TOKEN) {
+                    try IPrizeVaultV5Compound(vault).depositFor{value: amount}(account) returns (uint256) {
+                        return (true, true);
+                    } catch {}
+                } else {
+                    try IPrizeVaultV5Compound(vault).payoutToken() returns (address payoutToken) {
+                        if (token == payoutToken) {
+                            try IPrizeVaultV5Compound(vault).strategy() returns (address strategy) {
+                                if (_tryApprove(token, strategy, amount)) {
+                                    try IPrizeVaultV5Compound(vault).depositShmonFor(account, amount) returns (
+                                        uint256
+                                    ) {
+                                        _tryApprove(token, strategy, 0);
+                                        return (true, true);
+                                    } catch {
+                                        _tryApprove(token, strategy, 0);
+                                    }
+                                }
+                            } catch {}
+                        }
+                    } catch {}
                 }
             }
         }
         return (_tryPay(token, account, amount), false);
+    }
+
+    function _tryApprove(address token, address spender, uint256 amount) internal returns (bool) {
+        (bool ok, bytes memory data) =
+            token.call(abi.encodeWithSelector(IERC20ClaimManagerV5.approve.selector, spender, amount));
+        return ok && (data.length == 0 || abi.decode(data, (bool)));
     }
 
     function _setClaimed(bytes32 distributionId, uint256 leafIndex) internal {

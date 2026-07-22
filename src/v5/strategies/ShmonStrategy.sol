@@ -5,7 +5,6 @@ import {IYieldStrategyV5} from "../interfaces/IYieldStrategyV5.sol";
 
 interface IShmonVault {
     function deposit(uint256 assets, address receiver) external payable returns (uint256 shares);
-    function redeem(uint256 shares, address receiver, address owner) external returns (uint256 assets);
     function previewDeposit(uint256 assets) external view returns (uint256 shares);
     function previewWithdraw(uint256 assets) external view returns (uint256 shares);
     function previewRedeem(uint256 shares) external view returns (uint256 assets);
@@ -66,24 +65,16 @@ contract ShmonStrategy is IYieldStrategyV5 {
         if (assets == 0) revert ZeroShares();
     }
 
-    function withdraw(uint256 assets, address to) external onlyVault returns (uint256 shares) {
-        uint256 nativeBalance = address(this).balance;
-        if (nativeBalance < assets) {
-            uint256 deficit = assets - nativeBalance;
-            shares = shmonVault.previewWithdraw(deficit);
-            if (shares == 0) revert ZeroShares();
-            uint256 redeemed = shmonVault.redeem(shares, address(this), address(this));
-            require(redeemed >= deficit, "short redeem");
-        }
-
-        (bool ok,) = to.call{value: assets}("");
-        if (!ok) revert NativeTransferFailed();
-    }
-
     function withdrawShares(uint256 assets, address to) external onlyVault returns (uint256 shares) {
         shares = shmonVault.previewWithdraw(assets);
+        uint256 held = shmonVault.balanceOf(address(this));
+        if (shares > held) shares = held;
         if (shares == 0) revert ZeroShares();
         _safeTransfer(address(shmonVault), to, shares);
+    }
+
+    function shareToken() external view returns (address) {
+        return address(shmonVault);
     }
 
     function totalAssets() external view returns (uint256) {
