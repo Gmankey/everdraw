@@ -20,6 +20,7 @@ const input = {
   drawManager: hex(0xd00d, 20),
   seed: hex(0x123456789abcdefn, 32),
   accounts,
+  totalPayout: "1000000000000000000000",
   prizeLegs: [{ token: hex(0, 20), amount: "1000000000000000000000" }],
   tierBps: [6000, 2500, 1000, 500],
 };

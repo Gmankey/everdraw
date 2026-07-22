@@ -12,7 +12,7 @@ import type { DeriveV5TranchesService } from '../services/deriveV5Tranches.js';
 import type { RunnerConfig } from './config.js';
 import { POOL_EVENT_ABI } from './abi.js';
 
-const LAST_FINALIZED_BLOCK_KEY = 'last_finalized_block';
+const LAST_FINALIZED_BLOCK_KEY_PREFIX = 'last_finalized_block';
 const LAST_POINTS_CHECKPOINT_UNIX_KEY = 'last_points_checkpoint_unix';
 export const SUPPORTED_EVENTS: SupportedEventName[] = [
   // Shared
@@ -74,6 +74,8 @@ export function createIndexerRunner(input: {
   const { config, rawEventsRepo, indexerStateRepo, deriveRoundsService, deriveWalletRoundsService, deriveWalletStatsService, deriveV5TranchesService, derivePointsService } = input;
   const provider = makeProvider(config.rpcUrl, config.rpcUrlFallback);
   const iface = new Interface(POOL_EVENT_ABI);
+  const lastFinalizedBlockKey =
+    LAST_FINALIZED_BLOCK_KEY_PREFIX + ':' + config.poolAddresses.map((address) => address.toLowerCase()).sort().join(',');
 
   // Streak/tier/multiplier progression only advances via this checkpoint; it must run on its
   // own cadence (independent of block-scan frequency) or every wallet stays frozen at week 0.
@@ -94,7 +96,7 @@ export function createIndexerRunner(input: {
       console.log('[indexer] syncOnce starting...');
       const latestBlock = await provider.getBlockNumber();
       const finalizedHead = Math.max(config.deployBlock, latestBlock - config.confirmations);
-      const lastFinalizedBlock = Number(indexerStateRepo.get(LAST_FINALIZED_BLOCK_KEY)?.value ?? (config.deployBlock - 1));
+      const lastFinalizedBlock = Number(indexerStateRepo.get(lastFinalizedBlockKey)?.value ?? (config.deployBlock - 1));
       const fromBlock = Math.max(config.deployBlock, lastFinalizedBlock + 1);
       const toBlock = Math.min(finalizedHead, fromBlock + config.maxBlocksPerSync - 1);
       console.log(`[indexer] chain head: ${latestBlock}, will scan from ${fromBlock} to ${toBlock}`);
@@ -119,7 +121,7 @@ export function createIndexerRunner(input: {
         inserted += rows.length;
         chunkCount++;
         if (chunkCount % 1000 === 0) {
-          indexerStateRepo.set(LAST_FINALIZED_BLOCK_KEY, String(end), nowIso());
+          indexerStateRepo.set(lastFinalizedBlockKey, String(end), nowIso());
           console.log(`[indexer] checkpoint block ${end} (${chunkCount} chunks, ${inserted} events)`);
         }
       }
@@ -133,14 +135,14 @@ export function createIndexerRunner(input: {
         derivePointsService?.rebuildSettlementPoints();
         maybeRunPointsCheckpoint();
       }
-      indexerStateRepo.set(LAST_FINALIZED_BLOCK_KEY, String(toBlock), nowIso());
+      indexerStateRepo.set(lastFinalizedBlockKey, String(toBlock), nowIso());
 
       return { fromBlock, toBlock, inserted, latestBlock, finalizedHead };
     },
 
     async getStatus() {
       const chainHead = await provider.getBlockNumber();
-      const lastScannedBlock = Number(indexerStateRepo.get(LAST_FINALIZED_BLOCK_KEY)?.value ?? (config.deployBlock - 1));
+      const lastScannedBlock = Number(indexerStateRepo.get(lastFinalizedBlockKey)?.value ?? (config.deployBlock - 1));
       return {
         lastScannedBlock,
         chainHead,

@@ -197,11 +197,19 @@ async function main() {
   const pendingDrawManager = await vault.contract.pendingDrawManager();
   const pendingDrawManagerEffectiveAt = await vault.contract.pendingDrawManagerEffectiveAt();
   const configuredCompoundVault = await claimManager.contract.compoundVaultFor(manager.address);
+  const vaultPayoutToken = await vault.contract.payoutToken();
+  const managerPayoutToken = await manager.contract.payoutToken();
   if (pendingDrawManager.toLowerCase() !== manager.address.toLowerCase()) {
     throw new Error(`Pending draw manager mismatch: expected ${manager.address}, got ${pendingDrawManager}`);
   }
   if (configuredCompoundVault.toLowerCase() !== vault.address.toLowerCase()) {
     throw new Error(`Compound vault mismatch: expected ${vault.address}, got ${configuredCompoundVault}`);
+  }
+  if (vaultPayoutToken.toLowerCase() !== shmon.toLowerCase()) {
+    throw new Error("Vault payout token mismatch: expected " + shmon + ", got " + vaultPayoutToken);
+  }
+  if (managerPayoutToken.toLowerCase() !== shmon.toLowerCase()) {
+    throw new Error("Draw manager payout token mismatch: expected " + shmon + ", got " + managerPayoutToken);
   }
 
   const record = {

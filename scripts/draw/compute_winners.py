@@ -110,7 +110,6 @@ def abi_hash(parts):
 
 
 LEAF_DOMAIN = hx(keccak256(b"everdraw-v5-claim-leaf/1"))
-NATIVE_TOKEN = "0x0000000000000000000000000000000000000000"
 
 
 def merkle_root(leaves):
@@ -172,8 +171,7 @@ def compute(raw):
     fee_bps = sum(r["bps"] for r in fee_recipients)
     total_twab = sum(a["twab"] for a in accounts)
     if total_twab == 0:
-        native = next((l["amount"] for l in prize_legs if l["token"] == NATIVE_TOKEN), 0)
-        return {"algoVersion": ALGO_VERSION, "root": ZERO_ROOT, "totalTwab": "0", "totalPayout": str(native), "leafCount": 0, "winnerCount": 0, "winners": [], "leaves": []}
+        return {"algoVersion": ALGO_VERSION, "root": ZERO_ROOT, "totalTwab": "0", "totalPayout": str(int(raw["totalPayout"])), "leafCount": 0, "winnerCount": 0, "winners": [], "leaves": []}
 
     winners = []
     for pos in range(len(tier_bps)):
@@ -229,12 +227,11 @@ def compute(raw):
     proofs = merkle_proofs([l["leaf"] for l in leaves])
     for i, proof in enumerate(proofs):
         leaves[i]["proof"] = proof
-    native = next((l["amount"] for l in prize_legs if l["token"] == NATIVE_TOKEN), 0)
     return {
         "algoVersion": ALGO_VERSION,
         "root": merkle_root([l["leaf"] for l in leaves]),
         "totalTwab": str(total_twab),
-        "totalPayout": str(native),
+        "totalPayout": str(int(raw["totalPayout"])),
         "leafCount": len(leaves),
         "winnerCount": len(leaves),
         "winners": winners,

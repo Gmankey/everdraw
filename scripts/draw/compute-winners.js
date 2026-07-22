@@ -6,7 +6,6 @@ const abi = AbiCoder.defaultAbiCoder();
 export const ALGO_VERSION = "everdraw-v5-draw-algorithm/1";
 export const LEAF_DOMAIN = keccak256(Buffer.from("everdraw-v5-claim-leaf/1", "utf8"));
 const ZERO_ROOT = "0x" + "00".repeat(32);
-const NATIVE_TOKEN = "0x0000000000000000000000000000000000000000";
 
 function hex32(value) {
   if (!/^0x[0-9a-fA-F]{64}$/.test(value)) throw new Error(`expected bytes32: ${value}`);
@@ -40,7 +39,7 @@ function normalize(input) {
   const tierSum = tierBps.reduce((sum, bps) => sum + bps, 0n);
   if (tierBps.length === 0 || tierSum !== 10000n) throw new Error(`tierBps must sum to 10000, got ${tierSum}`);
   const feeBps = feeRecipients.reduce((sum, recipient) => sum + recipient.bps, 0n);
-  return { drawId, drawManager, seed, accounts, prizeLegs, tierBps, feeRecipients, feeBps };
+  return { drawId, drawManager, seed, accounts, prizeLegs, tierBps, feeRecipients, feeBps, totalPayout: uint(input.totalPayout) };
 }
 
 function encodedHash(types, values) {
@@ -171,7 +170,7 @@ export function compute(inputJson) {
     algoVersion: ALGO_VERSION,
     root: result.root,
     totalTwab: result.totalTwab.toString(),
-    totalPayout: input.prizeLegs.find((leg) => leg.token === NATIVE_TOKEN)?.amount.toString() || "0",
+    totalPayout: input.totalPayout.toString(),
     leafCount: result.leaves.length,
     winnerCount: result.leaves.length,
     winners: result.winners,

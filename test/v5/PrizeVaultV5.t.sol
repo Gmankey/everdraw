@@ -241,13 +241,12 @@ contract PrizeVaultV5Test is Test {
 
         vault.pause();
 
-        uint256 before = booster.balance;
         vm.prank(booster);
         vm.expectEmit(true, false, false, true, address(vault));
         emit BoostWithdraw(booster, 1.5 ether, 2.5 ether, uint64(block.timestamp));
-        vault.boostWithdraw(1.5 ether);
+        vault.boostWithdrawShmon(1.5 ether);
 
-        assertEq(booster.balance - before, 1.5 ether);
+        assertEq(shmon.balanceOf(booster), 1.5 ether);
         assertEq(vault.boosterPrincipalOf(booster), 2.5 ether);
         assertEq(vault.totalBoosterPrincipal(), 2.5 ether);
         assertEq(vault.totalPrincipal(), 2.5 ether);
@@ -299,11 +298,10 @@ contract PrizeVaultV5Test is Test {
 
         vault.pause();
 
-        uint256 before = alice.balance;
         vm.prank(alice);
-        vault.withdraw(1.5 ether);
+        vault.withdrawShmon(1.5 ether);
 
-        assertEq(alice.balance - before, 1.5 ether);
+        assertEq(shmon.balanceOf(alice), 1.5 ether);
         assertEq(vault.principalOf(alice), 2.5 ether);
         assertEq(vault.totalPrincipal(), 2.5 ether);
         assertEq(twab.balanceOf(address(vault), alice), 2.5 ether);
@@ -341,10 +339,9 @@ contract PrizeVaultV5Test is Test {
         vm.expectRevert(PrizeVaultV5.VaultIsStopped.selector);
         vault.deposit{value: 1 ether}();
 
-        uint256 before = alice.balance;
         vm.prank(alice);
-        vault.withdraw(2 ether);
-        assertEq(alice.balance - before, 2 ether);
+        vault.withdrawShmon(2 ether);
+        assertEq(shmon.balanceOf(alice), 2 ether);
     }
 
     function test_sponsorWithdrawLiveWhenPausedAndStopped() public {
@@ -355,11 +352,10 @@ contract PrizeVaultV5Test is Test {
         vault.pause();
         vault.stop();
 
-        uint256 before = sponsor.balance;
         vm.prank(sponsor);
-        vault.withdrawSponsor(3 ether);
+        vault.withdrawSponsorShmon(3 ether);
 
-        assertEq(sponsor.balance - before, 3 ether);
+        assertEq(shmon.balanceOf(sponsor), 3 ether);
         assertEq(vault.totalPrincipal(), 0);
     }
 
@@ -412,11 +408,10 @@ contract PrizeVaultV5Test is Test {
         vm.expectRevert(PrizeVaultV5.DepositCapExceeded.selector);
         vault.deposit{value: 1 ether}();
 
-        uint256 before = alice.balance;
         vm.prank(alice);
-        vault.withdraw(1 ether);
+        vault.withdrawShmon(1 ether);
 
-        assertEq(alice.balance - before, 1 ether);
+        assertEq(shmon.balanceOf(alice), 1 ether);
         assertEq(vault.principalOf(alice), 3 ether);
     }
 
@@ -454,11 +449,10 @@ contract PrizeVaultV5Test is Test {
         vm.prank(sponsor);
         vault.sponsorDeposit{value: 3 ether}();
 
-        uint256 before = sponsor.balance;
         vm.prank(sponsor);
-        vault.withdrawSponsor(1 ether);
+        vault.withdrawSponsorShmon(1 ether);
 
-        assertEq(sponsor.balance - before, 1 ether);
+        assertEq(shmon.balanceOf(sponsor), 1 ether);
         assertEq(vault.sponsorPrincipalOf(sponsor), 2 ether);
         assertEq(twab.balanceOf(address(vault), sponsor), 2 ether);
         assertEq(twab.delegateBalanceOf(address(vault), twab.SPONSOR_DELEGATE()), 2 ether);
@@ -474,12 +468,11 @@ contract PrizeVaultV5Test is Test {
 
         shmon.setRate(0.5 ether);
 
-        uint256 before = alice.balance;
         vm.prank(alice);
-        vault.withdraw(4 ether);
+        vault.withdrawShmon(4 ether);
 
         assertTrue(vault.shortfallMode());
-        assertEq(alice.balance - before, 2 ether);
+        assertEq(shmon.convertToAssets(shmon.balanceOf(alice)), 2 ether);
         assertEq(vault.totalPrincipal(), 6 ether);
 
         vm.deal(sponsor, 10 ether);
@@ -574,10 +567,9 @@ contract PrizeVaultV5Test is Test {
 
         shmon.setRate(2 ether);
 
-        uint256 aliceBefore = alice.balance;
         vm.prank(alice);
-        vault.withdraw(4 ether);
-        assertEq(alice.balance - aliceBefore, 4 ether);
+        vault.withdrawShmon(4 ether);
+        assertEq(shmon.convertToAssets(shmon.balanceOf(alice)), 4 ether);
 
         vm.prank(bob);
         uint256 shares = vault.withdrawShmon(4 ether);
@@ -621,11 +613,10 @@ contract PrizeVaultV5Test is Test {
         vm.deal(address(shmon), address(shmon).balance + 4 ether);
         shmon.setRate(2 ether);
 
-        uint256 before = alice.balance;
         vm.prank(alice);
-        vault.withdraw(4 ether);
+        vault.withdrawShmon(4 ether);
 
-        assertEq(alice.balance - before, 4 ether);
+        assertEq(shmon.convertToAssets(shmon.balanceOf(alice)), 4 ether);
         assertEq(vault.totalPrincipal(), 0);
         assertEq(strategy.totalAssets(), 4 ether);
     }
@@ -636,12 +627,12 @@ contract PrizeVaultV5Test is Test {
         vault.deposit{value: 4 ether}();
 
         shmon.setWithdrawFeeBps(5);
+        uint256 expectedShares = shmon.previewWithdraw(1 ether);
 
-        uint256 before = alice.balance;
         vm.prank(alice);
-        vault.withdraw(1 ether);
+        vault.withdrawShmon(1 ether);
 
-        assertEq(alice.balance - before, 1 ether);
+        assertEq(shmon.balanceOf(alice), expectedShares);
         assertEq(vault.principalOf(alice), 3 ether);
         assertLt(strategy.sharesHeld(), 3 ether);
     }
@@ -733,23 +724,21 @@ contract PrizeVaultV5Test is Test {
         assertEq(next.sharesHeld(), 4 ether);
         assertEq(next.totalAssets(), 4 ether);
 
-        uint256 before = alice.balance;
         vm.prank(alice);
-        vault.withdraw(1 ether);
-        assertEq(alice.balance - before, 1 ether);
+        vault.withdrawShmon(1 ether);
+        assertEq(shmon.balanceOf(alice), 1 ether);
         assertEq(next.sharesHeld(), 3 ether);
     }
 
-    function test_strategyChangeMigratesNativeDustToNewStrategy() public {
+    function test_shareWithdrawAndMigrationNeverCreateNativeDust() public {
         vm.deal(alice, 10 ether);
         vm.prank(alice);
         vault.deposit{value: 4 ether}();
 
         shmon.setWithdrawFeeBps(5);
-
         vm.prank(alice);
-        vault.withdraw(1 ether);
-        assertGt(address(strategy).balance, 0);
+        vault.withdrawShmon(1 ether);
+        assertEq(address(strategy).balance, 0);
 
         uint256 assetsBefore = strategy.totalAssets();
         ShmonStrategy next = new ShmonStrategy(address(shmon));

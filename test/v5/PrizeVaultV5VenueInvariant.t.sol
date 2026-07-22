@@ -43,7 +43,7 @@ contract PrizeVaultV5VenueInvariantHandler is Test {
 
         uint256 assets = bound(amount, 1, balance);
         vm.prank(account);
-        try vault.withdraw(assets) {} catch {}
+        try vault.withdrawShmon(assets) {} catch {}
     }
 
     function sponsorDeposit(uint96 amount) external {
@@ -61,7 +61,7 @@ contract PrizeVaultV5VenueInvariantHandler is Test {
 
         uint256 assets = bound(amount, 1, balance);
         vm.prank(SPONSOR);
-        try vault.withdrawSponsor(assets) {} catch {}
+        try vault.withdrawSponsorShmon(assets) {} catch {}
     }
 
     function boostDeposit(uint96 amount) external {
@@ -79,7 +79,7 @@ contract PrizeVaultV5VenueInvariantHandler is Test {
 
         uint256 assets = bound(amount, 1, balance);
         vm.prank(BOOSTER);
-        try vault.boostWithdraw(assets) {} catch {}
+        try vault.boostWithdrawShmon(assets) {} catch {}
     }
 
     function setVenueRate(uint96 rate) external {

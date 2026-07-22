@@ -68,26 +68,26 @@ contract V5M6IntegrationAuditTest is Test {
         vm.warp(START + PERIOD);
         shmon.setRate(2 ether);
         vm.deal(address(shmon), 100 ether);
-        _startSeedFinalizeAndClaim(1, 1, 15 ether, alice);
+        _startSeedFinalizeAndClaim(1, 1, 7.5 ether, alice);
         assertEq(uint8(_status(1)), uint8(DrawManagerV5.DrawStatus.Finalized));
-        assertEq(claimManager.reservedByToken(address(0)), 0);
+        assertEq(claimManager.reservedByToken(address(shmon)), 0);
 
         vm.warp(START + 2 * PERIOD);
         shmon.setRate(3 ether);
         vm.deal(address(shmon), 100 ether);
-        _startSeedFinalizeAndClaim(2, 2, 7.5 ether, alice);
+        _startSeedFinalizeAndClaim(2, 2, 2.5 ether, alice);
         assertEq(uint8(_status(2)), uint8(DrawManagerV5.DrawStatus.Finalized));
-        assertEq(claimManager.reservedByToken(address(0)), 0);
+        assertEq(claimManager.reservedByToken(address(shmon)), 0);
 
-        uint256 aliceBefore = alice.balance;
+        uint256 aliceBefore = shmon.balanceOf(alice);
         vm.prank(alice);
-        vault.withdraw(10 ether);
-        assertEq(alice.balance - aliceBefore, 10 ether);
+        uint256 aliceShares = vault.withdrawShmon(10 ether);
+        assertEq(shmon.balanceOf(alice) - aliceBefore, aliceShares);
 
-        uint256 bobBefore = bob.balance;
+        uint256 bobBefore = shmon.balanceOf(bob);
         vm.prank(bob);
-        vault.withdraw(5 ether);
-        assertEq(bob.balance - bobBefore, 5 ether);
+        uint256 bobShares = vault.withdrawShmon(5 ether);
+        assertEq(shmon.balanceOf(bob) - bobBefore, bobShares);
         assertEq(vault.totalPrincipal(), 0);
         assertEq(twab.balanceOf(address(vault), alice), 0);
         assertEq(twab.balanceOf(address(vault), bob), 0);
@@ -105,11 +105,11 @@ contract V5M6IntegrationAuditTest is Test {
 
         vm.prank(permissionless);
         vm.expectRevert(DrawManagerV5.ProposerGraceActive.selector);
-        manager.proposeRoot(1, bytes32(uint256(0xabc)), 1, 10 ether);
+        manager.proposeRoot(1, bytes32(uint256(0xabc)), 1, 5 ether);
 
         vm.warp(START + PERIOD + GRACE);
         vm.prank(permissionless);
-        manager.proposeRoot(1, bytes32(uint256(0xabc)), 1, 10 ether);
+        manager.proposeRoot(1, bytes32(uint256(0xabc)), 1, 5 ether);
 
         (,,,,,,,,,, address proposer,,,,) = manager.draws(1);
         assertEq(proposer, permissionless);
@@ -131,10 +131,9 @@ contract V5M6IntegrationAuditTest is Test {
         );
         manager.rerequestSeed(1);
 
-        uint256 aliceBefore = alice.balance;
         vm.prank(alice);
-        vault.withdraw(1 ether);
-        assertEq(alice.balance - aliceBefore, 1 ether);
+        vault.withdrawShmon(1 ether);
+        assertEq(shmon.balanceOf(alice), 0.5 ether);
 
         _depositNative(bob, 1 ether);
         assertEq(vault.totalPrincipal(), 10 ether);
@@ -155,12 +154,11 @@ contract V5M6IntegrationAuditTest is Test {
         _depositNative(bob, 6 ether);
         shmon.setRate(0.5 ether);
 
-        uint256 bobBefore = bob.balance;
         vm.prank(bob);
-        vault.withdraw(2 ether);
+        vault.withdrawShmon(2 ether);
 
         assertTrue(vault.shortfallMode());
-        assertEq(bob.balance - bobBefore, 1 ether);
+        assertEq(shmon.convertToAssets(shmon.balanceOf(bob)), 1 ether);
 
         vm.prank(alice);
         vault.emergencyRedeemShares(4 ether);
@@ -177,7 +175,7 @@ contract V5M6IntegrationAuditTest is Test {
         oracle.fulfill(1, bytes32(uint256(0xbeef)));
 
         vm.prank(keeper);
-        manager.proposeRoot(1, bytes32(uint256(0xbad)), 1, 10 ether);
+        manager.proposeRoot(1, bytes32(uint256(0xbad)), 1, 5 ether);
         vm.prank(guardian);
         manager.vetoRoot(1);
         assertEq(uint8(_status(1)), uint8(DrawManagerV5.DrawStatus.Seeded));
@@ -187,7 +185,7 @@ contract V5M6IntegrationAuditTest is Test {
 
         vm.warp(block.timestamp + 1 hours);
         vm.prank(keeper);
-        manager.proposeRoot(1, root, 1, 10 ether);
+        manager.proposeRoot(1, root, 1, 5 ether);
         vm.warp(block.timestamp + CHALLENGE);
         manager.finalizeRoot(1);
 
@@ -196,9 +194,9 @@ contract V5M6IntegrationAuditTest is Test {
         bytes32[][] memory proofs = new bytes32[][](1);
         proofs[0] = new bytes32[](0);
 
-        uint256 before = alice.balance;
+        uint256 before = shmon.balanceOf(alice);
         claimManager.claimMany(leaves, proofs);
-        assertEq(alice.balance - before, 10 ether);
+        assertEq(shmon.balanceOf(alice) - before, 5 ether);
     }
 
     function _depositNative(address account, uint256 amount) internal {

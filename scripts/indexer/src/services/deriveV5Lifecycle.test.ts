@@ -50,7 +50,7 @@ rawEventsRepo.upsertMany([
       periodStart: '1782950476',
       periodEnd: '1782954076',
       totalTwab: '68466435339327356583',
-      totalPayout: '6218526931038436132',
+      totalPayout: '3109263465519218066',
       requestId: '3185',
     }),
   }),
@@ -59,7 +59,7 @@ rawEventsRepo.upsertMany([
     eventName: 'RootProposed',
     logIndex: 3,
     roundId: 1,
-    payload: JSON.stringify({ drawId: 1, root: '0x02', winnerCount: 1, totalPayout: '6218526931038436132' }),
+    payload: JSON.stringify({ drawId: 1, root: '0x02', winnerCount: 1, totalPayout: '3109263465519218066' }),
   }),
   raw({
     eventName: 'DistributionRegistered',
@@ -72,14 +72,25 @@ rawEventsRepo.upsertMany([
     eventName: 'RootFinalized',
     logIndex: 5,
     roundId: 1,
-    payload: JSON.stringify({ drawId: 1, root: '0x02', winnerCount: 1, totalPayout: '6218526931038436132' }),
+    payload: JSON.stringify({ drawId: 1, root: '0x02', winnerCount: 1, totalPayout: '3109263465519218066' }),
   }),
   raw({
     eventName: 'ClaimPaid',
     logIndex: 6,
     contractAddress: claimManager,
     wallet,
-    payload: JSON.stringify({ distributionId, leafIndex: '0', account: wallet, token: '0x0000000000000000000000000000000000000000', amount: '6218526931038436132' }),
+    payload: JSON.stringify({ distributionId, leafIndex: '0', account: wallet, token: '0x0000000000000000000000000000000000000000', amount: '3109263465519218066' }),
+  }),  raw({
+    eventName: 'DrawEconomicsSnapshot',
+    logIndex: 7,
+    roundId: 1,
+    payload: JSON.stringify({
+      drawId: 1,
+      grossYield: '6218526931038436132',
+      sponsorYield: '0',
+      feeAmount: '0',
+      totalPayout: '3109263465519218066',
+    }),
   }),
 ]);
 
@@ -96,6 +107,6 @@ assert.equal(round.yieldMon, '6218526931038436132');
 const [walletRound] = walletRoundsRepo.listByRound(1, drawManager);
 assert.equal(walletRound.wallet, wallet);
 assert.equal(walletRound.won, 1);
-assert.equal(walletRound.prizeClaimed, '6218526931038436132');
+assert.equal(walletRound.prizeClaimed, '3109263465519218066');
 
 console.log('deriveV5Lifecycle.test.ts ok');

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
-import { Contract, Interface, JsonRpcProvider, ZeroAddress, getAddress } from "ethers";
+import { Contract, Interface, JsonRpcProvider, getAddress } from "ethers";
 
 const DEPLOYMENT_FILE = process.env.DEPLOYMENT_FILE || "deployments/monad-testnet.json";
 const RPC_URL = process.env.WATCHER_RPC_URL || process.env.KEEPER_RPC_URL || process.env.RPC_URL || process.env.MONAD_TESTNET_RPC_URL;
@@ -47,6 +47,7 @@ const DRAW_MANAGER_ABI = [
   "function vault() view returns (address)",
   "function twabController() view returns (address)",
   "function claimManager() view returns (address)",
+  "function payoutToken() view returns (address)",
   "function draws(uint256) view returns (uint64 periodStart,uint64 periodEnd,uint64 randomnessRequestId,bytes32 seed,uint256 totalTwab,uint256 totalPayout,uint32 winnerCount,uint32 rewardLegCount,bytes32 root,uint64 proposedAt,address proposer,uint8 status,uint256 grossYield,uint256 sponsorYield,uint256 feeAmount)",
   "function drawRewardLegCount(uint256) view returns (uint256)",
   "function drawRewardLegAt(uint256,uint256) view returns (address token,uint256 amount)",
@@ -402,8 +403,9 @@ export async function buildDrawInput({
     feeBps += BigInt(bps);
   }
 
+  const payoutToken = getAddress(await manager.payoutToken());
   const prizeLegs = [{
-    token: ZeroAddress,
+    token: payoutToken,
     amount: draw.totalPayout.toString(),
     feeAmount: draw.feeAmount.toString(),
   }];
