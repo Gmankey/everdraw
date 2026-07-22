@@ -30,3 +30,11 @@ skills/gitbook-direct/config.env
 .env.*
 !.env.example
 !*.env.example
+
+# repo-hygiene: indexer db + backups (never commit local state/artifacts)
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.bak
