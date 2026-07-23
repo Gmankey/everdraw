@@ -376,6 +376,47 @@
         "effectiveAtIso": "2026-07-23T05:40:30.000Z",
         "commitCommand": "HARDHAT_NETWORK=monadTestnet node scripts/redeploy-v5-claim-draw-managers.js --commit"
       }
+    },
+    {
+      "role": "V5 M8 testnet soak - ADR-0043 draw-manager timelock commit",
+      "status": "draw-manager-committed",
+      "committedAt": "2026-07-23T06:00:30.206Z",
+      "committedBy": "0xd5cc1f1D7b78943bDF09541A2ace41B5c6D83431",
+      "source": "src/v5",
+      "deployCommit": "c7914e9f159c415932bb6a968a9d14f3c5f60a98",
+      "adr": "decisions/0043-v5-prize-auto-compound.md",
+      "note": "Commit record for the ADR-0043 redeploy queued in a prior deployment record. The vault now points at the new DrawManagerV5; keeper/indexer/frontend may be re-pointed after verifying this record.",
+      "addresses": {
+        "twabController": "0xFFCB5261a6c3469d356dDCb7730dcacd30891407",
+        "shmonStrategy": "0x37293b0e555Da59C90173aBcBE24Ac20CaD13148",
+        "prizeVault": "0x06a35C612285794d73eFA761bb014CBC5D8ce192",
+        "claimManager": "0xBB19793bf3CA2EBDE481c8Db0C9DE8B98A8d6621",
+        "pythRandomnessOracle": "0x1C042E47DEc8F95Ed58D9055A12782abc7A97A97",
+        "drawManager": "0x1ca0daEF8c2d684ddC62D9F529eC859e445396eC"
+      },
+      "deployTxs": {
+        "vaultCommitDrawManagerChange": "0x6cfc35d3cb9502f11eb8ae93d8ef2a0097a318183a872174f7be59ecf53b2afa"
+      },
+      "startBlock": 47042467,
+      "constructorArgs": {
+        "shmon": "0x282BdDFF5e58793AcAb65438b257Dbd15A8745C9",
+        "entropy": "0x825c0390f379c631f3cf11a82a37d20bddf93c07",
+        "entropyProvider": "0x6CC14824Ea2918f5De5C2f75A9Da968ad4BD6344",
+        "guardian": "0xd5cc1f1D7b78943bDF09541A2ace41B5c6D83431",
+        "keeper": "0x629Bd7f323fD29E3dF75855C9BC542889c6c1268",
+        "firstPeriodStart": 1784698804,
+        "twabPeriodLength": 3600,
+        "twabPeriodOffset": 1784698804,
+        "drawPeriod": 3600,
+        "proposerGrace": 300,
+        "challengeWindow": 900,
+        "depositCap": "25000000000000000000000",
+        "symbol": "EVRDRAW-V5-MON"
+      },
+      "watcherSecrets": {
+        "drawManagerAddressSecret": "DRAW_MANAGER_ADDRESS",
+        "fromBlockSecret": "V5_WATCHER_FROM_BLOCK"
+      }
     }
   ]
 }
