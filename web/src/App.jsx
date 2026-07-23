@@ -1259,10 +1259,10 @@ function RoundProgressSteps({ state, settlementSecs, secondsRemaining, isV3 = fa
 const V5_UAT_DEFAULTS = {
   chainId: 10143,
   rpcUrl: 'https://testnet-rpc.monad.xyz',
-  drawManager: '0xC184369eb29b0Ba514e697Fb95A193CCA38B01b5',
-  prizeVault: '0xF3c85b45FCb7e74142124f9082A03e7e49E85eA4',
-  twabController: '0xF2f593E1b1Ef401e1a281D809F1b870f98F0cDCe',
-  claimManager: '0x78D0f6d7ab945590eC5e8fAffC773893f33528b7',
+  drawManager: '0x1ca0daEF8c2d684ddC62D9F529eC859e445396eC',
+  prizeVault: '0x06a35C612285794d73eFA761bb014CBC5D8ce192',
+  twabController: '0xFFCB5261a6c3469d356dDCb7730dcacd30891407',
+  claimManager: '0xBB19793bf3CA2EBDE481c8Db0C9DE8B98A8d6621',
   shmon: '0x282BdDFF5e58793AcAb65438b257Dbd15A8745C9',
 }
 
