@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import { AbiCoder, Contract, JsonRpcProvider, Wallet, ZeroAddress, getAddress, keccak256 } from "ethers";
 import { DrawInputEventCache, buildDrawInput } from "./draw/write-watch-inputs.mjs";
 import { compute } from "./draw/compute-winners.js";
+import { claimFinalizedDrawSafely } from "./keeper/claim-isolation.mjs";
 
 const DEPLOYMENT_FILE = process.env.DEPLOYMENT_FILE || "deployments/monad-testnet.json";
 const RPC_URL = process.env.KEEPER_RPC_URL || process.env.RPC_URL || process.env.MONAD_TESTNET_RPC_URL;
@@ -452,16 +453,21 @@ async function runOnce() {
     const draw = await rpcRead(`manager.draws(${drawId})`, () => manager.draws(drawId));
     console.log(`recent draw ${drawId} status=${statusName(draw.status)}`);
     if (Number(draw.status) === 4) {
-      acted = await maybeClaim({
-        manager,
-        signer,
-        provider: readProvider,
-        drawManagerAddress,
-        claimManagerAddress,
+      const claimed = await claimFinalizedDrawSafely(
         drawId,
-        fromBlock,
-        eventCache,
-      }) || acted;
+        () => maybeClaim({
+          manager,
+          signer,
+          provider: readProvider,
+          drawManagerAddress,
+          claimManagerAddress,
+          drawId,
+          fromBlock,
+          eventCache,
+        }),
+        (err, message) => ping(false, `${message}\n${err?.stack || err?.message || err}`),
+      );
+      acted = claimed || acted;
     }
   }
   await ping(true);
