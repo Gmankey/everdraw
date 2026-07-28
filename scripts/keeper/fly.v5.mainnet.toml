@@ -1,0 +1,59 @@
+app = "everdraw-keeper-v5-mainnet"
+primary_region = "sjc"
+
+# Create this app and its persistent cache volume once:
+#   flyctl apps create everdraw-keeper-v5-mainnet
+#   flyctl volumes create everdraw_keeper_v5_mainnet_cache \
+#     --app everdraw-keeper-v5-mainnet --region sjc --size 1
+#
+# Runtime targets and sensitive values are Fly secrets, not TOML values:
+#   flyctl secrets set -a everdraw-keeper-v5-mainnet \
+#     RPC_URL='<paid mainnet RPC>' \
+#     PRIVATE_KEY='<primary proposer key>' \
+#     DRAW_MANAGER_ADDRESS='<committed V5 DrawManager>' \
+#     CLAIM_MANAGER_ADDRESS='<V5 ClaimManager>' \
+#     V5_KEEPER_FROM_BLOCK='<fresh V5 deploy block>' \
+#     TELEGRAM_BOT_TOKEN='<operator token>' \
+#     TELEGRAM_CHAT_ID='<operator chat>' \
+#     KEEPER_HEALTHCHECK_FAIL_URL='<dead-man failure URL>'
+#
+# Do not deploy or set target addresses until PrizeVaultV5.drawManager() equals the
+# committed DrawManager after the ADR-0042 24-hour timelock.
+
+[build]
+  # Deploy from the repository root:
+  #   flyctl deploy . -c scripts/keeper/fly.v5.mainnet.toml --ha=false
+  dockerfile = "Dockerfile.v5"
+
+[env]
+  NODE_ENV = "production"
+  DEPLOYMENT_FILE = "deployments/monad-mainnet.json"
+  V5_KEEPER_EVENT_CACHE_FILE = "/data/keeper-v5-event-cache.json"
+  KEEPER_LOOP = "true"
+  KEEPER_INTERVAL_MS = "60000"
+  KEEPER_RECENT_CLAIM_WINDOW = "1000"
+  KEEPER_PREFLIGHT = "true"
+  KEEPER_CHAIN_ID = "143"
+  KEEPER_LOW_BALANCE_WEI = "500000000000000000"
+  KEEPER_LOW_BALANCE_WARN_WEI = "1000000000000000000"
+  KEEPER_CRASH_ALERT_THRESHOLD = "3"
+  KEEPER_CRASH_ALERT_WINDOW_MS = "60000"
+  KEEPER_ALERT_REPEAT_MS = "3600000"
+  TELEGRAM_TIMEOUT_MS = "8000"
+  TELEGRAM_RETRIES = "2"
+  # RPC_URL, PRIVATE_KEY, DRAW_MANAGER_ADDRESS, CLAIM_MANAGER_ADDRESS,
+  # V5_KEEPER_FROM_BLOCK, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, and
+  # KEEPER_HEALTHCHECK_FAIL_URL are intentionally omitted. They are operator secrets.
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+[deploy]
+  strategy = "immediate"
+
+[mounts]
+  source = "everdraw_keeper_v5_mainnet_cache"
+  destination = "/data"
+
+# No [services] block: the keeper is a background worker with no inbound HTTP.
