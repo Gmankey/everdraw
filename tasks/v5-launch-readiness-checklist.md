@@ -1,6 +1,30 @@
 # V5 launch-readiness checklist — single source of truth
 
-**Updated:** 2026-07-07. **Owner:** PM tracks; builder/ops execute. **Rule #5/#6:** every dependency named, failure mode known, verified on the live surface before "done."
+**Updated:** 2026-07-22. **Owner:** PM tracks; builder/ops execute. **Rule #5/#6:** every dependency named, failure mode known, verified on the live surface before "done."
+
+---
+
+## 2026-07-22 update — post-ADR-0045 shMON-share redeploy + confirmed operator decisions
+
+**Contract state is now final at ADR-0045, not ADR-0043.** After the auto-compound (ADR-0043) redeploy, a further, mandatory redeploy landed: **ADR-0045 — V5 is shMON-share-denominated end-to-end, no on-chain redeem to MON** (PR #231, commit `c7914e9`). This supersedes the native-MON escrow assumption throughout. The shMON→MON 18–22h unbonding means the contract never redeems; users convert on shMONAD themselves. The whole suite is now **297 forge tests** (was 108), incl. a `MockShmonDelayedRedeem` guardrail whose `redeem()` reverts.
+
+- **Deployed + verified on UAT** (2026-07-22): stack at deploy block 47042467; DrawManager timelock committed; keeper/indexer/frontend re-pointed. On-chain checks pass — `vault.payoutToken()`, `drawManager.payoutToken()`, `strategy.shareToken()` all == shMON. Draws 81–90 auto-claimed in shMON, emitting `ClaimPaid` + `PrizeCompounded`, indexed `source=prize_compound`.
+- **Opt-out semantics corrected:** auto-compound opt-out now pays the winner **shMON shares to their wallet** (not MON). No in-app MON conversion exists anywhere; the "convert to MON" action is a shMON-share withdrawal + shMONAD redirect with the 18–22h notice.
+
+**Confirmed operator decisions (2026-07-22) — feed the mainnet deploy params:**
+- **Beta risk posture:** 25,000 MON deposit cap; external audit **deferred until after beta** (unchanged from §C, reconfirmed).
+- **Mainnet minimum deposit:** **0** (no contract minimum) — builder recommendation accepted.
+- **Draw cadence:** **weekly**; `firstPeriodStart` = **the launch moment** snapped to the TWAB grid at deploy (no pre-committed calendar slot). Launch gates on readiness, not a date. Drift-free per ADR-0037 (genesis lands wherever launch does).
+
+**Open production blockers (from the 2026-07-22 UAT status note) — by owner:**
+- **PM:** ✅ ADR-0045 added to staging (PR #238); this checklist refresh (was stale/pre-ADR-0045).
+- **Builder:** `scripts/deploy-v5-mainnet.js` (guarded) + `scripts/keeper/fly.v5.mainnet.toml` do not exist yet — mainnet is blocked until they do; Merkl participant/Patron ingestion needs external confirmation; recorded clean Forge invariant-suite completion + indexer test rerun from a deps-installed checkout.
+- **Reviewer:** focused security review of the **ADR-0045 diff** (the July internal review predates the rewrite) — required even though the external audit stays deferred.
+- **Ops / operator-supplied:** UAT keeper alerts are **disabled** (Telegram + healthcheck transports both off — fix before soak counts); real-mainnet-shMON fork test needs an **archive-capable** RPC; clean uninterrupted soak after #237 + live vault/Patron withdrawal-choice + shMONAD-redirect verification.
+
+**Still needed from operator (values/secrets — not decidable by PM/builder):** final **guardian** + **pauser** addresses; **paid archive RPC** endpoint; keeper **Telegram** + **dead-man** alert destinations. Secrets go through the operator's own secure channel, never chat.
+
+---
 
 ## Status snapshot — the mechanism is proven
 Contracts (108 forge tests incl. invariant + fuzz), the full draw lifecycle (startDraw → seed → propose → challenge/veto → finalize → claim), the indexer (event ingestion → tranche ledger → per-tranche entries → points → weekly checkpoint), and the frontend (V5UatExperience) all work end-to-end on testnet UAT, validated to the wei. What remains is **not** more mechanism-proving — it's one clean soak, the production deploy/cutover, and the security review.
