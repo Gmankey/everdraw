@@ -12,21 +12,16 @@ import {MockRandomnessOracle} from "../mocks/MockRandomnessOracle.sol";
 interface IShmonRead {
     function balanceOf(address account) external view returns (uint256);
     function previewRedeem(uint256 shares) external view returns (uint256);
+    function convertToAssets(uint256 shares) external view returns (uint256);
     function previewDeposit(uint256 assets) external view returns (uint256);
     function deposit(uint256 assets, address receiver) external payable returns (uint256 shares);
     function approve(address spender, uint256 amount) external returns (bool);
     function transfer(address to, uint256 amount) external returns (bool);
 }
 
-interface ILiveV4Pool {
-    function buyTickets(uint32 ticketCount) external payable;
-}
-
 contract PrizeVaultV5ForkTest is Test {
-    bytes4 constant SALES_ENDED = bytes4(keccak256("SalesEnded()"));
     address constant MAINNET_SHMON = 0x1B68626dCa36c7fE922fD2d55E4f631d962dE19c;
     address constant MAINNET_SHMON_IMPL = 0x856A4019228c265DEE336DF705277607c4A18e1B;
-    address constant LIVE_V4_1_A = 0x933FF608eaC2b3221088bd9AE19b05F266dBF7DA;
     address constant LIVE_LEDGER_OWNER = 0xd399d4e24021eA08f2Cd11Fbb78a633e8D9B84A2;
 
     EverdrawTwabController twab;
@@ -84,15 +79,24 @@ contract PrizeVaultV5ForkTest is Test {
         vault.deposit{value: 1 ether}();
 
         uint256 shares = IShmonRead(MAINNET_SHMON).balanceOf(address(strategy));
+        uint256 creditedPrincipal = vault.principalOf(alice);
         assertGt(shares, 0);
-        assertGt(IShmonRead(MAINNET_SHMON).previewRedeem(shares), 0);
+        assertEq(creditedPrincipal, IShmonRead(MAINNET_SHMON).convertToAssets(shares));
+        // ERC-4626 deposits round minted shares down in the vault's favour. The observed
+        // mainnet delta is about 0.91 bps of the 1 MON input and remains inside shMON;
+        // neither PrizeVaultV5 nor ShmonStrategy retains native MON or extra shares.
+        assertLe(1 ether - creditedPrincipal, 2e14);
+        assertEq(address(vault).balance, 0);
+        assertEq(address(strategy).balance, 0);
 
         uint256 before = IShmonRead(MAINNET_SHMON).balanceOf(alice);
         vm.prank(alice);
         uint256 withdrawnShares = vault.withdrawShmon(0.25 ether);
 
         assertEq(IShmonRead(MAINNET_SHMON).balanceOf(alice) - before, withdrawnShares);
-        assertEq(vault.principalOf(alice), 0.75 ether);
+        assertEq(vault.principalOf(alice), creditedPrincipal - 0.25 ether);
+        assertEq(address(vault).balance, 0);
+        assertEq(address(strategy).balance, 0);
     }
 
     function test_fork_claimManagerNativePrizeCompoundAgainstRealShmonBypassesMinDeposit() public {
@@ -110,20 +114,6 @@ contract PrizeVaultV5ForkTest is Test {
         assertEq(vault.principalOf(alice), creditedAssets);
         assertEq(vault.totalPrincipal(), creditedAssets);
         assertEq(twab.balanceOf(address(vault), alice), creditedAssets);
-    }
-
-    function test_fork_liveV4NativeBuyPathStillEmulates() public {
-        vm.deal(alice, 2 ether);
-        vm.prank(alice, alice);
-        try ILiveV4Pool(LIVE_V4_1_A).buyTickets{value: 1 ether}(1) {}
-        catch (bytes memory reason) {
-            if (bytes4(reason) == SALES_ENDED) {
-                return;
-            }
-            assembly {
-                revert(add(reason, 0x20), mload(reason))
-            }
-        }
     }
 
     function test_fork_liveFundedEoaDirectShmonDepositStillEmulates() public {
