@@ -128,10 +128,16 @@ migration should require a coordinated full-stack redeploy.
 
 - `forge test --match-path test/v5/V5ShmonSharePayoutLifecycle.t.sol -vv`: 2 passed.
 - Source search confirmed no `strategy.withdraw(` or shMON `.redeem(` call under `src/v5`.
-- The full local Forge command was attempted but exceeded the execution window because the
-  invariant/fork surface runs long in this checkout; no full-suite result is claimed here.
-- The real-shMON fork suite remains dependent on an archive-capable Monad mainnet RPC, as recorded
-  in `PrizeVaultV5Fork.t.sol` and the launch checklist.
+- Follow-up fork work corrected the original blocker diagnosis: `NotActivated` came from
+  running Cancun-opcode mainnet shMON under the default Paris test EVM, not from RPC history.
+- The real-shMON suite uses `FOUNDRY_PROFILE=fork` / `--evm-version cancun`; default Foundry
+  and Hardhat deployment artifacts remain Paris.
+- The native-deposit delta is ERC-4626 share-mint rounding in shMON's favour. No native MON or
+  extra shares remain in PrizeVaultV5 or ShmonStrategy. The observed 1 MON deposit is credited
+  about 0.91 bps lower; it is not a separate EverDraw withdrawal fee.
+- The historical live-V4 buy test was retired after all V4 pools were intentionally stopped.
+- An archive-capable RPC is still required, but the operator's existing free-tier Alchemy endpoint
+  has sufficient recent-history depth.
 
 ## Launch disposition
 

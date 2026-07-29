@@ -1,0 +1,20 @@
+name: V5 real-shMON fork
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fork:
+    runs-on: ubuntu-latest
+    env:
+      MONAD_MAINNET_RPC_URL: ${{ secrets.MONAD_MAINNET_RPC_URL }}
+      FOUNDRY_PROFILE: fork
+    steps:
+      - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - name: Require archive RPC
+        run: test -n "$MONAD_MAINNET_RPC_URL"
+      - name: Run V5 against real mainnet shMON under Cancun
+        run: forge test --match-path 'test/v5/PrizeVaultV5Fork.t.sol' --evm-version cancun

@@ -7,7 +7,9 @@ signer-bearing commands. Builders and reviewers do not receive or inspect keys.
 
 ## 1. Required operator inputs
 
-- `MONAD_MAINNET_RPC_URL`: paid archive-capable Monad mainnet RPC
+- `MONAD_MAINNET_RPC_URL`: paid archive-capable Monad mainnet RPC for deployment and ongoing
+  production operations. The fork gate below may use the operator's existing free-tier Alchemy
+  endpoint, which has sufficient recent-history depth.
 - `GUARDIAN`: final guardian address
 - `PAUSER`: final pauser address
 - `KEEPER`: primary proposer address used by the managed V5 keeper
@@ -46,6 +48,22 @@ node --test scripts/deploy-v5-mainnet.unit.test.mjs
 ```
 
 Stop on any failure.
+
+### Real-shMON fork gate
+
+The production contracts and Hardhat artifacts remain compiled for `paris`. The real mainnet
+shMON dependency uses Cancun opcodes, so only this fork test harness runs with the dedicated
+`fork` profile / explicit Cancun EVM:
+
+```bash
+FOUNDRY_PROFILE=fork \
+MONAD_MAINNET_RPC_URL="<archive RPC>" \
+forge test --match-path 'test/v5/PrizeVaultV5Fork.t.sol' --evm-version cancun
+```
+
+Do not change `hardhat.config.js` or the mainnet deploy artifact target when running this gate.
+The historical V4 live-buy test was retired after every V4 pool was deliberately stopped; this
+suite now tests the current V5 dependency boundary against real shMON.
 
 ## 3. Read-only mainnet dependency preflight
 

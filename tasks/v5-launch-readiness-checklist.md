@@ -18,11 +18,16 @@
 
 **Open production blockers (from the 2026-07-22 UAT status note) — by owner:**
 - **PM:** ✅ ADR-0045 added to staging (PR #238); this checklist refresh (was stale/pre-ADR-0045).
-- **Builder:** `scripts/deploy-v5-mainnet.js` (guarded) + `scripts/keeper/fly.v5.mainnet.toml` do not exist yet — mainnet is blocked until they do; Merkl participant/Patron ingestion needs external confirmation; recorded clean Forge invariant-suite completion + indexer test rerun from a deps-installed checkout.
-- **Reviewer:** focused security review of the **ADR-0045 diff** (the July internal review predates the rewrite) — required even though the external audit stays deferred.
-- **Ops / operator-supplied:** UAT keeper alerts are **disabled** (Telegram + healthcheck transports both off — fix before soak counts); real-mainnet-shMON fork test needs an **archive-capable** RPC; clean uninterrupted soak after #237 + live vault/Patron withdrawal-choice + shMONAD-redirect verification.
+- **Builder:** guarded mainnet deploy tooling and the managed mainnet keeper config landed in
+  #240. Remaining builder gates are the ADR-0045 M-1 remediation, Merkl participant/Patron
+  ingestion confirmation, and recorded clean Forge invariant/indexer reruns from a deps-installed
+  checkout.
+- **Reviewer:** ADR-0045 focused review completed in #241. The real-shMON fork blocker was
+  subsequently root-caused as a test-harness EVM mismatch, not an archive-RPC failure; the fork
+  suite is pinned to Cancun by the follow-up ticket. M-1 remains a separate pre-mainnet blocker.
+- **Ops / operator-supplied:** UAT keeper alerts are **disabled** (Telegram + healthcheck transports both off — fix before soak counts); real-mainnet-shMON fork suite uses the operator's archive-capable free-tier Alchemy RPC and the Cancun test profile; clean uninterrupted soak after #237 + live vault/Patron withdrawal-choice + shMONAD-redirect verification.
 
-**Still needed from operator (values/secrets — not decidable by PM/builder):** final **guardian** + **pauser** addresses; **paid archive RPC** endpoint; keeper **Telegram** + **dead-man** alert destinations. Secrets go through the operator's own secure channel, never chat.
+**Still needed from operator (values/secrets — not decidable by PM/builder):** final **guardian** + **pauser** addresses; the existing archive-capable RPC endpoint; keeper **Telegram** + **dead-man** alert destinations. Secrets go through the operator's own secure channel, never chat.
 
 ---
 

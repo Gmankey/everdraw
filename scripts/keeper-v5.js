@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import { AbiCoder, Contract, JsonRpcProvider, Wallet, ZeroAddress, getAddress, keccak256 } from "ethers";
 import { DrawInputEventCache, buildDrawInput } from "./draw/write-watch-inputs.mjs";
 import { compute } from "./draw/compute-winners.js";
+import { deriveKeeperBalanceThresholds } from "./keeper/balance-thresholds.mjs";
 import { claimFinalizedDrawSafely } from "./keeper/claim-isolation.mjs";
 
 const DEPLOYMENT_FILE = process.env.DEPLOYMENT_FILE || "deployments/monad-testnet.json";
@@ -17,8 +18,12 @@ const LOOP = process.env.KEEPER_LOOP === "true";
 const INTERVAL_MS = Number(process.env.KEEPER_INTERVAL_MS || 60_000);
 const CLAIM_BATCH_SIZE = Number(process.env.CLAIM_BATCH_SIZE || 50);
 const HEALTHCHECK_URL = process.env.KEEPER_HEALTHCHECK_URL;
-const LOW_BALANCE_WEI = BigInt(process.env.KEEPER_LOW_BALANCE_WEI || "500000000000000000");
-const LOW_BALANCE_WARN_WEI = BigInt(process.env.KEEPER_LOW_BALANCE_WARN_WEI || "750000000000000000");
+const CONFIGURED_LOW_BALANCE_WEI = BigInt(process.env.KEEPER_LOW_BALANCE_WEI || "3000000000000000000");
+const CONFIGURED_LOW_BALANCE_WARN_WEI =
+  BigInt(process.env.KEEPER_LOW_BALANCE_WARN_WEI || "6000000000000000000");
+const LOW_BALANCE_DRAW_HEADROOM = BigInt(process.env.KEEPER_LOW_BALANCE_DRAW_HEADROOM || "4");
+const LOW_BALANCE_WARN_DRAW_HEADROOM = BigInt(process.env.KEEPER_LOW_BALANCE_WARN_DRAW_HEADROOM || "8");
+const BALANCE_GAS_BUFFER_WEI = BigInt(process.env.KEEPER_BALANCE_GAS_BUFFER_WEI || "100000000000000000");
 const EXPECTED_CHAIN_ID = BigInt(process.env.KEEPER_CHAIN_ID || "10143");
 const RPC_TIMEOUT_MS = Number(process.env.KEEPER_RPC_TIMEOUT_MS || 15_000);
 const TX_TIMEOUT_MS = Number(process.env.KEEPER_TX_TIMEOUT_MS || 180_000);
@@ -397,11 +402,29 @@ async function runOnce() {
   if (network.chainId !== EXPECTED_CHAIN_ID) throw new Error(`wrong chain id ${network.chainId}; expected ${EXPECTED_CHAIN_ID}`);
   const writeNetwork = await rpcRead("writeProvider.getNetwork", () => writeProvider.getNetwork());
   if (writeNetwork.chainId !== EXPECTED_CHAIN_ID) throw new Error(`wrong write chain id ${writeNetwork.chainId}; expected ${EXPECTED_CHAIN_ID}`);
-  const balance = await rpcRead(`writeProvider.getBalance(${signer.address})`, () => writeProvider.getBalance(signer.address));
-  if (balance < LOW_BALANCE_WARN_WEI) {
-    console.warn(`[keeper-v5] LOW_BALANCE_WARNING address=${signer.address} balanceWei=${balance} warningWei=${LOW_BALANCE_WARN_WEI} floorWei=${LOW_BALANCE_WEI}`);
+  let oracleFeeWei = 0n;
+  try {
+    const oracleAddress = await rpcRead("manager.randomnessOracle", () => manager.randomnessOracle());
+    const oracle = new Contract(oracleAddress, ORACLE_ABI, readProvider);
+    oracleFeeWei = await rpcRead("oracle.getFee(balance threshold)", () => oracle.getFee(), { retries: 0 });
+  } catch (err) {
+    console.warn(`[keeper-v5] ORACLE_FEE_THRESHOLD_FALLBACK error="${errorMessage(err)}"`);
   }
-  if (balance < LOW_BALANCE_WEI) throw new Error(`keeper balance low: ${signer.address} balance=${balance}`);
+  const { floorWei, warnWei } = deriveKeeperBalanceThresholds({
+    oracleFeeWei,
+    configuredFloorWei: CONFIGURED_LOW_BALANCE_WEI,
+    configuredWarnWei: CONFIGURED_LOW_BALANCE_WARN_WEI,
+    floorDraws: LOW_BALANCE_DRAW_HEADROOM,
+    warnDraws: LOW_BALANCE_WARN_DRAW_HEADROOM,
+    gasBufferWei: BALANCE_GAS_BUFFER_WEI,
+  });
+  const balance = await rpcRead(`writeProvider.getBalance(${signer.address})`, () => writeProvider.getBalance(signer.address));
+  if (balance < warnWei) {
+    console.warn(`[keeper-v5] LOW_BALANCE_WARNING address=${signer.address} balanceWei=${balance} warningWei=${warnWei} floorWei=${floorWei} oracleFeeWei=${oracleFeeWei}`);
+  }
+  if (balance < floorWei) {
+    throw new Error(`keeper balance low: ${signer.address} balance=${balance} floor=${floorWei} oracleFee=${oracleFeeWei}`);
+  }
 
   let acted = false;
   const currentDrawId = await rpcRead("manager.currentDrawId", () => manager.currentDrawId());
