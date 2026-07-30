@@ -6,10 +6,10 @@ import { join } from 'node:path'
 import { spawn } from 'node:child_process'
 import test from 'node:test'
 
-test('routes low-balance and crash-loop alerts to the failure endpoint', async (t) => {
+test('routes only actionable failures, not claim quarantine, to the failure endpoint', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'everdraw-v5-supervisor-'))
   const fakeKeeper = join(dir, 'fake-keeper.mjs')
-  writeFileSync(fakeKeeper, "console.warn('[keeper-v5] LOW_BALANCE_WARNING balanceWei=1 warningWei=2 floorWei=1')\nprocess.exit(1)\n")
+  writeFileSync(fakeKeeper, "console.warn('[keeper-v5] CLAIM_QUARANTINED key=manager:claims:45 drawId=45 error=InvalidProof selector=0x09bde339')\nconsole.warn('[keeper-v5] LOW_BALANCE_WARNING balanceWei=1 warningWei=2 floorWei=1')\nprocess.exit(1)\n")
 
   let failurePings = 0
   const server = createServer((_req, res) => {
@@ -51,7 +51,8 @@ test('routes low-balance and crash-loop alerts to the failure endpoint', async (
   supervisor.kill('SIGTERM')
   await new Promise((resolve) => supervisor.once('exit', resolve))
 
-  assert.ok(failurePings >= 2, `expected both alerts, received ${failurePings}`)
+  assert.equal(failurePings, 2, `expected low-balance + crash-loop only, received ${failurePings}`)
   assert.match(output, /ALERT low-balance/)
   assert.match(output, /ALERT crash-loop/)
+  assert.match(output, /ALERT claim-quarantined:manager:claims:45/)
 })

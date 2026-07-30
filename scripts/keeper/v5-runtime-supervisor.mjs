@@ -71,7 +71,8 @@ async function pingFailureHealthcheck() {
 async function alert(event) {
   const message = `EverDraw V5 keeper alert: ${event.key}\n${event.message}\ntime=${new Date().toISOString()}`
   log(`ALERT ${event.key}: ${event.message}`)
-  await Promise.all([sendTelegram(message), pingFailureHealthcheck()])
+  const failurePing = event.failureHealthcheck === false ? Promise.resolve(false) : pingFailureHealthcheck()
+  await Promise.all([sendTelegram(message), failurePing])
 }
 
 function observeStream(stream, output) {

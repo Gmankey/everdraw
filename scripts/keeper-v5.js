@@ -7,7 +7,12 @@ import { AbiCoder, Contract, JsonRpcProvider, Wallet, ZeroAddress, getAddress, k
 import { DrawInputEventCache, buildDrawInput } from "./draw/write-watch-inputs.mjs";
 import { compute } from "./draw/compute-winners.js";
 import { deriveKeeperBalanceThresholds } from "./keeper/balance-thresholds.mjs";
-import { claimFinalizedDrawSafely } from "./keeper/claim-isolation.mjs";
+import {
+  ClaimRetryState,
+  claimFinalizedDrawSafely,
+  claimStateKey,
+  reachedTransientAlertThreshold,
+} from "./keeper/claim-isolation.mjs";
 
 const DEPLOYMENT_FILE = process.env.DEPLOYMENT_FILE || "deployments/monad-testnet.json";
 const RPC_URL = process.env.KEEPER_RPC_URL || process.env.RPC_URL || process.env.MONAD_TESTNET_RPC_URL;
@@ -32,6 +37,8 @@ const RPC_BACKOFF_MS = Number(process.env.KEEPER_RPC_BACKOFF_MS || 1_000);
 const HEALTHCHECK_TIMEOUT_MS = Number(process.env.KEEPER_HEALTHCHECK_TIMEOUT_MS || 5_000);
 const RECENT_CLAIM_WINDOW = Number(process.env.KEEPER_RECENT_CLAIM_WINDOW || 5);
 const KEEPER_EVENT_CACHE_FILE = process.env.V5_KEEPER_EVENT_CACHE_FILE || process.env.WATCHER_EVENT_CACHE_FILE;
+const KEEPER_CLAIM_STATE_FILE = process.env.V5_KEEPER_CLAIM_STATE_FILE;
+const CLAIM_TRANSIENT_ALERT_THRESHOLD = Number(process.env.KEEPER_CLAIM_TRANSIENT_ALERT_THRESHOLD || 3);
 const abi = AbiCoder.defaultAbiCoder();
 
 const DRAW_MANAGER_ABI = [
@@ -69,6 +76,7 @@ const ORACLE_ABI = [
 
 const CLAIM_MANAGER_ABI = [
   "function isClaimed(bytes32 distributionId,uint256 leafIndex) view returns (bool)",
+  "function distributions(bytes32 distributionId) view returns (address source,bytes32 sourceKey,bytes32 root,uint32 leafCount,bytes32 metadata,uint64 registeredAt)",
   "function claimMany(tuple(bytes32 distributionId,uint256 leafIndex,address account,address token,uint256 amount)[] leaves, bytes32[][] proofs)",
 ];
 
@@ -336,10 +344,19 @@ async function maybeFinalize({ manager, signer, provider, drawId }) {
 async function maybeClaim({ manager, signer, provider, drawManagerAddress, claimManagerAddress, drawId, fromBlock, eventCache }) {
   const draw = await rpcRead(`manager.draws(${drawId})`, () => manager.draws(drawId));
   if (Number(draw.status) !== 4) return false;
-  const { input, inputFile } = await buildAndPersistInput(provider, drawManagerAddress, drawId, fromBlock, eventCache);
-  const result = computeWithPythonParity(input);
   const claimManager = new Contract(claimManagerAddress, CLAIM_MANAGER_ABI, provider);
   const distributionId = distributionIdFor(drawManagerAddress, drawId);
+  const distribution = await rpcRead(
+    `claimManager.distributions(${drawId})`,
+    () => claimManager.distributions(distributionId),
+  );
+  if (distribution.registeredAt === 0n) {
+    const err = new Error(`distribution ${distributionId} is not registered in configured ClaimManager ${claimManagerAddress}`);
+    err.data = "0x3a35c2f9";
+    throw err;
+  }
+  const { input, inputFile } = await buildAndPersistInput(provider, drawManagerAddress, drawId, fromBlock, eventCache);
+  const result = computeWithPythonParity(input);
   const pending = [];
   const proofs = [];
   for (const leaf of result.leaves) {
@@ -398,11 +415,19 @@ async function runOnce() {
     file: KEEPER_EVENT_CACHE_FILE || path.join(DRAW_INPUT_DIR, "keeper-v5-event-cache.json"),
     drawManagerAddress,
   });
+  const claimState = new ClaimRetryState(
+    KEEPER_CLAIM_STATE_FILE || path.join(DRAW_INPUT_DIR, "keeper-v5-claim-state.json"),
+  );
   const network = await rpcRead("readProvider.getNetwork", () => readProvider.getNetwork());
   if (network.chainId !== EXPECTED_CHAIN_ID) throw new Error(`wrong chain id ${network.chainId}; expected ${EXPECTED_CHAIN_ID}`);
   const writeNetwork = await rpcRead("writeProvider.getNetwork", () => writeProvider.getNetwork());
   if (writeNetwork.chainId !== EXPECTED_CHAIN_ID) throw new Error(`wrong write chain id ${writeNetwork.chainId}; expected ${EXPECTED_CHAIN_ID}`);
   let oracleFeeWei = 0n;
+  const wiredClaimManager = getAddress(await rpcRead("manager.claimManager", () => manager.claimManager()));
+  if (wiredClaimManager !== claimManagerAddress) {
+    throw new Error(`configured ClaimManager ${claimManagerAddress} does not match DrawManager.claimManager ${wiredClaimManager}`);
+  }
+
   try {
     const oracleAddress = await rpcRead("manager.randomnessOracle", () => manager.randomnessOracle());
     const oracle = new Contract(oracleAddress, ORACLE_ABI, readProvider);
@@ -431,7 +456,8 @@ async function runOnce() {
   if (currentDrawId === 0n) {
     console.log("no draw exists yet");
     acted = await maybeStartDraw({ manager, provider: readProvider, signer, fromBlock });
-    await ping(true);
+    const quarantined = claimState.quarantinedCount();
+    await ping(true, `keeper loop ok; quarantinedClaims=${quarantined}`);
     return acted;
   }
 
@@ -473,6 +499,10 @@ async function runOnce() {
   const firstDrawToClaim = firstRecentDrawId(afterStartDrawId);
   const claimDraws = claimDrawIds(finalizedThisCycle, firstDrawToClaim, afterStartDrawId);
   for (const drawId of claimDraws) {
+    const stateKey = claimStateKey(drawManagerAddress, claimManagerAddress, drawId);
+    if (claimState.isQuarantined(stateKey)) {
+      continue;
+    }
     const draw = await rpcRead(`manager.draws(${drawId})`, () => manager.draws(drawId));
     console.log(`recent draw ${drawId} status=${statusName(draw.status)}`);
     if (Number(draw.status) === 4) {
@@ -488,12 +518,38 @@ async function runOnce() {
           fromBlock,
           eventCache,
         }),
-        (err, message) => ping(false, `${message}\n${err?.stack || err?.message || err}`),
+        {
+          onTerminal: async (_err, terminal, message) => {
+            const added = claimState.quarantine(stateKey, {
+              drawId,
+              selector: terminal.selector,
+              name: terminal.name,
+              message,
+            });
+            if (added) {
+              console.warn(
+                `[keeper-v5] CLAIM_QUARANTINED key=${stateKey} drawId=${drawId} error=${terminal.name} selector=${terminal.selector}`,
+              );
+            }
+          },
+          onTransient: async (err, message) => {
+            const retry = claimState.recordTransientFailure(stateKey, { drawId, message });
+            console.warn(
+              `[keeper-v5] CLAIM_RETRY drawId=${drawId} failures=${retry.failures} threshold=${CLAIM_TRANSIENT_ALERT_THRESHOLD}`,
+            );
+            if (reachedTransientAlertThreshold(retry.failures, CLAIM_TRANSIENT_ALERT_THRESHOLD)) {
+              await ping(false, `${message}\n${err?.stack || err?.message || err}`);
+            }
+          },
+          onSuccess: async () => claimState.clearTransientFailure(stateKey),
+        },
       );
       acted = claimed || acted;
     }
   }
-  await ping(true);
+  const quarantined = claimState.quarantinedCount();
+  console.log(`[keeper-v5] CLAIM_QUARANTINE_HEARTBEAT count=${quarantined}`);
+  await ping(true, `keeper loop ok; quarantinedClaims=${quarantined}`);
   return acted;
 }
 

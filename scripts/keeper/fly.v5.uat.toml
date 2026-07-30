@@ -30,9 +30,11 @@ primary_region = "sjc"
   DEPLOYMENT_FILE = "deployments/monad-testnet.json"
   # Persistent event checkpoint used by keeper-v5.js to avoid rescanning deposit/seed logs from genesis every loop.
   V5_KEEPER_EVENT_CACHE_FILE = "/data/keeper-v5-event-cache.json"
+  V5_KEEPER_CLAIM_STATE_FILE = "/data/keeper-v5-claim-state.json"
   KEEPER_LOOP = "true"
   KEEPER_INTERVAL_MS = "60000"
   KEEPER_RECENT_CLAIM_WINDOW = "1000"
+  KEEPER_CLAIM_TRANSIENT_ALERT_THRESHOLD = "3"
   KEEPER_CHAIN_ID = "10143"
   # UAT runs hourly; keep the same minimums and live Pyth-fee-derived guard.
   KEEPER_LOW_BALANCE_WEI = "3000000000000000000"
