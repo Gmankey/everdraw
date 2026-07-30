@@ -12,9 +12,17 @@ export class V5RuntimeAlertPolicy {
   }
 
   observeLine(line, now = Date.now()) {
+    if (line.includes('CLAIM_QUARANTINED')) {
+      const claimKey = line.match(/key=([^ ]+)/)?.[1] || line.trim()
+      const alertKey = `claim-quarantined:${claimKey}`
+      return this.#dedupe(alertKey, now)
+        ? { key: alertKey, message: line.trim(), failureHealthcheck: false }
+        : null
+    }
+
     if (!line.includes('LOW_BALANCE_WARNING') && !line.includes('keeper balance low:')) return null
     return this.#dedupe('low-balance', now)
-      ? { key: 'low-balance', message: line.trim() }
+      ? { key: 'low-balance', message: line.trim(), failureHealthcheck: true }
       : null
   }
 
@@ -31,6 +39,7 @@ export class V5RuntimeAlertPolicy {
       ? {
           key: 'crash-loop',
           message: `keeper-v5 exited non-zero ${this.nonZeroExits.length} times within ${this.crashWindowMs}ms (latest code=${code})`,
+          failureHealthcheck: true,
         }
       : null
   }
