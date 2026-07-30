@@ -38,6 +38,13 @@ function snapToTwabGrid(timestamp, offset, periodLength) {
   return remainder === 0 ? timestamp : timestamp + (periodLength - remainder);
 }
 
+async function requireContractCode(label, address) {
+  const code = await ethers.provider.getCode(address);
+  if (code === "0x") {
+    throw new Error(`${label} has no bytecode on chain ${TESTNET_CHAIN_ID}: ${address}`);
+  }
+}
+
 async function deploy(name, args = []) {
   const factory = await ethers.getContractFactory(name);
   const contract = await factory.deploy(...args);
@@ -87,6 +94,8 @@ async function main() {
   const keeper = required("KEEPER");
   const pauser = optionalAddress("PAUSER");
 
+  await requireContractCode("SHMON", shmon);
+  await requireContractCode("ENTROPY", entropy);
   const latest = await ethers.provider.getBlock("latest");
   const twabPeriodLength = numberEnv("TWAB_PERIOD_LENGTH_SEC", 3600);
   const twabPeriodOffset = numberEnv("TWAB_PERIOD_OFFSET", Number(latest.timestamp));

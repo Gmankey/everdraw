@@ -23,6 +23,10 @@ Run in a clean checkout of merged staging:
     npm ci
 
     export MONAD_TESTNET_RPC_URL="https://testnet-rpc.monad.xyz"
+    export SHMON="0x282BdDFF5e58793AcAb65438b257Dbd15A8745C9"
+    export ENTROPY="0x825c0390f379c631f3cf11a82a37d20bddf93c07"
+    export ENTROPY_PROVIDER="0x6CC14824Ea2918f5De5C2f75A9Da968ad4BD6344"
+    export PAUSER="0xd5cc1f1D7b78943bDF09541A2ace41B5c6D83431"
     export GUARDIAN="0xd5cc1f1D7b78943bDF09541A2ace41B5c6D83431"
     export KEEPER="0x629Bd7f323fD29E3dF75855C9BC542889c6c1268"
     export TWAB_PERIOD_LENGTH_SEC=3600
@@ -50,6 +54,7 @@ and pendingDrawManagerEffectiveAt. The script verifies:
 - vault.pendingDrawManager() == new DrawManager
 - claimManager.compoundVaultFor(new DrawManager) == new vault
 - vault.payoutToken() == shMON
+- shMON and Pyth Entropy have bytecode on Monad testnet
 - drawManager.payoutToken() == shMON
 
 Do not re-point any service before the timelock commit.
