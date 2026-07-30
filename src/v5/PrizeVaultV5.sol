@@ -90,6 +90,7 @@ contract PrizeVaultV5 {
     error NoPendingDrawManagerChange();
     error TimelockNotElapsed();
     error StrategyMigrationShortfall(uint256 beforeAssets, uint256 afterAssets);
+    error StrategyShareTokenMismatch(address currentToken, address newToken);
     error NotDrawManager();
     error InsufficientYield(uint256 requested, uint256 available);
     error NoStrategyAssets();
@@ -249,6 +250,11 @@ contract PrizeVaultV5 {
         if (block.timestamp < pendingStrategyEffectiveAt) revert TimelockNotElapsed();
         IYieldStrategyV5 oldStrategy = strategy;
         IYieldStrategyV5 newStrategy = IYieldStrategyV5(pendingStrategy);
+        address currentShareToken = oldStrategy.shareToken();
+        address newShareToken = newStrategy.shareToken();
+        if (newShareToken != currentShareToken) {
+            revert StrategyShareTokenMismatch(currentShareToken, newShareToken);
+        }
         uint256 beforeAssets = oldStrategy.totalAssets();
 
         if (beforeAssets != 0) {
@@ -514,10 +520,13 @@ contract PrizeVaultV5 {
     }
 
     function _payoutAmount(uint256 principalAmount) internal view returns (uint256) {
-        if (!shortfallMode) return principalAmount;
         uint256 principal = totalPrincipal;
         if (principal == 0) return 0;
-        return (principalAmount * strategy.totalAssets()) / principal;
+        uint256 assets = strategy.totalAssets();
+        if (!shortfallMode && assets >= principal) return principalAmount;
+        // Apply even sub-tolerance share-conversion deficits pro rata so rounding from an
+        // earlier exit cannot leave the final account with an unpayable nominal balance.
+        return (principalAmount * assets) / principal;
     }
 
     function _emergencySharesForPrincipal(uint256 principalAmount) internal returns (uint256 shares) {

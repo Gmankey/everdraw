@@ -26,6 +26,7 @@ contract ShmonStrategy is IYieldStrategyV5 {
     error ZeroAddress();
     error VaultAlreadySet();
     error ZeroShares();
+    error InsufficientShares(uint256 required, uint256 held);
     error ShareTransferFailed();
     error NativeTransferFailed();
 
@@ -68,7 +69,7 @@ contract ShmonStrategy is IYieldStrategyV5 {
     function withdrawShares(uint256 assets, address to) external onlyVault returns (uint256 shares) {
         shares = shmonVault.previewWithdraw(assets);
         uint256 held = shmonVault.balanceOf(address(this));
-        if (shares > held) shares = held;
+        if (shares > held) revert InsufficientShares(shares, held);
         if (shares == 0) revert ZeroShares();
         _safeTransfer(address(shmonVault), to, shares);
     }
@@ -78,7 +79,8 @@ contract ShmonStrategy is IYieldStrategyV5 {
     }
 
     function totalAssets() external view returns (uint256) {
-        return address(this).balance + shmonVault.convertToAssets(shmonVault.balanceOf(address(this)));
+        // ADR-0045 payouts transfer shMON shares, so raw MON cannot be liquid backing.
+        return shmonVault.convertToAssets(shmonVault.balanceOf(address(this)));
     }
 
     function sharesHeld() external view returns (uint256) {
