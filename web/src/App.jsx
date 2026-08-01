@@ -1575,11 +1575,16 @@ async function v5LoadPreviousDraw(drawManagerAddress) {
   const base = getIndexerBaseUrl()
   const rounds = await fetch(`${base}/api/rounds`).then((response) => (response.ok ? response.json() : [])).catch(() => [])
   const draw = latestSettledDraw(rounds, drawManagerAddress)
-  if (!draw) return { draw: null, participants: [] }
+  const managerAddress = String(drawManagerAddress || '').toLowerCase()
+  const latestLifecycle = rounds
+    .filter((round) => String(round?.poolAddress || '').toLowerCase() === managerAddress)
+    .sort((a, b) => Number(b?.roundId || 0) - Number(a?.roundId || 0))[0]
+  const lastAdvancedAt = latestLifecycle?.settledAt || latestLifecycle?.drawnAt || latestLifecycle?.committedAt || null
+  if (!draw) return { draw: null, participants: [], lastAdvancedAt }
   const participants = await fetch(`${base}/api/rounds/${draw.roundId}/participants?pool=${encodeURIComponent(drawManagerAddress)}`)
     .then((response) => (response.ok ? response.json() : []))
     .catch(() => [])
-  return { draw, participants: participantRowsForDraw(participants, drawManagerAddress) }
+  return { draw, participants: participantRowsForDraw(participants, drawManagerAddress), lastAdvancedAt }
 }
 
 function V5ActionCard({
@@ -1880,6 +1885,8 @@ export function V5UatExperience() {
   const manager = useMemo(() => new ethers.Contract(cfg.drawManager, V5_DRAW_MANAGER_ABI, readProvider), [cfg.drawManager, readProvider])
   const shmon = useMemo(() => new ethers.Contract(cfg.shmon, V5_SHMON_ABI, readProvider), [cfg.shmon, readProvider])
   const refreshFailureStreak = useRef(0)
+  const observedDrawIdRef = useRef(0n)
+  const observedDrawAdvanceAtRef = useRef(0)
 
   const refresh = useCallback(async (targetAccount = account) => {
     const attemptCoreReads = () => Promise.all([
@@ -1953,6 +1960,12 @@ export function V5UatExperience() {
       v5BuildHistoryRows({ account: user, block, vault, manager }),
       v5LoadPreviousDraw(manager.target),
     ])
+    if (currentDrawId > observedDrawIdRef.current) {
+      if (observedDrawIdRef.current > 0n) observedDrawAdvanceAtRef.current = Date.now()
+      observedDrawIdRef.current = currentDrawId
+    }
+    const indexedAdvanceAtMs = Date.parse(previousDraw?.lastAdvancedAt || '') || 0
+    const lastDrawAdvancedAtMs = Math.max(indexedAdvanceAtMs, observedDrawAdvanceAtRef.current)
     const periodStart = Number(nextPeriodStart || 0n)
     const periodLogs = user && periodStart > 0 && block?.number ? await Promise.all([
       vault.queryFilter(vault.filters.Deposit(user), Math.max(0, Number(block.number) - 200000), block.number).catch(() => []),
@@ -1999,6 +2012,7 @@ export function V5UatExperience() {
       shmonShares,
       historyRows,
       previousDraw,
+      lastDrawAdvancedAtMs,
       periodAccountEvents: periodLogs,
       readAtMs: Date.now(),
       boosterSupported: vaultCode !== '0x' && totalBoosterPrincipal !== null && boosterPrincipal !== null,

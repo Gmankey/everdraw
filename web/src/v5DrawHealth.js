@@ -14,7 +14,10 @@ export function buildV5DrawHealth({ state, nowMs = Date.now() }) {
   const secondsRemaining = dueAt - now
   const isDue = Boolean(state?.preview?.due) || (dueAt > 0 && secondsRemaining <= 0)
   const overdueSeconds = isDue ? Math.max(0, -secondsRemaining) : 0
-  const isStalled = isDue && drawPeriod > 0 && overdueSeconds > drawPeriod
+  const lastAdvancedAtMs = Number(state?.lastDrawAdvancedAtMs || 0)
+  const recentlyAdvanced = lastAdvancedAtMs > 0
+    && Number(nowMs) - lastAdvancedAtMs <= drawPeriod * 2 * 1000
+  const isStalled = isDue && drawPeriod > 0 && overdueSeconds > drawPeriod && !recentlyAdvanced
 
   return { secondsRemaining, isLoading, isStarting: isDue && !isStalled, isStalled }
 }
