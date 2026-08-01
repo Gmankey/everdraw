@@ -20,6 +20,7 @@ COPY scripts/keeper/entrypoint-v5.sh ./scripts/keeper/
 COPY scripts/keeper/v5-runtime-supervisor.mjs ./scripts/keeper/
 COPY scripts/keeper/v5-runtime-alert-policy.mjs ./scripts/keeper/
 COPY scripts/keeper/claim-isolation.mjs ./scripts/keeper/
+COPY scripts/keeper/balance-thresholds.mjs ./scripts/keeper/
 COPY abi/ ./abi/
 COPY deployments/ ./deployments/
 
