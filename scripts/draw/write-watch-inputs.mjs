@@ -162,7 +162,7 @@ async function getLogsRange(provider, filter, from, to) {
   }
 }
 
-async function queryLogsChunked(provider, filter, fromBlock, toBlock, label = "logs") {
+export async function queryLogsChunked(provider, filter, fromBlock, toBlock, label = "logs") {
   // Build all [from,to] windows, then fetch them in bounded batches. Default to sequential:
   // Tenderly has hung under concurrent getLogs during live keeper proposeRoot.
   const effectiveFrom = Math.max(Number(fromBlock), Number(toBlock) - MAX_LOG_LOOKBACK);
