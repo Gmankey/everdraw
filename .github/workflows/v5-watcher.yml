@@ -1,0 +1,34 @@
+name: v5-root-watcher
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recompute-uat-roots:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: npm ci
+      - name: Recompute UAT root proposals independently
+        env:
+          DEPLOYMENT_FILE: deployments/monad-testnet.json
+          WATCHER_RPC_URL: ${{ secrets.V5_WATCHER_UAT_RPC_URL }}
+          WATCHER_LOGS_RPC_URL: ${{ secrets.V5_WATCHER_UAT_LOGS_RPC_URL || secrets.V5_WATCHER_UAT_RPC_URL }}
+          WATCHER_LOG_CHUNK_SIZE: "50000"
+          WATCHER_HEALTHCHECKS_PING_URL: ${{ secrets.V5_WATCHER_UAT_HEALTHCHECK_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: npm run draw:watch
