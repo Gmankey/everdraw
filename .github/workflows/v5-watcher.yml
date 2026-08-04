@@ -11,7 +11,7 @@ permissions:
 jobs:
   recompute-uat-roots:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -21,14 +21,27 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: actions/cache/restore@v4
+        with:
+          path: .watcher-cache
+          key: v5-root-watcher-uat-${{ github.run_id }}
+          restore-keys: |
+            v5-root-watcher-uat-
       - run: npm ci
       - name: Recompute UAT root proposals independently
         env:
           DEPLOYMENT_FILE: deployments/monad-testnet.json
           WATCHER_RPC_URL: ${{ secrets.V5_WATCHER_UAT_RPC_URL }}
           WATCHER_LOGS_RPC_URL: ${{ secrets.V5_WATCHER_UAT_LOGS_RPC_URL || secrets.V5_WATCHER_UAT_RPC_URL }}
-          WATCHER_LOG_CHUNK_SIZE: "50000"
+          WATCHER_LOG_CHUNK_SIZE: "1000"
+          WATCHER_STATE_FILE: .watcher-cache/state.json
+          WATCHER_EVENT_CACHE_FILE: .watcher-cache/event-cache.json
           WATCHER_HEALTHCHECKS_PING_URL: ${{ secrets.V5_WATCHER_UAT_HEALTHCHECK_URL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: npm run draw:watch
+      - uses: actions/cache/save@v4
+        if: success()
+        with:
+          path: .watcher-cache
+          key: v5-root-watcher-uat-${{ github.run_id }}
