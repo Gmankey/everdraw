@@ -96,6 +96,7 @@ async function alarm(message) {
 
 async function main() {
   const { drawManagerAddress, fromBlock } = resolveConfig();
+  fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
   const provider = new JsonRpcProvider(RPC_URL);
   const latest = await provider.getBlockNumber();
   const state = readState({ drawManagerAddress, fromBlock });
