@@ -162,7 +162,7 @@ async function getLogsRange(provider, filter, from, to) {
   }
 }
 
-export async function queryLogsChunked(provider, filter, fromBlock, toBlock, label = "logs") {
+export async function queryLogsChunked(provider, filter, fromBlock, toBlock, label = "logs", { onBatch } = {}) {
   // Build all [from,to] windows, then fetch them in bounded batches. Default to sequential:
   // Tenderly has hung under concurrent getLogs during live keeper proposeRoot.
   const effectiveFrom = Math.max(Number(fromBlock), Number(toBlock) - MAX_LOG_LOOKBACK);
@@ -176,7 +176,9 @@ export async function queryLogsChunked(provider, filter, fromBlock, toBlock, lab
   for (let i = 0; i < windows.length; i += LOG_CONCURRENCY) {
     const batch = windows.slice(i, i + LOG_CONCURRENCY);
     const results = await Promise.all(batch.map(([f, t]) => getLogsRange(provider, filter, f, t)));
-    for (const r of results) logs.push(...r);
+    const batchLogs = results.flat();
+    logs.push(...batchLogs);
+    if (onBatch) await onBatch({ windows: batch, logs: batchLogs });
     if ((i / LOG_CONCURRENCY) % 10 === 0) {
       console.log(`[${label}] ${Math.min(i + LOG_CONCURRENCY, windows.length)}/${windows.length} windows, ${Math.round((Date.now() - t0) / 1000)}s, ${logs.length} logs`);
     }
@@ -272,17 +274,27 @@ export class DrawInputEventCache {
     const iface = new Interface(VAULT_ABI);
     const topic0 = iface.getEvent("Deposit").topicHash;
     const from = last + 1;
-    const logs = await queryLogsChunked(provider, { address: getAddress(vaultAddress), topics: [topic0] }, from, target, "deposits:delta");
     const accounts = new Set((this.state.deposits.accounts || []).map((account) => getAddress(account)));
-    for (const log of sortLogs(logs)) {
-      const parsed = iface.parseLog(log);
-      accounts.add(getAddress(parsed.args.recipient));
-    }
-    this.state.deposits = {
-      lastScannedBlock: target,
-      accounts: [...accounts].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase())),
-    };
-    this.save();
+    await queryLogsChunked(
+      provider,
+      { address: getAddress(vaultAddress), topics: [topic0] },
+      from,
+      target,
+      "deposits:delta",
+      {
+        onBatch: ({ windows, logs }) => {
+          for (const log of sortLogs(logs)) {
+            const parsed = iface.parseLog(log);
+            accounts.add(getAddress(parsed.args.recipient));
+          }
+          this.state.deposits = {
+            lastScannedBlock: windows[windows.length - 1][1],
+            accounts: [...accounts].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase())),
+          };
+          this.save();
+        },
+      },
+    );
   }
 
   async syncSeeds({ provider, drawManagerAddress, vaultAddress, fromBlock, toBlock }) {
@@ -294,14 +306,24 @@ export class DrawInputEventCache {
     const iface = new Interface(DRAW_MANAGER_ABI);
     const topic0 = iface.getEvent("SeedReceived").topicHash;
     const from = last + 1;
-    const logs = await queryLogsChunked(provider, { address: getAddress(drawManagerAddress), topics: [topic0] }, from, target, "seeds:delta");
     const blocks = { ...(this.state.seeds.blocks || {}) };
-    for (const log of sortLogs(logs)) {
-      const parsed = iface.parseLog(log);
-      blocks[parsed.args.drawId.toString()] = log.blockNumber;
-    }
-    this.state.seeds = { lastScannedBlock: target, blocks };
-    this.save();
+    await queryLogsChunked(
+      provider,
+      { address: getAddress(drawManagerAddress), topics: [topic0] },
+      from,
+      target,
+      "seeds:delta",
+      {
+        onBatch: ({ windows, logs }) => {
+          for (const log of sortLogs(logs)) {
+            const parsed = iface.parseLog(log);
+            blocks[parsed.args.drawId.toString()] = log.blockNumber;
+          }
+          this.state.seeds = { lastScannedBlock: windows[windows.length - 1][1], blocks };
+          this.save();
+        },
+      },
+    );
   }
 
   async seedBlockFor({ provider, drawManagerAddress, vaultAddress, drawId, fromBlock, toBlock }) {
