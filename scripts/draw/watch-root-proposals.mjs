@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { Interface, JsonRpcProvider, getAddress } from "ethers";
+import { Contract, Interface, JsonRpcProvider, getAddress } from "ethers";
 import { spawnSync } from "node:child_process";
 import { DrawInputEventCache, buildDrawInput, queryLogsChunked } from "./write-watch-inputs.mjs";
 
@@ -11,6 +11,7 @@ const DEPLOYMENT_FILE = process.env.DEPLOYMENT_FILE || "deployments/monad-testne
 const CONFIGURED_DRAW_MANAGER_ADDRESS = process.env.DRAW_MANAGER_ADDRESS;
 const CONFIGURED_FROM_BLOCK = process.env.WATCHER_FROM_BLOCK || process.env.V5_WATCHER_FROM_BLOCK;
 const STATE_FILE = process.env.WATCHER_STATE_FILE || path.join(os.tmpdir(), "everdraw-v5-watcher-state.json");
+const MAX_BLOCKS_PER_RUN = Number(process.env.WATCHER_MAX_BLOCKS_PER_RUN || "250000");
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const HEALTHCHECKS_PING_URL = process.env.WATCHER_HEALTHCHECKS_PING_URL;
@@ -99,6 +100,8 @@ async function main() {
   const latest = await provider.getBlockNumber();
   const state = readState({ drawManagerAddress, fromBlock });
   const scanFromBlock = Math.max(fromBlock, Number(state?.lastScannedBlock || fromBlock - 1) + 1);
+  if (!Number.isSafeInteger(MAX_BLOCKS_PER_RUN) || MAX_BLOCKS_PER_RUN < 1) throw new Error("WATCHER_MAX_BLOCKS_PER_RUN must be a positive integer");
+  const runEnd = Math.min(scanFromBlock + MAX_BLOCKS_PER_RUN - 1, latest);
   const iface = new Interface(ABI);
   const rootTopic = iface.getEvent("RootProposed").topicHash;
   const logs = scanFromBlock > latest
@@ -107,13 +110,17 @@ async function main() {
       provider,
       { address: drawManagerAddress, topics: [rootTopic] },
       scanFromBlock,
-      latest,
+      runEnd,
       "root-proposals",
     );
   const eventCache = new DrawInputEventCache({
     drawManagerAddress,
     file: process.env.WATCHER_EVENT_CACHE_FILE || path.join(os.tmpdir(), "everdraw-v5-watcher-event-cache.json"),
   });
+  const manager = new Contract(drawManagerAddress, ["function vault() view returns (address)"], provider);
+  const vaultAddress = getAddress(await manager.vault());
+  await eventCache.syncDeposits({ provider, drawManagerAddress, vaultAddress, fromBlock, toBlock: runEnd });
+  await eventCache.syncSeeds({ provider, drawManagerAddress, vaultAddress, fromBlock, toBlock: runEnd });
   let checked = 0;
 
   for (const log of logs.sort((a, b) => a.blockNumber - b.blockNumber || (a.index ?? 0) - (b.index ?? 0))) {
@@ -125,7 +132,7 @@ async function main() {
       drawManagerAddress,
       drawId,
       fromBlock,
-      toBlock: latest,
+      toBlock: runEnd,
       eventCache,
     });
     const recomputed = recompute(input);
@@ -137,7 +144,7 @@ async function main() {
     }
   }
 
-  writeState({ drawManagerAddress, fromBlock, lastScannedBlock: latest });
+  writeState({ drawManagerAddress, fromBlock, lastScannedBlock: runEnd });
   if (HEALTHCHECKS_PING_URL) await fetch(HEALTHCHECKS_PING_URL).catch(() => {});
   console.log(`watcher checked ${checked} RootProposed events through block ${latest} (scan start ${scanFromBlock})`);
 }

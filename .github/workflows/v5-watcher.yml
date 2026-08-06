@@ -34,7 +34,8 @@ jobs:
           WATCHER_RPC_URL: ${{ secrets.V5_WATCHER_UAT_RPC_URL }}
           WATCHER_LOGS_RPC_URL: ${{ secrets.V5_WATCHER_UAT_LOGS_RPC_URL || secrets.V5_WATCHER_UAT_RPC_URL }}
           WATCHER_LOG_CHUNK_SIZE: "1000"
-          WATCHER_LOG_CONCURRENCY: "8"
+          WATCHER_LOG_CONCURRENCY: "2"
+          WATCHER_MAX_BLOCKS_PER_RUN: "250000"
           WATCHER_STATE_FILE: .watcher-cache/state.json
           WATCHER_EVENT_CACHE_FILE: .watcher-cache/event-cache.json
           WATCHER_HEALTHCHECKS_PING_URL: ${{ secrets.V5_WATCHER_UAT_HEALTHCHECK_URL }}
@@ -42,7 +43,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: npm run draw:watch
       - uses: actions/cache/save@v4
-        if: success()
+        if: always()
         with:
           path: .watcher-cache
           key: v5-root-watcher-uat-${{ github.run_id }}
