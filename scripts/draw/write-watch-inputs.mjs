@@ -147,6 +147,7 @@ async function getLogsRange(provider, filter, from, to) {
       break;
     }
   }
+  if (USE_CALLER_LOGS_PROVIDER) throw lastErr;
   // Fast logs RPC exhausted retries for this window — fall back to the caller's reliable provider.
   console.warn(`[logs ${from}-${to}] falling back to caller RPC after fast RPC failure: ${errMessage(lastErr)}`);
   try {
@@ -158,7 +159,7 @@ async function getLogsRange(provider, filter, from, to) {
       const right = await getLogsRange(provider, filter, mid + 1, to);
       return [...left, ...right];
     }
-    throw lastErr || fallbackErr;
+    throw fallbackErr;
   }
 }
 

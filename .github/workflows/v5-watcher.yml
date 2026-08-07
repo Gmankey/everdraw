@@ -27,12 +27,13 @@ jobs:
           key: v5-root-watcher-uat-${{ github.run_id }}
           restore-keys: |
             v5-root-watcher-uat-
+      - run: mkdir -p .watcher-cache
       - run: npm ci
       - name: Recompute UAT root proposals independently
         env:
           DEPLOYMENT_FILE: deployments/monad-testnet.json
           WATCHER_RPC_URL: ${{ secrets.V5_WATCHER_UAT_RPC_URL }}
-          WATCHER_LOGS_RPC_URL: ${{ secrets.V5_WATCHER_UAT_LOGS_RPC_URL || secrets.V5_WATCHER_UAT_RPC_URL }}
+          WATCHER_LOGS_RPC_URL: provider
           WATCHER_LOG_CHUNK_SIZE: "1000"
           WATCHER_LOG_CONCURRENCY: "2"
           WATCHER_MAX_BLOCKS_PER_RUN: "250000"
