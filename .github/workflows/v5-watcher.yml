@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: v5-root-watcher-uat
+  cancel-in-progress: false
+
 jobs:
   recompute-uat-roots:
     runs-on: ubuntu-latest
@@ -33,8 +37,8 @@ jobs:
         env:
           DEPLOYMENT_FILE: deployments/monad-testnet.json
           WATCHER_RPC_URL: ${{ secrets.V5_WATCHER_UAT_RPC_URL }}
-          WATCHER_LOGS_RPC_URL: provider
-          WATCHER_LOG_CHUNK_SIZE: "1000"
+          WATCHER_LOGS_RPC_URL: https://testnet-rpc.monad.xyz
+          WATCHER_LOG_CHUNK_SIZE: "100"
           WATCHER_LOG_CONCURRENCY: "2"
           WATCHER_MAX_BLOCKS_PER_RUN: "250000"
           WATCHER_STATE_FILE: .watcher-cache/state.json

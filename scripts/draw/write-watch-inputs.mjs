@@ -266,6 +266,41 @@ export class DrawInputEventCache {
     atomicWriteJson(this.file, this.state);
   }
 
+  ingestLogs({ drawManagerAddress, vaultAddress, fromBlock, toBlock, logs }) {
+    this.#ensureScope({ drawManagerAddress, vaultAddress, fromBlock });
+    const manager = getAddress(drawManagerAddress);
+    const vault = getAddress(vaultAddress);
+    const depositInterface = new Interface(VAULT_ABI);
+    const seedInterface = new Interface(DRAW_MANAGER_ABI);
+    const depositTopic = depositInterface.getEvent("Deposit").topicHash.toLowerCase();
+    const seedTopic = seedInterface.getEvent("SeedReceived").topicHash.toLowerCase();
+    const accounts = new Set((this.state.deposits.accounts || []).map((account) => getAddress(account)));
+    const blocks = { ...(this.state.seeds.blocks || {}) };
+
+    for (const log of sortLogs(logs)) {
+      const address = getAddress(log.address);
+      const topic0 = log.topics[0]?.toLowerCase();
+      if (address === vault && topic0 === depositTopic) {
+        const parsed = depositInterface.parseLog(log);
+        accounts.add(getAddress(parsed.args.recipient));
+      } else if (address === manager && topic0 === seedTopic) {
+        const parsed = seedInterface.parseLog(log);
+        blocks[parsed.args.drawId.toString()] = log.blockNumber;
+      }
+    }
+
+    const scannedThrough = Number(toBlock);
+    this.state.deposits = {
+      lastScannedBlock: Math.max(Number(this.state.deposits.lastScannedBlock || 0), scannedThrough),
+      accounts: [...accounts].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase())),
+    };
+    this.state.seeds = {
+      lastScannedBlock: Math.max(Number(this.state.seeds.lastScannedBlock || 0), scannedThrough),
+      blocks,
+    };
+    this.save();
+  }
+
   async syncDeposits({ provider, drawManagerAddress, vaultAddress, fromBlock, toBlock }) {
     this.#ensureScope({ drawManagerAddress, vaultAddress, fromBlock });
     const target = Number(toBlock);

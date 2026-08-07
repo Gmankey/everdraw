@@ -18,6 +18,8 @@ const HEALTHCHECKS_PING_URL = process.env.WATCHER_HEALTHCHECKS_PING_URL;
 
 const ABI = [
   "event RootProposed(uint256 indexed drawId, bytes32 indexed root, uint32 winnerCount, uint256 totalPayout, address indexed proposer, bytes32 algorithmVersion, uint64 challengeEndsAt)",
+  "event SeedReceived(uint256 indexed drawId, uint64 indexed requestId, bytes32 seed)",
+  "event Deposit(address indexed recipient, uint256 amount)",
 ];
 
 function latestV5Deployment() {
@@ -105,49 +107,62 @@ async function main() {
   const runEnd = Math.min(scanFromBlock + MAX_BLOCKS_PER_RUN - 1, latest);
   const iface = new Interface(ABI);
   const rootTopic = iface.getEvent("RootProposed").topicHash;
-  const logs = scanFromBlock > latest
-    ? []
-    : await queryLogsChunked(
-      provider,
-      { address: drawManagerAddress, topics: [rootTopic] },
-      scanFromBlock,
-      runEnd,
-      "root-proposals",
-    );
   const eventCache = new DrawInputEventCache({
     drawManagerAddress,
     file: process.env.WATCHER_EVENT_CACHE_FILE || path.join(os.tmpdir(), "everdraw-v5-watcher-event-cache.json"),
   });
   const manager = new Contract(drawManagerAddress, ["function vault() view returns (address)"], provider);
   const vaultAddress = getAddress(await manager.vault());
-  await eventCache.syncDeposits({ provider, drawManagerAddress, vaultAddress, fromBlock, toBlock: runEnd });
-  await eventCache.syncSeeds({ provider, drawManagerAddress, vaultAddress, fromBlock, toBlock: runEnd });
   let checked = 0;
 
-  for (const log of logs.sort((a, b) => a.blockNumber - b.blockNumber || (a.index ?? 0) - (b.index ?? 0))) {
-    const proposal = iface.parseLog(log);
-    const drawId = proposal.args.drawId.toString();
-    const proposedRoot = proposal.args.root.toLowerCase();
-    const input = await buildDrawInput({
+  if (scanFromBlock <= latest) {
+    const seedTopic = iface.getEvent("SeedReceived").topicHash;
+    const depositTopic = iface.getEvent("Deposit").topicHash;
+    await queryLogsChunked(
       provider,
-      drawManagerAddress,
-      drawId,
-      fromBlock,
-      toBlock: runEnd,
-      eventCache,
-    });
-    const recomputed = recompute(input);
-    checked++;
-    if (recomputed.root.toLowerCase() !== proposedRoot) {
-      await alarm(
-        `EverDraw V5 root mismatch draw ${drawId}\nproposed=${proposedRoot}\nrecomputed=${recomputed.root.toLowerCase()}\noperator action: verify and vetoRoot(${drawId}) from Ledger if confirmed`
-      );
-    }
-  }
+      {
+        address: [drawManagerAddress, vaultAddress],
+        topics: [[rootTopic, seedTopic, depositTopic]],
+      },
+      scanFromBlock,
+      runEnd,
+      "watcher-events",
+      {
+        onBatch: async ({ windows, logs }) => {
+          const batchEnd = windows[windows.length - 1][1];
+          eventCache.ingestLogs({ drawManagerAddress, vaultAddress, fromBlock, toBlock: batchEnd, logs });
+          const proposals = logs
+            .filter((log) => log.address.toLowerCase() === drawManagerAddress.toLowerCase() && log.topics[0]?.toLowerCase() === rootTopic.toLowerCase())
+            .sort((a, b) => a.blockNumber - b.blockNumber || (a.index ?? 0) - (b.index ?? 0));
 
-  writeState({ drawManagerAddress, fromBlock, lastScannedBlock: runEnd });
+          for (const log of proposals) {
+            const proposal = iface.parseLog(log);
+            const drawId = proposal.args.drawId.toString();
+            const proposedRoot = proposal.args.root.toLowerCase();
+            const input = await buildDrawInput({
+              provider,
+              drawManagerAddress,
+              drawId,
+              fromBlock,
+              toBlock: batchEnd,
+              eventCache,
+            });
+            const recomputed = recompute(input);
+            checked++;
+            if (recomputed.root.toLowerCase() !== proposedRoot) {
+              await alarm(
+                `EverDraw V5 root mismatch draw ${drawId}\nproposed=${proposedRoot}\nrecomputed=${recomputed.root.toLowerCase()}\noperator action: verify and vetoRoot(${drawId}) from Ledger if confirmed`,
+              );
+            }
+          }
+
+          writeState({ drawManagerAddress, fromBlock, lastScannedBlock: batchEnd });
+        },
+      },
+    );
+  }
   if (HEALTHCHECKS_PING_URL) await fetch(HEALTHCHECKS_PING_URL).catch(() => {});
-  console.log(`watcher checked ${checked} RootProposed events through block ${latest} (scan start ${scanFromBlock})`);
+  console.log(`watcher checked ${checked} RootProposed events through block ${runEnd} (scan start ${scanFromBlock}, chain head ${latest})`);
 }
 
 main().catch(async (err) => {
