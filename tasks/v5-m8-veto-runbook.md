@@ -17,7 +17,19 @@ Prove the guardian/operator can detect and veto a bad V5 root inside the challen
 ## Drill
 
 1. Start from a healthy completed seed state.
-2. Propose a deliberately bad root on testnet.
+2. Stop the UAT keeper before it proposes the seeded draw, then have the operator propose a deliberately bad root:
+   ```bash
+   read -s -p "Keeper private key: " PRIVATE_KEY
+   echo
+   export PRIVATE_KEY
+   RPC_URL="https://testnet-rpc.monad.xyz" \
+     DRAW_MANAGER_ADDRESS="<UAT_DRAW_MANAGER>" \
+     DRAW_ID="<SEEDED_DRAW_ID>" \
+     CONFIRM_BAD_ROOT_DRILL="<SEEDED_DRAW_ID>" \
+     node scripts/draw/propose-bad-root-testnet.mjs
+   unset PRIVATE_KEY
+   ```
+   The script is hard-gated to chain `10143`, verifies the primary proposer and seeded paying-draw state, and derives a deterministic invalid root. It never reads or stores a key itself.
 3. Confirm watcher alarm includes:
    - draw id
    - proposed root
@@ -29,6 +41,8 @@ Prove the guardian/operator can detect and veto a bad V5 root inside the challen
 7. Propose the corrected root.
 8. Confirm watcher reports match.
 9. Finalize after the challenge window and claim.
+
+Keep the keeper stopped through steps 25. After `RootVetoed` is confirmed, wait for `vetoedUntil(drawId)`, restart the managed keeper, and let it propose the corrected root.
 
 ## Evidence
 
