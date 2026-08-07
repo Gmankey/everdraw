@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: v5-root-watcher-uat
+  cancel-in-progress: false
+
 jobs:
   recompute-uat-roots:
     runs-on: ubuntu-latest
