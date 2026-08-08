@@ -7,9 +7,10 @@ signer-bearing commands. Builders and reviewers do not receive or inspect keys.
 
 ## 1. Required operator inputs
 
-- `MONAD_MAINNET_RPC_URL`: paid archive-capable Monad mainnet RPC for deployment and ongoing
-  production operations. The fork gate below may use the operator's existing free-tier Alchemy
-  endpoint, which has sufficient recent-history depth.
+- `MONAD_MAINNET_RPC_URL`: operator-managed archive-capable Monad mainnet RPC for deployment and
+  ongoing production operations. The operator's existing Alchemy endpoint is approved for beta
+  launch and the fork suite; a paid plan is not a launch prerequisite. Monitor capacity and error
+  rates after cutover rather than upgrading pre-emptively.
 - `GUARDIAN`: final guardian address
 - `PAUSER`: final pauser address
 - `KEEPER`: primary proposer address used by the managed V5 keeper
@@ -68,7 +69,7 @@ suite now tests the current V5 dependency boundary against real shMON.
 ## 3. Read-only mainnet dependency preflight
 
 ```bash
-export MONAD_MAINNET_RPC_URL="<paid archive RPC>"
+export MONAD_MAINNET_RPC_URL="<operator archive-capable RPC>"
 export SHMON="0x1B68626dCa36c7fE922fD2d55E4f631d962dE19c"
 export ENTROPY="0xD458261E832415CFd3BAE5E416FdF3230ce6F134"
 export ENTROPY_PROVIDER="0x52DeaA1c84233F7bb8C8A45baeDE41091c616506"
@@ -130,7 +131,7 @@ git fetch origin staging
 git checkout staging
 git pull --ff-only origin staging
 
-export MONAD_MAINNET_RPC_URL="<paid archive RPC>"
+export MONAD_MAINNET_RPC_URL="<operator archive-capable RPC>"
 read -s -p "Deployer private key: " PRIVATE_KEY
 echo
 export PRIVATE_KEY
@@ -162,7 +163,7 @@ Set all runtime targets and secrets together:
 
 ```bash
 flyctl secrets set -a everdraw-keeper-v5-mainnet \
-  RPC_URL="<paid mainnet RPC>" \
+  RPC_URL="<operator mainnet RPC>" \
   PRIVATE_KEY="<primary proposer key>" \
   DRAW_MANAGER_ADDRESS="<committed DrawManager>" \
   CLAIM_MANAGER_ADDRESS="<ClaimManager>" \
