@@ -1,6 +1,38 @@
 # V5 launch-readiness checklist — single source of truth
 
-**Updated:** 2026-07-22. **Owner:** PM tracks; builder/ops execute. **Rule #5/#6:** every dependency named, failure mode known, verified on the live surface before "done."
+**Updated:** 2026-08-08. **Owner:** PM tracks; builder/ops execute. **Rule #5/#6:** every dependency named, failure mode known, verified on the live surface before "done."
+
+## 2026-08-08 reconciliation — final UAT bytecode + independent veto drill
+
+The prior status block below is retained as history, but its M-1, alerting, watcher, RPC, and
+operator-input blockers are superseded by this reconciliation.
+
+- **M-1/L-1 closed:** PR #244 fixed the ADR-0045 share-backing mismatch and strategy share-token
+  invariant. The final UAT stack was freshly deployed and activated at block `49245338`:
+  PrizeVault `0xFAF8d7Fea6CA039f4f5dd1449477A4d8836Ed9A0`, DrawManager
+  `0xF7c5ED046A829FE153486C306dd0DF7EBB037C19`, ClaimManager
+  `0x7b614F7df10b38857bFbd70c43a7B7cef816dC24`, TWAB controller
+  `0xd92951A676C8fB3F593D18C8D38e705fE85e0ea8`, strategy
+  `0x955880F91354a6EF24A2E783ff4889b7C0DC1dB3`.
+- **Real-shMON fork gate closed:** the dedicated Cancun fork profile remains isolated from the
+  Paris production artifacts. The operator reran `PrizeVaultV5Fork.t.sol`: 6 passed, 0 failed.
+- **Keeper/alerts closed:** the managed Fly keeper is running with a persistent event cache;
+  terminal claim failures are quarantined; Telegram and independent healthcheck transports are
+  configured and observed. The 3 MON floor / 6 MON warning thresholds landed in #242.
+- **Independent watcher gate closed:** PRs #250-#255 host the watcher off Fly, bound and checkpoint
+  its scans, and keep it on the free official Monad log RPC. On 2026-08-08 the operator completed
+  the deliberate bad-root drill: watcher mismatch detected, Telegram alarm observed, guardian
+  Ledger veto executed, corrected root independently matched, draw finalized, and prize
+  auto-compounded. Evidence: `tasks/v5-root-watcher-veto-evidence-2026-08-08.md`.
+- **Operator inputs resolved:** guardian and pauser are both
+  `0xd5cc1f1D7b78943bDF09541A2ace41B5c6D83431`; the operator's archive-capable Alchemy Monad
+  mainnet endpoint is the approved deploy/fork/launch RPC; Telegram is proven; the dead-man URL is
+  configured and proven. Values remain operator-managed secrets/config and are never committed.
+
+**Remaining pre-cutover gates:** complete and record the still-unverified clean-soak branches in
+section A; obtain Merkl/shMonad confirmation for both participant and Patron event surfaces; then
+execute the mainnet deploy, managed keeper, indexer backfill/dual-serving, allowlisting, and
+production frontend cutover in section B.
 
 ---
 
@@ -19,15 +51,18 @@
 **Open production blockers (from the 2026-07-22 UAT status note) — by owner:**
 - **PM:** ✅ ADR-0045 added to staging (PR #238); this checklist refresh (was stale/pre-ADR-0045).
 - **Builder:** guarded mainnet deploy tooling and the managed mainnet keeper config landed in
-  #240. Remaining builder gates are the ADR-0045 M-1 remediation, Merkl participant/Patron
-  ingestion confirmation, and recorded clean Forge invariant/indexer reruns from a deps-installed
-  checkout.
+  #240. ADR-0045 M-1/L-1 remediation landed in #244. Remaining builder/ops gates are Merkl
+  participant/Patron ingestion confirmation and the recorded clean-soak branches in section A.
 - **Reviewer:** ADR-0045 focused review completed in #241. The real-shMON fork blocker was
-  subsequently root-caused as a test-harness EVM mismatch, not an archive-RPC failure; the fork
-  suite is pinned to Cancun by the follow-up ticket. M-1 remains a separate pre-mainnet blocker.
-- **Ops / operator-supplied:** UAT keeper alerts are **disabled** (Telegram + healthcheck transports both off — fix before soak counts); real-mainnet-shMON fork suite uses the operator's archive-capable free-tier Alchemy RPC and the Cancun test profile; clean uninterrupted soak after #237 + live vault/Patron withdrawal-choice + shMONAD-redirect verification.
+  root-caused as a test-harness EVM mismatch, not an archive-RPC failure; the fork suite is pinned
+  to Cancun. M-1/L-1 are closed by #244 and the final UAT redeploy.
+- **Ops / operator-supplied:** UAT Telegram + healthcheck transports are enabled and proven;
+  real-mainnet-shMON fork tests use the operator's archive-capable free-tier Alchemy RPC and the
+  Cancun test profile. Clean-soak branch evidence remains open as listed in section A.
 
-**Still needed from operator (values/secrets — not decidable by PM/builder):** final **guardian** + **pauser** addresses; the existing archive-capable RPC endpoint; keeper **Telegram** + **dead-man** alert destinations. Secrets go through the operator's own secure channel, never chat.
+**Operator values resolved:** guardian + pauser, archive-capable RPC, Telegram, and dead-man
+destinations are confirmed. Secrets stay in operator-managed secret stores and never enter chat or
+the repository.
 
 ---
 
@@ -46,17 +81,26 @@ Long poles = the soak and the security review; start both as soon as the auto-co
 ---
 
 ## A. Testing done = a real soak
-- [ ] **Keeper as a managed service** (ticket 1) — no soak is meaningful while the keeper is a manual terminal process (it has died repeatedly). Prerequisite for everything below.
-- [ ] **Auto-compound redeployed on UAT** (ADR-0043): new ClaimManager + DrawManager, timelocked `vault.setDrawManager`, keeper executes compounds, frontend opt-out toggle. Re-point keeper + indexer + frontend to the new addresses.
+- [x] **Keeper as a managed service** — Fly-managed, restart-tested, persistent cache mounted,
+  Telegram/dead-man transports proven.
+- [x] **Final contracts redeployed on UAT** (ADR-0043/0045 + M-1/L-1): fresh full stack,
+  timelock committed, keeper/indexer/frontend re-pointed. Auto-compound is the fixed product
+  default; there is deliberately no frontend opt-out toggle.
 - [ ] **One uninterrupted soak, no code changes**, exercising the paths only unit-tested or hit piecemeal so far:
   - Full-withdraw reset **and** partial LIFO withdrawal (only the withdrawn newest tranche loses tenure).
   - Streak → tier → multiplier progression across several checkpoints (now works after #193/#195; verify at a representative cadence).
   - Each bonus branch at least once: loss-streak 10/26/52, comeback-king (rejoin after 2+ missed draws), streak milestones 2/4/13/26.
-  - Auto-compound end-to-end: a win lands as a fresh tenure-0 tranche; an opted-out winner is paid to wallet; a paused-vault claim falls back to wallet (never bricks).
-- [ ] **Keeper catch-up efficiency** (ticket 2) — so recovery after any downtime isn't minutes-per-draw.
+  - Auto-compound end-to-end: a win lands as a fresh tenure-0 tranche; if compounding cannot
+    complete, the claim falls back to shMON wallet payment and never bricks.
+- [x] **Keeper catch-up efficiency** — persistent incremental seed/deposit caches survive restarts;
+  after the deliberate outage, the one-time delta backfill completed and subsequent cycles scanned
+  only new blocks.
+- [x] **Independent watcher + veto drill** — off-Fly watcher detected a deliberately bad draw-137
+  root, alerted via Telegram, guardian vetoed from Ledger, watcher matched the corrected root, and
+  the keeper finalized and auto-compounded the prize. See the 2026-08-08 evidence record.
 
 ## B. Production deploy + cutover
-- [ ] **Mainnet contract deploy** (chain 143): real shMON + real Pyth, **weekly** TWAB period (testnet ran hourly), deposit cap / min-deposit, through the existing `deploy:preflight` + bytecode-verify checks. Needs a mainnet deploy runbook.
+- [ ] **Mainnet contract deploy** (chain 143): execute `tasks/v5-mainnet-deploy-execution-runbook.md` with real shMON + real Pyth, weekly TWAB/draw periods, 25,000 MON cap, zero minimum, preflight, and bytecode verification.
 - [ ] **Indexer → V5 on mainnet**: the live `everdraw-indexer` still runs V4.1 round-based code. Bring it to the V5 ingestion code, point at mainnet V5 addresses via the canonical reconciliation control (not hand-set secrets), backfill. Must **dual-serve V4.1-B** during the sunset window (ADR-0044) — don't drop the old pool until it's drained.
 - [ ] **Frontend cutover on the real `everdraw.xyz` Vercel project** — today V5 only exists on the isolated `everdraw-v5-uat` project. Cutover = V5 mode + mainnet addresses + production indexer URL + wallet allowlist, with V4.1-B behind "Previous Vault" + the migration prompt (ADR-0044). Not "done" until verified on the live production surface (rule #6).
 - [ ] **Monitoring/alerting on mainnet** — keeper liveness (scaffolding exists on the keeper fly app), vault solvency/shortfall, indexer lag. The absence of exactly this caused the silent V4.1-A reserve incident.
@@ -66,7 +110,10 @@ Long poles = the soak and the security review; start both as soon as the auto-co
 - **Merkl — NEEDS RE-CONFIRM.** V5 changed the surfaces Merkl reads: participant points from the real transferable ERC-4626 share (ADR-0039), Degen points from the distinct `BoostDeposit`/`BoostWithdraw` event stream (ADR-0040). Re-confirm Merkl indexes both correctly against V5 before mainnet.
 - **MetaMask / Blockaid — STRUCTURALLY FIXED, allowlist at launch.** Honeypot signature is gone in V5 (real transferable share; Degen is events, not a token). Residual: generic new-contract caution. Submit V5 mainnet contracts for Blockaid/MetaMask allowlisting + Sourcify-verify at launch.
 - **External providers — verify each at deploy.** Pyth entropy (verified on testnet; confirm mainnet addresses), shMON (real mainnet ERC-4626 vs the testnet mock), RPC. Verify each address in `deployments/monad-mainnet.json` works on the live surface.
-- **Alchemy monthly limit — NOT viable for public launch on free tier.** V5 grows RPC load (frontend reads, keeper polling, indexer scans). Minimum for launch: a **paid RPC plan** + read caching (`rpcCache.js`, batch/debounce), and ideally a separate RPC for indexer/keeper so frontend traffic doesn't compete. Budget decision.
+- **RPC capacity — operator decision updated.** The operator's existing archive-capable Alchemy
+  Monad endpoint is approved for beta launch and the fork suite; a paid plan is not a launch gate.
+  Keep read caching/batching enabled, monitor usage and error rates, and separate operational and
+  public traffic later if observed load requires it.
 
 ## C. Decisions
 - [x] **Auto-compound (ADR-0043)** — IN launch scope (operator, 2026-07-07). Sequenced per above.
@@ -74,4 +121,6 @@ Long poles = the soak and the security review; start both as soon as the auto-co
 - [x] **Security review scope — DECIDED (operator, 2026-07-14): full external audit is deferred to AFTER beta**, once the product has real users exercising it. Rationale: audit spend is committed against a validated, in-use system rather than a pre-beta target. No scoped review or bug-bounty is being run in the interim unless the operator says otherwise. **This means beta launches WITHOUT an external audit** — an accepted risk for the beta phase, revisited before any broad / high-TVL launch. ADR-0042 remains the honest record that there is no external audit yet; the auto-compound diff (PR #196) plus the ADR-0042 `setDrawManager` timelock (PR #207) are the reviewable artifacts when the audit is commissioned.
 
 ## Priority order
-1. Keeper→fly (A) · 2. Auto-compound redeploy on UAT (A) · 3. Security-review decision + kickoff (C) · 4. Soak (A) with monitoring (B) · 5. Paid RPC (B) · 6. Indexer→mainnet, frontend cutover, allowlist (B).
+1. Finish the open clean-soak branches (A) · 2. Confirm Merkl participant + Patron ingestion (B)
+· 3. Mainnet deploy + managed keeper · 4. Indexer mainnet backfill/dual-serving · 5. Frontend
+cutover + allowlisting + live-surface verification (B).

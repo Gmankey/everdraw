@@ -81,7 +81,7 @@ Signer-bearing commands are run by the operator only. Use an interactive shell o
 Example non-secret env shape:
 
 ```bash
-export MONAD_MAINNET_RPC_URL="<paid mainnet RPC>"
+export MONAD_MAINNET_RPC_URL="<operator archive-capable RPC>"
 export SHMON="0x1B68626dCa36c7fE922fD2d55E4f631d962dE19c"
 export ENTROPY="0xD458261E832415CFd3BAE5E416FdF3230ce6F134"
 export ENTROPY_PROVIDER="0x52DeaA1c84233F7bb8C8A45baeDE41091c616506"
@@ -191,7 +191,7 @@ Mainnet keeper config must include:
 ```toml
 [env]
 NODE_ENV = "production"
-RPC_URL = "<paid mainnet RPC>"
+RPC_URL = "<operator mainnet RPC>"
 DRAW_MANAGER_ADDRESS = "<V5_DRAW_MANAGER>"
 CLAIM_MANAGER_ADDRESS = "<V5_CLAIM_MANAGER>"
 V5_KEEPER_FROM_BLOCK = "<deployment startBlock>"
