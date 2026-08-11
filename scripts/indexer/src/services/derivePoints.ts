@@ -129,7 +129,12 @@ export function createDerivePointsService(input: {
         const points = pointsRepo.getWalletPoints(wallet)!;
         const streak = pointsRepo.getWalletStreak(wallet)!;
         const hasActivePosition = pointsRepo.hasActivePositionAt(wallet, checkpointUnix);
-        const nextCurrent = hasActivePosition ? streak.currentStreakWeeks + 1 : 0;
+        const hadFullExit = streak.lastCheckpointUnix != null && streak.lastCheckpointUnix > 0
+          ? pointsRepo.hadV5VaultFullExitBetween(wallet, streak.lastCheckpointUnix, checkpointUnix)
+          : false;
+        const nextCurrent = hasActivePosition
+          ? hadFullExit ? 1 : streak.currentStreakWeeks + 1
+          : 0;
         const nextLongest = Math.max(streak.longestStreakWeeks, nextCurrent);
         let highestAwarded = points.highestStreakMilestoneAwarded;
         let lifetimePoints = points.lifetimePoints;
