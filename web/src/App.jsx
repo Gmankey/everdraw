@@ -16,6 +16,7 @@ import { walletParticipatedInDraw } from './v5DrawParticipation.js'
 import { v5PageFromHash } from './v5Navigation.js'
 import { V5_NETWORK_RETRY_MESSAGE, v5UserError, withRpcReadRetry } from './v5RpcRead.js'
 import { v5HistoryResult } from './v5HistoryResult.js'
+import { formatV5MaxInput } from './v5AmountInput.js'
 import { awardedMilestones, tierName } from './v5PointsView.js'
 import { latestSettledDraw, participantRowsForDraw } from './v5PreviousDraw.js'
 import './shmon.css'
@@ -1666,7 +1667,7 @@ function V5ActionCard({
             <span>{balanceLabel}</span>
             <span className="v5-balance-actions">
               <span>{formatV5Mon(balanceValue || 0n)} {balanceUnit}</span>
-              <button className="max-btn" onClick={() => setAmount(formatDepositMon(balanceValue || 0n))}>Max</button>
+              <button type="button" className="max-btn" onClick={() => setAmount(formatV5MaxInput(balanceValue || 0n, { isDeposit }))}>Max</button>
             </span>
           </div>
           {isDegen ? (
