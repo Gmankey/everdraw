@@ -136,7 +136,7 @@ async function preflightNetworkAndSigner() {
     throw new Error("V5 mainnet deploy script requires the monadMainnet Hardhat network");
   }
   if (!process.env.MONAD_MAINNET_RPC_URL) {
-    throw new Error("Missing MONAD_MAINNET_RPC_URL; production requires an operator-supplied paid RPC");
+    throw new Error("Missing MONAD_MAINNET_RPC_URL; production requires the operator-approved mainnet RPC");
   }
 
   const network = await ethers.provider.getNetwork();
