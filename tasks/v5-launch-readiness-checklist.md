@@ -1,6 +1,6 @@
 # V5 launch-readiness checklist — single source of truth
 
-**Updated:** 2026-08-08. **Owner:** PM tracks; builder/ops execute. **Rule #5/#6:** every dependency named, failure mode known, verified on the live surface before "done."
+**Updated:** 2026-08-11. **Owner:** PM tracks; builder/ops execute. **Rule #5/#6:** every dependency named, failure mode known, verified on the live surface before "done."
 
 ## 2026-08-08 reconciliation — final UAT bytecode + independent veto drill
 
@@ -30,11 +30,15 @@ operator-input blockers are superseded by this reconciliation.
   configured and proven. Values remain operator-managed secrets/config and are never committed.
 
 **Remaining pre-cutover gates:** complete and record the still-unverified clean-soak branches in
-section A; obtain Merkl/shMonad confirmation for both participant and Patron event surfaces; then
-execute the mainnet deploy, managed keeper, indexer backfill/dual-serving, allowlisting, and
-production frontend cutover in section B.
+section A; then execute the mainnet deploy, managed keeper, indexer backfill/dual-serving,
+allowlisting, and production frontend cutover in section B. Merkl/shMonad campaign activation is
+post-beta by operator decision (2026-08-11).
 
 ---
+**Latest no-key preflight:** local build, ABI/source checks, locked mainnet-parameter tests and the
+full non-fork Forge suite passed on 2026-08-11. Evidence and explicit remaining boundaries:
+`tasks/v5-beta-mainnet-preflight-2026-08-11.md`.
+
 
 ## 2026-07-22 update — post-ADR-0045 shMON-share redeploy + confirmed operator decisions
 
@@ -51,8 +55,8 @@ production frontend cutover in section B.
 **Open production blockers (from the 2026-07-22 UAT status note) — by owner:**
 - **PM:** ✅ ADR-0045 added to staging (PR #238); this checklist refresh (was stale/pre-ADR-0045).
 - **Builder:** guarded mainnet deploy tooling and the managed mainnet keeper config landed in
-  #240. ADR-0045 M-1/L-1 remediation landed in #244. Remaining builder/ops gates are Merkl
-  participant/Patron ingestion confirmation and the recorded clean-soak branches in section A.
+  #240. ADR-0045 M-1/L-1 remediation landed in #244. The remaining pre-cutover builder/ops gate is
+  the recorded clean-soak branches in section A; Merkl/shMonad activation is post-beta.
 - **Reviewer:** ADR-0045 focused review completed in #241. The real-shMON fork blocker was
   root-caused as a test-harness EVM mismatch, not an archive-RPC failure; the fork suite is pinned
   to Cancun. M-1/L-1 are closed by #244 and the final UAT redeploy.
@@ -104,10 +108,13 @@ Long poles = the soak and the security review; start both as soon as the auto-co
 - [ ] **Indexer → V5 on mainnet**: the live `everdraw-indexer` still runs V4.1 round-based code. Bring it to the V5 ingestion code, point at mainnet V5 addresses via the canonical reconciliation control (not hand-set secrets), backfill. Must **dual-serve V4.1-B** during the sunset window (ADR-0044) — don't drop the old pool until it's drained.
 - [ ] **Frontend cutover on the real `everdraw.xyz` Vercel project** — today V5 only exists on the isolated `everdraw-v5-uat` project. Cutover = V5 mode + mainnet addresses + production indexer URL + wallet allowlist, with V4.1-B behind "Previous Vault" + the migration prompt (ADR-0044). Not "done" until verified on the live production surface (rule #6).
 - [ ] **Monitoring/alerting on mainnet** — keeper liveness (scaffolding exists on the keeper fly app), vault solvency/shortfall, indexer lag. The absence of exactly this caused the silent V4.1-A reserve incident.
-- [ ] **User docs** for the TWAB model (continuous tickets, Patron pool, points) — `docs/how-it-works/` still describes the round-based product.
+- [x] **User docs** for the TWAB model (continuous tickets, Patron pool, points) — rewritten under
+  `docs-site/pages/` in #209; route/build follow-ups landed in #215.
 
 ### B external-dependency detail (carried from the prior checklist)
-- **Merkl — NEEDS RE-CONFIRM.** V5 changed the surfaces Merkl reads: participant points from the real transferable ERC-4626 share (ADR-0039), Degen points from the distinct `BoostDeposit`/`BoostWithdraw` event stream (ADR-0040). Re-confirm Merkl indexes both correctly against V5 before mainnet.
+- **Merkl/shMonad campaign — DEFERRED UNTIL AFTER BETA.** V5 keeps the participant and Patron event
+  surfaces available, but campaign registration and multiplier confirmation are not launch gates.
+  Re-confirm both surfaces before enabling external shMonad points.
 - **MetaMask / Blockaid — STRUCTURALLY FIXED, allowlist at launch.** Honeypot signature is gone in V5 (real transferable share; Degen is events, not a token). Residual: generic new-contract caution. Submit V5 mainnet contracts for Blockaid/MetaMask allowlisting + Sourcify-verify at launch.
 - **External providers — verify each at deploy.** Pyth entropy (verified on testnet; confirm mainnet addresses), shMON (real mainnet ERC-4626 vs the testnet mock), RPC. Verify each address in `deployments/monad-mainnet.json` works on the live surface.
 - **RPC capacity — operator decision updated.** The operator's existing archive-capable Alchemy
@@ -121,6 +128,6 @@ Long poles = the soak and the security review; start both as soon as the auto-co
 - [x] **Security review scope — DECIDED (operator, 2026-07-14): full external audit is deferred to AFTER beta**, once the product has real users exercising it. Rationale: audit spend is committed against a validated, in-use system rather than a pre-beta target. No scoped review or bug-bounty is being run in the interim unless the operator says otherwise. **This means beta launches WITHOUT an external audit** — an accepted risk for the beta phase, revisited before any broad / high-TVL launch. ADR-0042 remains the honest record that there is no external audit yet; the auto-compound diff (PR #196) plus the ADR-0042 `setDrawManager` timelock (PR #207) are the reviewable artifacts when the audit is commissioned.
 
 ## Priority order
-1. Finish the open clean-soak branches (A) · 2. Confirm Merkl participant + Patron ingestion (B)
-· 3. Mainnet deploy + managed keeper · 4. Indexer mainnet backfill/dual-serving · 5. Frontend
-cutover + allowlisting + live-surface verification (B).
+1. Finish the open clean-soak branches (A) · 2. Mainnet deploy + managed keeper · 3. Indexer
+mainnet backfill/dual-serving · 4. Frontend cutover + allowlisting + live-surface verification (B)
+· 5. Post-beta Merkl/shMonad campaign confirmation.
