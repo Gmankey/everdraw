@@ -1,0 +1,48 @@
+app = "everdraw-indexer-uat"
+primary_region = "sjc"
+
+[build]
+
+[env]
+  PORT = "3001"
+  DB_PATH = "/data/everdraw.db"
+  NODE_ENV = "production"
+  POINTS_START_UNIX = "0"
+  POINTS_CHECKPOINT_INTERVAL_SEC = "3600"
+  # RPC_URL, POOL_ADDRESSES, and START_BLOCK are set as Fly secrets.
+
+[mounts]
+  source = "everdraw_indexer_uat_data"
+  destination = "/data"
+
+[[services]]
+  internal_port = 3001
+  protocol = "tcp"
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
+    force_https = true
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+
+  [services.concurrency]
+    hard_limit = 50
+    soft_limit = 25
+    type = "connections"
+
+  [[services.http_checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "60s"
+    method = "GET"
+    path = "/api/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
