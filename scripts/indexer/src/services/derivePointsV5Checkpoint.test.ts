@@ -162,4 +162,96 @@ function v5Round(ctx: ReturnType<typeof context>, roundId: number, settledAt: st
   assert.equal(ctx.pointsRepo.getProfile(wallet)!.currentStreakWeeks, 0, 'streak should reset once the V5 position is fully closed');
 }
 
+{
+  // A full vault exit resets the vault streak even when a Patron position remains open and an
+  // auto-compounded prize opens a fresh vault tranche before the next checkpoint.
+  const ctx = context();
+  v5Round(ctx, 1, '2026-05-03T00:00:00.000Z');
+  ctx.walletRoundsRepo.upsert({
+    wallet,
+    roundId: 1,
+    poolAddress: vault,
+    tickets: 0,
+    monPaid: '0',
+    won: 0,
+    withdrew: 0,
+    prizeClaimed: '0',
+    principalWithdrawn: '0',
+    withdrawnAt: null,
+    netPosition: '0',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  ctx.walletRoundsRepo.upsertV5ResolvedBase(wallet, 1, vault, 5);
+
+  ctx.v5TranchesRepo.insertTranche({
+    wallet,
+    vaultAddress: vault,
+    poolType: 'vault',
+    amount: '1000000000000000000',
+    remainingAmount: '0',
+    openedBlockNumber: 100,
+    openedLogIndex: 0,
+    openedAt: '2026-05-01T00:00:00.000Z',
+    openedTxHash: '0xvault-old',
+    startDrawId: 1,
+    closedAt: '2026-05-08T00:00:00.000Z',
+    closedBlockNumber: 200,
+    closedLogIndex: 0,
+    closedTxHash: '0xvault-exit',
+  });
+  ctx.v5TranchesRepo.insertTranche({
+    wallet,
+    vaultAddress: vault,
+    poolType: 'degen',
+    amount: '1000000000000000000',
+    remainingAmount: '1000000000000000000',
+    openedBlockNumber: 101,
+    openedLogIndex: 0,
+    openedAt: '2026-05-01T00:01:00.000Z',
+    openedTxHash: '0xdegen',
+    startDrawId: 1,
+    closedAt: null,
+    closedBlockNumber: null,
+    closedLogIndex: null,
+    closedTxHash: null,
+  });
+  ctx.v5TranchesRepo.insertTranche({
+    wallet,
+    vaultAddress: vault,
+    poolType: 'vault',
+    amount: '1000000000000000',
+    remainingAmount: '1000000000000000',
+    openedBlockNumber: 200,
+    openedLogIndex: 1,
+    openedAt: '2026-05-08T00:00:00.000Z',
+    openedTxHash: '0xprize-compound',
+    startDrawId: 2,
+    closedAt: null,
+    closedBlockNumber: null,
+    closedLogIndex: null,
+    closedTxHash: null,
+  });
+
+  const previousCheckpoint = Date.parse('2026-05-06T00:00:00.000Z') / 1000;
+  ctx.pointsRepo.ensureWallet(wallet, previousCheckpoint);
+  ctx.pointsRepo.upsertWalletStreak({
+    wallet,
+    currentStreakWeeks: 13,
+    longestStreakWeeks: 13,
+    lastCheckpointUnix: previousCheckpoint,
+    consecutiveNonWins: 0,
+    consecutiveMissedDraws: 0,
+    updatedAt: previousCheckpoint,
+  });
+
+  const checkpointUnix = Date.parse('2026-05-10T00:00:00.000Z') / 1000;
+  assert.equal(ctx.pointsRepo.hasActivePositionAt(wallet, checkpointUnix), true);
+  assert.equal(ctx.pointsRepo.hadV5VaultFullExitBetween(wallet, previousCheckpoint, checkpointUnix), true);
+
+  const result = ctx.service.runWeeklyCheckpoint(checkpointUnix);
+  assert.equal(result.skipped, false);
+  assert.equal(ctx.pointsRepo.getProfile(wallet)!.currentStreakWeeks, 1, 'fresh prize tranche must rebuild after the full-exit reset');
+}
+
 console.log('derivePointsV5Checkpoint.test.ts ok');

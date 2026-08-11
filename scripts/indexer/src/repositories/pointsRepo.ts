@@ -20,6 +20,7 @@ export interface PointsRepo {
   listWalletsWithDeposits(): string[];
   hasAnySettledRoundBetween(fromUnix: number, toUnix: number): boolean;
   hasActivePositionAt(wallet: string, checkpointUnix: number, poolAddress?: string): boolean;
+  hadV5VaultFullExitBetween(wallet: string, fromUnix: number, toUnix: number): boolean;
   hadFirstDepositBefore(wallet: string, roundId: number): boolean;
   hasDegenDepositAtOrBefore(wallet: string, atUnix: number): boolean;
 }
@@ -197,11 +198,47 @@ export function createPointsRepo(db: Database.Database): PointsRepo {
       const v5Row = db.prepare(`
         SELECT COUNT(*) AS c FROM v5_tranches
         WHERE LOWER(wallet) = LOWER(?)
+          AND pool_type = 'vault'
           AND CAST(strftime('%s', opened_at) AS INTEGER) <= ?
           AND (closed_at IS NULL OR CAST(strftime('%s', closed_at) AS INTEGER) > ?)
           ${v5PoolSql}
       `).get(...v5Params) as { c: number };
       return v5Row.c > 0;
+    },
+    hadV5VaultFullExitBetween(wallet, fromUnix, toUnix) {
+      const row = db.prepare(`
+        SELECT 1
+        FROM v5_tranches closed
+        WHERE LOWER(closed.wallet) = LOWER(?)
+          AND closed.pool_type = ?
+          AND closed.closed_at IS NOT NULL
+          AND CAST(strftime(?, closed.closed_at) AS INTEGER) > ?
+          AND CAST(strftime(?, closed.closed_at) AS INTEGER) <= ?
+          AND NOT EXISTS (
+            SELECT 1
+            FROM v5_tranches active
+            WHERE LOWER(active.wallet) = LOWER(closed.wallet)
+              AND LOWER(active.vault_address) = LOWER(closed.vault_address)
+              AND active.pool_type = ?
+              AND (
+                active.opened_block_number < closed.closed_block_number
+                OR (
+                  active.opened_block_number = closed.closed_block_number
+                  AND active.opened_log_index <= closed.closed_log_index
+                )
+              )
+              AND (
+                active.closed_block_number IS NULL
+                OR active.closed_block_number > closed.closed_block_number
+                OR (
+                  active.closed_block_number = closed.closed_block_number
+                  AND active.closed_log_index > closed.closed_log_index
+                )
+              )
+          )
+        LIMIT 1
+      `).get(wallet, "vault", "%s", fromUnix, "%s", toUnix, "vault") as Record<string, number> | undefined;
+      return row != null;
     },
     hadFirstDepositBefore(wallet, roundId) {
       const row = db.prepare(`SELECT COUNT(*) AS c FROM wallet_rounds WHERE LOWER(wallet) = LOWER(?) AND tickets > 0 AND round_id < ?`).get(wallet, roundId) as { c: number };
