@@ -17,6 +17,7 @@ import { v5PageFromHash } from './v5Navigation.js'
 import { V5_NETWORK_RETRY_MESSAGE, v5UserError, withRpcReadRetry } from './v5RpcRead.js'
 import { v5HistoryResult } from './v5HistoryResult.js'
 import { formatV5MaxInput } from './v5AmountInput.js'
+import { runV5ConfirmedFollowups } from './v5TransactionLifecycle.js'
 import { awardedMilestones, tierName } from './v5PointsView.js'
 import { latestSettledDraw, participantRowsForDraw } from './v5PreviousDraw.js'
 import './shmon.css'
@@ -2098,8 +2099,12 @@ export function V5UatExperience() {
       const nextAccount = await signer.getAddress()
       setAccount(nextAccount)
       setStatus('')
-      await refresh(nextAccount)
-      await options.afterConfirm?.({ signer, account: nextAccount, receipt })
+      await runV5ConfirmedFollowups({
+        context: { signer, account: nextAccount, receipt },
+        onReceipt: options.afterReceipt,
+        refresh,
+        afterConfirm: options.afterConfirm,
+      })
     } catch (err) {
       setError(v5UserError(err, `${label} could not be completed. Please try again.`))
     } finally {
@@ -2223,9 +2228,11 @@ export function V5UatExperience() {
     if (!request) return
     return transact(request.label, (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer)[request.walletMethodName](request.amount), {
       afterSubmit: request.clearAmount,
-      afterConfirm: async (ctx) => {
+      afterReceipt: () => {
         setWithdrawChoiceOpen(false)
         setWithdrawRequest(null)
+      },
+      afterConfirm: async (ctx) => {
         await request.afterConfirm?.(ctx)
       },
     })
@@ -2242,9 +2249,11 @@ export function V5UatExperience() {
     } catch {}
     return transact(request.label, (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer)[request.convertMethodName](request.amount), {
       afterSubmit: request.clearAmount,
-      afterConfirm: async (ctx) => {
+      afterReceipt: () => {
         setWithdrawChoiceOpen(false)
         setWithdrawRequest(null)
+      },
+      afterConfirm: async (ctx) => {
         await request.afterConfirm?.(ctx)
         try {
           if (shmonadWindow && !shmonadWindow.closed) {
