@@ -18,6 +18,7 @@ const HEALTHCHECKS_PING_URL = process.env.WATCHER_HEALTHCHECKS_PING_URL;
 
 const ABI = [
   "event RootProposed(uint256 indexed drawId, bytes32 indexed root, uint32 winnerCount, uint256 totalPayout, address indexed proposer, bytes32 algorithmVersion, uint64 challengeEndsAt)",
+  "event DrawPeriodChangeQueued(uint64 drawPeriod, uint64 effectiveAt)",
   "event SeedReceived(uint256 indexed drawId, uint64 indexed requestId, bytes32 seed)",
   "event Deposit(address indexed recipient, uint256 amount)",
 ];
@@ -96,6 +97,17 @@ async function alarm(message) {
   }
 }
 
+async function notify(message) {
+  console.warn(message);
+  if (TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID) {
+    await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: message }),
+    });
+  }
+}
+
 async function main() {
   const { drawManagerAddress, fromBlock } = resolveConfig();
   fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
@@ -107,6 +119,7 @@ async function main() {
   const runEnd = Math.min(scanFromBlock + MAX_BLOCKS_PER_RUN - 1, latest);
   const iface = new Interface(ABI);
   const rootTopic = iface.getEvent("RootProposed").topicHash;
+  const drawPeriodChangeTopic = iface.getEvent("DrawPeriodChangeQueued").topicHash;
   const eventCache = new DrawInputEventCache({
     drawManagerAddress,
     file: process.env.WATCHER_EVENT_CACHE_FILE || path.join(os.tmpdir(), "everdraw-v5-watcher-event-cache.json"),
@@ -122,7 +135,7 @@ async function main() {
       provider,
       {
         address: [drawManagerAddress, vaultAddress],
-        topics: [[rootTopic, seedTopic, depositTopic]],
+        topics: [[rootTopic, seedTopic, depositTopic, drawPeriodChangeTopic]],
       },
       scanFromBlock,
       runEnd,
@@ -131,6 +144,20 @@ async function main() {
         onBatch: async ({ windows, logs }) => {
           const batchEnd = windows[windows.length - 1][1];
           eventCache.ingestLogs({ drawManagerAddress, vaultAddress, fromBlock, toBlock: batchEnd, logs });
+          const cadenceChanges = logs
+            .filter(
+              (log) =>
+                log.address.toLowerCase() === drawManagerAddress.toLowerCase() &&
+                log.topics[0]?.toLowerCase() === drawPeriodChangeTopic.toLowerCase(),
+            )
+            .sort((a, b) => a.blockNumber - b.blockNumber || (a.index ?? 0) - (b.index ?? 0));
+          for (const log of cadenceChanges) {
+            const queued = iface.parseLog(log);
+            await notify(
+              `EverDraw V5 draw-period change queued\nnewPeriod=${queued.args.drawPeriod.toString()} seconds\neffectiveAt=${new Date(Number(queued.args.effectiveAt) * 1000).toISOString()}\ntx=${log.transactionHash}`,
+            );
+          }
+
           const proposals = logs
             .filter((log) => log.address.toLowerCase() === drawManagerAddress.toLowerCase() && log.topics[0]?.toLowerCase() === rootTopic.toLowerCase())
             .sort((a, b) => a.blockNumber - b.blockNumber || (a.index ?? 0) - (b.index ?? 0));

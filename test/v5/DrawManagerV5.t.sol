@@ -65,6 +65,10 @@ contract DrawManagerV5Test is Test {
         uint256 availablePrize,
         string reason
     );
+    event DrawPeriodChangeQueued(uint64 drawPeriod, uint64 effectiveAt);
+    event DrawPeriodChangeCommitted(uint64 drawPeriod, uint64 activationPeriodStart);
+    event DrawPeriodChanged(uint64 previousDrawPeriod, uint64 drawPeriod, uint64 activationPeriodStart);
+    event DrawPeriodChangeCancelled();
 
     EverdrawTwabController twab;
     MockERC4626YieldVault shmon;
@@ -136,6 +140,159 @@ contract DrawManagerV5Test is Test {
             assertEq(uint8(status), uint8(DrawManagerV5.DrawStatus.Skipped));
             vm.warp(START + uint64(i + 1) * PERIOD);
         }
+    }
+
+    function test_drawPeriodChangeQueueCommitAndAccessControl() public {
+        uint64 newPeriod = 6 hours;
+        uint64 effectiveAt = uint64(block.timestamp + manager.DRAW_PERIOD_CHANGE_DELAY());
+
+        vm.prank(alice);
+        vm.expectRevert(DrawManagerV5.NotOwner.selector);
+        manager.queueDrawPeriodChange(newPeriod);
+
+        vm.expectEmit(false, false, false, true, address(manager));
+        emit DrawPeriodChangeQueued(newPeriod, effectiveAt);
+        manager.queueDrawPeriodChange(newPeriod);
+        assertEq(manager.pendingDrawPeriod(), newPeriod);
+        assertEq(manager.pendingDrawPeriodEffectiveAt(), effectiveAt);
+
+        vm.prank(alice);
+        vm.expectRevert(DrawManagerV5.NotOwner.selector);
+        manager.commitDrawPeriodChange();
+
+        vm.expectRevert(DrawManagerV5.TimelockNotElapsed.selector);
+        manager.commitDrawPeriodChange();
+
+        vm.warp(effectiveAt);
+        vm.expectEmit(false, false, false, true, address(manager));
+        emit DrawPeriodChangeCommitted(newPeriod, START + PERIOD);
+        manager.commitDrawPeriodChange();
+        assertEq(manager.drawPeriod(), PERIOD);
+        assertEq(manager.scheduledDrawPeriod(), newPeriod);
+        assertEq(manager.scheduledDrawPeriodActivationAt(), START + PERIOD);
+        assertEq(manager.pendingDrawPeriod(), 0);
+        assertEq(manager.pendingDrawPeriodEffectiveAt(), 0);
+
+        vm.expectRevert(DrawManagerV5.DrawPeriodChangeAlreadyScheduled.selector);
+        manager.queueDrawPeriodChange(12 hours);
+    }
+
+    function test_drawPeriodChangeCanBeCancelledOnlyByOwner() public {
+        manager.queueDrawPeriodChange(6 hours);
+
+        vm.prank(alice);
+        vm.expectRevert(DrawManagerV5.NotOwner.selector);
+        manager.cancelDrawPeriodChange();
+
+        vm.expectEmit(false, false, false, true, address(manager));
+        emit DrawPeriodChangeCancelled();
+        manager.cancelDrawPeriodChange();
+        assertEq(manager.pendingDrawPeriod(), 0);
+        assertEq(manager.pendingDrawPeriodEffectiveAt(), 0);
+
+        vm.expectRevert(DrawManagerV5.NoPendingDrawPeriodChange.selector);
+        manager.cancelDrawPeriodChange();
+    }
+
+    function test_drawPeriodChangeRejectsNonTwabAlignedCadence() public {
+        uint64 badPeriod = 90 minutes;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DrawManagerV5.BadTwabPeriodAlignment.selector, uint64(START), badPeriod, uint32(1 hours), uint32(START)
+            )
+        );
+        manager.queueDrawPeriodChange(badPeriod);
+    }
+
+    function test_drawPeriodChangeCommittedMidPeriodActivatesAtBoundaryWithoutGapOrOverlap() public {
+        uint64 newPeriod = 6 hours;
+        vm.warp(START + 2 days);
+        manager.queueDrawPeriodChange(newPeriod);
+        vm.warp(block.timestamp + manager.DRAW_PERIOD_CHANGE_DELAY());
+        manager.commitDrawPeriodChange();
+
+        assertEq(manager.drawPeriod(), PERIOD);
+        assertEq(manager.nextPeriodStart(), START);
+
+        vm.warp(START + PERIOD);
+        vm.expectEmit(false, false, false, true, address(manager));
+        emit DrawPeriodChanged(PERIOD, newPeriod, START + PERIOD);
+        manager.startDraw();
+
+        (uint64 firstStart, uint64 firstEnd,,,,,,,,,,,,,) = manager.draws(1);
+        assertEq(firstStart, START);
+        assertEq(firstEnd, START + PERIOD);
+        assertEq(manager.nextPeriodStart(), firstEnd);
+        assertEq(manager.drawPeriod(), newPeriod);
+        assertEq(manager.scheduledDrawPeriod(), 0);
+        assertEq(manager.nextPeriodStart() % twab.periodLength(), uint64(START) % twab.periodLength());
+
+        vm.warp(firstEnd + newPeriod);
+        manager.startDraw();
+        (uint64 secondStart, uint64 secondEnd,,,,,,,,,,,,,) = manager.draws(2);
+        assertEq(secondStart, firstEnd);
+        assertEq(secondEnd, firstEnd + newPeriod);
+        assertEq(secondEnd - secondStart, newPeriod);
+    }
+
+    function test_drawPeriodChangePreservesOverdueBacklogAtOldCadenceUntilFutureBoundary() public {
+        uint64 newPeriod = 6 hours;
+        vm.warp(START + 3 * PERIOD + 2 days);
+        manager.queueDrawPeriodChange(newPeriod);
+        vm.warp(block.timestamp + manager.DRAW_PERIOD_CHANGE_DELAY());
+
+        uint64 activationAt = START + 4 * PERIOD;
+        vm.expectEmit(false, false, false, true, address(manager));
+        emit DrawPeriodChangeCommitted(newPeriod, activationAt);
+        manager.commitDrawPeriodChange();
+        assertEq(manager.scheduledDrawPeriodActivationAt(), activationAt);
+
+        for (uint256 i = 1; i <= 3; i++) {
+            manager.startDraw();
+            (uint64 periodStart, uint64 periodEnd,,,,,,,,,,,,,) = manager.draws(i);
+            assertEq(periodStart, START + uint64(i - 1) * PERIOD);
+            assertEq(periodEnd, START + uint64(i) * PERIOD);
+        }
+        assertEq(manager.drawPeriod(), PERIOD);
+
+        vm.warp(activationAt);
+        manager.startDraw();
+        (uint64 boundaryStart, uint64 boundaryEnd,,,,,,,,,,,,,) = manager.draws(4);
+        assertEq(boundaryStart, START + 3 * PERIOD);
+        assertEq(boundaryEnd, activationAt);
+
+        assertEq(manager.nextPeriodStart(), activationAt);
+        assertEq(manager.drawPeriod(), newPeriod);
+        assertEq(manager.scheduledDrawPeriod(), 0);
+        assertEq(manager.scheduledDrawPeriodActivationAt(), 0);
+
+        vm.warp(activationAt + newPeriod);
+        manager.startDraw();
+        (uint64 nextStart, uint64 nextEnd,,,,,,,,,,,,,) = manager.draws(5);
+        assertEq(nextStart, activationAt);
+        assertEq(nextEnd, activationAt + newPeriod);
+    }
+
+    function test_skippedPeriodSpanningDrawPeriodChangeConsumesExactlyOneOldSlot() public {
+        uint64 newPeriod = 6 hours;
+        manager.queueDrawPeriodChange(newPeriod);
+        vm.warp(START + manager.DRAW_PERIOD_CHANGE_DELAY());
+        manager.commitDrawPeriodChange();
+
+        vm.warp(START + PERIOD);
+        manager.startDraw();
+        (uint64 skippedStart, uint64 skippedEnd,,,,,,,,,, DrawManagerV5.DrawStatus status,,,) = manager.draws(1);
+        assertEq(uint8(status), uint8(DrawManagerV5.DrawStatus.Skipped));
+        assertEq(skippedStart, START);
+        assertEq(skippedEnd, START + PERIOD);
+        assertEq(manager.nextPeriodStart(), skippedEnd);
+        assertEq(manager.drawPeriod(), newPeriod);
+
+        vm.warp(skippedEnd + newPeriod);
+        manager.startDraw();
+        (uint64 nextStart, uint64 nextEnd,,,,,,,,,,,,,) = manager.draws(2);
+        assertEq(nextStart, skippedEnd);
+        assertEq(nextEnd, skippedEnd + newPeriod);
     }
 
     function test_constructorRejectsDrawPeriodsNotAlignedToTwabGrid() public {
