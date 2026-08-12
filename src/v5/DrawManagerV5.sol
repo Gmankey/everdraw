@@ -16,6 +16,7 @@ interface IERC20DrawManagerV5 {
 /// @notice V5 draw lifecycle: fixed-period cadence, VRF seed, root proposal, veto, finalize.
 contract DrawManagerV5 is IRandomnessOracleConsumer {
     uint64 public constant ORACLE_CHANGE_DELAY = 24 hours;
+    uint64 public constant DRAW_PERIOD_CHANGE_DELAY = 24 hours;
     bytes32 public constant ALGORITHM_VERSION_HASH = keccak256("everdraw-v5-draw-algorithm/1");
     uint16 public constant MAX_FEE_BPS = 2_000;
     uint8 public constant MAX_FEE_RECIPIENTS = 8;
@@ -86,6 +87,10 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     uint64 public pendingOracleEffectiveAt;
 
     uint64 public drawPeriod;
+    uint64 public pendingDrawPeriod;
+    uint64 public pendingDrawPeriodEffectiveAt;
+    uint64 public scheduledDrawPeriod;
+    uint64 public scheduledDrawPeriodActivationAt;
     uint64 public nextPeriodStart;
     uint64 public proposerGracePeriod;
     uint64 public challengeWindow;
@@ -115,6 +120,9 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     event TimingUpdated(uint64 proposerGracePeriod, uint64 challengeWindow, uint64 vetoCooldown);
     event MinPrizeThresholdUpdated(uint256 minPrizeThreshold);
     event DrawPeriodChangeQueued(uint64 drawPeriod, uint64 effectiveAt);
+    event DrawPeriodChangeCommitted(uint64 drawPeriod, uint64 activationPeriodStart);
+    event DrawPeriodChanged(uint64 previousDrawPeriod, uint64 drawPeriod, uint64 activationPeriodStart);
+    event DrawPeriodChangeCancelled();
     event OracleChangeQueued(address indexed oracle, uint64 effectiveAt);
     event OracleChanged(address indexed oracle);
     event OracleChangeCancelled();
@@ -182,6 +190,8 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     error UnknownRequest();
     error NotOracle();
     error NoPendingOracleChange();
+    error NoPendingDrawPeriodChange();
+    error DrawPeriodChangeAlreadyScheduled();
     error TimelockNotElapsed();
     error BadFeeConfig();
     error TokenNotAllowed();
@@ -283,6 +293,48 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
         challengeWindow = newChallengeWindow;
         vetoCooldown = newVetoCooldown;
         emit TimingUpdated(newProposerGracePeriod, newChallengeWindow, newVetoCooldown);
+    }
+
+    /// @notice Queues a cadence change. The committed value activates only after the current
+    /// scheduled period is consumed, so an open TWAB interval is never resized.
+    function queueDrawPeriodChange(uint64 newDrawPeriod) external onlyOwner {
+        if (scheduledDrawPeriod != 0) revert DrawPeriodChangeAlreadyScheduled();
+        uint32 twabPeriodLength = twabController.periodLength();
+        if (newDrawPeriod == 0 || newDrawPeriod % twabPeriodLength != 0) {
+            revert BadTwabPeriodAlignment(
+                nextPeriodStart, newDrawPeriod, twabPeriodLength, twabController.periodOffset()
+            );
+        }
+        pendingDrawPeriod = newDrawPeriod;
+        pendingDrawPeriodEffectiveAt = uint64(block.timestamp + DRAW_PERIOD_CHANGE_DELAY);
+        emit DrawPeriodChangeQueued(newDrawPeriod, pendingDrawPeriodEffectiveAt);
+    }
+
+    function commitDrawPeriodChange() external onlyOwner {
+        if (pendingDrawPeriodEffectiveAt == 0) revert NoPendingDrawPeriodChange();
+        if (block.timestamp < pendingDrawPeriodEffectiveAt) revert TimelockNotElapsed();
+        if (scheduledDrawPeriod != 0) revert DrawPeriodChangeAlreadyScheduled();
+
+        uint64 newDrawPeriod = pendingDrawPeriod;
+        uint256 activationPeriodStart = uint256(nextPeriodStart) + drawPeriod;
+        if (activationPeriodStart <= block.timestamp) {
+            uint256 elapsed = block.timestamp - activationPeriodStart;
+            activationPeriodStart += ((elapsed / drawPeriod) + 1) * drawPeriod;
+        }
+        if (activationPeriodStart > type(uint64).max) revert BadConfig();
+
+        scheduledDrawPeriod = newDrawPeriod;
+        scheduledDrawPeriodActivationAt = uint64(activationPeriodStart);
+        pendingDrawPeriod = 0;
+        pendingDrawPeriodEffectiveAt = 0;
+        emit DrawPeriodChangeCommitted(newDrawPeriod, uint64(activationPeriodStart));
+    }
+
+    function cancelDrawPeriodChange() external onlyOwner {
+        if (pendingDrawPeriodEffectiveAt == 0) revert NoPendingDrawPeriodChange();
+        pendingDrawPeriod = 0;
+        pendingDrawPeriodEffectiveAt = 0;
+        emit DrawPeriodChangeCancelled();
     }
 
     function setMinPrizeThreshold(uint256 newMinPrizeThreshold) external onlyOwner {
@@ -470,6 +522,13 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
 
         drawId = ++currentDrawId;
         nextPeriodStart = periodEnd;
+        if (scheduledDrawPeriod != 0 && periodEnd == scheduledDrawPeriodActivationAt) {
+            uint64 previousDrawPeriod = drawPeriod;
+            drawPeriod = scheduledDrawPeriod;
+            scheduledDrawPeriod = 0;
+            scheduledDrawPeriodActivationAt = 0;
+            emit DrawPeriodChanged(previousDrawPeriod, drawPeriod, periodEnd);
+        }
 
         uint256 totalTwab = twabController.getTotalTwabBetween(address(vault), periodStart, periodEnd);
         uint256 totalPrincipalTwab = twabController.getTotalPrincipalTwabBetween(address(vault), periodStart, periodEnd);

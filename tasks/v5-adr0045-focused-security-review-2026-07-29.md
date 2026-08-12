@@ -144,3 +144,28 @@ migration should require a coordinated full-stack redeploy.
 ADR-0045's core share escrow and claim model is cleared. Mainnet remains blocked on M-1. L-1 should
 be closed at the same time because strategy replacement is part of the documented recovery model.
 The accepted post-beta external-audit posture is unchanged; this focused review does not replace it.
+
+## 2026-08-12 addendum - timelocked draw-period governance
+
+**Scope:** `DrawManagerV5.queueDrawPeriodChange`, `commitDrawPeriodChange`,
+`cancelDrawPeriodChange`, and boundary activation in `startDraw`, implementing ADR-0036's cadence
+tunable and ADR-0037's no-drift launch gate.
+
+The new owner power cannot move principal, prizes, or escrow. Its operational risk is schedule
+manipulation: a cadence change can alter future TWAB measurement windows, oracle spend, and draw
+frequency. The 24-hour queue/commit delay provides an exit and monitoring window. A committed
+change does not resize the currently scheduled period; it activates only after `startDraw`
+consumes that exact interval. The replacement cadence must remain a multiple of the TWAB period.
+
+Review disposition:
+
+- no gap or overlap is introduced at activation because `nextPeriodStart` advances to the old
+  period's exact end before the new duration is installed;
+- mid-period commit behavior is deterministic and cannot alter accrued TWAB;
+- zero-TWAB/zero-prize boundary periods still consume one complete old-cadence slot;
+- queue, commit, and cancel are owner-only, and commit is delayed for 24 hours;
+- another change cannot be queued while a committed cadence is awaiting boundary activation;
+- queue, commit, activation, and cancellation are separately observable events.
+
+Residual governance risk is accepted under ADR-0036's single-Ledger launch posture. The six-hour
+UAT transition and seven-day final soak must complete before mainnet deployment.

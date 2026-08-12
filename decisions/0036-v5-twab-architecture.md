@@ -99,6 +99,12 @@ interface IYieldStrategy {
 
 ### 3.4 DrawManager
 
+**Cadence-change implementation amendment (2026-08-12):** the owner tunable uses a 24-hour
+queue/commit timelock. A commit never resizes an interval already accruing TWAB: the current
+scheduled period is consumed at its original length, then the new cadence activates at that exact
+boundary. The new duration must be a multiple of the TWAB period. This preserves grid alignment
+and guarantees no gap, overlap, or rolling drift even when the boundary period is skipped.
+
 - **Cadence:** draws cover consecutive periods `[periodStart, periodEnd)` of `drawPeriod` seconds (owner-tunable with timelock; launch value is an open decision, §10-Q1). No deposit windows — the period only bounds the TWAB measurement and the prize accrual.
 - **Trigger is permissionless:** after `periodEnd`, anyone may call `startDraw()` (keeper does it in practice; keeper death does not stall the protocol). It snapshots the prize (§5.1), requests randomness via `IRandomnessOracle` (ADR-0029 contract reused as-is, including the 24h oracle-swap timelock and the per-consumer adapter deployment), and records the request.
 - **Seed lands** via `onRandomnessReceived` exactly as in V4.
