@@ -571,6 +571,62 @@
         "drawManagerAddressSecret": "DRAW_MANAGER_ADDRESS",
         "fromBlockSecret": "V5_WATCHER_FROM_BLOCK"
       }
+    },
+    {
+      "role": "V5 M8 testnet soak",
+      "status": "deployed-draw-manager-queued",
+      "deployedAt": "2026-08-12T03:11:13.525Z",
+      "deployedBy": "0xd5cc1f1D7b78943bDF09541A2ace41B5c6D83431",
+      "source": "src/v5",
+      "deployCommit": "d9e85267d9024a0b036d72918c3aabbfdfde0960",
+      "addresses": {
+        "twabController": "0x0039A79B7AbfB9b4C13BE31fd85ede14b0A054c4",
+        "shmonStrategy": "0x9295559E1ADdA7320Efc0826877e9220ec8A842f",
+        "prizeVault": "0xC64F9F01f87Dd03ba069D93bE764751F9A21c9ae",
+        "claimManager": "0x42f00a926844a20BFB7E957Cd5277De9625CA2D9",
+        "pythRandomnessOracle": "0x20690C60E51d894e59a61171b2c2A6AEC7F75B3f",
+        "drawManager": "0x6e00D2ff59C494a6BC786Ec06f68229e33f6dF11"
+      },
+      "deployTxs": {
+        "twabController": "0x455b2a309725bcabdc2383afde9777d9491dc21cd2e05180a06aceeaf8c66c8c",
+        "shmonStrategy": "0xd5a638601743c53449e0c3f2ef6fd29be259ef48be2485a55f26eb7cad61b36c",
+        "prizeVault": "0x005c8f9bb3b27329ef8d29179a11fea4b7e2a9274229270877989958a97fc630",
+        "claimManager": "0x5ad801eed852228d3db27f8cb78518d5fec497a059367621fb154f771551915f",
+        "pythRandomnessOracle": "0xc54772fc45a739229db2dbb859946ce390b99ea72670374121d3c31e75cb80dd",
+        "drawManager": "0x8978635c54aed64a2319fdb0b5eadd326a420221c179dd3ea41a8d86e45572a9",
+        "strategySetVault": "0x17bab519f3ef23b5b60941e781953d622be7fc4b5d5cb728232159f167c28e63",
+        "twabRegisterVault": "0xa7dd97fca47e178706fe931e49564512bfa349005d94c1324973a3dfbc82c53d",
+        "claimAuthorizeManager": "0xa90d80f036f6edbc60fe8c4bda3a39a3b6f6a2aeace1ff772f20e95591150880",
+        "claimSetCompoundVault": "0xf3dbd306e51028dfd8d38ceca6181c99a64613937bc4539d11160080de043dbe",
+        "vaultQueueDrawManagerChange": "0x7e2a5dff694136840995db0c129afbd7d2741c1c1403665cd25d0d78bdee925f",
+        "vaultSetPauser": "0xdd97a95c4bf766c2de96220388ca63484a6863612c2462b026e35d1c323c434d"
+      },
+      "startBlock": 52978375,
+      "constructorArgs": {
+        "shmon": "0x282BdDFF5e58793AcAb65438b257Dbd15A8745C9",
+        "entropy": "0x825c0390f379c631f3cf11a82a37d20bddf93c07",
+        "entropyProvider": "0x6CC14824Ea2918f5De5C2f75A9Da968ad4BD6344",
+        "guardian": "0xd5cc1f1D7b78943bDF09541A2ace41B5c6D83431",
+        "keeper": "0x629Bd7f323fD29E3dF75855C9BC542889c6c1268",
+        "firstPeriodStart": 1786504239,
+        "twabPeriodLength": 3600,
+        "twabPeriodOffset": 1786504239,
+        "drawPeriod": 21600,
+        "proposerGrace": 300,
+        "challengeWindow": 900,
+        "depositCap": "25000000000000000000000",
+        "symbol": "EVRDRAW-V5-MON"
+      },
+      "watcherSecrets": {
+        "drawManagerAddressSecret": "DRAW_MANAGER_ADDRESS",
+        "fromBlockSecret": "V5_WATCHER_FROM_BLOCK"
+      },
+      "activation": {
+        "pendingDrawManager": "0x6e00D2ff59C494a6BC786Ec06f68229e33f6dF11",
+        "effectiveAt": 1786590669,
+        "effectiveAtIso": "2026-08-13T03:11:09.000Z",
+        "commitCommand": "HARDHAT_NETWORK=monadTestnet node scripts/redeploy-v5-claim-draw-managers.js --commit"
+      }
     }
   ]
 }
