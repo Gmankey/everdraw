@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Run the V5 root watcher outside Fly on GitHub Actions. The watcher is read-only: it reconstructs each proposed root from chain events, compares the Python reference result with the on-chain root, sends an alarm on a mismatch, and pings an independent Healthchecks check on a successful run.
+Run the V5 root watcher outside Fly on GitHub Actions. The watcher is read-only: it reconstructs each proposed root from chain events, compares the Python reference result with the on-chain root, sends an alarm on a mismatch, and pings an independent Healthchecks check only after its cursor reaches chain head with adequate veto time remaining.
 
 The keeper's files, Fly volume, RPC, and credentials are not used by this worker.
 
@@ -12,6 +12,9 @@ The keeper's files, Fly volume, RPC, and credentials are not used by this worker
 - The repository branch contains `.github/workflows/v5-watcher.yml`.
 - The watcher RPC is independent from the Fly keeper RPC and can read historical state at seed blocks.
 - A separate Healthchecks check exists for the watcher.
+
+- The Healthchecks period and grace are short enough to detect two missed five-minute workflow
+  runs; for the 15-minute UAT challenge window, use a five-minute period and five-minute grace.
 
 ## Configure Repository Secrets
 
@@ -47,8 +50,10 @@ unset V5_WATCHER_UAT_RPC_URL V5_WATCHER_UAT_LOGS_RPC_URL V5_WATCHER_UAT_HEALTHCH
    ```
 
 2. Open the dispatched run. It must finish green and log `watcher checked N RootProposed events`.
-3. Confirm the watcher Healthchecks check is green.
-4. During the veto drill, confirm a deliberately bad root creates a Telegram + Healthchecks failure alarm before the challenge window expires.
+3. Confirm the numeric `through block` equals `chain head`; bootstrap progress does
+   not send an OK heartbeat until it catches up.
+4. Confirm the watcher Healthchecks check is green.
+5. During the veto drill, confirm a deliberately bad root creates a Telegram + Healthchecks failure alarm before the challenge window expires.
 
 ## Mainnet
 

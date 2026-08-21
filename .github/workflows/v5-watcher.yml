@@ -2,7 +2,9 @@ name: v5-root-watcher
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    # UAT uses a 15-minute challenge window. Poll at five minutes so a delayed run still leaves
+    # operator response time; mainnet uses the longer launch challenge window from ADR-0036.
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -15,7 +17,7 @@ concurrency:
 jobs:
   recompute-uat-roots:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -37,9 +39,14 @@ jobs:
         env:
           DEPLOYMENT_FILE: deployments/monad-testnet.json
           WATCHER_RPC_URL: ${{ secrets.V5_WATCHER_UAT_RPC_URL }}
-          WATCHER_LOGS_RPC_URL: https://testnet-rpc.monad.xyz
+          WATCHER_LOGS_RPC_URL: ${{ secrets.V5_WATCHER_UAT_LOGS_RPC_URL || secrets.V5_WATCHER_UAT_RPC_URL }}
           WATCHER_LOG_CHUNK_SIZE: "100"
           WATCHER_LOG_CONCURRENCY: "2"
+          WATCHER_LOG_TIMEOUT_MS: "10000"
+          WATCHER_RPC_RETRY_ATTEMPTS: "6"
+          WATCHER_RPC_RETRY_BASE_DELAY_MS: "500"
+          WATCHER_RPC_RETRY_MAX_DELAY_MS: "5000"
+          WATCHER_MIN_VETO_REMAINING_SEC: "300"
           WATCHER_MAX_BLOCKS_PER_RUN: "250000"
           WATCHER_STATE_FILE: .watcher-cache/state.json
           WATCHER_EVENT_CACHE_FILE: .watcher-cache/event-cache.json

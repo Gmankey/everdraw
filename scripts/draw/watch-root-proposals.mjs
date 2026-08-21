@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { Contract, Interface, JsonRpcProvider, getAddress } from "ethers";
 import { spawnSync } from "node:child_process";
-import { DrawInputEventCache, buildDrawInput, queryLogsChunked } from "./write-watch-inputs.mjs";
+import { DrawInputEventCache, buildDrawInput, queryLogsChunked, retryTransient } from "./write-watch-inputs.mjs";
 
 const RPC_URL = process.env.WATCHER_RPC_URL || process.env.RPC_URL;
 const DEPLOYMENT_FILE = process.env.DEPLOYMENT_FILE || "deployments/monad-testnet.json";
@@ -15,6 +15,7 @@ const MAX_BLOCKS_PER_RUN = Number(process.env.WATCHER_MAX_BLOCKS_PER_RUN || "250
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const HEALTHCHECKS_PING_URL = process.env.WATCHER_HEALTHCHECKS_PING_URL;
+const MIN_VETO_REMAINING_SEC = Number(process.env.WATCHER_MIN_VETO_REMAINING_SEC || "300");
 
 const ABI = [
   "event RootProposed(uint256 indexed drawId, bytes32 indexed root, uint32 winnerCount, uint256 totalPayout, address indexed proposer, bytes32 algorithmVersion, uint64 challengeEndsAt)",
@@ -108,11 +109,17 @@ async function notify(message) {
   }
 }
 
-async function main() {
+export function proposalCoverageFailure({ challengeEndsAt, observedAt, minRemainingSec = MIN_VETO_REMAINING_SEC }) {
+  const remaining = Number(challengeEndsAt) - Number(observedAt);
+  if (remaining >= Number(minRemainingSec)) return undefined;
+  return `only ${remaining} seconds remained in the veto window (minimum ${minRemainingSec})`;
+}
+
+export async function main() {
   const { drawManagerAddress, fromBlock } = resolveConfig();
   fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
   const provider = new JsonRpcProvider(RPC_URL);
-  const latest = await provider.getBlockNumber();
+  const latest = await retryTransient(() => provider.getBlockNumber(), "watcher chain head");
   const state = readState({ drawManagerAddress, fromBlock });
   const scanFromBlock = Math.max(fromBlock, Number(state?.lastScannedBlock || fromBlock - 1) + 1);
   if (!Number.isSafeInteger(MAX_BLOCKS_PER_RUN) || MAX_BLOCKS_PER_RUN < 1) throw new Error("WATCHER_MAX_BLOCKS_PER_RUN must be a positive integer");
@@ -125,8 +132,10 @@ async function main() {
     file: process.env.WATCHER_EVENT_CACHE_FILE || path.join(os.tmpdir(), "everdraw-v5-watcher-event-cache.json"),
   });
   const manager = new Contract(drawManagerAddress, ["function vault() view returns (address)"], provider);
-  const vaultAddress = getAddress(await manager.vault());
+  const vaultAddress = getAddress(await retryTransient(() => manager.vault(), "watcher vault read"));
   let checked = 0;
+  const coverageFailures = [];
+  const enforceLiveWindow = Boolean(state);
 
   if (scanFromBlock <= latest) {
     const seedTopic = iface.getEvent("SeedReceived").topicHash;
@@ -166,33 +175,60 @@ async function main() {
             const proposal = iface.parseLog(log);
             const drawId = proposal.args.drawId.toString();
             const proposedRoot = proposal.args.root.toLowerCase();
-            const input = await buildDrawInput({
-              provider,
-              drawManagerAddress,
-              drawId,
-              fromBlock,
-              toBlock: batchEnd,
-              eventCache,
-            });
+            const input = await retryTransient(
+              () => buildDrawInput({
+                provider,
+                drawManagerAddress,
+                drawId,
+                fromBlock,
+                toBlock: batchEnd,
+                eventCache,
+              }),
+              `draw ${drawId} reconstruction`,
+            );
             const recomputed = recompute(input);
             checked++;
             if (recomputed.root.toLowerCase() !== proposedRoot) {
-              await alarm(
-                `EverDraw V5 root mismatch draw ${drawId}\nproposed=${proposedRoot}\nrecomputed=${recomputed.root.toLowerCase()}\noperator action: verify and vetoRoot(${drawId}) from Ledger if confirmed`,
-              );
+              const message = `EverDraw V5 root mismatch draw ${drawId}\nproposed=${proposedRoot}\nrecomputed=${recomputed.root.toLowerCase()}\noperator action: verify and vetoRoot(${drawId}) from Ledger if confirmed`;
+              coverageFailures.push(message);
+              await alarm(message);
+            }
+            if (enforceLiveWindow) {
+              const timingFailure = proposalCoverageFailure({
+                challengeEndsAt: proposal.args.challengeEndsAt,
+                observedAt: Math.floor(Date.now() / 1000),
+              });
+              if (timingFailure) {
+                const message = `EverDraw V5 watcher coverage late for draw ${drawId}: ${timingFailure}`;
+                coverageFailures.push(message);
+                await alarm(message);
+              }
             }
           }
 
-          writeState({ drawManagerAddress, fromBlock, lastScannedBlock: batchEnd });
+          if (coverageFailures.length === 0) {
+            writeState({ drawManagerAddress, fromBlock, lastScannedBlock: batchEnd });
+          }
         },
       },
     );
   }
-  if (HEALTHCHECKS_PING_URL) await fetch(HEALTHCHECKS_PING_URL).catch(() => {});
+  const caughtUp = runEnd === latest;
+  if (!caughtUp) {
+    console.warn(`watcher bootstrap incomplete: cursor ${runEnd}, chain head ${latest}; healthcheck remains unconfirmed`);
+  }
+  if (coverageFailures.length > 0) {
+    const err = new Error(`Watcher found ${coverageFailures.length} coverage failure(s)`);
+    err.alreadyAlarmed = true;
+    throw err;
+  }
+  if (caughtUp && HEALTHCHECKS_PING_URL) await fetch(HEALTHCHECKS_PING_URL).catch(() => {});
   console.log(`watcher checked ${checked} RootProposed events through block ${runEnd} (scan start ${scanFromBlock}, chain head ${latest})`);
 }
 
-main().catch(async (err) => {
-  await alarm(`EverDraw V5 watcher failed: ${err.stack || err.message}`);
-  process.exit(1);
-});
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch(async (err) => {
+    if (!err.alreadyAlarmed) await alarm(`EverDraw V5 watcher failed: ${err.stack || err.message}`);
+    process.exit(1);
+  });
+}
