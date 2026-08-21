@@ -85,7 +85,12 @@ function drawStatusName(status) {
 }
 
 function errText(err) {
-  return (err?.error?.message || err?.info?.error?.message || err?.message || "").toLowerCase();
+  return [
+    err?.message,
+    err?.shortMessage,
+    err?.error?.message,
+    err?.info?.error?.message,
+  ].filter(Boolean).join(" ").toLowerCase();
 }
 function errMessage(err) {
   return err?.shortMessage || err?.error?.message || err?.info?.error?.message || err?.message || String(err);
@@ -93,9 +98,12 @@ function errMessage(err) {
 function errCode(err) {
   return err?.error?.code ?? err?.info?.error?.code;
 }
-function isRangeLimitError(err) {
+export function isRangeLimitError(err) {
   const msg = errText(err);
-  return msg.includes("range") || msg.includes("limited") || msg.includes("too many") || msg.includes("block range");
+  return msg.includes("block range")
+    || msg.includes("range limit")
+    || msg.includes("maximum range")
+    || msg.includes("limited to") && msg.includes("blocks");
 }
 // drpc (and most RPCs) occasionally return a retryable hiccup: "temporary internal error,
 // please retry", rate limits, timeouts. These must be retried, not fatal.
@@ -103,7 +111,8 @@ export function isTransientError(err) {
   const msg = errText(err);
   const code = errCode(err);
   return msg.includes("temporary") || msg.includes("please retry") || msg.includes("try again")
-    || msg.includes("timeout") || msg.includes("rate limit") || msg.includes("too many requests")
+    || msg.includes("timeout") || msg.includes("timed out") || msg.includes("rate limit") || msg.includes("too many requests")
+    || msg.includes("compute unit") || msg.includes("capacity")
     || msg.includes("invalid json") || msg.includes("not valid json") || msg.includes("failed to detect network")
     || msg.includes("network error") || msg.includes("socket") || msg.includes("econn")
     || msg.includes("enetwork") || msg.includes("server response")
@@ -159,12 +168,6 @@ async function getLogsRange(provider, filter, from, to) {
       return await getLogsWithTimeout(logsProvider(provider), filter, from, to, `logs fast ${from}-${to}`);
     } catch (err) {
       lastErr = err;
-      if (isRangeLimitError(err) && to > from) {
-        const mid = Math.floor((from + to) / 2);
-        const left = await getLogsRange(provider, filter, from, mid);
-        const right = await getLogsRange(provider, filter, mid + 1, to);
-        return [...left, ...right];
-      }
       if (isTransientError(err) && attempt < RPC_RETRY_ATTEMPTS - 1) {
         const delay = Math.min(RPC_RETRY_MAX_DELAY_MS, RPC_RETRY_BASE_DELAY_MS * (2 ** attempt));
         console.warn(`[logs ${from}-${to}] fast RPC failed attempt ${attempt + 1}/${RPC_RETRY_ATTEMPTS}: ${errMessage(err)}; retrying in ${delay}ms`);
@@ -173,6 +176,12 @@ async function getLogsRange(provider, filter, from, to) {
       }
       break;
     }
+      if (isRangeLimitError(err) && to > from) {
+        const mid = Math.floor((from + to) / 2);
+        const left = await getLogsRange(provider, filter, from, mid);
+        const right = await getLogsRange(provider, filter, mid + 1, to);
+        return [...left, ...right];
+      }
   }
   if (USE_CALLER_LOGS_PROVIDER) throw lastErr;
   // Fast logs RPC exhausted retries for this window — fall back to the caller's reliable provider.

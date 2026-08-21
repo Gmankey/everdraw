@@ -3,7 +3,7 @@ import fs from "node:fs";
 import test from "node:test";
 
 import { proposalCoverageFailure } from "./watch-root-proposals.mjs";
-import { isTransientError, retryTransient } from "./write-watch-inputs.mjs";
+import { isRangeLimitError, isTransientError, retryTransient } from "./write-watch-inputs.mjs";
 
 test("provider startup invalid JSON is retryable", async () => {
   let calls = 0;
@@ -20,6 +20,16 @@ test("provider startup invalid JSON is retryable", async () => {
   assert.equal(result, 123);
   assert.equal(calls, 3);
   assert.equal(isTransientError(new Error("failed to detect network")), true);
+});
+
+test("CU rate limits back off instead of recursively splitting the block range", () => {
+  const err = new Error("could not coalesce error");
+  err.error = { message: "compute units per second capacity exceeded; too many requests" };
+
+  assert.equal(isTransientError(err), true);
+  assert.equal(isRangeLimitError(err), false);
+  assert.equal(isRangeLimitError(new Error("eth_getLogs block range limited to 100 blocks")), true);
+  assert.equal(isTransientError(Object.assign(new Error("fallback timed out"), { error: { message: "opaque provider error" } })), true);
 });
 
 test("deterministic errors are not retried", async () => {
