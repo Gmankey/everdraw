@@ -66,5 +66,10 @@ test("workflow uses configured logs RPC and a five-minute cadence", () => {
   assert.doesNotMatch(workflow, /WATCHER_LOGS_RPC_URL: https:\/\/testnet-rpc\.monad\.xyz/);
   assert.match(workflow, /if: always\(\)/);
   assert.match(fs.readFileSync(new URL("./watch-root-proposals.mjs", import.meta.url), "utf8"), /if \(coverageFailures\.length === 0\)/);
+  assert.match(workflow, /WATCHER_JOB_DURATION_SEC: "3000"/);
+  assert.match(workflow, /WATCHER_POLL_INTERVAL_SEC: "60"/);
+  assert.match(workflow, /WATCHER_MAX_STALE_SUCCESS_SEC: "600"/);
+  assert.match(workflow, /while \(\( SECONDS < deadline \)\)/);
+  assert.match(workflow, /SECONDS - last_success > WATCHER_MAX_STALE_SUCCESS_SEC/);
 });
 
