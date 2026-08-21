@@ -33,6 +33,9 @@ function positiveIntEnv(name, fallback) {
 const CHUNK_SIZE = positiveIntEnv("WATCHER_LOG_CHUNK_SIZE", 1000);
 const LOG_CONCURRENCY = positiveIntEnv("WATCHER_LOG_CONCURRENCY", 1);
 const LOG_TIMEOUT_MS = positiveIntEnv("WATCHER_LOG_TIMEOUT_MS", 30_000);
+const RPC_RETRY_ATTEMPTS = positiveIntEnv("WATCHER_RPC_RETRY_ATTEMPTS", 6);
+const RPC_RETRY_BASE_DELAY_MS = positiveIntEnv("WATCHER_RPC_RETRY_BASE_DELAY_MS", 500);
+const RPC_RETRY_MAX_DELAY_MS = positiveIntEnv("WATCHER_RPC_RETRY_MAX_DELAY_MS", 5_000);
 // Cap how far back log scans reach. Scanning from the deploy block (100k+ blocks) is both slow
 // and unnecessary here — deposits relevant to a draw are recent. Bound the window for speed;
 // widen via env (or use an event indexer) if very old positions must be discovered. A proper
@@ -96,15 +99,39 @@ function isRangeLimitError(err) {
 }
 // drpc (and most RPCs) occasionally return a retryable hiccup: "temporary internal error,
 // please retry", rate limits, timeouts. These must be retried, not fatal.
-function isTransientError(err) {
+export function isTransientError(err) {
   const msg = errText(err);
   const code = errCode(err);
   return msg.includes("temporary") || msg.includes("please retry") || msg.includes("try again")
     || msg.includes("timeout") || msg.includes("rate limit") || msg.includes("too many requests")
+    || msg.includes("invalid json") || msg.includes("not valid json") || msg.includes("failed to detect network")
+    || msg.includes("network error") || msg.includes("socket") || msg.includes("econn")
+    || msg.includes("enetwork") || msg.includes("server response")
     // drpc load-balances across backends; some intermittently report the method unavailable
     // (-32601). A retry lands on a backend that supports it.
     || msg.includes("does not exist") || msg.includes("not available") || msg.includes("method not found")
     || code === 19 || code === 429 || code === -32005 || code === -32601;
+}
+
+export async function retryTransient(operation, label, {
+  attempts = RPC_RETRY_ATTEMPTS,
+  baseDelayMs = RPC_RETRY_BASE_DELAY_MS,
+  maxDelayMs = RPC_RETRY_MAX_DELAY_MS,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+} = {}) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await operation();
+    } catch (err) {
+      lastError = err;
+      if (!isTransientError(err) || attempt === attempts) throw err;
+      const delay = Math.min(maxDelayMs, baseDelayMs * (2 ** (attempt - 1)));
+      console.warn(`[${label}] transient failure attempt ${attempt}/${attempts}: ${errMessage(err)}; retrying in ${delay}ms`);
+      await sleep(delay);
+    }
+  }
+  throw lastError;
 }
 
 function withTimeout(promise, label, timeoutMs = LOG_TIMEOUT_MS) {
@@ -127,7 +154,7 @@ function getLogsWithTimeout(provider, filter, from, to, label) {
 //    log collection.
 async function getLogsRange(provider, filter, from, to) {
   let lastErr;
-  for (let attempt = 0; attempt < 6; attempt++) {
+  for (let attempt = 0; attempt < RPC_RETRY_ATTEMPTS; attempt++) {
     try {
       return await getLogsWithTimeout(logsProvider(provider), filter, from, to, `logs fast ${from}-${to}`);
     } catch (err) {
@@ -138,9 +165,9 @@ async function getLogsRange(provider, filter, from, to) {
         const right = await getLogsRange(provider, filter, mid + 1, to);
         return [...left, ...right];
       }
-      if (isTransientError(err) && attempt < 5) {
-        const delay = 250 * (attempt + 1);
-        console.warn(`[logs ${from}-${to}] fast RPC failed attempt ${attempt + 1}/6: ${errMessage(err)}; retrying in ${delay}ms`);
+      if (isTransientError(err) && attempt < RPC_RETRY_ATTEMPTS - 1) {
+        const delay = Math.min(RPC_RETRY_MAX_DELAY_MS, RPC_RETRY_BASE_DELAY_MS * (2 ** attempt));
+        console.warn(`[logs ${from}-${to}] fast RPC failed attempt ${attempt + 1}/${RPC_RETRY_ATTEMPTS}: ${errMessage(err)}; retrying in ${delay}ms`);
         await new Promise((r) => setTimeout(r, delay));
         continue;
       }
@@ -151,7 +178,10 @@ async function getLogsRange(provider, filter, from, to) {
   // Fast logs RPC exhausted retries for this window — fall back to the caller's reliable provider.
   console.warn(`[logs ${from}-${to}] falling back to caller RPC after fast RPC failure: ${errMessage(lastErr)}`);
   try {
-    return await getLogsWithTimeout(provider, filter, from, to, `logs fallback ${from}-${to}`);
+    return await retryTransient(
+      () => getLogsWithTimeout(provider, filter, from, to, `logs fallback ${from}-${to}`),
+      `logs fallback ${from}-${to}`,
+    );
   } catch (fallbackErr) {
     if (isRangeLimitError(fallbackErr) && to > from) {
       const mid = Math.floor((from + to) / 2);
