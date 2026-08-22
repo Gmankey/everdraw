@@ -7,6 +7,8 @@ import { spawnSync } from "node:child_process";
 import { DrawInputEventCache, buildDrawInput, queryLogsChunked, retryTransient } from "./write-watch-inputs.mjs";
 
 const RPC_URL = process.env.WATCHER_RPC_URL || process.env.RPC_URL;
+const HEAD_RPC_URL = process.env.WATCHER_HEAD_RPC_URL || RPC_URL;
+const HEAD_RPC_TIMEOUT_MS = Number(process.env.WATCHER_HEAD_RPC_TIMEOUT_MS || "10000");
 const DEPLOYMENT_FILE = process.env.DEPLOYMENT_FILE || "deployments/monad-testnet.json";
 const CONFIGURED_DRAW_MANAGER_ADDRESS = process.env.DRAW_MANAGER_ADDRESS;
 const CONFIGURED_FROM_BLOCK = process.env.WATCHER_FROM_BLOCK || process.env.V5_WATCHER_FROM_BLOCK;
@@ -121,13 +123,29 @@ export function shouldEnforceLiveWindow(state) {
 export function canCheckpointBatch(rootMismatchCount) {
   return Number(rootMismatchCount) === 0;
 }
+export function withRpcTimeout(promise, label, timeoutMs = HEAD_RPC_TIMEOUT_MS) {
+  if (!Number.isSafeInteger(Number(timeoutMs)) || Number(timeoutMs) < 1) {
+    throw new Error("WATCHER_HEAD_RPC_TIMEOUT_MS must be a positive integer");
+  }
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), Number(timeoutMs));
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
 
 
 export async function main() {
   const { drawManagerAddress, fromBlock } = resolveConfig();
+  // Keep historical block-tag reads on the archive RPC. Current head/config reads
+  // use a lightweight endpoint so archive-provider stalls cannot block bootstrap.
   fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
   const provider = new JsonRpcProvider(RPC_URL);
-  const latest = await retryTransient(() => provider.getBlockNumber(), "watcher chain head");
+  const headProvider = HEAD_RPC_URL === RPC_URL ? provider : new JsonRpcProvider(HEAD_RPC_URL);
+  const latest = await retryTransient(
+    () => withRpcTimeout(headProvider.getBlockNumber(), "watcher chain head"),
+    "watcher chain head",
+  );
   const state = readState({ drawManagerAddress, fromBlock });
   const scanFromBlock = Math.max(fromBlock, Number(state?.lastScannedBlock || fromBlock - 1) + 1);
   if (!Number.isSafeInteger(MAX_BLOCKS_PER_RUN) || MAX_BLOCKS_PER_RUN < 1) throw new Error("WATCHER_MAX_BLOCKS_PER_RUN must be a positive integer");
@@ -139,8 +157,11 @@ export async function main() {
     drawManagerAddress,
     file: process.env.WATCHER_EVENT_CACHE_FILE || path.join(os.tmpdir(), "everdraw-v5-watcher-event-cache.json"),
   });
-  const manager = new Contract(drawManagerAddress, ["function vault() view returns (address)"], provider);
-  const vaultAddress = getAddress(await retryTransient(() => manager.vault(), "watcher vault read"));
+  const manager = new Contract(drawManagerAddress, ["function vault() view returns (address)"], headProvider);
+  const vaultAddress = getAddress(await retryTransient(
+    () => withRpcTimeout(manager.vault(), "watcher vault read"),
+    "watcher vault read",
+  ));
   let checked = 0;
   const coverageFailures = [];
   const rootMismatches = [];

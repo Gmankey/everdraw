@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 
-import { canCheckpointBatch, proposalCoverageFailure, shouldEnforceLiveWindow } from "./watch-root-proposals.mjs";
+import { canCheckpointBatch, proposalCoverageFailure, shouldEnforceLiveWindow, withRpcTimeout } from "./watch-root-proposals.mjs";
 import { isRangeLimitError, isTransientError, retryTransient } from "./write-watch-inputs.mjs";
 
 test("provider startup invalid JSON is retryable", async () => {
@@ -66,6 +66,17 @@ test("bootstrap timing is not treated as live coverage and only root mismatches 
   assert.equal(canCheckpointBatch(1), false);
 });
 
+test("current RPC calls have a bounded timeout", async () => {
+  await assert.rejects(
+    withRpcTimeout(new Promise(() => {}), "watcher chain head", 5),
+    /watcher chain head timed out after 5ms/,
+  );
+  await assert.rejects(
+    Promise.resolve().then(() => withRpcTimeout(Promise.resolve(1), "invalid", 0)),
+    /WATCHER_HEAD_RPC_TIMEOUT_MS must be a positive integer/,
+  );
+});
+
 
 test("workflow uses configured logs RPC and a five-minute cadence", () => {
   const workflow = fs.readFileSync(new URL("../../.github/workflows/v5-watcher.yml", import.meta.url), "utf8");
@@ -74,6 +85,10 @@ test("workflow uses configured logs RPC and a five-minute cadence", () => {
   assert.match(workflow, /secrets\.V5_WATCHER_UAT_LOGS_RPC_URL \|\| secrets\.V5_WATCHER_UAT_RPC_URL/);
   assert.doesNotMatch(workflow, /WATCHER_LOGS_RPC_URL: https:\/\/testnet-rpc\.monad\.xyz/);
   assert.match(workflow, /if: always\(\)/);
+  assert.match(workflow, /WATCHER_HEAD_RPC_URL: https:\/\/testnet-rpc\.monad\.xyz/);
+  assert.match(workflow, /WATCHER_HEAD_RPC_TIMEOUT_MS: "10000"/);
+  assert.match(watcher, /buildDrawInput\(\{\s*provider,/);
+  assert.match(watcher, /headProvider\.getBlockNumber\(\)/);
   assert.match(watcher, /shouldEnforceLiveWindow\(state\)/);
   assert.match(watcher, /canCheckpointBatch\(rootMismatches\.length\)/);
   assert.match(watcher, /liveMonitoring: true/);

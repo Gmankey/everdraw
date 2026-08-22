@@ -40,6 +40,8 @@ jobs:
           DEPLOYMENT_FILE: deployments/monad-testnet.json
           WATCHER_RPC_URL: ${{ secrets.V5_WATCHER_UAT_RPC_URL }}
           WATCHER_LOGS_RPC_URL: ${{ secrets.V5_WATCHER_UAT_LOGS_RPC_URL || secrets.V5_WATCHER_UAT_RPC_URL }}
+          WATCHER_HEAD_RPC_URL: https://testnet-rpc.monad.xyz
+          WATCHER_HEAD_RPC_TIMEOUT_MS: "10000"
           WATCHER_LOG_CHUNK_SIZE: "100"
           WATCHER_LOG_CONCURRENCY: "1"
           WATCHER_LOG_TIMEOUT_MS: "20000"
