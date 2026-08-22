@@ -50,6 +50,8 @@ jobs:
           WATCHER_JOB_DURATION_SEC: "3000"
           WATCHER_POLL_INTERVAL_SEC: "60"
           WATCHER_MAX_STALE_SUCCESS_SEC: "600"
+          WATCHER_CYCLE_TIMEOUT_SEC: "480"
+          WATCHER_SHUTDOWN_RESERVE_SEC: "180"
           WATCHER_MAX_BLOCKS_PER_RUN: "250000"
           WATCHER_STATE_FILE: .watcher-cache/state.json
           WATCHER_EVENT_CACHE_FILE: .watcher-cache/event-cache.json
@@ -62,12 +64,25 @@ jobs:
           last_success=0
 
           while (( SECONDS < deadline )); do
-            npm run draw:watch
+            remaining=$((deadline - SECONDS))
+            if (( remaining <= WATCHER_SHUTDOWN_RESERVE_SEC )); then
+              break
+            fi
+
+            cycle_budget=$WATCHER_CYCLE_TIMEOUT_SEC
+            max_cycle_budget=$((remaining - WATCHER_SHUTDOWN_RESERVE_SEC))
+            if (( cycle_budget > max_cycle_budget )); then
+              cycle_budget=$max_cycle_budget
+            fi
+
+            timeout --signal=TERM --kill-after=15s "${cycle_budget}s" npm run draw:watch
             status=$?
             now=$SECONDS
 
             if (( status == 0 )); then
               last_success=$now
+            elif (( status == 124 )); then
+              echo "::warning::watcher cycle reached its ${cycle_budget}s budget; checkpointed progress will resume next cycle"
             else
               echo "::warning::watcher cycle failed with exit code $status; retrying in ${WATCHER_POLL_INTERVAL_SEC}s"
             fi

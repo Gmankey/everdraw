@@ -61,12 +61,12 @@ function readState({ drawManagerAddress, fromBlock }) {
   }
 }
 
-function writeState({ drawManagerAddress, fromBlock, lastScannedBlock }) {
+function writeState({ drawManagerAddress, fromBlock, lastScannedBlock, liveMonitoring = false }) {
   fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
   const temp = `${STATE_FILE}.${process.pid}.tmp`;
   fs.writeFileSync(
     temp,
-    JSON.stringify({ version: 1, drawManagerAddress, fromBlock, lastScannedBlock, updatedAt: new Date().toISOString() }) + "\n",
+    JSON.stringify({ version: 2, drawManagerAddress, fromBlock, lastScannedBlock, liveMonitoring, updatedAt: new Date().toISOString() }) + "\n",
   );
   fs.renameSync(temp, STATE_FILE);
 }
@@ -114,6 +114,14 @@ export function proposalCoverageFailure({ challengeEndsAt, observedAt, minRemain
   if (remaining >= Number(minRemainingSec)) return undefined;
   return `only ${remaining} seconds remained in the veto window (minimum ${minRemainingSec})`;
 }
+export function shouldEnforceLiveWindow(state) {
+  return state?.liveMonitoring === true;
+}
+
+export function canCheckpointBatch(rootMismatchCount) {
+  return Number(rootMismatchCount) === 0;
+}
+
 
 export async function main() {
   const { drawManagerAddress, fromBlock } = resolveConfig();
@@ -135,7 +143,8 @@ export async function main() {
   const vaultAddress = getAddress(await retryTransient(() => manager.vault(), "watcher vault read"));
   let checked = 0;
   const coverageFailures = [];
-  const enforceLiveWindow = Boolean(state);
+  const rootMismatches = [];
+  const enforceLiveWindow = shouldEnforceLiveWindow(state);
 
   if (scanFromBlock <= latest) {
     const seedTopic = iface.getEvent("SeedReceived").topicHash;
@@ -191,6 +200,7 @@ export async function main() {
             if (recomputed.root.toLowerCase() !== proposedRoot) {
               const message = `EverDraw V5 root mismatch draw ${drawId}\nproposed=${proposedRoot}\nrecomputed=${recomputed.root.toLowerCase()}\noperator action: verify and vetoRoot(${drawId}) from Ledger if confirmed`;
               coverageFailures.push(message);
+              rootMismatches.push(message);
               await alarm(message);
             }
             if (enforceLiveWindow) {
@@ -206,8 +216,16 @@ export async function main() {
             }
           }
 
-          if (coverageFailures.length === 0) {
-            writeState({ drawManagerAddress, fromBlock, lastScannedBlock: batchEnd });
+          // A root mismatch must remain at the cursor for operator resolution. A late
+          // observation is still an incident, but retrying the same expired proposal
+          // forever cannot restore its veto window and only creates duplicate alerts.
+          if (canCheckpointBatch(rootMismatches.length)) {
+            writeState({
+              drawManagerAddress,
+              fromBlock,
+              lastScannedBlock: batchEnd,
+              liveMonitoring: enforceLiveWindow,
+            });
           }
         },
       },
@@ -221,6 +239,9 @@ export async function main() {
     const err = new Error(`Watcher found ${coverageFailures.length} coverage failure(s)`);
     err.alreadyAlarmed = true;
     throw err;
+  }
+  if (caughtUp) {
+    writeState({ drawManagerAddress, fromBlock, lastScannedBlock: runEnd, liveMonitoring: true });
   }
   if (caughtUp && HEALTHCHECKS_PING_URL) await fetch(HEALTHCHECKS_PING_URL).catch(() => {});
   console.log(`watcher checked ${checked} RootProposed events through block ${runEnd} (scan start ${scanFromBlock}, chain head ${latest})`);

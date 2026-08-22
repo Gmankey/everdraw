@@ -49,16 +49,18 @@ unset V5_WATCHER_UAT_RPC_URL V5_WATCHER_UAT_LOGS_RPC_URL V5_WATCHER_UAT_HEALTHCH
    gh run list --repo Gmankey/everdraw --workflow v5-watcher.yml --limit 3
    ```
 
-2. Open the dispatched run. It should remain in progress for approximately 50 minutes and log
-   `watcher checked N RootProposed events` once per polling cycle. A single cycle may retry after
-   a transient RPC failure, but the job fails if it has no successful chain-head scan for ten
-   minutes.
+2. Open the dispatched run. It should remain in progress for approximately 50 minutes. During
+   bootstrap, an individual scan is capped at eight minutes and resumes from its last persisted
+   log window; the job can remain red until a complete scan reaches chain head. Once caught up,
+   it logs `watcher checked N RootProposed events` once per polling cycle and fails if it has no
+   successful chain-head scan for ten minutes.
 3. Confirm the numeric `through block` equals `chain head`; bootstrap progress does
    not send an OK heartbeat until it catches up.
 4. Confirm the watcher Healthchecks check is green.
 5. During the veto drill, confirm a deliberately bad root creates a Telegram + Healthchecks failure alarm before the challenge window expires.
-6. Confirm a scheduled successor is queued or starts after the 50-minute worker exits; a handoff
-   gap that trips Healthchecks invalidates the soak window.
+6. Confirm the worker exits normally rather than hitting the 60-minute job timeout, its cache-save
+   step succeeds, and a scheduled successor is queued or starts after it exits. A handoff gap that
+   trips Healthchecks invalidates the soak window.
 
 ## Mainnet
 
