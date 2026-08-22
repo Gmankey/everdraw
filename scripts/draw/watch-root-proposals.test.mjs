@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 
-import { proposalCoverageFailure } from "./watch-root-proposals.mjs";
+import { canCheckpointBatch, proposalCoverageFailure, shouldEnforceLiveWindow } from "./watch-root-proposals.mjs";
 import { isRangeLimitError, isTransientError, retryTransient } from "./write-watch-inputs.mjs";
 
 test("provider startup invalid JSON is retryable", async () => {
@@ -58,18 +58,32 @@ test("proposal coverage requires five minutes of veto time", () => {
     /only 299 seconds remained/,
   );
 });
+test("bootstrap timing is not treated as live coverage and only root mismatches pin the cursor", () => {
+  assert.equal(shouldEnforceLiveWindow({ lastScannedBlock: 123 }), false);
+  assert.equal(shouldEnforceLiveWindow({ lastScannedBlock: 123, liveMonitoring: false }), false);
+  assert.equal(shouldEnforceLiveWindow({ lastScannedBlock: 123, liveMonitoring: true }), true);
+  assert.equal(canCheckpointBatch(0), true);
+  assert.equal(canCheckpointBatch(1), false);
+});
+
 
 test("workflow uses configured logs RPC and a five-minute cadence", () => {
   const workflow = fs.readFileSync(new URL("../../.github/workflows/v5-watcher.yml", import.meta.url), "utf8");
+  const watcher = fs.readFileSync(new URL("./watch-root-proposals.mjs", import.meta.url), "utf8");
   assert.match(workflow, /cron: "\*\/5 \* \* \* \*"/);
   assert.match(workflow, /secrets\.V5_WATCHER_UAT_LOGS_RPC_URL \|\| secrets\.V5_WATCHER_UAT_RPC_URL/);
   assert.doesNotMatch(workflow, /WATCHER_LOGS_RPC_URL: https:\/\/testnet-rpc\.monad\.xyz/);
   assert.match(workflow, /if: always\(\)/);
-  assert.match(fs.readFileSync(new URL("./watch-root-proposals.mjs", import.meta.url), "utf8"), /if \(coverageFailures\.length === 0\)/);
+  assert.match(watcher, /shouldEnforceLiveWindow\(state\)/);
+  assert.match(watcher, /canCheckpointBatch\(rootMismatches\.length\)/);
+  assert.match(watcher, /liveMonitoring: true/);
   assert.match(workflow, /WATCHER_JOB_DURATION_SEC: "3000"/);
   assert.match(workflow, /WATCHER_POLL_INTERVAL_SEC: "60"/);
   assert.match(workflow, /WATCHER_MAX_STALE_SUCCESS_SEC: "600"/);
   assert.match(workflow, /while \(\( SECONDS < deadline \)\)/);
+  assert.match(workflow, /WATCHER_CYCLE_TIMEOUT_SEC: "480"/);
+  assert.match(workflow, /WATCHER_SHUTDOWN_RESERVE_SEC: "180"/);
+  assert.match(workflow, /timeout --signal=TERM --kill-after=15s/);
   assert.match(workflow, /SECONDS - last_success > WATCHER_MAX_STALE_SUCCESS_SEC/);
 });
 
