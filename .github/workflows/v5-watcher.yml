@@ -17,7 +17,7 @@ concurrency:
 jobs:
   recompute-uat-roots:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -47,13 +47,46 @@ jobs:
           WATCHER_RPC_RETRY_BASE_DELAY_MS: "500"
           WATCHER_RPC_RETRY_MAX_DELAY_MS: "10000"
           WATCHER_MIN_VETO_REMAINING_SEC: "300"
+          WATCHER_JOB_DURATION_SEC: "3000"
+          WATCHER_POLL_INTERVAL_SEC: "60"
+          WATCHER_MAX_STALE_SUCCESS_SEC: "600"
           WATCHER_MAX_BLOCKS_PER_RUN: "250000"
           WATCHER_STATE_FILE: .watcher-cache/state.json
           WATCHER_EVENT_CACHE_FILE: .watcher-cache/event-cache.json
           WATCHER_HEALTHCHECKS_PING_URL: ${{ secrets.V5_WATCHER_UAT_HEALTHCHECK_URL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: npm run draw:watch
+        run: |
+          set +e
+          deadline=$((SECONDS + WATCHER_JOB_DURATION_SEC))
+          last_success=0
+
+          while (( SECONDS < deadline )); do
+            npm run draw:watch
+            status=$?
+            now=$SECONDS
+
+            if (( status == 0 )); then
+              last_success=$now
+            else
+              echo "::warning::watcher cycle failed with exit code $status; retrying in ${WATCHER_POLL_INTERVAL_SEC}s"
+            fi
+
+            remaining=$((deadline - SECONDS))
+            if (( remaining <= 0 )); then
+              break
+            fi
+            sleep_for=$WATCHER_POLL_INTERVAL_SEC
+            if (( sleep_for > remaining )); then
+              sleep_for=$remaining
+            fi
+            sleep "$sleep_for"
+          done
+
+          if (( last_success == 0 || SECONDS - last_success > WATCHER_MAX_STALE_SUCCESS_SEC )); then
+            echo "::error::watcher had no successful chain-head scan in the final ${WATCHER_MAX_STALE_SUCCESS_SEC}s"
+            exit 1
+          fi
       - uses: actions/cache/save@v4
         if: always()
         with:
