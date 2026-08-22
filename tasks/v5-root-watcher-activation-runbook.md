@@ -10,7 +10,11 @@ The keeper's files, Fly volume, RPC, and credentials are not used by this worker
 
 - The active V5 deployment is recorded in `deployments/monad-testnet.json`.
 - The repository branch contains `.github/workflows/v5-watcher.yml`.
-- The watcher RPC is independent from the Fly keeper RPC and can read historical state at seed blocks.
+- The archive watcher RPC is independent from the Fly keeper RPC and can read historical state at seed blocks.
+- Current chain-head and contract-configuration reads use `WATCHER_HEAD_RPC_URL` (the public Monad
+  testnet RPC in the UAT workflow). Historical TWAB reads stay on the archive RPC, while event
+  scans use `WATCHER_LOGS_RPC_URL`. Do not replace the archive RPC with the public endpoint: the
+  public endpoint does not serve the deployment's historical state.
 - A separate Healthchecks check exists for the watcher.
 
 - The Healthchecks period and grace are short enough to detect two missed five-minute workflow
@@ -57,6 +61,8 @@ unset V5_WATCHER_UAT_RPC_URL V5_WATCHER_UAT_LOGS_RPC_URL V5_WATCHER_UAT_HEALTHCH
 3. Confirm the numeric `through block` equals `chain head`; bootstrap progress does
    not send an OK heartbeat until it catches up.
 4. Confirm the watcher Healthchecks check is green.
+   A head-RPC failure must time out in ten seconds and retry; it must not consume the eight-minute
+   cycle budget before the historical scan begins.
 5. During the veto drill, confirm a deliberately bad root creates a Telegram + Healthchecks failure alarm before the challenge window expires.
 6. Confirm the worker exits normally rather than hitting the 60-minute job timeout, its cache-save
    step succeeds, and a scheduled successor is queued or starts after it exits. A handoff gap that
