@@ -88,22 +88,21 @@ export ENTROPY_PROVIDER="0x52DeaA1c84233F7bb8C8A45baeDE41091c616506"
 export GUARDIAN="<operator-approved guardian>"
 export KEEPER="<primary proposer address>"
 export PAUSER="<operator-approved pauser>"
-export TWAB_PERIOD_LENGTH_SEC=604800
-export DRAW_PERIOD_SEC=604800
-export TWAB_PERIOD_OFFSET="<weekly anchor unix>"
-export FIRST_PERIOD_START="<weekly anchor unix>"
-export DEPOSIT_CAP_MON=25000
+# Weekly cadence, the 25,000 MON cap, zero minimum, and the eight-hour challenge
+# window are locked by scripts/deploy-v5-mainnet.js. Do not export overrides.
 export DEPLOY_COMMIT="$(git rev-parse HEAD)"
 ```
 
-If a min deposit is approved, it must be an explicit env/config input and a post-deploy owner transaction. Do not silently hardcode it.
+The approved minimum deposit is zero and is locked by the deploy script.
 
 ## Step 2 - Deploy V5 contracts
 
-Blocked until a reviewed mainnet V5 deploy script exists. The intended invocation shape is:
+Use the reviewed deploy script and dedicated mainnet Hardhat configuration:
 
 ```bash
-npx hardhat run scripts/deploy-v5-mainnet.js --network monadMainnet
+npx hardhat run scripts/deploy-v5-mainnet.js \
+  --config hardhat.v5-mainnet.config.js \
+  --network monadMainnet
 ```
 
 The deploy script should deploy and wire:

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   DEPOSIT_CAP_MON,
+  CHALLENGE_WINDOW_SECONDS,
   MAINNET_CHAIN_ID,
   MIN_DEPOSIT_MON,
   WEEK_SECONDS,
@@ -14,12 +15,14 @@ test("locks the approved chain and economic parameters", () => {
   assert.equal(MAINNET_CHAIN_ID, 143n);
   assert.equal(DEPOSIT_CAP_MON, "25000");
   assert.equal(MIN_DEPOSIT_MON, "0");
+  assert.equal(CHALLENGE_WINDOW_SECONDS, 28_800);
   assert.deepEqual(assertFixedLaunchParameters({}), {
     depositCap: "25000",
     minDeposit: "0",
   });
   assert.throws(() => assertFixedLaunchParameters({ DEPOSIT_CAP_MON: "50000" }), /must be 25000/);
   assert.throws(() => assertFixedLaunchParameters({ MIN_DEPOSIT_MON: "1" }), /must be 0/);
+  assert.throws(() => assertFixedLaunchParameters({ CHALLENGE_WINDOW_SEC: "900" }), /fixed at 28800/);
 });
 
 test("derives a weekly launch grid from the launch block", () => {

@@ -2,6 +2,7 @@ export const MAINNET_CHAIN_ID = 143n;
 export const WEEK_SECONDS = 7 * 24 * 60 * 60;
 export const DEPOSIT_CAP_MON = "25000";
 export const MIN_DEPOSIT_MON = "0";
+export const CHALLENGE_WINDOW_SECONDS = 8 * 60 * 60;
 
 export function uintEnv(env, name, fallback) {
   const raw = env[name] ?? String(fallback);
@@ -42,6 +43,10 @@ export function assertFixedLaunchParameters(env) {
       throw new Error(`${name} is derived by the mainnet deploy script and must not be overridden`);
     }
   }
+  if (env.CHALLENGE_WINDOW_SEC !== undefined && env.CHALLENGE_WINDOW_SEC !== "") {
+    throw new Error(`CHALLENGE_WINDOW_SEC is fixed at ${CHALLENGE_WINDOW_SECONDS} for mainnet and must not be overridden`);
+  }
+
 
   return { depositCap, minDeposit };
 }
