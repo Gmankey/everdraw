@@ -5,6 +5,7 @@ import fs from "node:fs";
 import hre from "hardhat";
 import {
   MAINNET_CHAIN_ID,
+  CHALLENGE_WINDOW_SECONDS,
   WEEK_SECONDS,
   assertFixedLaunchParameters,
   deriveWeeklyCadence,
@@ -374,8 +375,7 @@ async function deployAndQueue() {
   const latest = await ethers.provider.getBlock("latest");
   const cadence = deriveWeeklyCadence(Number(latest.timestamp));
   const proposerGrace = uintEnv(process.env, "PROPOSER_GRACE_PERIOD_SEC", 300);
-  const challengeWindow = uintEnv(process.env, "CHALLENGE_WINDOW_SEC", 900);
-  if (challengeWindow === 0) throw new Error("CHALLENGE_WINDOW_SEC must be greater than zero");
+  const challengeWindow = CHALLENGE_WINDOW_SECONDS;
 
   const minPrizeThreshold = ethers.parseEther(process.env.MIN_PRIZE_THRESHOLD_SHMON || "0.001");
   const depositCap = ethers.parseEther("25000");

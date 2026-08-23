@@ -27,9 +27,10 @@ The deploy script locks these accepted parameters:
 - weekly TWAB and draw periods
 - launch-block-derived TWAB offset and first period start
 - default minimum prize threshold `0.001 shMON`
+- challenge window `8 hours` (`28,800` seconds)
 
-`TWAB_PERIOD_LENGTH_SEC`, `DRAW_PERIOD_SEC`, `TWAB_PERIOD_OFFSET`, and `FIRST_PERIOD_START` must
-not be supplied. The script derives cadence from the launch block and rejects overrides.
+`TWAB_PERIOD_LENGTH_SEC`, `DRAW_PERIOD_SEC`, `TWAB_PERIOD_OFFSET`, `FIRST_PERIOD_START`, and
+`CHALLENGE_WINDOW_SEC` must not be supplied. The script derives or locks them and rejects overrides.
 
 ## 2. Source and local gates
 
