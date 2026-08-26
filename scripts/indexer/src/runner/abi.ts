@@ -39,6 +39,7 @@ export const POOL_EVENT_ABI = [
   // ── V5 PrizeVaultV5 events ───────────────────────────────────────────────
   'event Deposit(address indexed recipient, uint256 amount)',
   'event Withdraw(address indexed recipient, uint256 amount)',
+  'event Transfer(address indexed from, address indexed to, uint256 amount)',
   'event BoostDeposit(address indexed booster, uint256 amount, uint256 balance, uint64 timestamp)',
   'event BoostWithdraw(address indexed booster, uint256 amount, uint256 balance, uint64 timestamp)',
 

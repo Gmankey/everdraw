@@ -33,7 +33,7 @@ export function createV5TranchesRepo(db: Database.Database): V5TranchesRepo {
       @txHash, @logIndex, @blockNumber, @blockTimestamp, LOWER(@vaultAddress), LOWER(@wallet),
       @poolType, @action, @amount, @balanceAfter, @rawEventName, @source
     )
-    ON CONFLICT(tx_hash, log_index) DO UPDATE SET
+    ON CONFLICT(tx_hash, log_index, wallet) DO UPDATE SET
       block_number = excluded.block_number,
       block_timestamp = excluded.block_timestamp,
       vault_address = excluded.vault_address,

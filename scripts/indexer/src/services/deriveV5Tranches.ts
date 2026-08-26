@@ -7,6 +7,7 @@ import { multiplierForTranche } from './pointsMath.js';
 // Locked ticket rate: 0.005 entries/MON/minute (see v5-odds-display-ux ticket).
 const ENTRIES_RATE_PER_MON_PER_MIN = 0.005;
 const WEI_PER_MON = 1e18;
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
 type DrawWindow = {
   drawId: number;
@@ -23,6 +24,20 @@ type PositionPayload = {
 
 type PrizeCompoundedPayload = {
   account?: string;
+};
+
+type TransferPayload = {
+  from?: string;
+  to?: string;
+  amount?: string | number;
+};
+
+type DerivedPositionEvent = {
+  wallet: string;
+  poolType: V5PoolType;
+  action: V5PositionAction;
+  amount: bigint;
+  balanceAfter: bigint | null;
 };
 
 export interface DeriveV5TranchesService {
@@ -66,59 +81,59 @@ export function createDeriveV5TranchesService(
       v5TranchesRepo.deleteAll();
 
       for (const event of finalizedEvents) {
-        const position = toPositionEvent(event);
-        if (!position) continue;
-
-        v5TranchesRepo.insertPositionEvent({
-          txHash: event.txHash,
-          logIndex: event.logIndex,
-          blockNumber: event.blockNumber,
-          blockTimestamp: event.blockTimestamp,
-          vaultAddress: event.contractAddress,
-          wallet: position.wallet,
-          poolType: position.poolType,
-          action: position.action,
-          amount: position.amount.toString(),
-          balanceAfter: position.balanceAfter?.toString() ?? null,
-          rawEventName: event.eventName,
-          source: sourceForPositionEvent(event, position, prizeCompoundDeposits),
-        });
-
-        if (position.action === 'deposit') {
-          v5TranchesRepo.insertTranche({
-            wallet: position.wallet,
+        const positions = toPositionEvents(event);
+        for (const position of positions) {
+          v5TranchesRepo.insertPositionEvent({
+            txHash: event.txHash,
+            logIndex: event.logIndex,
+            blockNumber: event.blockNumber,
+            blockTimestamp: event.blockTimestamp,
             vaultAddress: event.contractAddress,
+            wallet: position.wallet,
             poolType: position.poolType,
+            action: position.action,
             amount: position.amount.toString(),
-            remainingAmount: position.amount.toString(),
-            openedBlockNumber: event.blockNumber,
-            openedLogIndex: event.logIndex,
-            openedAt: event.blockTimestamp,
-            openedTxHash: event.txHash,
-            startDrawId: findDrawId(drawWindows, event.blockTimestamp),
-            closedAt: null,
-            closedBlockNumber: null,
-            closedLogIndex: null,
-            closedTxHash: null,
+            balanceAfter: position.balanceAfter?.toString() ?? null,
+            rawEventName: event.eventName,
+            source: sourceForPositionEvent(event, position, prizeCompoundDeposits),
           });
-        } else {
-          consumeNewestTranches({
+
+          if (position.action === 'deposit' || position.action === 'transfer_in') {
+            v5TranchesRepo.insertTranche({
+              wallet: position.wallet,
+              vaultAddress: event.contractAddress,
+              poolType: position.poolType,
+              amount: position.amount.toString(),
+              remainingAmount: position.amount.toString(),
+              openedBlockNumber: event.blockNumber,
+              openedLogIndex: event.logIndex,
+              openedAt: event.blockTimestamp,
+              openedTxHash: event.txHash,
+              startDrawId: findDrawId(drawWindows, event.blockTimestamp),
+              closedAt: null,
+              closedBlockNumber: null,
+              closedLogIndex: null,
+              closedTxHash: null,
+            });
+          } else {
+            consumeNewestTranches({
+              repo: v5TranchesRepo,
+              wallet: position.wallet,
+              vaultAddress: event.contractAddress,
+              poolType: position.poolType,
+              amount: position.amount,
+              event,
+            });
+          }
+          assertBalanceAfter({
             repo: v5TranchesRepo,
             wallet: position.wallet,
             vaultAddress: event.contractAddress,
             poolType: position.poolType,
-            amount: position.amount,
+            expected: position.balanceAfter,
             event,
           });
         }
-        assertBalanceAfter({
-          repo: v5TranchesRepo,
-          wallet: position.wallet,
-          vaultAddress: event.contractAddress,
-          poolType: position.poolType,
-          expected: position.balanceAfter,
-          event,
-        });
       }
 
       // Per-wallet per-draw entries → resolved base points (per-tranche tenure multiplier, §2b).
@@ -135,7 +150,7 @@ function buildPrizeCompoundDeposits(events: RawEventRow[]): Set<string> {
 
   for (const event of events) {
     if (event.eventName === 'Deposit') {
-      const position = toPositionEvent(event);
+      const position = toPositionEvents(event)[0];
       if (!position || position.poolType !== 'vault' || position.action !== 'deposit') continue;
       const key = prizeCompoundKey(event.txHash, position.wallet);
       const queue = pendingDeposits.get(key) ?? [];
@@ -164,6 +179,7 @@ function sourceForPositionEvent(
   position: { wallet: string; poolType: V5PoolType; action: V5PositionAction; amount: bigint },
   prizeCompoundDeposits: Set<string>
 ): V5PositionEventSource {
+  if (event.eventName === 'Transfer') return 'transfer';
   if (event.eventName !== 'Deposit' || position.action !== 'deposit' || position.poolType !== 'vault') return 'user';
   return prizeCompoundDeposits.has(positionEventKey(event)) ? 'prize_compound' : 'user';
 }
@@ -223,29 +239,46 @@ function consumeNewestTranches(input: {
       closedTxHash: nextRemaining === 0n ? input.event.txHash : null,
     });
   }
+
+  if (remaining > 0n) {
+    throw new Error(
+      `V5 tranche underflow after ${input.event.eventName} ${input.event.txHash}:${input.event.logIndex} ` +
+      `wallet=${input.wallet} pool=${input.poolType} missing=${remaining}`
+    );
+  }
 }
 
-function toPositionEvent(event: RawEventRow): {
-  wallet: string;
-  poolType: V5PoolType;
-  action: V5PositionAction;
-  amount: bigint;
-  balanceAfter: bigint | null;
-} | null {
-  if (!['Deposit', 'Withdraw', 'BoostDeposit', 'BoostWithdraw'].includes(event.eventName)) return null;
+function toPositionEvents(event: RawEventRow): DerivedPositionEvent[] {
+  if (event.eventName === 'Transfer') {
+    const payload = JSON.parse(event.payload) as TransferPayload;
+    const from = String(payload.from ?? '').toLowerCase();
+    const to = String(payload.to ?? '').toLowerCase();
+    const amount = BigInt(String(payload.amount ?? '0'));
+    if (amount <= 0n || from === to) return [];
+
+    // Mint/burn transfers mirror Deposit/Withdraw and must not be counted twice.
+    if (from === ZERO_ADDRESS || to === ZERO_ADDRESS) return [];
+    if (!/^0x[0-9a-f]{40}$/.test(from) || !/^0x[0-9a-f]{40}$/.test(to)) return [];
+    return [
+      { wallet: from, poolType: 'vault', action: 'transfer_out', amount, balanceAfter: null },
+      { wallet: to, poolType: 'vault', action: 'transfer_in', amount, balanceAfter: null },
+    ];
+  }
+
+  if (!['Deposit', 'Withdraw', 'BoostDeposit', 'BoostWithdraw'].includes(event.eventName)) return [];
   const payload = JSON.parse(event.payload) as PositionPayload;
   const wallet = String(payload.recipient ?? payload.booster ?? event.wallet ?? '').toLowerCase();
-  if (!/^0x[0-9a-f]{40}$/.test(wallet)) return null;
+  if (!/^0x[0-9a-f]{40}$/.test(wallet)) return [];
 
   const poolType: V5PoolType = event.eventName === 'BoostDeposit' || event.eventName === 'BoostWithdraw' ? 'degen' : 'vault';
   const action: V5PositionAction = event.eventName === 'Deposit' || event.eventName === 'BoostDeposit' ? 'deposit' : 'withdraw';
-  return {
+  return [{
     wallet,
     poolType,
     action,
     amount: BigInt(String(payload.amount ?? '0')),
     balanceAfter: payload.balance == null ? null : BigInt(String(payload.balance)),
-  };
+  }];
 }
 
 function toDrawWindow(event: RawEventRow): DrawWindow | null {
@@ -303,16 +336,16 @@ function writeV5ResolvedBase(input: {
   const groups = new Map<string, PosEvent[]>();
   const groupMeta = new Map<string, { wallet: string; poolType: V5PoolType }>();
   for (const event of finalizedEvents) {
-    const position = toPositionEvent(event);
-    if (!position) continue;
     const unix = Math.floor(Date.parse(event.blockTimestamp) / 1000);
     if (!Number.isFinite(unix)) continue;
-    const key = `${position.wallet}:${position.poolType}`;
-    if (!groups.has(key)) {
-      groups.set(key, []);
-      groupMeta.set(key, { wallet: position.wallet, poolType: position.poolType });
+    for (const position of toPositionEvents(event)) {
+      const key = `${position.wallet}:${position.poolType}`;
+      if (!groups.has(key)) {
+        groups.set(key, []);
+        groupMeta.set(key, { wallet: position.wallet, poolType: position.poolType });
+      }
+      groups.get(key)!.push({ unix, action: position.action, amount: position.amount });
     }
-    groups.get(key)!.push({ unix, action: position.action, amount: position.amount });
   }
 
   // resolvedBase[wallet][drawId]
@@ -353,7 +386,7 @@ function writeV5ResolvedBase(input: {
     let prevTime: number | null = null;
     for (const ev of events) {
       if (prevTime != null) flushSegment(prevTime, ev.unix);
-      if (ev.action === 'deposit') {
+      if (ev.action === 'deposit' || ev.action === 'transfer_in') {
         stack.push({ remaining: ev.amount, startDrawId: findDrawIdUnix(windows, ev.unix) });
       } else {
         let remaining = ev.amount;

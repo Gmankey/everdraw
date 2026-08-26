@@ -4,7 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { Contract, Interface, JsonRpcProvider, getAddress } from "ethers";
 import { spawnSync } from "node:child_process";
-import { DrawInputEventCache, buildDrawInput, queryLogsChunked, retryTransient } from "./write-watch-inputs.mjs";
+import { queryLogsChunked, retryTransient } from "./write-watch-inputs.mjs";
+import { buildWatcherDrawInput, ingestWatcherReconstructionLogs } from "./reconstruct-watcher-input.mjs";
 
 const RPC_URL = process.env.WATCHER_RPC_URL || process.env.RPC_URL;
 const HEAD_RPC_URL = process.env.WATCHER_HEAD_RPC_URL || RPC_URL;
@@ -27,7 +28,7 @@ const ABI = [
   "event TimingChangeQueued(uint64 proposerGracePeriod, uint64 challengeWindow, uint64 vetoCooldown, uint64 effectiveAt)",
   "event PrimaryProposerSet(address indexed primaryProposer)",
   "event SeedReceived(uint256 indexed drawId, uint64 indexed requestId, bytes32 seed)",
-  "event Deposit(address indexed recipient, uint256 amount)",
+  "event Transfer(address indexed from,address indexed to,uint256 amount)",
 ];
 
 function latestV5Deployment() {
@@ -50,14 +51,20 @@ function resolveConfig() {
   return { drawManagerAddress: getAddress(drawManagerAddress), fromBlock };
 }
 
-function readState({ drawManagerAddress, fromBlock }) {
+function readState({ chainId, drawManagerAddress, vaultAddress, fromBlock }) {
   if (!fs.existsSync(STATE_FILE)) return undefined;
   try {
     const state = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
     if (
+      state.version !== 3 ||
+      state.chainId !== BigInt(chainId).toString() ||
       getAddress(state.drawManagerAddress) !== drawManagerAddress ||
+      getAddress(state.vaultAddress) !== vaultAddress ||
       Number(state.fromBlock) !== fromBlock ||
-      !Number.isSafeInteger(Number(state.lastScannedBlock))
+      !Number.isSafeInteger(Number(state.lastScannedBlock)) ||
+      !Array.isArray(state.participantAccounts) ||
+      typeof state.seedBlocks !== "object" ||
+      state.seedBlocks == null
     ) {
       return undefined;
     }
@@ -67,14 +74,42 @@ function readState({ drawManagerAddress, fromBlock }) {
   }
 }
 
-function writeState({ drawManagerAddress, fromBlock, lastScannedBlock, liveMonitoring = false }) {
+function writeState({
+  chainId,
+  drawManagerAddress,
+  vaultAddress,
+  fromBlock,
+  lastScannedBlock,
+  lastScannedBlockHash,
+  participantAccounts,
+  seedBlocks,
+  liveMonitoring = false,
+}) {
   fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
   const temp = `${STATE_FILE}.${process.pid}.tmp`;
   fs.writeFileSync(
     temp,
-    JSON.stringify({ version: 2, drawManagerAddress, fromBlock, lastScannedBlock, liveMonitoring, updatedAt: new Date().toISOString() }) + "\n",
+    JSON.stringify({
+      version: 3,
+      chainId: BigInt(chainId).toString(),
+      drawManagerAddress,
+      vaultAddress,
+      fromBlock,
+      lastScannedBlock,
+      lastScannedBlockHash,
+      participantAccounts,
+      seedBlocks,
+      liveMonitoring,
+      updatedAt: new Date().toISOString(),
+    }) + "\n",
   );
   fs.renameSync(temp, STATE_FILE);
+}
+
+export async function canonicalCheckpointMatches(provider, state) {
+  if (!state?.lastScannedBlockHash || Number(state.lastScannedBlock) < 1) return false;
+  const block = await provider.getBlock(Number(state.lastScannedBlock));
+  return block?.hash?.toLowerCase() === state.lastScannedBlockHash.toLowerCase();
 }
 
 function recompute(input) {
@@ -145,8 +180,9 @@ export function withRpcTimeout(promise, label, timeoutMs = HEAD_RPC_TIMEOUT_MS) 
 
 export async function main() {
   const { drawManagerAddress, fromBlock } = resolveConfig();
-  // Keep historical block-tag reads on the archive RPC. Current head/config reads
-  // use a lightweight endpoint so archive-provider stalls cannot block bootstrap.
+  // Historical block-tag reads and reconstruction use the independent watcher RPC.
+  // Current head/config reads may use a lightweight endpoint so archive stalls cannot
+  // hide liveness, but they never supply participant reconstruction data.
   fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
   const provider = new JsonRpcProvider(RPC_URL);
   const headProvider = HEAD_RPC_URL === RPC_URL ? provider : new JsonRpcProvider(HEAD_RPC_URL);
@@ -154,24 +190,34 @@ export async function main() {
     () => withRpcTimeout(headProvider.getBlockNumber(), "watcher chain head"),
     "watcher chain head",
   );
-  const state = readState({ drawManagerAddress, fromBlock });
-  const scanFromBlock = Math.max(fromBlock, Number(state?.lastScannedBlock || fromBlock - 1) + 1);
-  if (!Number.isSafeInteger(MAX_BLOCKS_PER_RUN) || MAX_BLOCKS_PER_RUN < 1) throw new Error("WATCHER_MAX_BLOCKS_PER_RUN must be a positive integer");
-  const runEnd = Math.min(scanFromBlock + MAX_BLOCKS_PER_RUN - 1, latest);
   const iface = new Interface(ABI);
   const rootTopic = iface.getEvent("RootProposed").topicHash;
   const drawPeriodChangeTopic = iface.getEvent("DrawPeriodChangeQueued").topicHash;
   const timingChangeTopic = iface.getEvent("TimingChangeQueued").topicHash;
   const proposerChangeTopic = iface.getEvent("PrimaryProposerSet").topicHash;
-  const eventCache = new DrawInputEventCache({
-    drawManagerAddress,
-    file: process.env.WATCHER_EVENT_CACHE_FILE || path.join(os.tmpdir(), "everdraw-v5-watcher-event-cache.json"),
-  });
   const manager = new Contract(drawManagerAddress, ABI, headProvider);
   const vaultAddress = getAddress(await retryTransient(
     () => withRpcTimeout(manager.vault(), "watcher vault read"),
     "watcher vault read",
   ));
+  const chainId = (await retryTransient(() => provider.getNetwork(), "watcher chain")).chainId;
+  let state = readState({ chainId, drawManagerAddress, vaultAddress, fromBlock });
+  if (state && !await retryTransient(
+    () => canonicalCheckpointMatches(provider, state),
+    "watcher canonical checkpoint",
+  )) {
+    console.warn(`watcher reorg detected at block ${state.lastScannedBlock}; rebuilding from ${fromBlock}`);
+    state = undefined;
+  }
+
+  const scanFromBlock = Math.max(fromBlock, Number(state?.lastScannedBlock || fromBlock - 1) + 1);
+  if (!Number.isSafeInteger(MAX_BLOCKS_PER_RUN) || MAX_BLOCKS_PER_RUN < 1) throw new Error("WATCHER_MAX_BLOCKS_PER_RUN must be a positive integer");
+  const runEnd = Math.min(scanFromBlock + MAX_BLOCKS_PER_RUN - 1, latest);
+  let reconstruction = {
+    accounts: [...(state?.participantAccounts || [])],
+    seedBlocks: { ...(state?.seedBlocks || {}) },
+  };
+  let lastCheckpointHash = state?.lastScannedBlockHash || "";
   let checked = 0;
   const coverageFailures = [];
   const rootMismatches = [];
@@ -179,12 +225,12 @@ export async function main() {
 
   if (scanFromBlock <= latest) {
     const seedTopic = iface.getEvent("SeedReceived").topicHash;
-    const depositTopic = iface.getEvent("Deposit").topicHash;
+    const transferTopic = iface.getEvent("Transfer").topicHash;
     await queryLogsChunked(
       provider,
       {
         address: [drawManagerAddress, vaultAddress],
-        topics: [[rootTopic, seedTopic, depositTopic, drawPeriodChangeTopic, timingChangeTopic, proposerChangeTopic]],
+        topics: [[rootTopic, seedTopic, transferTopic, drawPeriodChangeTopic, timingChangeTopic, proposerChangeTopic]],
       },
       scanFromBlock,
       runEnd,
@@ -192,7 +238,19 @@ export async function main() {
       {
         onBatch: async ({ windows, logs }) => {
           const batchEnd = windows[windows.length - 1][1];
-          eventCache.ingestLogs({ drawManagerAddress, vaultAddress, fromBlock, toBlock: batchEnd, logs });
+          reconstruction = ingestWatcherReconstructionLogs({
+            logs,
+            vaultAddress,
+            drawManagerAddress,
+            initialAccounts: reconstruction.accounts,
+            initialSeedBlocks: reconstruction.seedBlocks,
+          });
+          const checkpoint = await retryTransient(
+            () => provider.getBlock(batchEnd),
+            `watcher checkpoint block ${batchEnd}`,
+          );
+          if (!checkpoint?.hash) throw new Error(`Missing watcher checkpoint block ${batchEnd}`);
+          lastCheckpointHash = checkpoint.hash.toLowerCase();
           const cadenceChanges = logs
             .filter(
               (log) =>
@@ -257,16 +315,17 @@ export async function main() {
               await alarm(message);
             }
             console.log(`watcher draw ${drawId} storedChallengeEndsAt=${storedChallengeEndsAt}`);
+            const seedBlock = reconstruction.seedBlocks[drawId];
+            if (!seedBlock) throw new Error(`Watcher has no SeedReceived block for draw ${drawId}`);
             const input = await retryTransient(
-              () => buildDrawInput({
+              () => buildWatcherDrawInput({
                 provider,
                 drawManagerAddress,
                 drawId,
-                fromBlock,
-                toBlock: batchEnd,
-                eventCache,
+                seedBlock,
+                participantAccounts: reconstruction.accounts,
               }),
-              `draw ${drawId} reconstruction`,
+              `draw ${drawId} independent reconstruction`,
             );
             const recomputed = recompute(input);
             checked++;
@@ -294,9 +353,14 @@ export async function main() {
           // forever cannot restore its veto window and only creates duplicate alerts.
           if (canCheckpointBatch(rootMismatches.length)) {
             writeState({
+              chainId,
               drawManagerAddress,
+              vaultAddress,
               fromBlock,
               lastScannedBlock: batchEnd,
+              lastScannedBlockHash: lastCheckpointHash,
+              participantAccounts: reconstruction.accounts,
+              seedBlocks: reconstruction.seedBlocks,
               liveMonitoring: enforceLiveWindow,
             });
           }
@@ -314,7 +378,17 @@ export async function main() {
     throw err;
   }
   if (caughtUp) {
-    writeState({ drawManagerAddress, fromBlock, lastScannedBlock: runEnd, liveMonitoring: true });
+    writeState({
+      chainId,
+      drawManagerAddress,
+      vaultAddress,
+      fromBlock,
+      lastScannedBlock: runEnd,
+      lastScannedBlockHash: lastCheckpointHash,
+      participantAccounts: reconstruction.accounts,
+      seedBlocks: reconstruction.seedBlocks,
+      liveMonitoring: true,
+    });
   }
   if (caughtUp && HEALTHCHECKS_PING_URL) await fetch(HEALTHCHECKS_PING_URL).catch(() => {});
   console.log(`watcher checked ${checked} RootProposed events through block ${runEnd} (scan start ${scanFromBlock}, chain head ${latest})`);

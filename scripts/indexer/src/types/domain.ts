@@ -26,6 +26,7 @@ export type SupportedEventName =
   // V5 PrizeVault events
   | 'Deposit'
   | 'Withdraw'
+  | 'Transfer'
   | 'BoostDeposit'
   | 'BoostWithdraw'
   // V5 DrawManager lifecycle events
@@ -154,8 +155,8 @@ export interface WalletRoundPointsRow {
 }
 
 export type V5PoolType = 'vault' | 'degen';
-export type V5PositionAction = 'deposit' | 'withdraw';
-export type V5PositionEventSource = 'user' | 'prize_compound';
+export type V5PositionAction = 'deposit' | 'withdraw' | 'transfer_in' | 'transfer_out';
+export type V5PositionEventSource = 'user' | 'prize_compound' | 'transfer';
 
 export interface V5PositionEventRow {
   txHash: string;

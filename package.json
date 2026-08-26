@@ -43,7 +43,7 @@
     "draw:fuzz": "node scripts/draw/differential-fuzz.mjs",
     "draw:load100k": "node scripts/draw/load-100k.mjs",
     "draw:watch": "node scripts/draw/watch-root-proposals.mjs",
-    "draw:watch:test": "node --test scripts/draw/watch-root-proposals.test.mjs",
+    "draw:watch:test": "node --test scripts/draw/write-watch-inputs.test.mjs scripts/draw/watch-root-proposals.test.mjs",
     "draw:watch:inputs": "node scripts/draw/write-watch-inputs.mjs",
     "protocol:monitor-policy-test": "node --test scripts/protocol-monitor-policy.test.mjs"
   },

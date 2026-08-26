@@ -106,12 +106,12 @@ function ensureV5TrancheTables(db: Database.Database): void {
       vault_address TEXT NOT NULL,
       wallet TEXT NOT NULL,
       pool_type TEXT NOT NULL CHECK (pool_type IN ('vault', 'degen')),
-      action TEXT NOT NULL CHECK (action IN ('deposit', 'withdraw')),
+      action TEXT NOT NULL CHECK (action IN ('deposit', 'withdraw', 'transfer_in', 'transfer_out')),
       amount TEXT NOT NULL,
       balance_after TEXT,
       raw_event_name TEXT NOT NULL,
-      source TEXT NOT NULL DEFAULT 'user' CHECK (source IN ('user', 'prize_compound')),
-      PRIMARY KEY (tx_hash, log_index)
+      source TEXT NOT NULL DEFAULT 'user' CHECK (source IN ('user', 'prize_compound', 'transfer')),
+      PRIMARY KEY (tx_hash, log_index, wallet)
     );
 
     CREATE INDEX IF NOT EXISTS idx_v5_position_events_wallet ON v5_position_events(wallet);
@@ -144,6 +144,44 @@ function ensureV5TrancheTables(db: Database.Database): void {
   const positionEventColumns = db.prepare("PRAGMA table_info(v5_position_events)").all() as Array<{ name: string }>;
   const positionEventNames = new Set(positionEventColumns.map((column) => column.name));
   if (positionEventColumns.length > 0 && !positionEventNames.has('source')) {
-    db.exec("ALTER TABLE v5_position_events ADD COLUMN source TEXT NOT NULL DEFAULT 'user' CHECK (source IN ('user', 'prize_compound'))");
+    db.exec("ALTER TABLE v5_position_events ADD COLUMN source TEXT NOT NULL DEFAULT 'user' CHECK (source IN ('user', 'prize_compound', 'transfer'))");
+  }
+  const positionTable = db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'v5_position_events'"
+  ).get() as { sql?: string } | undefined;
+  if (positionTable?.sql && !positionTable.sql.includes("'transfer_in'")) {
+    db.exec(`
+      ALTER TABLE v5_position_events RENAME TO v5_position_events_pre_transfer;
+
+      CREATE TABLE v5_position_events (
+        tx_hash TEXT NOT NULL,
+        log_index INTEGER NOT NULL,
+        block_number INTEGER NOT NULL,
+        block_timestamp TEXT NOT NULL,
+        vault_address TEXT NOT NULL,
+        wallet TEXT NOT NULL,
+        pool_type TEXT NOT NULL CHECK (pool_type IN ('vault', 'degen')),
+        action TEXT NOT NULL CHECK (action IN ('deposit', 'withdraw', 'transfer_in', 'transfer_out')),
+        amount TEXT NOT NULL,
+        balance_after TEXT,
+        raw_event_name TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'user' CHECK (source IN ('user', 'prize_compound', 'transfer')),
+        PRIMARY KEY (tx_hash, log_index, wallet)
+      );
+
+      INSERT INTO v5_position_events (
+        tx_hash, log_index, block_number, block_timestamp, vault_address, wallet,
+        pool_type, action, amount, balance_after, raw_event_name, source
+      )
+      SELECT
+        tx_hash, log_index, block_number, block_timestamp, vault_address, wallet,
+        pool_type, action, amount, balance_after, raw_event_name, source
+      FROM v5_position_events_pre_transfer;
+
+      DROP TABLE v5_position_events_pre_transfer;
+      CREATE INDEX idx_v5_position_events_wallet ON v5_position_events(wallet);
+      CREATE INDEX idx_v5_position_events_vault_pool ON v5_position_events(vault_address, pool_type);
+      CREATE INDEX idx_v5_position_events_order ON v5_position_events(block_number, log_index);
+    `);
   }
 }
