@@ -155,12 +155,12 @@ CREATE TABLE IF NOT EXISTS v5_position_events (
   vault_address TEXT NOT NULL,
   wallet TEXT NOT NULL,
   pool_type TEXT NOT NULL CHECK (pool_type IN ('vault', 'degen')),
-  action TEXT NOT NULL CHECK (action IN ('deposit', 'withdraw')),
+  action TEXT NOT NULL CHECK (action IN ('deposit', 'withdraw', 'transfer_in', 'transfer_out')),
   amount TEXT NOT NULL,
   balance_after TEXT,
   raw_event_name TEXT NOT NULL,
-  source TEXT NOT NULL DEFAULT 'user' CHECK (source IN ('user', 'prize_compound')),
-  PRIMARY KEY (tx_hash, log_index)
+  source TEXT NOT NULL DEFAULT 'user' CHECK (source IN ('user', 'prize_compound', 'transfer')),
+  PRIMARY KEY (tx_hash, log_index, wallet)
 );
 
 CREATE INDEX IF NOT EXISTS idx_v5_position_events_wallet ON v5_position_events(wallet);

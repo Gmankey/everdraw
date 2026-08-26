@@ -45,5 +45,19 @@ Move the ERC-20 metadata off the vault onto a read-only adapter Merkl points at,
 ## V4.1 interim (this ADR does not fix V4.1 — immutable)
 Until V5: rely on Blockaid/MetaMask **token** allowlisting of `0x933FF608…F7DA` and `0x1886f329…404C` (false-positive report framed as a token, via FastLane/Monad fast-track), plus the in-app Smart Account note. See the builder backlog / runbook.
 
+## 2026-08-26 security clarification  offchain transfer semantics
+
+Every offchain participant reconstruction must discover accounts from the canonical vault
+`Transfer` stream, including mint, burn, sender, and recipient addresses. Keeper and watcher use
+independent implementations and persist chain-, vault-, and block-hash-scoped inventories so a
+reorg cannot leave orphan accounts in either root calculation.
+
+Points tenure is deliberately non-transferable. A participant transfer consumes the sender's
+newest tranches first (LIFO), matching withdrawals. The recipient receives a fresh tenure-zero
+tranche at the transfer timestamp; its first full-weight draw is the following draw. Mint and burn
+`Transfer` events mirror `Deposit` and `Withdraw` and are not double-counted by the tranche
+ledger. This prevents an aged multiplier from being sold while preserving standard ERC-20 share
+transferability.
+
 ## Related
 - ADR-0006 (superseded surface), ADR-0036 (TWAB architecture), ADR-0038 (MON denomination), `tasks/builder-backlog-2026-06-25.md`.

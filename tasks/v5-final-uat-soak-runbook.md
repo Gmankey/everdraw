@@ -39,6 +39,9 @@ unresolved alert, manual lifecycle transaction, or funding halt resets the clock
   the operator alert, then restart it and verify recovery to green. Record both timestamps.
 - Indexer lag remains healthy and every lifecycle event is ingested.
 - Participant MON and shMON deposits both work.
+- Transfer participant shares to a fresh wallet during an open draw. Confirm the sender and
+  recipient TWABs reconcile exactly and the independently reconstructed watcher root matches the
+  keeper proposal.
 - A partial withdrawal consumes newest tranches first while surviving tenure and streak remain.
 - An exact full withdrawal leaves zero participant principal and resets the participant streak.
 - A Patron deposit contributes yield, receives zero entries, and can be withdrawn in shMON.

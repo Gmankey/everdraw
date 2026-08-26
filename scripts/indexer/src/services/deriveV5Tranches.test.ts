@@ -192,7 +192,7 @@ rawEventsRepo.upsertMany([
 
 assert.throws(
   () => service.rebuildFromRaw(),
-  /V5 tranche balance drift after BoostWithdraw/
+  /V5 tranche (?:underflow|balance drift) after BoostWithdraw/
 );
 
 console.log('deriveV5Tranches.test.ts ok');

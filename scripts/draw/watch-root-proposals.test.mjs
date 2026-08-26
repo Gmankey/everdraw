@@ -1,15 +1,24 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
+import { Interface } from "ethers";
 
+import { compute } from "./compute-winners.js";
+import { ingestWatcherReconstructionLogs } from "./reconstruct-watcher-input.mjs";
 import {
   canCheckpointBatch,
+  canonicalCheckpointMatches,
   challengeDeadlineMismatch,
   proposalCoverageFailure,
   shouldEnforceLiveWindow,
   withRpcTimeout,
 } from "./watch-root-proposals.mjs";
-import { isRangeLimitError, isTransientError, retryTransient } from "./write-watch-inputs.mjs";
+import {
+  isRangeLimitError,
+  isTransientError,
+  participantAccountsFromLogs,
+  retryTransient,
+} from "./write-watch-inputs.mjs";
 
 test("provider startup invalid JSON is retryable", async () => {
   let calls = 0;
@@ -89,6 +98,69 @@ test("current RPC calls have a bounded timeout", async () => {
 });
 
 
+test("keeper and watcher independently reconstruct transfer recipients to the same total and root", () => {
+  const vault = "0x0000000000000000000000000000000000000a11";
+  const manager = "0x0000000000000000000000000000000000000d22";
+  const alice = "0x00000000000000000000000000000000000000a1";
+  const bob = "0x00000000000000000000000000000000000000b2";
+  const carol = "0x00000000000000000000000000000000000000c3";
+  const transfer = new Interface(["event Transfer(address indexed from,address indexed to,uint256 amount)"]);
+  const makeLog = (from, to, amount, blockNumber, index) => {
+    const encoded = transfer.encodeEventLog(transfer.getEvent("Transfer"), [from, to, amount]);
+    return { address: vault, blockNumber, index, logIndex: index, topics: encoded.topics, data: encoded.data };
+  };
+  const logs = [
+    makeLog("0x0000000000000000000000000000000000000000", alice, 100n, 10, 0),
+    makeLog(alice, bob, 40n, 11, 0),
+    makeLog(bob, carol, 10n, 12, 0),
+  ];
+
+  const keeperAccounts = participantAccountsFromLogs(logs);
+  const watcher = ingestWatcherReconstructionLogs({
+    logs,
+    vaultAddress: vault,
+    drawManagerAddress: manager,
+  });
+  assert.deepEqual(watcher.accounts, keeperAccounts);
+
+  const twab = new Map([
+    [alice.toLowerCase(), 60n],
+    [bob.toLowerCase(), 30n],
+    [carol.toLowerCase(), 10n],
+  ]);
+  const inputFor = (accounts) => ({
+    drawId: "9",
+    drawManager: manager,
+    seed: `0x${"42".repeat(32)}`,
+    totalPayout: "1000",
+    prizeLegs: [{
+      token: "0x0000000000000000000000000000000000000000",
+      amount: "1000",
+      feeAmount: "0",
+    }],
+    feeRecipients: [],
+    tierBps: [10000],
+    accounts: accounts.map((address) => ({ address, twab: twab.get(address.toLowerCase()).toString() })),
+  });
+  const keeperResult = compute(inputFor(keeperAccounts));
+  const watcherResult = compute(inputFor(watcher.accounts));
+  assert.equal(keeperResult.totalTwab, "100");
+  assert.equal(watcherResult.totalTwab, "100");
+  assert.equal(watcherResult.root, keeperResult.root);
+});
+
+test("watcher canonical checkpoint detects reorg replacement", async () => {
+  const state = { lastScannedBlock: 99, lastScannedBlockHash: `0x${"11".repeat(32)}` };
+  assert.equal(
+    await canonicalCheckpointMatches({ getBlock: async () => ({ hash: `0x${"11".repeat(32)}` }) }, state),
+    true,
+  );
+  assert.equal(
+    await canonicalCheckpointMatches({ getBlock: async () => ({ hash: `0x${"22".repeat(32)}` }) }, state),
+    false,
+  );
+});
+
 test("workflow uses configured logs RPC and a five-minute cadence", () => {
   const workflow = fs.readFileSync(new URL("../../.github/workflows/v5-watcher.yml", import.meta.url), "utf8");
   const watcher = fs.readFileSync(new URL("./watch-root-proposals.mjs", import.meta.url), "utf8");
@@ -98,7 +170,8 @@ test("workflow uses configured logs RPC and a five-minute cadence", () => {
   assert.match(workflow, /if: always\(\)/);
   assert.match(workflow, /WATCHER_HEAD_RPC_URL: https:\/\/testnet-rpc\.monad\.xyz/);
   assert.match(workflow, /WATCHER_HEAD_RPC_TIMEOUT_MS: "10000"/);
-  assert.match(watcher, /buildDrawInput\(\{\s*provider,/);
+  assert.match(watcher, /buildWatcherDrawInput\(\{\s*provider,/);
+  assert.doesNotMatch(watcher, /DrawInputEventCache|buildDrawInput/);
   assert.match(watcher, /headProvider\.getBlockNumber\(\)/);
   assert.match(watcher, /shouldEnforceLiveWindow\(state\)/);
   assert.match(watcher, /canCheckpointBatch\(rootMismatches\.length\)/);

@@ -56,7 +56,6 @@ jobs:
           WATCHER_SHUTDOWN_RESERVE_SEC: "180"
           WATCHER_MAX_BLOCKS_PER_RUN: "250000"
           WATCHER_STATE_FILE: .watcher-cache/state.json
-          WATCHER_EVENT_CACHE_FILE: .watcher-cache/event-cache.json
           WATCHER_HEALTHCHECKS_PING_URL: ${{ secrets.V5_WATCHER_UAT_HEALTHCHECK_URL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}

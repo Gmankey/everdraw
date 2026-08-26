@@ -39,6 +39,7 @@ export const SUPPORTED_EVENTS: SupportedEventName[] = [
   'EmergencyForceSettled',
   'Deposit',
   'Withdraw',
+  'Transfer',
   'BoostDeposit',
   'BoostWithdraw',
   'DrawStarted',
@@ -379,6 +380,9 @@ function normalizeArgs(eventName: SupportedEventName, args: any): Record<string,
 
     case 'Withdraw':
       return { recipient: String(args.recipient).toLowerCase(), amount: String(args.amount) };
+
+    case 'Transfer':
+      return { from: String(args.from).toLowerCase(), to: String(args.to).toLowerCase(), amount: String(args.amount) };
 
     case 'BoostDeposit':
       return {

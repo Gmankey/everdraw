@@ -44,7 +44,8 @@ const RPC_RETRY_MAX_DELAY_MS = positiveIntEnv("WATCHER_RPC_RETRY_MAX_DELAY_MS", 
 // With a reliable RPC + 1000-block chunks this stays tolerable; an indexer is the long-term
 // path. Override to bound the scan only if you understand the correctness tradeoff.
 const MAX_LOG_LOOKBACK = positiveIntEnv("WATCHER_LOG_MAX_LOOKBACK", 50_000_000);
-const CACHE_VERSION = 1;
+const CACHE_VERSION = 2;
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 const DRAW_MANAGER_ABI = [
   "function vault() view returns (address)",
@@ -61,6 +62,7 @@ const DRAW_MANAGER_ABI = [
 
 const VAULT_ABI = [
   "event Deposit(address indexed recipient, uint256 amount)",
+  "event Transfer(address indexed from,address indexed to,uint256 amount)",
 ];
 
 const TWAB_ABI = [
@@ -234,6 +236,29 @@ function sortLogs(logs) {
     return (a.logIndex ?? a.index ?? 0) - (b.logIndex ?? b.index ?? 0);
   });
 }
+export function participantAccountsFromLogs(logs, initialAccounts = []) {
+  const iface = new Interface(VAULT_ABI);
+  const depositTopic = iface.getEvent("Deposit").topicHash.toLowerCase();
+  const transferTopic = iface.getEvent("Transfer").topicHash.toLowerCase();
+  const accounts = new Set(initialAccounts.map((account) => getAddress(account)));
+  const add = (account) => {
+    const normalized = getAddress(account);
+    if (normalized !== ZERO_ADDRESS) accounts.add(normalized);
+  };
+
+  for (const log of sortLogs([...logs])) {
+    const topic0 = log.topics[0]?.toLowerCase();
+    if (topic0 === depositTopic) {
+      add(iface.parseLog(log).args.recipient);
+    } else if (topic0 === transferTopic) {
+      const parsed = iface.parseLog(log);
+      add(parsed.args.from);
+      add(parsed.args.to);
+    }
+  }
+
+  return [...accounts].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+}
 
 function atomicWriteJson(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -266,22 +291,25 @@ export class DrawInputEventCache {
   #fresh() {
     return {
       version: CACHE_VERSION,
+      chainId: "",
       drawManagerAddress: this.drawManagerAddress || "",
       vaultAddress: "",
       fromBlock: 0,
-      deposits: { lastScannedBlock: 0, accounts: [] },
-      seeds: { lastScannedBlock: 0, blocks: {} },
+      participants: { lastScannedBlock: 0, lastScannedBlockHash: "", accounts: [] },
+      seeds: { lastScannedBlock: 0, lastScannedBlockHash: "", blocks: {} },
       updatedAt: "",
     };
   }
 
-  #ensureScope({ drawManagerAddress, vaultAddress, fromBlock }) {
+  #ensureScope({ chainId, drawManagerAddress, vaultAddress, fromBlock }) {
+    const expectedChainId = BigInt(chainId).toString();
     const manager = getAddress(drawManagerAddress);
     const vault = getAddress(vaultAddress);
     const expectedStart = Math.max(0, Number(fromBlock) - 1);
     const configuredFromBlock = Number(fromBlock);
     if (
       this.state.version !== CACHE_VERSION ||
+      (this.state.chainId && this.state.chainId !== expectedChainId) ||
       (this.state.drawManagerAddress && getAddress(this.state.drawManagerAddress) !== manager) ||
       (this.state.vaultAddress && getAddress(this.state.vaultAddress) !== vault) ||
       !Number.isSafeInteger(Number(this.state.fromBlock)) ||
@@ -289,15 +317,50 @@ export class DrawInputEventCache {
     ) {
       this.state = this.#fresh();
     }
+    this.state.chainId = expectedChainId;
     this.state.drawManagerAddress = manager;
     this.state.vaultAddress = vault;
     this.state.fromBlock = this.state.fromBlock ? Math.min(Number(this.state.fromBlock), configuredFromBlock) : configuredFromBlock;
-    if (!Number.isSafeInteger(Number(this.state.deposits?.lastScannedBlock)) || this.state.deposits.lastScannedBlock < expectedStart) {
-      this.state.deposits = { lastScannedBlock: expectedStart, accounts: [] };
+    if (
+      !Number.isSafeInteger(Number(this.state.participants?.lastScannedBlock)) ||
+      this.state.participants.lastScannedBlock < expectedStart
+    ) {
+      this.state.participants = { lastScannedBlock: expectedStart, lastScannedBlockHash: "", accounts: [] };
     }
     if (!Number.isSafeInteger(Number(this.state.seeds?.lastScannedBlock)) || this.state.seeds.lastScannedBlock < expectedStart) {
-      this.state.seeds = { lastScannedBlock: expectedStart, blocks: {} };
+      this.state.seeds = { lastScannedBlock: expectedStart, lastScannedBlockHash: "", blocks: {} };
     }
+  }
+
+  async #checkpointHash(provider, blockNumber) {
+    if (Number(blockNumber) <= 0) return "";
+    const block = await retryTransient(
+      () => provider.getBlock(Number(blockNumber)),
+      `event cache block ${blockNumber}`,
+    );
+    if (!block?.hash) throw new Error(`Missing canonical block ${blockNumber}`);
+    return block.hash.toLowerCase();
+  }
+
+  async ensureCanonical({ provider, drawManagerAddress, vaultAddress, fromBlock }) {
+    const chainId = (await retryTransient(() => provider.getNetwork(), "event cache chain")).chainId;
+    const scope = { chainId, drawManagerAddress, vaultAddress, fromBlock };
+    this.#ensureScope(scope);
+
+    for (const checkpoint of [this.state.participants, this.state.seeds]) {
+      if (!checkpoint.lastScannedBlockHash || checkpoint.lastScannedBlock < Number(fromBlock)) continue;
+      const canonicalHash = await this.#checkpointHash(provider, checkpoint.lastScannedBlock);
+      if (canonicalHash !== checkpoint.lastScannedBlockHash.toLowerCase()) {
+        console.warn(
+          `event cache reorg detected at block ${checkpoint.lastScannedBlock}; rebuilding from ${fromBlock}`,
+        );
+        this.state = this.#fresh();
+        this.#ensureScope(scope);
+        this.save();
+        return false;
+      }
+    }
+    return true;
   }
 
   save() {
@@ -305,66 +368,62 @@ export class DrawInputEventCache {
     atomicWriteJson(this.file, this.state);
   }
 
-  ingestLogs({ drawManagerAddress, vaultAddress, fromBlock, toBlock, logs }) {
-    this.#ensureScope({ drawManagerAddress, vaultAddress, fromBlock });
+  ingestLogs({ chainId, drawManagerAddress, vaultAddress, fromBlock, toBlock, blockHash = "", logs }) {
+    this.#ensureScope({ chainId, drawManagerAddress, vaultAddress, fromBlock });
     const manager = getAddress(drawManagerAddress);
     const vault = getAddress(vaultAddress);
-    const depositInterface = new Interface(VAULT_ABI);
     const seedInterface = new Interface(DRAW_MANAGER_ABI);
-    const depositTopic = depositInterface.getEvent("Deposit").topicHash.toLowerCase();
     const seedTopic = seedInterface.getEvent("SeedReceived").topicHash.toLowerCase();
-    const accounts = new Set((this.state.deposits.accounts || []).map((account) => getAddress(account)));
+    const vaultLogs = logs.filter((log) => getAddress(log.address) === vault);
+    const accounts = participantAccountsFromLogs(vaultLogs, this.state.participants.accounts || []);
     const blocks = { ...(this.state.seeds.blocks || {}) };
 
-    for (const log of sortLogs(logs)) {
-      const address = getAddress(log.address);
-      const topic0 = log.topics[0]?.toLowerCase();
-      if (address === vault && topic0 === depositTopic) {
-        const parsed = depositInterface.parseLog(log);
-        accounts.add(getAddress(parsed.args.recipient));
-      } else if (address === manager && topic0 === seedTopic) {
-        const parsed = seedInterface.parseLog(log);
-        blocks[parsed.args.drawId.toString()] = log.blockNumber;
-      }
+    for (const log of sortLogs([...logs])) {
+      if (getAddress(log.address) !== manager || log.topics[0]?.toLowerCase() !== seedTopic) continue;
+      const parsed = seedInterface.parseLog(log);
+      blocks[parsed.args.drawId.toString()] = log.blockNumber;
     }
 
     const scannedThrough = Number(toBlock);
-    this.state.deposits = {
-      lastScannedBlock: Math.max(Number(this.state.deposits.lastScannedBlock || 0), scannedThrough),
-      accounts: [...accounts].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase())),
+    const checkpointHash = String(blockHash || "").toLowerCase();
+    this.state.participants = {
+      lastScannedBlock: Math.max(Number(this.state.participants.lastScannedBlock || 0), scannedThrough),
+      lastScannedBlockHash: checkpointHash,
+      accounts,
     };
     this.state.seeds = {
       lastScannedBlock: Math.max(Number(this.state.seeds.lastScannedBlock || 0), scannedThrough),
+      lastScannedBlockHash: checkpointHash,
       blocks,
     };
     this.save();
   }
 
-  async syncDeposits({ provider, drawManagerAddress, vaultAddress, fromBlock, toBlock }) {
-    this.#ensureScope({ drawManagerAddress, vaultAddress, fromBlock });
+  async syncParticipants({ provider, drawManagerAddress, vaultAddress, fromBlock, toBlock }) {
+    await this.ensureCanonical({ provider, drawManagerAddress, vaultAddress, fromBlock });
     const target = Number(toBlock);
-    const last = Number(this.state.deposits.lastScannedBlock || 0);
+    const last = Number(this.state.participants.lastScannedBlock || 0);
     if (target <= last) return;
 
     const iface = new Interface(VAULT_ABI);
-    const topic0 = iface.getEvent("Deposit").topicHash;
+    const depositTopic = iface.getEvent("Deposit").topicHash;
+    const transferTopic = iface.getEvent("Transfer").topicHash;
     const from = last + 1;
-    const accounts = new Set((this.state.deposits.accounts || []).map((account) => getAddress(account)));
+    let accounts = [...(this.state.participants.accounts || [])];
     await queryLogsChunked(
       provider,
-      { address: getAddress(vaultAddress), topics: [topic0] },
+      { address: getAddress(vaultAddress), topics: [[depositTopic, transferTopic]] },
       from,
       target,
-      "deposits:delta",
+      "participants:delta",
       {
-        onBatch: ({ windows, logs }) => {
-          for (const log of sortLogs(logs)) {
-            const parsed = iface.parseLog(log);
-            accounts.add(getAddress(parsed.args.recipient));
-          }
-          this.state.deposits = {
-            lastScannedBlock: windows[windows.length - 1][1],
-            accounts: [...accounts].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase())),
+        onBatch: async ({ windows, logs }) => {
+          const scannedThrough = windows[windows.length - 1][1];
+          accounts = participantAccountsFromLogs(logs, accounts);
+          this.state.participants = {
+            lastScannedBlock: scannedThrough,
+            lastScannedBlockHash: await this.#checkpointHash(provider, scannedThrough),
+            accounts,
           };
           this.save();
         },
@@ -373,7 +432,7 @@ export class DrawInputEventCache {
   }
 
   async syncSeeds({ provider, drawManagerAddress, vaultAddress, fromBlock, toBlock }) {
-    this.#ensureScope({ drawManagerAddress, vaultAddress, fromBlock });
+    await this.ensureCanonical({ provider, drawManagerAddress, vaultAddress, fromBlock });
     const target = Number(toBlock);
     const last = Number(this.state.seeds.lastScannedBlock || 0);
     if (target <= last) return;
@@ -389,12 +448,17 @@ export class DrawInputEventCache {
       target,
       "seeds:delta",
       {
-        onBatch: ({ windows, logs }) => {
+        onBatch: async ({ windows, logs }) => {
           for (const log of sortLogs(logs)) {
             const parsed = iface.parseLog(log);
             blocks[parsed.args.drawId.toString()] = log.blockNumber;
           }
-          this.state.seeds = { lastScannedBlock: windows[windows.length - 1][1], blocks };
+          const scannedThrough = windows[windows.length - 1][1];
+          this.state.seeds = {
+            lastScannedBlock: scannedThrough,
+            lastScannedBlockHash: await this.#checkpointHash(provider, scannedThrough),
+            blocks,
+          };
           this.save();
         },
       },
@@ -409,8 +473,8 @@ export class DrawInputEventCache {
   }
 
   async participantAccounts({ provider, drawManagerAddress, vaultAddress, fromBlock, toBlock }) {
-    await this.syncDeposits({ provider, drawManagerAddress, vaultAddress, fromBlock, toBlock });
-    return [...(this.state.deposits.accounts || [])];
+    await this.syncParticipants({ provider, drawManagerAddress, vaultAddress, fromBlock, toBlock });
+    return [...(this.state.participants.accounts || [])];
   }
 }
 
@@ -437,14 +501,16 @@ async function seedBlockFor(provider, manager, drawId, fromBlock, toBlock) {
 
 async function participantAccounts(provider, vaultAddress, fromBlock, toBlock) {
   const iface = new Interface(VAULT_ABI);
-  const topic0 = iface.getEvent("Deposit").topicHash;
-  const logs = await queryLogsChunked(provider, { address: vaultAddress, topics: [topic0] }, fromBlock, toBlock, "deposits");
-  const accounts = new Set();
-  for (const log of logs) {
-    const parsed = iface.parseLog(log);
-    accounts.add(getAddress(parsed.args.recipient));
-  }
-  return [...accounts].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+  const depositTopic = iface.getEvent("Deposit").topicHash;
+  const transferTopic = iface.getEvent("Transfer").topicHash;
+  const logs = await queryLogsChunked(
+    provider,
+    { address: vaultAddress, topics: [[depositTopic, transferTopic]] },
+    fromBlock,
+    toBlock,
+    "participants",
+  );
+  return participantAccountsFromLogs(logs);
 }
 
 export async function buildDrawInput({
