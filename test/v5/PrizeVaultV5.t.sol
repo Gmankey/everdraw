@@ -47,6 +47,24 @@ contract PrizeVaultV5Test is Test {
         twab.registerVault(address(vault));
     }
 
+    function test_ownershipHandoffIsTwoStep() public {
+        vault.transferOwnership(alice);
+        assertEq(vault.owner(), address(this));
+        assertEq(vault.pendingOwner(), alice);
+
+        vm.prank(bob);
+        vm.expectRevert(bytes("not pending owner"));
+        vault.acceptOwnership();
+
+        vm.prank(alice);
+        vault.acceptOwnership();
+        assertEq(vault.owner(), alice);
+        assertEq(vault.pendingOwner(), address(0));
+
+        vm.expectRevert(PrizeVaultV5.NotOwner.selector);
+        vault.setDepositCap(1 ether);
+    }
+
     function test_nativeDepositCreditsPrincipalAndTwab() public {
         vm.deal(alice, 10 ether);
 

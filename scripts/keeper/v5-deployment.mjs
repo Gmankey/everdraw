@@ -11,6 +11,8 @@ export const REQUIRED_V5_ADDRESSES = [
 ];
 
 const ACTIVE_STATUS = "draw-manager-committed";
+const MAINNET_CHAIN_ID = 143;
+const OWNERSHIP_CONTRACTS = ["twabController", "prizeVault", "claimManager", "drawManager"];
 
 function positiveBlock(value, label) {
   const number = Number(value);
@@ -27,6 +29,26 @@ function normalizedAddress(value, label) {
   }
   if (address === ZeroAddress) throw new Error(`Invalid ${label}: zero address`);
   return address;
+}
+
+function transactionHash(value, label) {
+  if (!/^0x[0-9a-f]{64}$/i.test(value || "")) throw new Error(`Invalid ${label}: ${value || "<missing>"}`);
+  return value.toLowerCase();
+}
+
+function validateMainnetOwnership(entry) {
+  if (entry.ownership?.status !== "accepted") {
+    throw new Error("Activated mainnet V5 deployment is missing accepted final ownership");
+  }
+  const finalOwner = normalizedAddress(entry.ownership.finalOwner, "V5 final owner");
+  const deployer = normalizedAddress(entry.ownership.deployer, "V5 deployment owner");
+  if (finalOwner === deployer) throw new Error("V5 final owner must differ from deployment owner");
+
+  const acceptTxs = {};
+  for (const name of OWNERSHIP_CONTRACTS) {
+    acceptTxs[name] = transactionHash(entry.ownership.acceptTxs?.[name], `V5 ownership acceptance tx ${name}`);
+  }
+  return { ...entry.ownership, finalOwner, deployer, acceptTxs };
 }
 
 function isV5Record(entry) {
@@ -52,11 +74,14 @@ export function selectActiveV5Deployment(data, { expectedChainId }) {
     addresses[name] = normalizedAddress(active.addresses?.[name], `V5 deployment address ${name}`);
   }
 
+  const ownership = chainId === MAINNET_CHAIN_ID ? validateMainnetOwnership(active) : active.ownership;
+
   return {
     ...active,
     chainId,
     startBlock: positiveBlock(active.startBlock, "V5 deployment startBlock"),
     addresses,
+    ownership,
   };
 }
 

@@ -26,12 +26,89 @@ const ABI = [
   "function vault() view returns (address)",
   "function challengeEndsAt(uint256) view returns (uint64)",
   "event RootProposed(uint256 indexed drawId, bytes32 indexed root, uint32 winnerCount, uint256 totalPayout, address indexed proposer, bytes32 algorithmVersion, uint64 challengeEndsAt)",
-  "event DrawPeriodChangeQueued(uint64 drawPeriod, uint64 effectiveAt)",
-  "event TimingChangeQueued(uint64 proposerGracePeriod, uint64 challengeWindow, uint64 vetoCooldown, uint64 effectiveAt)",
-  "event PrimaryProposerSet(address indexed primaryProposer)",
   "event SeedReceived(uint256 indexed drawId, uint64 indexed requestId, bytes32 seed)",
   "event Transfer(address indexed from,address indexed to,uint256 amount)",
+  "event OwnershipTransferStarted(address indexed previousOwner,address indexed pendingOwner)",
+  "event OwnershipTransferred(address indexed previousOwner,address indexed newOwner)",
+  "event GuardianSet(address indexed guardian)",
+  "event PrimaryProposerSet(address indexed primaryProposer)",
+  "event TimingChangeQueued(uint64 proposerGracePeriod,uint64 challengeWindow,uint64 vetoCooldown,uint64 effectiveAt)",
+  "event TimingUpdated(uint64 proposerGracePeriod,uint64 challengeWindow,uint64 vetoCooldown)",
+  "event TimingChangeCancelled()",
+  "event MinPrizeThresholdUpdated(uint256 minPrizeThreshold)",
+  "event DrawPeriodChangeQueued(uint64 drawPeriod,uint64 effectiveAt)",
+  "event DrawPeriodChangeCommitted(uint64 drawPeriod,uint64 activationPeriodStart)",
+  "event DrawPeriodChanged(uint64 previousDrawPeriod,uint64 drawPeriod,uint64 activationPeriodStart)",
+  "event DrawPeriodChangeCancelled()",
+  "event OracleChangeQueued(address indexed oracle,uint64 effectiveAt)",
+  "event OracleChanged(address indexed oracle)",
+  "event OracleChangeCancelled()",
+  "event SeedRequestTimeoutUpdated(uint64 seedRequestTimeout)",
+  "event FeeConfigUpdated(uint8 feeBase,uint16 totalFeeBps)",
+  "event FeeRecipientsUpdated(uint16 totalFeeBps)",
+  "event RewardTokenAllowedSet(address indexed token,bool allowed)",
+  "event DepositCapUpdated(uint256 depositCap)",
+  "event MinDepositUpdated(uint256 minDeposit)",
+  "event Paused(address indexed by)",
+  "event Unpaused(address indexed by)",
+  "event PauserSet(address indexed pauser)",
+  "event DrawManagerSet(address indexed drawManager)",
+  "event DrawManagerChangeQueued(address indexed drawManager,uint64 effectiveAt)",
+  "event DrawManagerChangeCancelled()",
+  "event VaultStopped(uint64 stoppedAt)",
+  "event StrategyChangeQueued(address indexed strategy,uint64 effectiveAt)",
+  "event StrategyChanged(address indexed strategy)",
+  "event StrategyChangeCancelled()",
+  "event SourceAuthorizationSet(address indexed source,bool authorized)",
+  "event CompoundVaultSet(address indexed source,address indexed vault)",
+  "event VaultRegistered(address indexed vault)",
 ];
+const PRIVILEGED_EVENT_NAMES = new Set([
+  "OwnershipTransferStarted",
+  "OwnershipTransferred",
+  "GuardianSet",
+  "PrimaryProposerSet",
+  "TimingChangeQueued",
+  "TimingUpdated",
+  "TimingChangeCancelled",
+  "MinPrizeThresholdUpdated",
+  "DrawPeriodChangeQueued",
+  "DrawPeriodChangeCommitted",
+  "DrawPeriodChanged",
+  "DrawPeriodChangeCancelled",
+  "OracleChangeQueued",
+  "OracleChanged",
+  "OracleChangeCancelled",
+  "SeedRequestTimeoutUpdated",
+  "FeeConfigUpdated",
+  "FeeRecipientsUpdated",
+  "RewardTokenAllowedSet",
+  "DepositCapUpdated",
+  "MinDepositUpdated",
+  "Paused",
+  "Unpaused",
+  "PauserSet",
+  "DrawManagerSet",
+  "DrawManagerChangeQueued",
+  "DrawManagerChangeCancelled",
+  "VaultStopped",
+  "StrategyChangeQueued",
+  "StrategyChanged",
+  "StrategyChangeCancelled",
+  "SourceAuthorizationSet",
+  "CompoundVaultSet",
+  "VaultRegistered",
+]);
+
+function displayEventValue(value) {
+  if (typeof value === "bigint") return value.toString();
+  return String(value);
+}
+
+export function formatPrivilegedChange({ contractLabel, parsed, txHash }) {
+  const values = Array.from(parsed.args || []).map(displayEventValue).join(", ");
+  return `EverDraw V5 privileged change\ncontract=${contractLabel}\nevent=${parsed.name}\nvalues=${values || "<none>"}\ntx=${txHash}`;
+}
 
 function resolveConfig() {
   if (!RPC_URL) throw new Error("WATCHER_RPC_URL/RPC_URL is required");
@@ -174,7 +251,6 @@ export function withRpcTimeout(promise, label, timeoutMs = HEAD_RPC_TIMEOUT_MS) 
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-
 export async function main() {
   const { deployment, drawManagerAddress, fromBlock } = resolveConfig();
   // Historical block-tag reads and reconstruction use the independent watcher RPC.
@@ -201,9 +277,9 @@ export async function main() {
   );
   const iface = new Interface(ABI);
   const rootTopic = iface.getEvent("RootProposed").topicHash;
-  const drawPeriodChangeTopic = iface.getEvent("DrawPeriodChangeQueued").topicHash;
-  const timingChangeTopic = iface.getEvent("TimingChangeQueued").topicHash;
-  const proposerChangeTopic = iface.getEvent("PrimaryProposerSet").topicHash;
+  const privilegedTopics = new Map(
+    [...PRIVILEGED_EVENT_NAMES].map((name) => [iface.getEvent(name).topicHash.toLowerCase(), name]),
+  );
   const manager = new Contract(drawManagerAddress, ABI, headProvider);
   const vaultAddress = getAddress(await retryTransient(
     () => withRpcTimeout(manager.vault(), "watcher vault read"),
@@ -212,6 +288,13 @@ export async function main() {
   if (vaultAddress !== deployment.addresses.prizeVault) {
     throw new Error(`Watcher DrawManager.vault ${vaultAddress} does not match activated deployment ${deployment.addresses.prizeVault}`);
   }
+  const contractLabels = new Map([
+    [drawManagerAddress.toLowerCase(), "DrawManagerV5"],
+    [vaultAddress.toLowerCase(), "PrizeVaultV5"],
+    [deployment.addresses.claimManager.toLowerCase(), "ClaimManagerV5"],
+    [deployment.addresses.twabController.toLowerCase(), "EverdrawTwabController"],
+  ]);
+  const monitoredAddresses = [...contractLabels.keys()];
   let state = readState({ chainId, drawManagerAddress, vaultAddress, fromBlock });
   if (state && !await retryTransient(
     () => canonicalCheckpointMatches(provider, state),
@@ -240,8 +323,8 @@ export async function main() {
     await queryLogsChunked(
       provider,
       {
-        address: [drawManagerAddress, vaultAddress],
-        topics: [[rootTopic, seedTopic, transferTopic, drawPeriodChangeTopic, timingChangeTopic, proposerChangeTopic]],
+        address: monitoredAddresses,
+        topics: [[rootTopic, seedTopic, transferTopic, ...privilegedTopics.keys()]],
       },
       scanFromBlock,
       runEnd,
@@ -262,46 +345,21 @@ export async function main() {
           );
           if (!checkpoint?.hash) throw new Error(`Missing watcher checkpoint block ${batchEnd}`);
           lastCheckpointHash = checkpoint.hash.toLowerCase();
-          const cadenceChanges = logs
-            .filter(
-              (log) =>
-                log.address.toLowerCase() === drawManagerAddress.toLowerCase() &&
-                log.topics[0]?.toLowerCase() === drawPeriodChangeTopic.toLowerCase(),
-            )
+          const privilegedChanges = logs
+            .filter((log) => privilegedTopics.has(log.topics[0]?.toLowerCase()))
             .sort((a, b) => a.blockNumber - b.blockNumber || (a.index ?? 0) - (b.index ?? 0));
-          for (const log of cadenceChanges) {
-            const queued = iface.parseLog(log);
-            await notify(
-              `EverDraw V5 draw-period change queued\nnewPeriod=${queued.args.drawPeriod.toString()} seconds\neffectiveAt=${new Date(Number(queued.args.effectiveAt) * 1000).toISOString()}\ntx=${log.transactionHash}`,
-            );
-          }
-
-          const timingChanges = logs
-            .filter(
-              (log) =>
-                log.address.toLowerCase() === drawManagerAddress.toLowerCase() &&
-                log.topics[0]?.toLowerCase() === timingChangeTopic.toLowerCase(),
-            )
-            .sort((a, b) => a.blockNumber - b.blockNumber || (a.index ?? 0) - (b.index ?? 0));
-          for (const log of timingChanges) {
-            const queued = iface.parseLog(log);
-            await notify(
-              `EverDraw V5 timing change queued\nproposerGrace=${queued.args.proposerGracePeriod} seconds\nchallengeWindow=${queued.args.challengeWindow} seconds\nvetoCooldown=${queued.args.vetoCooldown} seconds\neffectiveAt=${new Date(Number(queued.args.effectiveAt) * 1000).toISOString()}\ntx=${log.transactionHash}`,
-            );
-          }
-
-          const proposerChanges = logs
-            .filter(
-              (log) =>
-                log.address.toLowerCase() === drawManagerAddress.toLowerCase() &&
-                log.topics[0]?.toLowerCase() === proposerChangeTopic.toLowerCase(),
-            )
-            .sort((a, b) => a.blockNumber - b.blockNumber || (a.index ?? 0) - (b.index ?? 0));
-          for (const log of proposerChanges) {
-            const changed = iface.parseLog(log);
-            await notify(
-              `EverDraw V5 primary proposer changed\nprimaryProposer=${changed.args.primaryProposer}\ntx=${log.transactionHash}`,
-            );
+          for (const log of privilegedChanges) {
+            const parsed = iface.parseLog(log);
+            const message = formatPrivilegedChange({
+              contractLabel: contractLabels.get(log.address.toLowerCase()) || getAddress(log.address),
+              parsed,
+              txHash: log.transactionHash,
+            });
+            if (enforceLiveWindow) {
+              await notify(message);
+            } else {
+              console.log(`historical ${message.replaceAll("\n", " | ")}`);
+            }
           }
 
           const proposals = logs

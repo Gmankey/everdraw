@@ -9,6 +9,7 @@ import {
   canCheckpointBatch,
   canonicalCheckpointMatches,
   challengeDeadlineMismatch,
+  formatPrivilegedChange,
   proposalCoverageFailure,
   shouldEnforceLiveWindow,
   withRpcTimeout,
@@ -19,6 +20,23 @@ import {
   participantAccountsFromLogs,
   retryTransient,
 } from "./write-watch-inputs.mjs";
+
+test("privileged governance events identify the contract and transaction", () => {
+  const message = formatPrivilegedChange({
+    contractLabel: "PrizeVaultV5",
+    parsed: {
+      name: "OwnershipTransferStarted",
+      args: [
+        "0x0000000000000000000000000000000000000001",
+        "0x0000000000000000000000000000000000000002",
+      ],
+    },
+    txHash: `0x${"ab".repeat(32)}`,
+  });
+  assert.match(message, /contract=PrizeVaultV5/);
+  assert.match(message, /event=OwnershipTransferStarted/);
+  assert.match(message, /0xabababab/);
+});
 
 test("provider startup invalid JSON is retryable", async () => {
   let calls = 0;
@@ -190,6 +208,11 @@ test("workflow uses configured logs RPC and a five-minute cadence", () => {
   assert.match(watcher, /canCheckpointBatch\(rootMismatches\.length\)/);
   assert.match(watcher, /TimingChangeQueued/);
   assert.match(watcher, /PrimaryProposerSet/);
+  assert.match(watcher, /OwnershipTransferStarted/);
+  assert.match(watcher, /StrategyChangeQueued/);
+  assert.match(watcher, /SourceAuthorizationSet/);
+  assert.match(watcher, /address: monitoredAddresses/);
+  assert.match(watcher, /if \(enforceLiveWindow\)/);
   assert.match(watcher, /liveMonitoring: true/);
   assert.match(workflow, /WATCHER_JOB_DURATION_SEC: "3000"/);
   assert.match(workflow, /WATCHER_POLL_INTERVAL_SEC: "60"/);

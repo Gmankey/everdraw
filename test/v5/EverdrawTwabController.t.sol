@@ -49,6 +49,9 @@ contract EverdrawTwabVaultHarness {
 }
 
 contract EverdrawTwabControllerTest is Test {
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed pendingOwner);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+
     EverdrawTwabController controller;
     EverdrawTwabVaultHarness vault;
 
@@ -78,6 +81,39 @@ contract EverdrawTwabControllerTest is Test {
         vm.prank(alice);
         vm.expectRevert(EverdrawTwabController.NotOwner.selector);
         controller.registerVault(address(anotherVault));
+    }
+
+    function test_ownershipTransferRequiresPendingOwnerAcceptance() public {
+        vm.expectEmit(true, true, false, true);
+        emit OwnershipTransferStarted(address(this), bob);
+        controller.transferOwnership(bob);
+
+        assertEq(controller.owner(), address(this));
+        assertEq(controller.pendingOwner(), bob);
+
+        vm.prank(alice);
+        vm.expectRevert(EverdrawTwabController.NotPendingOwner.selector);
+        controller.acceptOwnership();
+
+        vm.expectEmit(true, true, false, true);
+        emit OwnershipTransferred(address(this), bob);
+        vm.prank(bob);
+        controller.acceptOwnership();
+
+        assertEq(controller.owner(), bob);
+        assertEq(controller.pendingOwner(), address(0));
+
+        vm.expectRevert(EverdrawTwabController.NotOwner.selector);
+        controller.registerVault(address(0x1234));
+    }
+
+    function test_onlyOwnerCanNominateAndZeroOwnerIsRejected() public {
+        vm.prank(alice);
+        vm.expectRevert(EverdrawTwabController.NotOwner.selector);
+        controller.transferOwnership(bob);
+
+        vm.expectRevert(EverdrawTwabController.ZeroAddress.selector);
+        controller.transferOwnership(address(0));
     }
 
     function test_samePeriodUpdatesOverwriteOneObservation() public {

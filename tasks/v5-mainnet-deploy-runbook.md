@@ -6,26 +6,20 @@
 
 **Hard rule:** do not copy the UAT hourly settings. Mainnet V5 uses weekly draw/TWAB cadence.
 
-## Current blocker before execution
+## Release-state guard
 
-The checked-in `scripts/deploy-v5-testnet.js` is explicitly testnet-only and refuses any network except `monadTestnet`. Before this runbook can be executed, a reviewed mainnet V5 deploy script must exist, or the testnet script must be deliberately generalized in a separate PR with mainnet guards.
+`scripts/deploy-v5-mainnet.js` is the only approved V5 mainnet deployment path. It verifies chain `143`, reviewed shMON/Pyth dependencies, weekly cadence, runtime bytecode, complete wiring, pairwise role separation, and the two-step final-owner handoff. It writes append-only states to `deployments/monad-mainnet.json` and will not produce an active record until ownership acceptance and delayed DrawManager activation are independently evidenced.
 
-The mainnet deploy script must:
-
-- require `--network monadMainnet` and verify chain id `143`
-- write to `deployments/monad-mainnet.json`, not `deployments/monad-testnet.json`
-- use real mainnet shMON and real mainnet Pyth Entropy addresses
-- set weekly cadence values, not UAT hourly values
-- record constructor args, deploy txs, start block, runtime bytecode hashes, and verification status
-- never read, print, derive, or enumerate private keys outside Hardhat's signer mechanism
+The deployer key is only an initializer. It must never be the final owner, guardian, pauser, or keeper, and it must not remain an intended role after setup.
 
 ## Signer vs config matrix
 
 | Step | Needs signer key? | Notes |
 |---|---:|---|
 | Source preflight and build | No | Pure local checks |
-| Contract deployment | Yes | Deployer/owner key; operator only |
-| `queueDrawManagerChange` / `commitDrawManagerChange` | Yes | Vault owner key; timelocked by ADR-0042 |
+| Contract deployment and ownership nomination | Yes | Temporary deployer key; operator only |
+| Accept ownership on four contracts | Yes | Final Ledger EOA or multisig; four independent calls |
+| `commitDrawManagerChange` | Yes | Final owner only; timelocked by ADR-0042 |
 | Keeper Fly deployment | No deploy key, yes keeper secret | `PRIVATE_KEY` is set as Fly secret by operator only |
 | Indexer deployment/backfill | No | Infra config only |
 | Frontend cutover | No | Vercel config/build only |
@@ -47,9 +41,12 @@ Confirm these before deployment and copy the final values into `deployments/mona
 | `FIRST_PERIOD_START` | explicit weekly boundary, not an implicit immediate start |
 | Deposit cap | `25000` MON, approved in `tasks/v5-launch-params-operator-approved.md` |
 | Minimum deposit | operator must explicitly decide before deploy. If no product/legal decision exists, leave contract min at `0` and rely on UI copy only; do not invent a hard min in the deploy script |
+| Final owner | operator-approved Ledger EOA or multisig; must accept all four mutable contracts |
 | Guardian | operator-approved guardian address |
 | Keeper/proposer | primary proposer address used by managed V5 keeper |
-| Pauser | operator-approved pauser, or owner only if deliberately accepted |
+| Pauser | operator-approved pauser |
+
+The deployer, final owner, guardian, keeper, and pauser must all be different addresses. The script rejects any overlap.
 
 ## Step 0 - Source freeze
 
@@ -85,6 +82,7 @@ export MONAD_MAINNET_RPC_URL="<operator archive-capable RPC>"
 export SHMON="0x1B68626dCa36c7fE922fD2d55E4f631d962dE19c"
 export ENTROPY="0xD458261E832415CFd3BAE5E416FdF3230ce6F134"
 export ENTROPY_PROVIDER="0x52DeaA1c84233F7bb8C8A45baeDE41091c616506"
+export FINAL_OWNER="<approved Ledger EOA or multisig>"
 export GUARDIAN="<operator-approved guardian>"
 export KEEPER="<primary proposer address>"
 export PAUSER="<operator-approved pauser>"
@@ -120,35 +118,63 @@ Then setup:
 2. `twab.registerVault(vault)`
 3. `claimManager.setAuthorizedSource(drawManager, true)`
 4. `claimManager.setCompoundVault(drawManager, vault)` for ADR-0043 auto-compound
-5. optional `vault.setPauser(pauser)` if approved
-6. optional `vault.setMinDeposit(minDeposit)` only if explicitly approved
+5. `vault.setPauser(pauser)`
+6. `drawManager.setMinPrizeThreshold(minPrizeThreshold)`
+7. `vault.queueDrawManagerChange(drawManager)`
+8. `transferOwnership(finalOwner)` on TWAB, vault, ClaimManager, and DrawManager
 
-Do not open deposits until the draw manager is active and verified.
+The script verifies `owner == deployer` and `pendingOwner == FINAL_OWNER` on all four contracts, then records `deployed-ownership-pending`. Do not open deposits or re-point any service in this state.
 
-## Step 3 - Activate draw manager through the ADR-0042 timelock
+## Step 3 - Accept ownership, then activate the DrawManager
 
-`PrizeVaultV5.setDrawManager(address)` is now a queue alias, not an instant switch. Mainnet activation is two transactions separated by the delay.
+The final owner must first accept all four nominations. From the approved Ledger account or multisig, call this no-argument function once on each deployed address:
 
-Queue:
-
-```bash
-cast send <PRIZE_VAULT> "queueDrawManagerChange(address)" <DRAW_MANAGER> --rpc-url "$MONAD_MAINNET_RPC_URL"
+```text
+EverdrawTwabController.acceptOwnership()
+PrizeVaultV5.acceptOwnership()
+ClaimManagerV5.acceptOwnership()
+DrawManagerV5.acceptOwnership()
 ```
 
-Read the queued state:
+Do not call any admin function from the deployer after nomination. Record the four successful transaction hashes, then run the read-only receipt/on-chain verifier:
+
+```bash
+export TWAB_OWNERSHIP_ACCEPT_TX="<tx hash>"
+export VAULT_OWNERSHIP_ACCEPT_TX="<tx hash>"
+export CLAIM_OWNERSHIP_ACCEPT_TX="<tx hash>"
+export DRAW_MANAGER_OWNERSHIP_ACCEPT_TX="<tx hash>"
+
+HARDHAT_NETWORK=monadMainnet \
+  node scripts/deploy-v5-mainnet.js --record-ownership
+```
+
+The verifier requires each transaction to have succeeded, emitted the expected `OwnershipTransferred(deployer, finalOwner)` event from the correct contract, and left all four contracts at `owner == FINAL_OWNER` and `pendingOwner == address(0)`. Direct EOA calls and multisig-executed calls are both supported. It appends `ownership-accepted-draw-manager-queued`; without that state, activation is rejected.
+
+Read the queued activation time:
 
 ```bash
 cast call <PRIZE_VAULT> "pendingDrawManager()(address)" --rpc-url "$MONAD_MAINNET_RPC_URL"
 cast call <PRIZE_VAULT> "pendingDrawManagerEffectiveAt()(uint64)" --rpc-url "$MONAD_MAINNET_RPC_URL"
 ```
 
-Wait until `pendingDrawManagerEffectiveAt` has passed. Then commit:
+After that timestamp, the final owner calls `PrizeVaultV5.commitDrawManagerChange()`.
+
+For a final-owner EOA supported by the operator's Hardhat signer flow, run:
 
 ```bash
-cast send <PRIZE_VAULT> "commitDrawManagerChange()" --rpc-url "$MONAD_MAINNET_RPC_URL"
+HARDHAT_NETWORK=monadMainnet \
+  node scripts/deploy-v5-mainnet.js --commit
 ```
 
-Verify:
+For a Ledger or multisig call executed in Remix/Safe, record it afterward without giving the deployer any authority:
+
+```bash
+export DRAW_MANAGER_COMMIT_TX="<successful commitDrawManagerChange tx hash>"
+HARDHAT_NETWORK=monadMainnet \
+  node scripts/deploy-v5-mainnet.js --record-commit
+```
+
+Both paths verify complete wiring, final ownership, the activation event, and:
 
 ```bash
 cast call <PRIZE_VAULT> "drawManager()(address)" --rpc-url "$MONAD_MAINNET_RPC_URL"
@@ -156,7 +182,7 @@ cast call <PRIZE_VAULT> "pendingDrawManager()(address)" --rpc-url "$MONAD_MAINNE
 cast call <PRIZE_VAULT> "pendingDrawManagerEffectiveAt()(uint64)" --rpc-url "$MONAD_MAINNET_RPC_URL"
 ```
 
-Expected: `drawManager` equals the new V5 draw manager, pending address is zero, pending time is zero.
+Expected: `drawManager` is the new V5 manager, pending address/time are zero, all four owners are `FINAL_OWNER`, and the append-only record status is `draw-manager-committed`.
 
 ## Step 4 - Verify deployment record and bytecode
 
@@ -170,6 +196,9 @@ Update `deployments/monad-mainnet.json` in the same style as prior records. Requ
 - runtime bytecode SHA256
 - verification evidence/status
 - start block for keeper/indexer backfill
+- deployer, final owner, guardian, pauser, and keeper role addresses
+- four ownership nomination tx hashes and four independently verified acceptance tx hashes
+- final-owner DrawManager activation tx hash and `draw-manager-committed` status
 
 Run:
 
@@ -320,7 +349,7 @@ Before opening deposits, confirm alerts are live for:
 - RPC failure rate
 - indexer lag
 - queued draw-manager and strategy changes
-- ownership transfer
+- ownership nomination and acceptance across TWAB, vault, ClaimManager, and DrawManager
 - pause/stop
 - cap/min-deposit changes
 - vault solvency/shortfall
@@ -333,6 +362,7 @@ Do not announce or route real users until all are true:
 
 - deployment record committed
 - bytecode verified
+- all four mutable contracts are owned by `FINAL_OWNER`, all `pendingOwner` values are zero, and the deployer has no intended role
 - `drawManager()` active after timelock commit
 - keeper managed service survives restart
 - indexer backfilled and serving V5 events

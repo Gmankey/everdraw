@@ -6,9 +6,13 @@ import hre from "hardhat";
 import {
   MAINNET_CHAIN_ID,
   CHALLENGE_WINDOW_SECONDS,
+  OWNERSHIP_ACCEPTED_STATUS,
+  OWNERSHIP_PENDING_STATUS,
   WEEK_SECONDS,
+  assertDistinctRoleAddresses,
   assertFixedLaunchParameters,
   deriveWeeklyCadence,
+  findLatestOwnershipPendingMainnetV5Record,
   findLatestQueuedMainnetV5Record,
   sameAddress,
   uintEnv,
@@ -18,7 +22,10 @@ const { ethers } = hre;
 
 const DEPLOYMENT_FILE = "deployments/monad-mainnet.json";
 const COMMIT_MODE = process.argv.includes("--commit");
+const RECORD_OWNERSHIP_MODE = process.argv.includes("--record-ownership");
+const RECORD_COMMIT_MODE = process.argv.includes("--record-commit");
 const PREFLIGHT_ONLY = process.argv.includes("--preflight-only");
+const MODES = [COMMIT_MODE, RECORD_OWNERSHIP_MODE, RECORD_COMMIT_MODE, PREFLIGHT_ONLY].filter(Boolean).length;
 
 const APPROVED_SHMON = "0x1B68626dCa36c7fE922fD2d55E4f631d962dE19c";
 const APPROVED_ENTROPY = "0xD458261E832415CFd3BAE5E416FdF3230ce6F134";
@@ -132,7 +139,7 @@ async function verifyExternalDependencies(shmon, entropy, entropyProvider) {
   };
 }
 
-async function preflightNetworkAndSigner() {
+async function preflightNetwork() {
   if (hre.network.name !== "monadMainnet") {
     throw new Error("V5 mainnet deploy script requires the monadMainnet Hardhat network");
   }
@@ -144,7 +151,10 @@ async function preflightNetworkAndSigner() {
   if (network.chainId !== MAINNET_CHAIN_ID) {
     throw new Error(`Wrong chain id: got ${network.chainId}, expected ${MAINNET_CHAIN_ID}`);
   }
+}
 
+async function preflightNetworkAndSigner() {
+  await preflightNetwork();
   const [deployer] = await ethers.getSigners();
   if (!deployer) {
     throw new Error("No signer configured; operator must provide PRIVATE_KEY interactively");
@@ -171,6 +181,94 @@ async function send(label, txPromise) {
   const receipt = await tx.wait();
   console.log(`${label}: ${receipt.hash}`);
   return receipt.hash;
+}
+
+function requiredTxHash(name) {
+  const value = required(name);
+  if (!/^0x[0-9a-f]{64}$/i.test(value)) throw new Error(`Invalid ${name}: ${value}`);
+  return value.toLowerCase();
+}
+
+async function verifyOwnershipState({ contracts, deployer, finalOwner, accepted }) {
+  for (const [label, contract] of Object.entries(contracts)) {
+    const [owner, pendingOwner] = await Promise.all([contract.owner(), contract.pendingOwner()]);
+    const expectedOwner = accepted ? finalOwner : deployer;
+    const expectedPending = accepted ? ethers.ZeroAddress : finalOwner;
+    if (!sameAddress(owner, expectedOwner) || !sameAddress(pendingOwner, expectedPending)) {
+      throw new Error(
+        `${label} ownership mismatch: owner=${owner} pendingOwner=${pendingOwner} expectedOwner=${expectedOwner} expectedPending=${expectedPending}`,
+      );
+    }
+  }
+}
+
+async function verifyRecordedCall({
+  label,
+  txHash,
+  contractAddress,
+  expectedActor,
+  functionSignature,
+  eventSignature,
+  eventArgs,
+}) {
+  const [transaction, receipt] = await Promise.all([
+    ethers.provider.getTransaction(txHash),
+    ethers.provider.getTransactionReceipt(txHash),
+  ]);
+  if (!transaction || !receipt || Number(receipt.status) !== 1) {
+    throw new Error(`${label} transaction is missing or failed: ${txHash}`);
+  }
+  const actorCode = await ethers.provider.getCode(expectedActor);
+  if (actorCode === "0x") {
+    if (!sameAddress(transaction.to, contractAddress) || !sameAddress(transaction.from, expectedActor)) {
+      throw new Error(
+        `${label} direct transaction actor/target mismatch: from=${transaction.from} to=${transaction.to}`,
+      );
+    }
+    const callInterface = new ethers.Interface([`function ${functionSignature}`]);
+    const selector = callInterface.getFunction(functionSignature.split("(")[0]).selector;
+    if (!transaction.data?.toLowerCase().startsWith(selector.toLowerCase())) {
+      throw new Error(`${label} transaction does not call ${functionSignature}`);
+    }
+  } else if (!sameAddress(transaction.to, expectedActor)) {
+    throw new Error(
+      `${label} multisig transaction must execute through final owner ${expectedActor}, got target ${transaction.to}`,
+    );
+  }
+
+  const eventInterface = new ethers.Interface([`event ${eventSignature}`]);
+  const eventName = eventSignature.split("(")[0];
+  let matched = false;
+  for (const log of receipt.logs) {
+    if (!sameAddress(log.address, contractAddress)) continue;
+    try {
+      const parsed = eventInterface.parseLog(log);
+      if (!parsed || parsed.name !== eventName) continue;
+      matched = eventArgs.every((expected, index) => sameAddress(parsed.args[index], expected));
+      if (matched) break;
+    } catch {
+      // Ignore unrelated logs from the same transaction.
+    }
+  }
+  if (!matched) throw new Error(`${label} transaction is missing the expected ${eventName} event`);
+  return receipt;
+}
+
+async function ownershipContracts(addresses) {
+  const [twab, vault, claimManager, drawManager] = await Promise.all([
+    ethers.getContractAt("EverdrawTwabController", addresses.twabController),
+    ethers.getContractAt("PrizeVaultV5", addresses.prizeVault),
+    ethers.getContractAt("ClaimManagerV5", addresses.claimManager),
+    ethers.getContractAt("DrawManagerV5", addresses.drawManager),
+  ]);
+  return { twab, vault, claimManager, drawManager };
+}
+
+function recordDeployment(deploymentData, record) {
+  deploymentData.contracts = deploymentData.contracts || [];
+  deploymentData.contracts.push(record);
+  writeDeploymentFile(deploymentData);
+  runManifestBytecodeCheck();
 }
 
 function zeroImmutableReferences(bytecode, immutableReferences = {}) {
@@ -364,9 +462,17 @@ async function deployAndQueue() {
   const shmon = requiredAddress("SHMON");
   const entropy = requiredAddress("ENTROPY");
   const entropyProvider = requiredAddress("ENTROPY_PROVIDER");
+  const finalOwner = requiredAddress("FINAL_OWNER");
   const guardian = requiredAddress("GUARDIAN");
   const keeper = requiredAddress("KEEPER");
   const pauser = requiredAddress("PAUSER");
+  assertDistinctRoleAddresses({
+    deployer: deployer.address,
+    finalOwner,
+    guardian,
+    keeper,
+    pauser,
+  });
   assertApprovedDependency("SHMON", shmon, APPROVED_SHMON);
   assertApprovedDependency("ENTROPY", entropy, APPROVED_ENTROPY);
   assertApprovedDependency("ENTROPY_PROVIDER", entropyProvider, APPROVED_ENTROPY_PROVIDER);
@@ -385,6 +491,7 @@ async function deployAndQueue() {
   console.log({
     chainId: MAINNET_CHAIN_ID.toString(),
     deployCommit,
+    finalOwner,
     cadence,
     depositCap: depositCap.toString(),
     minDeposit: "0",
@@ -495,6 +602,36 @@ async function deployAndQueue() {
     runtimeHashes[name] = await verifyRuntimeAgainstArtifact(name, deployment.address);
   }
 
+  const ownershipTransferTxs = {
+    twabController: await send(
+      "twab.transferOwnership",
+      twab.contract.transferOwnership(finalOwner),
+    ),
+    prizeVault: await send(
+      "vault.transferOwnership",
+      vault.contract.transferOwnership(finalOwner),
+    ),
+    claimManager: await send(
+      "claimManager.transferOwnership",
+      claimManager.contract.transferOwnership(finalOwner),
+    ),
+    drawManager: await send(
+      "drawManager.transferOwnership",
+      manager.contract.transferOwnership(finalOwner),
+    ),
+  };
+  await verifyOwnershipState({
+    contracts: {
+      twab: twab.contract,
+      vault: vault.contract,
+      claimManager: claimManager.contract,
+      drawManager: manager.contract,
+    },
+    deployer: deployer.address,
+    finalOwner,
+    accepted: false,
+  });
+
   const startBlock = Math.min(...deployments.map(([, deployment]) => deployment.blockNumber));
   const effectiveAt = wiring.pendingDrawManagerEffectiveAt;
   const addresses = {
@@ -510,13 +647,31 @@ async function deployAndQueue() {
     protocolVersion: 5,
     network: "monad-mainnet",
     chainId: Number(MAINNET_CHAIN_ID),
-    status: "deployed-draw-manager-queued",
+    status: OWNERSHIP_PENDING_STATUS,
     deployedAt: new Date().toISOString(),
     deployedBy: deployer.address,
     source: "src/v5",
     deployCommit,
     adrs: ["ADR-0042", "ADR-0043", "ADR-0045"],
     addresses,
+    ownership: {
+      status: "pending-acceptance",
+      deployer: deployer.address,
+      finalOwner,
+      roles: { guardian, pauser, keeper },
+      transferTxs: ownershipTransferTxs,
+      acceptanceTxEnv: {
+        twabController: "TWAB_OWNERSHIP_ACCEPT_TX",
+        prizeVault: "VAULT_OWNERSHIP_ACCEPT_TX",
+        claimManager: "CLAIM_OWNERSHIP_ACCEPT_TX",
+        drawManager: "DRAW_MANAGER_OWNERSHIP_ACCEPT_TX",
+      },
+      strategyInitializer: {
+        address: deployer.address,
+        capability: "setVault-only",
+        disabledBy: `vault pinned to ${vault.address}; subsequent setVault calls revert VaultAlreadySet`,
+      },
+    },
     deployTxs: {
       twabController: twab.tx,
       shmonStrategy: strategy.tx,
@@ -598,21 +753,88 @@ async function deployAndQueue() {
   };
 
   const deploymentData = readDeploymentFile();
-  deploymentData.contracts = deploymentData.contracts || [];
-  deploymentData.contracts.push(record);
-  writeDeploymentFile(deploymentData);
-  runManifestBytecodeCheck();
+  recordDeployment(deploymentData, record);
 
-  console.log("V5 mainnet deployment verified and recorded:");
+  console.log("V5 mainnet deployment verified; final ownership acceptance is required:");
   console.log({ ...addresses, startBlock, pendingDrawManagerEffectiveAt: effectiveAt });
-  console.log(`Wait until ${record.drawManagerTimelock.effectiveAtIso}, commit the deployment record, then run:`);
-  console.log(record.drawManagerTimelock.commitCommand);
+  console.log(`Final owner: ${finalOwner}`);
+  console.log("The final owner must call acceptOwnership() on TWAB, vault, ClaimManager, and DrawManager.");
+  console.log("Then record the four successful transactions with --record-ownership.");
+  console.log(`The DrawManager timelock also cannot be committed before ${record.drawManagerTimelock.effectiveAtIso}.`);
   console.log("Do not start the keeper, indexer, frontend, or deposits before commit verification.");
+}
+
+async function recordOwnershipAcceptance() {
+  runSourcePreflight();
+  await preflightNetwork();
+  const deploymentData = readDeploymentFile();
+  const current = findLatestOwnershipPendingMainnetV5Record(deploymentData);
+  const { deployer, finalOwner, roles } = current.ownership || {};
+  assertDistinctRoleAddresses({
+    deployer,
+    finalOwner,
+    guardian: roles?.guardian,
+    keeper: roles?.keeper,
+    pauser: roles?.pauser,
+  });
+
+  const contracts = await ownershipContracts(current.addresses);
+  const acceptanceTxs = {
+    twabController: requiredTxHash("TWAB_OWNERSHIP_ACCEPT_TX"),
+    prizeVault: requiredTxHash("VAULT_OWNERSHIP_ACCEPT_TX"),
+    claimManager: requiredTxHash("CLAIM_OWNERSHIP_ACCEPT_TX"),
+    drawManager: requiredTxHash("DRAW_MANAGER_OWNERSHIP_ACCEPT_TX"),
+  };
+  const checks = [
+    ["TWAB ownership acceptance", acceptanceTxs.twabController, current.addresses.twabController],
+    ["vault ownership acceptance", acceptanceTxs.prizeVault, current.addresses.prizeVault],
+    ["ClaimManager ownership acceptance", acceptanceTxs.claimManager, current.addresses.claimManager],
+    ["DrawManager ownership acceptance", acceptanceTxs.drawManager, current.addresses.drawManager],
+  ];
+  for (const [label, txHash, contractAddress] of checks) {
+    await verifyRecordedCall({
+      label,
+      txHash,
+      contractAddress,
+      expectedActor: finalOwner,
+      functionSignature: "acceptOwnership()",
+      eventSignature: "OwnershipTransferred(address indexed previousOwner,address indexed newOwner)",
+      eventArgs: [deployer, finalOwner],
+    });
+  }
+  await verifyOwnershipState({
+    contracts,
+    deployer,
+    finalOwner,
+    accepted: true,
+  });
+
+  const acceptedAt = new Date().toISOString();
+  const record = {
+    ...current,
+    role: "EverDraw V5 mainnet beta - final ownership accepted",
+    status: OWNERSHIP_ACCEPTED_STATUS,
+    ownership: {
+      ...current.ownership,
+      status: "accepted",
+      acceptedAt,
+      acceptTxs: acceptanceTxs,
+    },
+    ownershipAcceptanceOfDeployCommit: current.deployCommit,
+  };
+  recordDeployment(deploymentData, record);
+  console.log("Final ownership accepted and recorded on all four mutable V5 contracts.");
+  console.log({
+    finalOwner,
+    acceptanceTxs,
+    drawManagerTimelockEffectiveAt: current.drawManagerTimelock.effectiveAtIso,
+  });
+  console.log("After the timelock elapses, the final owner may run --commit or execute through its multisig.");
 }
 
 async function commitQueuedDrawManager() {
   runSourcePreflight();
-  const deployer = await preflightNetworkAndSigner();
+  const signer = await preflightNetworkAndSigner();
   const deploymentData = readDeploymentFile();
   const current = findLatestQueuedMainnetV5Record(deploymentData);
   const {
@@ -624,11 +846,19 @@ async function commitQueuedDrawManager() {
     pythRandomnessOracle,
   } = current.addresses;
 
-  const vault = await ethers.getContractAt("PrizeVaultV5", prizeVault);
-  const owner = await vault.owner();
-  if (!sameAddress(owner, deployer.address)) {
-    throw new Error(`Signer is not the PrizeVaultV5 owner (${owner})`);
+  const finalOwner = current.ownership?.finalOwner;
+  if (!finalOwner) throw new Error("Activated deployment record is missing finalOwner");
+  if (!sameAddress(finalOwner, signer.address)) {
+    throw new Error(`Signer ${signer.address} is not the final V5 owner ${finalOwner}`);
   }
+  const contracts = await ownershipContracts(current.addresses);
+  await verifyOwnershipState({
+    contracts,
+    deployer: current.ownership.deployer,
+    finalOwner,
+    accepted: true,
+  });
+  const vault = contracts.vault;
   if (sameAddress(await vault.drawManager(), drawManager)) {
     console.log("Draw manager is already committed; no transaction sent.");
     return;
@@ -647,10 +877,7 @@ async function commitQueuedDrawManager() {
 
   const commitTx = await send("vault.commitDrawManagerChange", vault.commitDrawManagerChange());
   const strategy = await ethers.getContractAt("ShmonStrategy", shmonStrategy);
-  const twab = await ethers.getContractAt("EverdrawTwabController", twabController);
-  const claimManagerContract = await ethers.getContractAt("ClaimManagerV5", claimManager);
   const oracle = await ethers.getContractAt("PythRandomnessOracle", pythRandomnessOracle);
-  const manager = await ethers.getContractAt("DrawManagerV5", drawManager);
 
   await verifyWiring({
     shmon: current.constructorArgs.shmon,
@@ -665,37 +892,102 @@ async function commitQueuedDrawManager() {
       drawPeriod: current.constructorArgs.drawPeriod,
       firstPeriodStart: current.constructorArgs.firstPeriodStart,
     },
-    twab: { contract: twab, address: twabController },
+    twab: { contract: contracts.twab, address: twabController },
     strategy: { contract: strategy, address: shmonStrategy },
     vault: { contract: vault, address: prizeVault },
-    claimManager: { contract: claimManagerContract, address: claimManager },
+    claimManager: { contract: contracts.claimManager, address: claimManager },
     oracle: { contract: oracle, address: pythRandomnessOracle },
-    manager: { contract: manager, address: drawManager },
+    manager: { contract: contracts.drawManager, address: drawManager },
     expectActive: true,
   });
 
-  deploymentData.contracts.push({
+  recordDeployment(deploymentData, {
     ...current,
     role: "EverDraw V5 mainnet beta - ADR-0045 draw-manager activation",
     status: "draw-manager-committed",
     committedAt: new Date().toISOString(),
-    committedBy: deployer.address,
-    deployTxs: { vaultCommitDrawManagerChange: commitTx },
+    committedBy: signer.address,
+    deployTxs: { ...current.deployTxs, vaultCommitDrawManagerChange: commitTx },
     activationOfDeployCommit: current.deployCommit,
   });
-  writeDeploymentFile(deploymentData);
-  runManifestBytecodeCheck();
 
   console.log("V5 mainnet draw manager committed and all wiring re-verified:");
   console.log(current.addresses);
   console.log(`Indexer/keeper start block: ${current.startBlock}`);
 }
 
+async function recordCommittedDrawManager() {
+  runSourcePreflight();
+  await preflightNetwork();
+  const deploymentData = readDeploymentFile();
+  const current = findLatestQueuedMainnetV5Record(deploymentData);
+  const commitTx = requiredTxHash("DRAW_MANAGER_COMMIT_TX");
+  const finalOwner = current.ownership?.finalOwner;
+  if (!finalOwner) throw new Error("Queued deployment record is missing finalOwner");
+
+  const contracts = await ownershipContracts(current.addresses);
+  await verifyOwnershipState({
+    contracts,
+    deployer: current.ownership.deployer,
+    finalOwner,
+    accepted: true,
+  });
+  await verifyRecordedCall({
+    label: "vault DrawManager activation",
+    txHash: commitTx,
+    contractAddress: current.addresses.prizeVault,
+    expectedActor: finalOwner,
+    functionSignature: "commitDrawManagerChange()",
+    eventSignature: "DrawManagerSet(address indexed drawManager)",
+    eventArgs: [current.addresses.drawManager],
+  });
+
+  const strategy = await ethers.getContractAt("ShmonStrategy", current.addresses.shmonStrategy);
+  const oracle = await ethers.getContractAt("PythRandomnessOracle", current.addresses.pythRandomnessOracle);
+  await verifyWiring({
+    shmon: current.constructorArgs.shmon,
+    entropy: current.constructorArgs.entropy,
+    entropyProvider: current.constructorArgs.entropyProvider,
+    guardian: current.constructorArgs.guardian,
+    keeper: current.constructorArgs.keeper,
+    pauser: current.constructorArgs.pauser,
+    cadence: {
+      twabPeriodLength: current.constructorArgs.twabPeriodLength,
+      twabPeriodOffset: current.constructorArgs.twabPeriodOffset,
+      drawPeriod: current.constructorArgs.drawPeriod,
+      firstPeriodStart: current.constructorArgs.firstPeriodStart,
+    },
+    twab: { contract: contracts.twab, address: current.addresses.twabController },
+    strategy: { contract: strategy, address: current.addresses.shmonStrategy },
+    vault: { contract: contracts.vault, address: current.addresses.prizeVault },
+    claimManager: { contract: contracts.claimManager, address: current.addresses.claimManager },
+    oracle: { contract: oracle, address: current.addresses.pythRandomnessOracle },
+    manager: { contract: contracts.drawManager, address: current.addresses.drawManager },
+    expectActive: true,
+  });
+
+  recordDeployment(deploymentData, {
+    ...current,
+    role: "EverDraw V5 mainnet beta - ADR-0045 draw-manager activation",
+    status: "draw-manager-committed",
+    committedAt: new Date().toISOString(),
+    committedBy: finalOwner,
+    deployTxs: { ...current.deployTxs, vaultCommitDrawManagerChange: commitTx },
+    activationOfDeployCommit: current.deployCommit,
+  });
+  console.log("Externally executed DrawManager activation verified and recorded.");
+  console.log(current.addresses);
+}
+
 async function main() {
-  if (COMMIT_MODE && PREFLIGHT_ONLY) {
-    throw new Error("--commit and --preflight-only are mutually exclusive");
+  if (MODES > 1) {
+    throw new Error("Choose only one mode: --preflight-only, --record-ownership, --commit, or --record-commit");
   }
-  if (COMMIT_MODE) {
+  if (RECORD_OWNERSHIP_MODE) {
+    await recordOwnershipAcceptance();
+  } else if (RECORD_COMMIT_MODE) {
+    await recordCommittedDrawManager();
+  } else if (COMMIT_MODE) {
     await commitQueuedDrawManager();
   } else {
     await deployAndQueue();
