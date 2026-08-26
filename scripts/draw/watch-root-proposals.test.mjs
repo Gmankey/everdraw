@@ -161,6 +161,19 @@ test("watcher canonical checkpoint detects reorg replacement", async () => {
   );
 });
 
+test("mainnet watcher is independently configured and schedule-gated", () => {
+  const workflow = fs.readFileSync(new URL("../../.github/workflows/v5-watcher-mainnet.yml", import.meta.url), "utf8");
+  assert.match(workflow, /cron: "\*\/15 \* \* \* \*"/);
+  assert.match(workflow, /vars\.V5_WATCHER_MAINNET_ENABLED == 'true'/);
+  assert.match(workflow, /DEPLOYMENT_FILE: deployments\/monad-mainnet\.json/);
+  assert.match(workflow, /WATCHER_CHAIN_ID: "143"/);
+  assert.match(workflow, /secrets\.V5_WATCHER_MAINNET_RPC_URL/);
+  assert.match(workflow, /secrets\.V5_WATCHER_MAINNET_HEAD_RPC_URL/);
+  assert.match(workflow, /secrets\.V5_WATCHER_MAINNET_HEALTHCHECK_URL/);
+  assert.match(workflow, /\.watcher-cache-mainnet/);
+  assert.match(workflow, /if: always\(\)/);
+});
+
 test("workflow uses configured logs RPC and a five-minute cadence", () => {
   const workflow = fs.readFileSync(new URL("../../.github/workflows/v5-watcher.yml", import.meta.url), "utf8");
   const watcher = fs.readFileSync(new URL("./watch-root-proposals.mjs", import.meta.url), "utf8");

@@ -32,4 +32,6 @@ jobs:
       - run: npm run build
       - run: npm run check:abi
       - run: npm run check:deploy-source
+      - run: npm run keeper:v5:test
+      - run: npm run draw:watch:test
       - run: forge test

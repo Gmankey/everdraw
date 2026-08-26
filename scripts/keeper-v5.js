@@ -13,6 +13,7 @@ import {
   claimStateKey,
   reachedTransientAlertThreshold,
 } from "./keeper/claim-isolation.mjs";
+import { readActiveV5Deployment, resolveV5RuntimeTargets } from "./keeper/v5-deployment.mjs";
 
 const DEPLOYMENT_FILE = process.env.DEPLOYMENT_FILE || "deployments/monad-testnet.json";
 const RPC_URL = process.env.KEEPER_RPC_URL || process.env.RPC_URL || process.env.MONAD_TESTNET_RPC_URL;
@@ -65,33 +66,40 @@ const DRAW_MANAGER_ABI = [
 
 const TWAB_ABI = [
   "function getTotalTwabBetween(address vault,uint256 startTime,uint256 endTime) view returns (uint256)",
+  "function registeredVaults(address) view returns (bool)",
 ];
 
 const VAULT_ABI = [
   "function availableYield() view returns (uint256)",
+  "function drawManager() view returns (address)",
 ];
 
 const ORACLE_ABI = [
   "function getFee() view returns (uint128)",
+  "function consumer() view returns (address)",
+];
+
+const STRATEGY_ABI = [
+  "function vault() view returns (address)",
 ];
 
 const CLAIM_MANAGER_ABI = [
   "function isClaimed(bytes32 distributionId,uint256 leafIndex) view returns (bool)",
   "function distributions(bytes32 distributionId) view returns (address source,bytes32 sourceKey,bytes32 root,uint32 leafCount,bytes32 metadata,uint64 registeredAt)",
+  "function authorizedSource(address) view returns (bool)",
+  "function compoundVaultFor(address) view returns (address)",
   "function claimMany(tuple(bytes32 distributionId,uint256 leafIndex,address account,address token,uint256 amount)[] leaves, bytes32[][] proofs)",
 ];
 
 function readDeployment() {
-  const data = JSON.parse(fs.readFileSync(DEPLOYMENT_FILE, "utf8"));
-  const v5 = [...(data.contracts || [])].reverse().find((entry) => entry.role === "V5 M8 testnet soak");
-  if (!v5) throw new Error(`No V5 M8 testnet soak deployment in ${DEPLOYMENT_FILE}`);
-  return v5;
+  return readActiveV5Deployment(DEPLOYMENT_FILE, { expectedChainId: EXPECTED_CHAIN_ID });
 }
 
-function requiredAddress(name, fallback) {
-  const value = process.env[name] || fallback;
-  if (!value) throw new Error(`Missing ${name}`);
-  return getAddress(value);
+function assertWiredAddress(label, actual, expected) {
+  const normalized = getAddress(actual);
+  if (normalized !== expected) {
+    throw new Error(`${label} ${normalized} does not match activated deployment ${expected}`);
+  }
 }
 
 function statusName(status) {
@@ -406,9 +414,7 @@ async function runOnce() {
   if (!RPC_URL) throw new Error("Missing KEEPER_RPC_URL/RPC_URL/MONAD_TESTNET_RPC_URL");
   if (!PRIVATE_KEY) throw new Error("Missing PRIVATE_KEY for keeper signer");
   const deployment = readDeployment();
-  const drawManagerAddress = requiredAddress("DRAW_MANAGER_ADDRESS", deployment.addresses.drawManager);
-  const claimManagerAddress = requiredAddress("CLAIM_MANAGER_ADDRESS", deployment.addresses.claimManager);
-  const fromBlock = Number(process.env.V5_WATCHER_FROM_BLOCK || process.env.V5_KEEPER_FROM_BLOCK || deployment.startBlock || 0);
+  const { drawManagerAddress, claimManagerAddress, fromBlock } = resolveV5RuntimeTargets(deployment);
   const writeProvider = new JsonRpcProvider(RPC_URL);
   const readProvider = new JsonRpcProvider(READ_RPC_URL);
   const signer = new Wallet(PRIVATE_KEY, writeProvider);
@@ -424,12 +430,52 @@ async function runOnce() {
   if (network.chainId !== EXPECTED_CHAIN_ID) throw new Error(`wrong chain id ${network.chainId}; expected ${EXPECTED_CHAIN_ID}`);
   const writeNetwork = await rpcRead("writeProvider.getNetwork", () => writeProvider.getNetwork());
   if (writeNetwork.chainId !== EXPECTED_CHAIN_ID) throw new Error(`wrong write chain id ${writeNetwork.chainId}; expected ${EXPECTED_CHAIN_ID}`);
-  let oracleFeeWei = 0n;
-  const wiredClaimManager = getAddress(await rpcRead("manager.claimManager", () => manager.claimManager()));
-  if (wiredClaimManager !== claimManagerAddress) {
-    throw new Error(`configured ClaimManager ${claimManagerAddress} does not match DrawManager.claimManager ${wiredClaimManager}`);
+
+  for (const [name, address] of Object.entries(deployment.addresses)) {
+    const code = await rpcRead(`getCode(${name})`, () => readProvider.getCode(address));
+    if (code === "0x") throw new Error(`Activated deployment ${name} has no bytecode at ${address}`);
   }
 
+  const vault = new Contract(deployment.addresses.prizeVault, VAULT_ABI, readProvider);
+  const twab = new Contract(deployment.addresses.twabController, TWAB_ABI, readProvider);
+  const strategy = new Contract(deployment.addresses.shmonStrategy, STRATEGY_ABI, readProvider);
+  const claimManager = new Contract(claimManagerAddress, CLAIM_MANAGER_ABI, readProvider);
+  const oracle = new Contract(deployment.addresses.pythRandomnessOracle, ORACLE_ABI, readProvider);
+  const [
+    wiredVault,
+    wiredTwab,
+    wiredClaimManager,
+    wiredOracle,
+    activeDrawManager,
+    strategyVault,
+    registeredVault,
+    authorizedSource,
+    compoundVault,
+    oracleConsumer,
+  ] = await Promise.all([
+    rpcRead("manager.vault", () => manager.vault()),
+    rpcRead("manager.twabController", () => manager.twabController()),
+    rpcRead("manager.claimManager", () => manager.claimManager()),
+    rpcRead("manager.randomnessOracle", () => manager.randomnessOracle()),
+    rpcRead("vault.drawManager", () => vault.drawManager()),
+    rpcRead("strategy.vault", () => strategy.vault()),
+    rpcRead("twab.registeredVaults", () => twab.registeredVaults(deployment.addresses.prizeVault)),
+    rpcRead("claimManager.authorizedSource", () => claimManager.authorizedSource(drawManagerAddress)),
+    rpcRead("claimManager.compoundVaultFor", () => claimManager.compoundVaultFor(drawManagerAddress)),
+    rpcRead("oracle.consumer", () => oracle.consumer()),
+  ]);
+  assertWiredAddress("DrawManager.vault", wiredVault, deployment.addresses.prizeVault);
+  assertWiredAddress("DrawManager.twabController", wiredTwab, deployment.addresses.twabController);
+  assertWiredAddress("DrawManager.claimManager", wiredClaimManager, claimManagerAddress);
+  assertWiredAddress("DrawManager.randomnessOracle", wiredOracle, deployment.addresses.pythRandomnessOracle);
+  assertWiredAddress("PrizeVault.drawManager", activeDrawManager, drawManagerAddress);
+  assertWiredAddress("ShmonStrategy.vault", strategyVault, deployment.addresses.prizeVault);
+  assertWiredAddress("ClaimManager.compoundVaultFor", compoundVault, deployment.addresses.prizeVault);
+  assertWiredAddress("PythRandomnessOracle.consumer", oracleConsumer, drawManagerAddress);
+  if (!registeredVault) throw new Error("Activated PrizeVault is not registered in TwabController");
+  if (!authorizedSource) throw new Error("Activated DrawManager is not an authorized ClaimManager source");
+
+  let oracleFeeWei = 0n;
   try {
     const oracleAddress = await rpcRead("manager.randomnessOracle", () => manager.randomnessOracle());
     const oracle = new Contract(oracleAddress, ORACLE_ABI, readProvider);
