@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { ethers } from 'ethers'
 
 const INDEXER_URL = (import.meta.env.VITE_INDEXER_URL || 'https://everdraw-indexer.fly.dev').replace(/\/$/, '')
@@ -110,15 +110,15 @@ function stateLabel(r) {
   return r.state.charAt(0).toUpperCase() + r.state.slice(1)
 }
 
-export function StatsPage() {
+export function StatsPage({ indexerUrl = INDEXER_URL, networkLabel = 'Monad mainnet' }) {
   const [rounds, setRounds] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [lastUpdated, setLastUpdated] = useState(null)
 
-  function load() {
+  const load = useCallback(() => {
     setLoading(true)
-    fetch(`${INDEXER_URL}/api/rounds`)
+    fetch(`${indexerUrl}/api/rounds`)
       .then(r => {
         if (!r.ok) throw new Error(`Indexer returned ${r.status}`)
         return r.json()
@@ -132,9 +132,12 @@ export function StatsPage() {
         setError(`Could not reach indexer: ${e.message}`)
         setLoading(false)
       })
-  }
+  }, [indexerUrl])
 
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    const timeout = window.setTimeout(load, 0)
+    return () => window.clearTimeout(timeout)
+  }, [load])
 
   // Only show rounds from mainnet launch (Apr 6 2026)
   const LAUNCH_DATE = new Date('2026-04-06T00:00:00Z')
@@ -163,7 +166,7 @@ export function StatsPage() {
       <div className="stats-hero">
         <h2 className="stats-title">Protocol Stats</h2>
         <p className="stats-subtitle">
-          Live on-chain data · Monad mainnet
+          Live on-chain data · {networkLabel}
           {lastUpdated && (
             <span className="stats-timestamp">
               {' '}· Updated {lastUpdated.toLocaleTimeString()}

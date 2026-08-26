@@ -263,17 +263,36 @@ Confirm V5 `Deposit`, `Withdraw`, `BoostDeposit`, `BoostWithdraw`, draw lifecycl
 
 Production frontend is the canonical `everdraw` Vercel project and production branch is `staging`. Do not use UAT project settings for production.
 
-Set production env values:
+Generate one complete manifest from the activated deployment record. Do not set individual V5
+address variables and do not copy the UAT manifest:
 
-- V5 prize vault address
-- V5 draw manager address
-- V5 claim manager address
-- V5 TWAB controller address
-- production V5 indexer URL
-- Monad mainnet chain id `143`
-- PostHog envs if operator chooses to activate analytics
+```bash
+export V5_RELEASE_MANIFEST="$(node scripts/v5-frontend-release-manifest.mjs \
+  --environment mainnet \
+  --deployment-file deployments/monad-mainnet.json \
+  --rpc-url "<approved browser-facing Monad mainnet RPC>" \
+  --explorer-url "https://monadvision.com" \
+  --indexer-url "<production V5 indexer URL>" \
+  --claim-proof-url "<production claim-proof URL, if separate>")"
 
-Redeploy from `staging`. Vite bakes `VITE_*` values into the bundle, so changing env vars alone is not enough.
+cd web
+VITE_V5_ENABLED=true \
+VITE_V5_UAT=false \
+VITE_V5_RELEASE_MANIFEST="$V5_RELEASE_MANIFEST" \
+npm run build
+cd ..
+```
+
+The production `everdraw` project (`prj_41iuO5toVtvHCvfAGckpR2z9pqUI`) must contain exactly:
+
+- `VITE_V5_ENABLED=true`
+- `VITE_V5_UAT=false`
+- `VITE_V5_RELEASE_MANIFEST=<the exact generated JSON>`
+
+Remove legacy per-address `VITE_V5_*_ADDRESS` variables so they cannot be mistaken for active
+configuration. The build preflight rejects a missing, malformed, testnet, or incomplete mainnet
+manifest. Redeploy from `staging`; Vite bakes these values into the bundle, so changing an
+environment variable alone is not a cutover.
 
 Verification:
 
