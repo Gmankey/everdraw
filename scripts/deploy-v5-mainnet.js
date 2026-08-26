@@ -507,6 +507,7 @@ async function deployAndQueue() {
   };
   const record = {
     role: "EverDraw V5 mainnet beta - ADR-0045",
+    protocolVersion: 5,
     network: "monad-mainnet",
     chainId: Number(MAINNET_CHAIN_ID),
     status: "deployed-draw-manager-queued",

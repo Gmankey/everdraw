@@ -6,11 +6,13 @@ import { Contract, Interface, JsonRpcProvider, getAddress } from "ethers";
 import { spawnSync } from "node:child_process";
 import { queryLogsChunked, retryTransient } from "./write-watch-inputs.mjs";
 import { buildWatcherDrawInput, ingestWatcherReconstructionLogs } from "./reconstruct-watcher-input.mjs";
+import { readActiveV5Deployment, resolveV5RuntimeTargets } from "../keeper/v5-deployment.mjs";
 
 const RPC_URL = process.env.WATCHER_RPC_URL || process.env.RPC_URL;
 const HEAD_RPC_URL = process.env.WATCHER_HEAD_RPC_URL || RPC_URL;
 const HEAD_RPC_TIMEOUT_MS = Number(process.env.WATCHER_HEAD_RPC_TIMEOUT_MS || "10000");
 const DEPLOYMENT_FILE = process.env.DEPLOYMENT_FILE || "deployments/monad-testnet.json";
+const EXPECTED_CHAIN_ID = BigInt(process.env.WATCHER_CHAIN_ID || "10143");
 const CONFIGURED_DRAW_MANAGER_ADDRESS = process.env.DRAW_MANAGER_ADDRESS;
 const CONFIGURED_FROM_BLOCK = process.env.WATCHER_FROM_BLOCK || process.env.V5_WATCHER_FROM_BLOCK;
 const STATE_FILE = process.env.WATCHER_STATE_FILE || path.join(os.tmpdir(), "everdraw-v5-watcher-state.json");
@@ -31,24 +33,19 @@ const ABI = [
   "event Transfer(address indexed from,address indexed to,uint256 amount)",
 ];
 
-function latestV5Deployment() {
-  if (!fs.existsSync(DEPLOYMENT_FILE)) return undefined;
-  const deployment = JSON.parse(fs.readFileSync(DEPLOYMENT_FILE, "utf8"));
-  return [...(deployment.contracts || [])]
-    .reverse()
-    .find((entry) => entry.role?.startsWith("V5") && entry.addresses?.drawManager && entry.startBlock);
-}
-
 function resolveConfig() {
-  const deployment = latestV5Deployment();
-  const drawManagerAddress = CONFIGURED_DRAW_MANAGER_ADDRESS || deployment?.addresses?.drawManager;
-  const fromBlock = Number(CONFIGURED_FROM_BLOCK || deployment?.startBlock || 0);
-  if (!RPC_URL || !drawManagerAddress || !Number.isSafeInteger(fromBlock) || fromBlock < 1) {
-    throw new Error(
-      "WATCHER_RPC_URL/RPC_URL plus DRAW_MANAGER_ADDRESS and WATCHER_FROM_BLOCK are required (or a recorded V5 deployment)",
-    );
-  }
-  return { drawManagerAddress: getAddress(drawManagerAddress), fromBlock };
+  if (!RPC_URL) throw new Error("WATCHER_RPC_URL/RPC_URL is required");
+  const deployment = readActiveV5Deployment(DEPLOYMENT_FILE, { expectedChainId: EXPECTED_CHAIN_ID });
+  const targets = resolveV5RuntimeTargets(deployment, {
+    ...process.env,
+    DRAW_MANAGER_ADDRESS: CONFIGURED_DRAW_MANAGER_ADDRESS,
+    V5_WATCHER_FROM_BLOCK: CONFIGURED_FROM_BLOCK,
+  });
+  return {
+    deployment,
+    drawManagerAddress: targets.drawManagerAddress,
+    fromBlock: targets.fromBlock,
+  };
 }
 
 function readState({ chainId, drawManagerAddress, vaultAddress, fromBlock }) {
@@ -179,13 +176,25 @@ export function withRpcTimeout(promise, label, timeoutMs = HEAD_RPC_TIMEOUT_MS) 
 
 
 export async function main() {
-  const { drawManagerAddress, fromBlock } = resolveConfig();
+  const { deployment, drawManagerAddress, fromBlock } = resolveConfig();
   // Historical block-tag reads and reconstruction use the independent watcher RPC.
   // Current head/config reads may use a lightweight endpoint so archive stalls cannot
   // hide liveness, but they never supply participant reconstruction data.
   fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
   const provider = new JsonRpcProvider(RPC_URL);
   const headProvider = HEAD_RPC_URL === RPC_URL ? provider : new JsonRpcProvider(HEAD_RPC_URL);
+  const chainId = (await retryTransient(() => provider.getNetwork(), "watcher chain")).chainId;
+  const headChainId = (await retryTransient(() => headProvider.getNetwork(), "watcher head chain")).chainId;
+  if (chainId !== EXPECTED_CHAIN_ID || headChainId !== EXPECTED_CHAIN_ID) {
+    throw new Error(`Watcher RPC chain mismatch: reconstruction=${chainId} head=${headChainId} expected=${EXPECTED_CHAIN_ID}`);
+  }
+  for (const [label, candidate] of [["reconstruction", provider], ["head", headProvider]]) {
+    const code = await retryTransient(
+      () => withRpcTimeout(candidate.getCode(drawManagerAddress), `watcher ${label} DrawManager bytecode`),
+      `watcher ${label} DrawManager bytecode`,
+    );
+    if (code === "0x") throw new Error(`Watcher ${label} RPC has no DrawManager bytecode at ${drawManagerAddress}`);
+  }
   const latest = await retryTransient(
     () => withRpcTimeout(headProvider.getBlockNumber(), "watcher chain head"),
     "watcher chain head",
@@ -200,7 +209,9 @@ export async function main() {
     () => withRpcTimeout(manager.vault(), "watcher vault read"),
     "watcher vault read",
   ));
-  const chainId = (await retryTransient(() => provider.getNetwork(), "watcher chain")).chainId;
+  if (vaultAddress !== deployment.addresses.prizeVault) {
+    throw new Error(`Watcher DrawManager.vault ${vaultAddress} does not match activated deployment ${deployment.addresses.prizeVault}`);
+  }
   let state = readState({ chainId, drawManagerAddress, vaultAddress, fromBlock });
   if (state && !await retryTransient(
     () => canonicalCheckpointMatches(provider, state),

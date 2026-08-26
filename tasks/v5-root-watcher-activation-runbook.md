@@ -70,4 +70,49 @@ unset V5_WATCHER_UAT_RPC_URL V5_WATCHER_UAT_LOGS_RPC_URL V5_WATCHER_UAT_HEALTHCH
 
 ## Mainnet
 
-Do not enable a mainnet schedule until the V5 mainnet deployment is recorded and the same three conditions are met: separate archive RPC, separate Healthchecks check, and a successful manual dispatch against the recorded mainnet DrawManager. Use distinct mainnet secret names and a distinct Healthchecks check.
+The mainnet worker is `.github/workflows/v5-watcher-mainnet.yml`. It is disabled on schedule until
+the repository variable `V5_WATCHER_MAINNET_ENABLED` is exactly `true`. Do not enable it until
+the activated V5 record is committed to `deployments/monad-mainnet.json`.
+
+Use a reconstruction/archive RPC that is operationally independent from the Fly keeper RPC. Use a
+separate current-head RPC and a separate Healthchecks check. Enter all values interactively:
+
+```bash
+read -rsp "Mainnet watcher archive RPC URL: " V5_WATCHER_MAINNET_RPC_URL
+echo
+printf %s "$V5_WATCHER_MAINNET_RPC_URL" | gh secret set V5_WATCHER_MAINNET_RPC_URL --repo Gmankey/everdraw
+
+read -rsp "Mainnet watcher logs RPC URL (Enter to reuse watcher archive RPC): " V5_WATCHER_MAINNET_LOGS_RPC_URL
+echo
+if [ -n "$V5_WATCHER_MAINNET_LOGS_RPC_URL" ]; then
+  printf %s "$V5_WATCHER_MAINNET_LOGS_RPC_URL" | gh secret set V5_WATCHER_MAINNET_LOGS_RPC_URL --repo Gmankey/everdraw
+fi
+
+read -rsp "Mainnet watcher current-head RPC URL: " V5_WATCHER_MAINNET_HEAD_RPC_URL
+echo
+printf %s "$V5_WATCHER_MAINNET_HEAD_RPC_URL" | gh secret set V5_WATCHER_MAINNET_HEAD_RPC_URL --repo Gmankey/everdraw
+
+read -rsp "Mainnet watcher Healthchecks ping URL: " V5_WATCHER_MAINNET_HEALTHCHECK_URL
+echo
+printf %s "$V5_WATCHER_MAINNET_HEALTHCHECK_URL" | gh secret set V5_WATCHER_MAINNET_HEALTHCHECK_URL --repo Gmankey/everdraw
+
+unset V5_WATCHER_MAINNET_RPC_URL V5_WATCHER_MAINNET_LOGS_RPC_URL
+unset V5_WATCHER_MAINNET_HEAD_RPC_URL V5_WATCHER_MAINNET_HEALTHCHECK_URL
+```
+
+Before deposits open:
+
+1. Manually dispatch `v5-watcher-mainnet.yml` from `staging`.
+2. Confirm it resolves chain 143 and the activated manifest, reaches chain head, saves its distinct
+   `.watcher-cache-mainnet` state, and turns the mainnet Healthchecks check green.
+3. Deliberately propose a bad root on the release contracts, observe the Telegram mismatch alarm,
+   and veto it from the designated guardian Ledger/multisig within the stored challenge deadline.
+4. Record the proposal, alert, veto, corrected proposal, finalize, and claim transactions in launch
+   evidence.
+5. Only after the drill passes, enable the schedule:
+
+   ```bash
+   gh variable set V5_WATCHER_MAINNET_ENABLED --repo Gmankey/everdraw --body true
+   ```
+
+A missing run, cache gap, wrong-chain/config failure, or unproven veto drill blocks deposits.
