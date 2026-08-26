@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "node scripts/validate-v5-release-config.mjs && vite build",
+    "test:v5-release": "node --test src/v5ReleaseConfig.test.js",
+    "test:v5-period-events": "node --test src/v5PeriodAccountEvents.test.js",
     "lint": "eslint .",
     "test:rpc-cache": "node --test src/rpcCache.test.js",
     "test:draw-health": "node --test src/v5DrawHealth.test.js",

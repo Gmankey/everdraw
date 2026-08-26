@@ -20,6 +20,8 @@ import { formatV5MaxInput } from './v5AmountInput.js'
 import { runV5ConfirmedFollowups } from './v5TransactionLifecycle.js'
 import { awardedMilestones, tierName } from './v5PointsView.js'
 import { latestSettledDraw, participantRowsForDraw } from './v5PreviousDraw.js'
+import { assertV5RuntimeSnapshot, assertV5WalletChain, v5ReleaseConfigFromEnv, verifyV5WritePreconditions } from './v5ReleaseConfig.js'
+import { v5PeriodAccountEvents } from './v5PeriodAccountEvents.js'
 import './shmon.css'
 
 // Vercel build-ignore guard markers for production deploys: points/preview, setMaxTickets.
@@ -624,17 +626,17 @@ function ProfilePage({ account, points, history, tranches, currentDrawId, curren
   )
 }
 
-function LeaderboardPage({ account }) {
+function LeaderboardPage({ account, indexerUrl = getIndexerBaseUrl() }) {
   const [period, setPeriod] = useState('all')
   const [rows, setRows] = useState([])
   useEffect(() => {
     const ac = new AbortController()
-    fetch(`${getIndexerBaseUrl()}/api/leaderboard?limit=100&period=${period}`, { signal: ac.signal })
+    fetch(`${indexerUrl}/api/leaderboard?limit=100&period=${period}`, { signal: ac.signal })
       .then((r) => r.ok ? r.json() : [])
       .then((data) => { assertNotAborted(ac.signal); setRows(Array.isArray(data) ? data : []) })
       .catch((err) => { if (!isAbortError(err)) setRows([]) })
     return () => ac.abort()
-  }, [period])
+  }, [indexerUrl, period])
   const currentRow = account ? rows.find((r) => r.wallet?.toLowerCase() === account.toLowerCase()) : null
   return (
     <section className="participants-card points-page">
@@ -1258,16 +1260,6 @@ function RoundProgressSteps({ state, settlementSecs, secondsRemaining, isV3 = fa
   )
 }
 
-const V5_UAT_DEFAULTS = {
-  chainId: 10143,
-  rpcUrl: 'https://testnet-rpc.monad.xyz',
-  drawManager: '0x1ca0daEF8c2d684ddC62D9F529eC859e445396eC',
-  prizeVault: '0x06a35C612285794d73eFA761bb014CBC5D8ce192',
-  twabController: '0xFFCB5261a6c3469d356dDCb7730dcacd30891407',
-  claimManager: '0xBB19793bf3CA2EBDE481c8Db0C9DE8B98A8d6621',
-  shmon: '0x282BdDFF5e58793AcAb65438b257Dbd15A8745C9',
-}
-
 const V5_VAULT_ABI = [
   'function deposit() payable returns (uint256)',
   'function depositShmon(uint256 shares) returns (uint256)',
@@ -1276,6 +1268,9 @@ const V5_VAULT_ABI = [
   'function boostDepositShmon(uint256 shares) returns (uint256)',
   'function boostWithdrawShmon(uint256 amount) returns (uint256)',
   'function strategy() view returns (address)',
+  'function twabController() view returns (address)',
+  'function payoutToken() view returns (address)',
+  'function drawManager() view returns (address)',
   'function principalOf(address) view returns (uint256)',
   'function boosterPrincipalOf(address) view returns (uint256)',
   'function totalPrincipal() view returns (uint256)',
@@ -1286,6 +1281,7 @@ const V5_VAULT_ABI = [
   'function stoppedAt() view returns (uint64)',
   'event Deposit(address indexed recipient, uint256 amount)',
   'event Withdraw(address indexed recipient, uint256 amount)',
+  'event Transfer(address indexed from, address indexed to, uint256 amount)',
   'event BoostDeposit(address indexed booster, uint256 amount, uint256 balance, uint64 timestamp)',
   'event BoostWithdraw(address indexed booster, uint256 amount, uint256 balance, uint64 timestamp)',
   'error ZeroAmount()',
@@ -1296,6 +1292,11 @@ const V5_VAULT_ABI = [
 ]
 
 const V5_DRAW_MANAGER_ABI = [
+  'function vault() view returns (address)',
+  'function twabController() view returns (address)',
+  'function claimManager() view returns (address)',
+  'function randomnessOracle() view returns (address)',
+  'function payoutToken() view returns (address)',
   'function currentDrawId() view returns (uint256)',
   'function nextPeriodStart() view returns (uint64)',
   'function drawPeriod() view returns (uint64)',
@@ -1305,7 +1306,22 @@ const V5_DRAW_MANAGER_ABI = [
 ]
 
 const V5_CLAIM_MANAGER_ABI = [
+  'function authorizedSource(address) view returns (bool)',
+  'function compoundVaultFor(address) view returns (address)',
   'function claimMany(tuple(bytes32 distributionId,uint256 leafIndex,address account,address token,uint256 amount)[] leaves, bytes32[][] proofs)',
+]
+
+const V5_STRATEGY_ABI = [
+  'function vault() view returns (address)',
+  'function shareToken() view returns (address)',
+]
+
+const V5_ORACLE_ABI = [
+  'function consumer() view returns (address)',
+]
+
+const V5_TWAB_ABI = [
+  'function registeredVaults(address) view returns (bool)',
 ]
 
 const V5_SHMON_ABI = [
@@ -1317,22 +1333,10 @@ const V5_SHMON_ABI = [
 
 const V5_DRAW_STATUS = ['Waiting', 'Awaiting seed', 'Seeded', 'Proposed', 'Finalized', 'Skipped']
 
-function v5EnvAddress(name, fallback) {
-  const value = import.meta.env[name] || fallback
-  return ethers.isAddress(value) ? value : fallback
-}
-
 function v5Config() {
-  return {
-    chainId: Number(import.meta.env.VITE_CHAIN_ID || V5_UAT_DEFAULTS.chainId),
-    rpcUrl: import.meta.env.VITE_RPC_URL || V5_UAT_DEFAULTS.rpcUrl,
-    drawManager: v5EnvAddress('VITE_V5_DRAW_MANAGER_ADDRESS', V5_UAT_DEFAULTS.drawManager),
-    prizeVault: v5EnvAddress('VITE_V5_PRIZE_VAULT_ADDRESS', V5_UAT_DEFAULTS.prizeVault),
-    twabController: v5EnvAddress('VITE_V5_TWAB_CONTROLLER_ADDRESS', V5_UAT_DEFAULTS.twabController),
-    claimManager: v5EnvAddress('VITE_V5_CLAIM_MANAGER_ADDRESS', V5_UAT_DEFAULTS.claimManager),
-    shmon: v5EnvAddress('VITE_SHMON_ADDRESS', V5_UAT_DEFAULTS.shmon),
-    claimProofUrl: import.meta.env.VITE_V5_CLAIM_PROOF_URL || '',
-  }
+  const config = v5ReleaseConfigFromEnv(import.meta.env)
+  if (!config) throw new Error('V5 release mode is enabled without an approved release manifest')
+  return config
 }
 
 function formatV5Mon(value, digits = 4) {
@@ -1359,8 +1363,8 @@ function formatV5Duration(totalSeconds) {
   return `${minutes}m`
 }
 
-async function switchToV5Chain(provider, chainId, rpcUrl) {
-  const hexChainId = `0x${Number(chainId).toString(16)}`
+async function switchToV5Chain(provider, config) {
+  const hexChainId = `0x${Number(config.chainId).toString(16)}`
   try {
     await provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: hexChainId }] })
   } catch (err) {
@@ -1369,13 +1373,15 @@ async function switchToV5Chain(provider, chainId, rpcUrl) {
       method: 'wallet_addEthereumChain',
       params: [{
         chainId: hexChainId,
-        chainName: 'Monad Testnet',
-        nativeCurrency: { name: 'MON', symbol: 'MON', decimals: 18 },
-        rpcUrls: [rpcUrl],
-        blockExplorerUrls: ['https://testnet.monadexplorer.com'],
+        chainName: config.chainName,
+        nativeCurrency: config.nativeCurrency,
+        rpcUrls: [config.rpcUrl],
+        blockExplorerUrls: [config.explorerUrl],
       }],
     })
   }
+  const walletChainId = await provider.request({ method: 'eth_chainId' })
+  assertV5WalletChain(config, BigInt(walletChainId))
 }
 
 function v5ClaimUrl(template, account, cfg) {
@@ -1413,8 +1419,8 @@ function v5EventDate(block) {
   return new Date(Number(block.timestamp) * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-function v5ExplorerTx(hash) {
-  return hash ? `https://testnet.monadexplorer.com/tx/${hash}` : '#'
+function v5ExplorerTx(hash, explorerUrl) {
+  return hash ? `${explorerUrl}/tx/${hash}` : '#'
 }
 
 const V5_TICKETS_PER_MON_PER_MINUTE = 0.005
@@ -1498,19 +1504,22 @@ function v5EventDateFromIso(iso) {
   return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-// Reads from the indexer (not eth_getLogs): a fixed on-chain lookback window cannot span a
-// testnet vault's full lifetime once the chain head advances past it (Monad blocks are seconds
-// apart), so a direct queryFilter here silently returns nothing for real deposit history.
-async function v5BuildHistoryRows({ account, vault, manager }) {
-  if (!account) return []
-  const base = getIndexerBaseUrl()
+async function fetchV5Json(url, label) {
+  const response = await fetch(url)
+  if (!response.ok) throw new Error(`${label} is unavailable (${response.status})`)
+  return response.json()
+}
+
+async function v5BuildHistoryData({ account, vault, manager, indexerUrl }) {
+  if (!account) return { rows: [], positionEvents: [] }
+  const base = indexerUrl
   const drawManagerLc = String(manager?.target || '').toLowerCase()
   const vaultAddress = String(vault?.target || '')
   const vaultQuery = encodeURIComponent(vaultAddress)
   const [positionEvents, rounds, tranches] = await Promise.all([
-    fetch(`${base}/api/v5/wallets/${account}/position-events?vault=${vaultQuery}`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
-    fetch(`${base}/api/rounds`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
-    fetch(`${base}/api/v5/wallets/${account}/tranches?vault=${vaultQuery}`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
+    fetchV5Json(`${base}/api/v5/wallets/${account}/position-events?vault=${vaultQuery}`, 'V5 position history'),
+    fetchV5Json(`${base}/api/rounds`, 'V5 draw history'),
+    fetchV5Json(`${base}/api/v5/wallets/${account}/tranches?vault=${vaultQuery}`, 'V5 tranche history'),
   ])
 
   const scopedEvents = scopeV5RowsToVault(positionEvents, vaultAddress)
@@ -1521,15 +1530,19 @@ async function v5BuildHistoryRows({ account, vault, manager }) {
   const positionRows = scopedEvents
     .filter((ev) => ev.source !== 'prize_compound')
     .map((ev) => {
-      const isDeposit = ev.action === 'deposit'
+      const isCredit = ev.action === 'deposit' || ev.action === 'transfer_in'
+      const isTransfer = ev.action === 'transfer_in' || ev.action === 'transfer_out'
       const isDegen = ev.pool_type === 'degen'
+      const transaction = isTransfer
+        ? (isCredit ? 'Transfer in' : 'Transfer out')
+        : isDegen ? (isCredit ? 'Patron Pool deposit' : 'Patron Pool withdraw') : (isCredit ? 'Deposit' : 'Withdraw')
       return {
         key: `${ev.tx_hash}-${ev.log_index}`,
         sortAt: Date.parse(ev.block_timestamp || '') || 0,
         date: v5EventDateFromIso(ev.block_timestamp),
-        transaction: isDegen ? (isDeposit ? 'Patron Pool deposit' : 'Patron Pool withdraw') : (isDeposit ? 'Deposit' : 'Withdraw'),
-        result: isDegen ? 'Prize excluded' : (isDeposit ? 'Entered' : 'Exited'),
-        principal: `${isDeposit ? '+' : '-'}${formatV5Mon(ev.amount)} MON`,
+        transaction,
+        result: isDegen ? 'Prize excluded' : (isCredit ? 'Entered' : 'Exited'),
+        principal: `${isCredit ? '+' : '-'}${formatV5Mon(ev.amount)} MON`,
         prize: '\u2014',
         tx: ev.tx_hash,
       }
@@ -1570,12 +1583,12 @@ async function v5BuildHistoryRows({ account, vault, manager }) {
       prizeWin: win,
     }))
 
-  return [...positionRows, ...drawRows, ...unmatchedPrizeRows].sort((a, b) => b.sortAt - a.sortAt).slice(0, 24)
+  return { rows: [...positionRows, ...drawRows, ...unmatchedPrizeRows].sort((a, b) => b.sortAt - a.sortAt).slice(0, 24), positionEvents: scopedEvents }
 }
 
-async function v5LoadPreviousDraw(drawManagerAddress) {
-  const base = getIndexerBaseUrl()
-  const rounds = await fetch(`${base}/api/rounds`).then((response) => (response.ok ? response.json() : [])).catch(() => [])
+async function v5LoadPreviousDraw(drawManagerAddress, indexerUrl) {
+  const base = indexerUrl
+  const rounds = await fetchV5Json(`${base}/api/rounds`, 'V5 draw history')
   const draw = latestSettledDraw(rounds, drawManagerAddress)
   const managerAddress = String(drawManagerAddress || '').toLowerCase()
   const latestLifecycle = rounds
@@ -1583,9 +1596,7 @@ async function v5LoadPreviousDraw(drawManagerAddress) {
     .sort((a, b) => Number(b?.roundId || 0) - Number(a?.roundId || 0))[0]
   const lastAdvancedAt = latestLifecycle?.settledAt || latestLifecycle?.drawnAt || latestLifecycle?.committedAt || null
   if (!draw) return { draw: null, participants: [], lastAdvancedAt }
-  const participants = await fetch(`${base}/api/rounds/${draw.roundId}/participants?pool=${encodeURIComponent(drawManagerAddress)}`)
-    .then((response) => (response.ok ? response.json() : []))
-    .catch(() => [])
+  const participants = await fetchV5Json(`${base}/api/rounds/${draw.roundId}/participants?pool=${encodeURIComponent(drawManagerAddress)}`, 'V5 draw participants')
   return { draw, participants: participantRowsForDraw(participants, drawManagerAddress), lastAdvancedAt }
 }
 
@@ -1607,6 +1618,7 @@ function V5ActionCard({
   boosterSupported,
   depositsDisabled = false,
   onDeposit,
+  actionsDisabled = false,
   onWithdraw,
   onConnect,
 }) {
@@ -1624,6 +1636,7 @@ function V5ActionCard({
     ? 'Submitting...'
     : !account
       ? `Connect Wallet to ${isDeposit ? 'Deposit' : 'Withdraw'}`
+      : actionsDisabled ? 'Temporarily unavailable'
       : isDeposit && depositsDisabled ? 'Deposits paused'
         : isDeposit ? `${submitVerb} with ${depositAsset}` : submitVerb
 
@@ -1715,7 +1728,7 @@ function V5ActionCard({
           ) : null}
           <button
             className="btn deposit-btn"
-            disabled={Boolean(busy) || (Boolean(account) && isDeposit && depositsDisabled) || (isDegen && !boosterSupported && Boolean(account))}
+            disabled={Boolean(busy) || actionsDisabled || (Boolean(account) && isDeposit && depositsDisabled) || (isDegen && !boosterSupported && Boolean(account))}
             onClick={!account ? onConnect : isDeposit ? onDeposit : onWithdraw}
           >
             {submitLabel}
@@ -1829,7 +1842,7 @@ function V5PreviousRound({ state, onBack, status, error }) {
   )
 }
 
-function V5HistoryTable({ account, rows }) {
+function V5HistoryTable({ account, rows, explorerUrl, isUat = false }) {
   return (
     <section className="participants-card v5-history-card">
       <div className="participants-head">
@@ -1843,11 +1856,11 @@ function V5HistoryTable({ account, rows }) {
         {!account ? (
           <div className="points-empty-state">Connect a wallet to view your history.</div>
         ) : rows.length === 0 ? (
-          <div className="points-empty-state">No V5 UAT history found yet.</div>
+          <div className="points-empty-state">{isUat ? 'No V5 UAT history found yet.' : 'No V5 history found yet.'}</div>
         ) : rows.map((row) => (
           <div className="participants-row v5-history-row" key={row.key}>
             <span>{row.date}</span>
-            <span>{row.tx ? <a className="stats-winner-link" href={v5ExplorerTx(row.tx)} target="_blank" rel="noopener noreferrer">{row.transaction}</a> : row.transaction}</span>
+            <span>{row.tx ? <a className="stats-winner-link" href={v5ExplorerTx(row.tx, explorerUrl)} target="_blank" rel="noopener noreferrer">{row.transaction}</a> : row.transaction}</span>
             <span>{row.prizeWin ? <span className="v5-history-winner">WINNER</span> : row.result}</span>
             <span>{row.principal}</span>
             <span>{row.prize}</span>
@@ -1881,29 +1894,131 @@ export function V5UatExperience() {
   const [pointsProfile, setPointsProfile] = useState(null)
   const [pointsHistory, setPointsHistory] = useState([])
   const [pointsTranches, setPointsTranches] = useState([])
+  const [dataAvailable, setDataAvailable] = useState(false)
 
   const readProvider = useMemo(() => new ethers.JsonRpcProvider(cfg.rpcUrl), [cfg.rpcUrl])
   const vault = useMemo(() => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, readProvider), [cfg.prizeVault, readProvider])
   const manager = useMemo(() => new ethers.Contract(cfg.drawManager, V5_DRAW_MANAGER_ABI, readProvider), [cfg.drawManager, readProvider])
   const shmon = useMemo(() => new ethers.Contract(cfg.shmon, V5_SHMON_ABI, readProvider), [cfg.shmon, readProvider])
+  const claimManager = useMemo(() => new ethers.Contract(cfg.claimManager, V5_CLAIM_MANAGER_ABI, readProvider), [cfg.claimManager, readProvider])
+  const strategy = useMemo(() => new ethers.Contract(cfg.shmonStrategy, V5_STRATEGY_ABI, readProvider), [cfg.shmonStrategy, readProvider])
+  const randomnessOracle = useMemo(() => new ethers.Contract(cfg.pythRandomnessOracle, V5_ORACLE_ABI, readProvider), [cfg.pythRandomnessOracle, readProvider])
+  const twabController = useMemo(() => new ethers.Contract(cfg.twabController, V5_TWAB_ABI, readProvider), [cfg.twabController, readProvider])
+  const runtimeVerifiedAtRef = useRef(0)
   const refreshFailureStreak = useRef(0)
   const observedDrawIdRef = useRef(0n)
   const observedDrawAdvanceAtRef = useRef(0)
+  const verifyRuntime = useCallback(async ({ force = false } = {}) => {
+    if (!force && Date.now() - runtimeVerifiedAtRef.current < 30_000) return true
+    try {
+      const snapshot = await withRpcReadRetry(async () => {
+        const [
+          network,
+          drawManagerCode,
+          prizeVaultCode,
+          twabControllerCode,
+          claimManagerCode,
+          strategyCode,
+          oracleCode,
+          shmonCode,
+          managerVault,
+          managerTwab,
+          managerClaim,
+          managerOracle,
+          managerPayoutToken,
+          vaultDrawManager,
+          vaultStrategy,
+          vaultTwab,
+          vaultPayoutToken,
+          strategyVault,
+          strategyShareToken,
+          claimCompoundVault,
+          claimAuthorizedSource,
+          oracleConsumer,
+          twabRegisteredVault,
+        ] = await Promise.all([
+          readProvider.getNetwork(),
+          readProvider.getCode(cfg.drawManager),
+          readProvider.getCode(cfg.prizeVault),
+          readProvider.getCode(cfg.twabController),
+          readProvider.getCode(cfg.claimManager),
+          readProvider.getCode(cfg.shmonStrategy),
+          readProvider.getCode(cfg.pythRandomnessOracle),
+          readProvider.getCode(cfg.shmon),
+          manager.vault(),
+          manager.twabController(),
+          manager.claimManager(),
+          manager.randomnessOracle(),
+          manager.payoutToken(),
+          vault.drawManager(),
+          vault.strategy(),
+          vault.twabController(),
+          vault.payoutToken(),
+          strategy.vault(),
+          strategy.shareToken(),
+          claimManager.compoundVaultFor(cfg.drawManager),
+          claimManager.authorizedSource(cfg.drawManager),
+          randomnessOracle.consumer(),
+          twabController.registeredVaults(cfg.prizeVault),
+        ])
+        return {
+          chainId: network.chainId,
+          code: {
+            drawManager: drawManagerCode,
+            prizeVault: prizeVaultCode,
+            twabController: twabControllerCode,
+            claimManager: claimManagerCode,
+            shmonStrategy: strategyCode,
+            pythRandomnessOracle: oracleCode,
+            shmon: shmonCode,
+          },
+          wiring: {
+            managerVault,
+            managerTwab,
+            managerClaim,
+            managerOracle,
+            managerPayoutToken,
+            vaultDrawManager,
+            vaultStrategy,
+            vaultTwab,
+            vaultPayoutToken,
+            strategyVault,
+            strategyShareToken,
+            claimCompoundVault,
+            claimAuthorizedSource,
+            oracleConsumer,
+            twabRegisteredVault,
+          },
+        }
+      }, {
+        attempts: 4,
+        baseDelayMs: 500,
+        onRetry: () => setError(V5_NETWORK_RETRY_MESSAGE),
+      })
+      assertV5RuntimeSnapshot(cfg, snapshot)
+      runtimeVerifiedAtRef.current = Date.now()
+      return true
+    } catch (err) {
+      runtimeVerifiedAtRef.current = 0
+      setDataAvailable(false)
+      throw err
+    }
+  }, [cfg, claimManager, manager, randomnessOracle, readProvider, strategy, twabController, vault])
 
   const refresh = useCallback(async (targetAccount = account) => {
+    await verifyRuntime()
     const attemptCoreReads = () => Promise.all([
       readProvider.getBlock('latest'),
       manager.currentDrawId(),
       manager.nextPeriodStart(),
       manager.drawPeriod(),
-      manager.previewStartDraw().catch(() => null),
+      manager.previewStartDraw(),
       vault.totalPrincipal(),
       vault.totalParticipantPrincipal(),
-      vault.totalBoosterPrincipal().catch(() => null),
+      vault.totalBoosterPrincipal(),
       vault.availableYield(),
       vault.paused(),
       vault.stoppedAt(),
-      readProvider.getCode(cfg.prizeVault),
     ])
     const attemptCoreReadsWithRetry = () => withRpcReadRetry(attemptCoreReads, {
       attempts: 4,
@@ -1926,7 +2041,7 @@ export function V5UatExperience() {
       } catch (err2) {
         refreshFailureStreak.current += 1
         if (refreshFailureStreak.current >= 3) {
-          setError('Having trouble reaching the Monad testnet RPC — retrying automatically...')
+          setError(`Having trouble reaching the ${cfg.chainName} RPC — retrying automatically...`)
         }
         throw err2
       }
@@ -1946,22 +2061,26 @@ export function V5UatExperience() {
       availableYield,
       paused,
       stoppedAt,
-      vaultCode,
     ] = core
 
-    const draw = currentDrawId > 0n ? await manager.draws(currentDrawId).catch(() => null) : null
+    const draw = currentDrawId > 0n
+      ? await withRpcReadRetry(() => manager.draws(currentDrawId), { attempts: 4, baseDelayMs: 500 })
+      : null
     const user = ethers.isAddress(targetAccount || '') ? targetAccount : ''
-    const [principal, boosterPrincipal, balance, shmonShares] = user ? await Promise.all([
-      vault.principalOf(user).catch(() => 0n),
-      vault.boosterPrincipalOf(user).catch(() => null),
-      readProvider.getBalance(user).catch(() => 0n),
-      shmon.balanceOf(user).catch(() => 0n),
-    ]) : [0n, 0n, 0n, 0n]
-    const shmonBalance = shmonShares > 0n ? await shmon.convertToAssets(shmonShares).catch(() => 0n) : 0n
-    const [historyRows, previousDraw] = await Promise.all([
-      v5BuildHistoryRows({ account: user, block, vault, manager }),
-      v5LoadPreviousDraw(manager.target),
+    const [principal, boosterPrincipal, balance, shmonShares] = user ? await withRpcReadRetry(() => Promise.all([
+      vault.principalOf(user),
+      vault.boosterPrincipalOf(user),
+      readProvider.getBalance(user),
+      shmon.balanceOf(user),
+    ]), { attempts: 4, baseDelayMs: 500 }) : [0n, 0n, 0n, 0n]
+    const shmonBalance = shmonShares > 0n
+      ? await withRpcReadRetry(() => shmon.convertToAssets(shmonShares), { attempts: 4, baseDelayMs: 500 })
+      : 0n
+    const [historyData, previousDraw] = await Promise.all([
+      v5BuildHistoryData({ account: user, vault, manager, indexerUrl: cfg.indexerUrl }),
+      v5LoadPreviousDraw(manager.target, cfg.indexerUrl),
     ])
+    const historyRows = historyData.rows
     if (currentDrawId > observedDrawIdRef.current) {
       if (observedDrawIdRef.current > 0n) observedDrawAdvanceAtRef.current = Date.now()
       observedDrawIdRef.current = currentDrawId
@@ -1969,30 +2088,9 @@ export function V5UatExperience() {
     const indexedAdvanceAtMs = Date.parse(previousDraw?.lastAdvancedAt || '') || 0
     const lastDrawAdvancedAtMs = Math.max(indexedAdvanceAtMs, observedDrawAdvanceAtRef.current)
     const periodStart = Number(nextPeriodStart || 0n)
-    const periodLogs = user && periodStart > 0 && block?.number ? await Promise.all([
-      vault.queryFilter(vault.filters.Deposit(user), Math.max(0, Number(block.number) - 200000), block.number).catch(() => []),
-      vault.queryFilter(vault.filters.Withdraw(user), Math.max(0, Number(block.number) - 200000), block.number).catch(() => []),
-    ]).then(async ([deposits, withdrawals]) => {
-      const logs = [
-        ...deposits.map((log) => ({ log, type: 'deposit' })),
-        ...withdrawals.map((log) => ({ log, type: 'withdraw' })),
-      ]
-      const blocks = new Map(await Promise.all([...new Set(logs.map((item) => item.log.blockNumber))].map(async (blockNumber) => [
-        blockNumber,
-        await readProvider.getBlock(blockNumber).catch(() => null),
-      ])))
-      return logs
-        .map((item) => ({
-          type: item.type,
-          amount: item.log.args?.amount?.toString?.() || '0',
-          blockNumber: item.log.blockNumber,
-          transactionIndex: item.log.transactionIndex || 0,
-          index: item.log.index || 0,
-          timestamp: Number(blocks.get(item.log.blockNumber)?.timestamp || 0),
-        }))
-        .filter((item) => item.timestamp >= periodStart)
-        .sort((a, b) => a.timestamp - b.timestamp || a.blockNumber - b.blockNumber || a.transactionIndex - b.transactionIndex || a.index - b.index)
-    }) : []
+    const periodLogs = user && periodStart > 0
+      ? v5PeriodAccountEvents(historyData.positionEvents, periodStart)
+      : []
 
     setState({
       block,
@@ -2017,10 +2115,19 @@ export function V5UatExperience() {
       lastDrawAdvancedAtMs,
       periodAccountEvents: periodLogs,
       readAtMs: Date.now(),
-      boosterSupported: vaultCode !== '0x' && totalBoosterPrincipal !== null && boosterPrincipal !== null,
+      boosterSupported: true,
     })
-  }, [account, cfg.prizeVault, manager, readProvider, shmon, vault])
+    setDataAvailable(true)
+  }, [account, cfg.chainName, cfg.indexerUrl, manager, readProvider, shmon, vault, verifyRuntime])
 
+  const checkedRefresh = useCallback(async (...args) => {
+    try {
+      return await refresh(...args)
+    } catch (err) {
+      setDataAvailable(false)
+      throw err
+    }
+  }, [refresh])
   useEffect(() => {
     const id = setInterval(() => setLiveNowMs(Date.now()), 1000)
     return () => clearInterval(id)
@@ -2033,11 +2140,11 @@ export function V5UatExperience() {
   }, [])
 
   useEffect(() => {
-    trackPageView('/v5-uat', 'EverDraw V5 UAT')
-    refresh().catch((err) => setError(v5UserError(err)))
-    const id = setInterval(() => refresh().catch(() => {}), 20_000)
+    trackPageView(cfg.isUat ? '/v5-uat' : '/v5', cfg.isUat ? 'EverDraw V5 UAT' : 'EverDraw V5')
+    checkedRefresh().catch((err) => setError(v5UserError(err)))
+    const id = setInterval(() => checkedRefresh().catch(() => {}), 20_000)
     return () => clearInterval(id)
-  }, [refresh])
+  }, [cfg.isUat, checkedRefresh])
 
   useEffect(() => {
     const ac = new AbortController()
@@ -2048,9 +2155,9 @@ export function V5UatExperience() {
       return () => ac.abort()
     }
     Promise.all([
-      fetch(`${getIndexerBaseUrl()}/api/points/${account}`, { signal: ac.signal }).then((r) => r.ok ? r.json() : null),
-      fetch(`${getIndexerBaseUrl()}/api/points/${account}/history?limit=12`, { signal: ac.signal }).then((r) => r.ok ? r.json() : []),
-      fetch(`${getIndexerBaseUrl()}/api/v5/wallets/${account}/tranches?vault=${encodeURIComponent(cfg.prizeVault)}`, { signal: ac.signal }).then((r) => r.ok ? r.json() : []),
+      fetch(`${cfg.indexerUrl}/api/points/${account}`, { signal: ac.signal }).then((r) => r.ok ? r.json() : null),
+      fetch(`${cfg.indexerUrl}/api/points/${account}/history?limit=12`, { signal: ac.signal }).then((r) => r.ok ? r.json() : []),
+      fetch(`${cfg.indexerUrl}/api/v5/wallets/${account}/tranches?vault=${encodeURIComponent(cfg.prizeVault)}`, { signal: ac.signal }).then((r) => r.ok ? r.json() : []),
     ]).then(([profile, history, tranches]) => {
       assertNotAborted(ac.signal)
       setPointsProfile(profile)
@@ -2064,7 +2171,7 @@ export function V5UatExperience() {
       }
     })
     return () => ac.abort()
-  }, [account, cfg.prizeVault])
+  }, [account, cfg.indexerUrl, cfg.prizeVault])
 
   const connect = useCallback(async () => {
     setError('')
@@ -2073,14 +2180,14 @@ export function V5UatExperience() {
       const provider = getWalletProvider()
       if (!provider) return
       const accounts = await provider.request({ method: 'eth_requestAccounts' })
-      await switchToV5Chain(provider, cfg.chainId, cfg.rpcUrl)
+      await switchToV5Chain(provider, cfg)
       const next = accounts?.[0] || ''
       setAccount(next)
-      await refresh(next)
+      await checkedRefresh(next)
     } catch (err) {
       setError(v5UserError(err, 'Wallet connection failed. Please try again.'))
     }
-  }, [cfg.chainId, cfg.rpcUrl, refresh])
+  }, [cfg, checkedRefresh])
 
   const transact = useCallback(async (label, fn, options = {}) => {
     setBusy(label)
@@ -2089,7 +2196,13 @@ export function V5UatExperience() {
     try {
       const provider = getWalletProvider()
       if (!provider) throw new Error('Connect wallet first')
-      await switchToV5Chain(provider, cfg.chainId, cfg.rpcUrl)
+      await switchToV5Chain(provider, cfg)
+      await verifyV5WritePreconditions({
+        config: cfg,
+        walletProvider: provider,
+        verifyRuntime,
+        refreshData: () => checkedRefresh(account),
+      })
       const browserProvider = new ethers.BrowserProvider(provider)
       const signer = await browserProvider.getSigner()
       const tx = await fn(signer)
@@ -2102,7 +2215,7 @@ export function V5UatExperience() {
       await runV5ConfirmedFollowups({
         context: { signer, account: nextAccount, receipt },
         onReceipt: options.afterReceipt,
-        refresh,
+        refresh: checkedRefresh,
         afterConfirm: options.afterConfirm,
       })
     } catch (err) {
@@ -2110,7 +2223,7 @@ export function V5UatExperience() {
     } finally {
       setBusy('')
     }
-  }, [cfg.chainId, cfg.rpcUrl, refresh])
+  }, [account, cfg, checkedRefresh, verifyRuntime])
 
   const drawHealth = buildV5DrawHealth({ state, nowMs: liveNowMs })
   const countdown = drawHealth.isLoading
@@ -2171,12 +2284,12 @@ export function V5UatExperience() {
     : 'Are you sure? If you withdraw, you risk losing your streak and multipliers.'
   const afterPlayAction = async ({ account: nextAccount }) => {
     setPlayAmount('')
-    const deposited = await vault.principalOf(nextAccount).catch(() => 0n)
+    const deposited = await withRpcReadRetry(() => vault.principalOf(nextAccount), { attempts: 4, baseDelayMs: 500 })
     setPlayNotice(`Total currently deposited: ${formatV5Mon(deposited)} MON`)
   }
   const afterDegenAction = async ({ account: nextAccount }) => {
     setDegenAmount('')
-    const deposited = await vault.boosterPrincipalOf(nextAccount).catch(() => 0n)
+    const deposited = await withRpcReadRetry(() => vault.boosterPrincipalOf(nextAccount), { attempts: 4, baseDelayMs: 500 })
     setDegenNotice(`Total currently in Patron Pool: ${formatV5Mon(deposited)} MON`)
   }
   const clearPlayAmount = () => setPlayAmount('')
@@ -2185,7 +2298,7 @@ export function V5UatExperience() {
     const assets = parseV5Mon(amountValue)
     const shmonWrite = new ethers.Contract(cfg.shmon, V5_SHMON_ABI, signer)
     const vaultWrite = new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer)
-    const strategyAddress = await vaultWrite.strategy()
+    const strategyAddress = cfg.shmonStrategy
     const shares = await shmonWrite.previewDeposit(assets)
     if (shares <= 0n) throw new Error('shMON deposit amount is too small')
     setStatus('Approving shMON...')
@@ -2269,8 +2382,8 @@ export function V5UatExperience() {
     })
   }
   return (
-    <div className="app-shell v5-uat-mode">
-      <div className="beta-corner-ribbon" title="Testnet UAT only"></div>
+    <div className={`app-shell v5-release-mode ${cfg.isUat ? 'v5-uat-mode' : 'v5-mainnet-mode'}`}>
+      {cfg.isUat ? <div className="beta-corner-ribbon" title="Testnet UAT only"></div> : null}
       <div className="app-container">
         <Header
           account={account}
@@ -2284,7 +2397,7 @@ export function V5UatExperience() {
           onProfileClick={openProfilePage}
           onLeaderboardClick={openLeaderboardPage}
         />
-        <div className="v5-uat-strip">TESTNET / UAT</div>
+        {cfg.isUat ? <div className="v5-uat-strip">TESTNET / UAT</div> : null}
 
         <h1>
           Win the Pot.
@@ -2298,7 +2411,13 @@ export function V5UatExperience() {
           <button className={`vault-aux-btn ${v5Page === 'history' ? 'active' : ''}`} onClick={openHistoryPage}>My History</button>
         </section>
 
-        {drawHealth.isStalled && (v5Page === 'vault' || v5Page === 'degen') ? (
+        {!dataAvailable && (v5Page === 'vault' || v5Page === 'degen') ? (
+          <div className="claim-flow-confirm-panel v5-draw-health-banner" role="alert">
+            <div className="claim-flow-eyebrow">PROTOCOL DATA UNAVAILABLE</div>
+            <div className="claim-flow-confirm-copy">Transactions are temporarily disabled while the approved release configuration is verified.</div>
+          </div>
+        ) : null}
+        {dataAvailable && drawHealth.isStalled && (v5Page === 'vault' || v5Page === 'degen') ? (
           <div className="claim-flow-confirm-panel v5-draw-health-banner" role="alert">
             <div className="claim-flow-eyebrow">DRAWS ARE PAUSED</div>
             <div className="claim-flow-confirm-copy">Your principal is safe and withdrawable anytime, but new deposits won't earn draw entries until draws resume.</div>
@@ -2306,9 +2425,9 @@ export function V5UatExperience() {
         ) : null}
 
         {v5Page === 'stats' ? (
-          <StatsPage />
+          <StatsPage indexerUrl={cfg.indexerUrl} networkLabel={cfg.chainName} />
         ) : v5Page === 'leaderboard' ? (
-          <LeaderboardPage account={account} />
+          <LeaderboardPage account={account} indexerUrl={cfg.indexerUrl} />
         ) : v5Page === 'degen' ? (
           <section className="main-grid v5-single-card-page">
             <V5ActionCard
@@ -2328,6 +2447,7 @@ export function V5UatExperience() {
               boosterSupported={Boolean(state?.boosterSupported)}
               depositsDisabled={drawHealth.isStalled}
               onConnect={connect}
+              actionsDisabled={!dataAvailable}
               onDeposit={() => transact('Patron Pool deposit', (signer) => (
                 degenDepositAsset === 'shMON'
                   ? depositV5Shmon(signer, degenAmount, 'boostDepositShmon')
@@ -2356,7 +2476,7 @@ export function V5UatExperience() {
             error=""
           />
         ) : v5Page === 'history' ? (
-          <V5HistoryTable account={account} rows={state?.historyRows || []} />
+          <V5HistoryTable account={account} rows={state?.historyRows || []} explorerUrl={cfg.explorerUrl} isUat={cfg.isUat} />
         ) : (
         <>
         <section className="main-grid">
@@ -2377,6 +2497,7 @@ export function V5UatExperience() {
             account={account}
             boosterSupported
             depositsDisabled={drawHealth.isStalled}
+            actionsDisabled={!dataAvailable}
             onConnect={connect}
             onDeposit={() => transact('Deposit', (signer) => (
               playDepositAsset === 'shMON'
@@ -2443,8 +2564,17 @@ export function V5UatExperience() {
 
         <footer className="site-footer" id="disclaimer">
           <div className="disclaimer-box">
-            <div className="disclaimer-title">Testnet UAT</div>
-            <p>This isolated site is for EverDraw V5 user acceptance testing on Monad testnet. Use testnet funds only. Production everdraw.xyz and production Vercel envs are not used by this build.</p>
+            {cfg.isUat ? (
+              <>
+                <div className="disclaimer-title">Testnet UAT</div>
+                <p>This isolated site is for EverDraw V5 user acceptance testing on Monad testnet. Use testnet funds only. Production everdraw.xyz and production Vercel envs are not used by this build.</p>
+              </>
+            ) : (
+              <>
+                <div className="disclaimer-title">Disclaimer</div>
+                <p>EverDraw is currently in beta and is awaiting a formal third-party audit. By accessing or using EverDraw, you acknowledge that the protocol, yield integrations, indexer data, wallet connections, and related infrastructure are experimental software. You buy tickets, approve tokens, deposit assets, interact with third-party protocols, and secure your wallet entirely at your own risk. You are solely responsible for reviewing all risks, permissions, transaction details, applicable laws, and tax treatment before participating. EverDraw is not investment, tax, accounting, or legal advice, and all liability is disclaimed to the maximum extent permitted by law.</p>
+              </>
+            )}
           </div>
         </footer>
       </div>
