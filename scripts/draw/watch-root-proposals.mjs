@@ -20,8 +20,12 @@ const HEALTHCHECKS_PING_URL = process.env.WATCHER_HEALTHCHECKS_PING_URL;
 const MIN_VETO_REMAINING_SEC = Number(process.env.WATCHER_MIN_VETO_REMAINING_SEC || "300");
 
 const ABI = [
+  "function vault() view returns (address)",
+  "function challengeEndsAt(uint256) view returns (uint64)",
   "event RootProposed(uint256 indexed drawId, bytes32 indexed root, uint32 winnerCount, uint256 totalPayout, address indexed proposer, bytes32 algorithmVersion, uint64 challengeEndsAt)",
   "event DrawPeriodChangeQueued(uint64 drawPeriod, uint64 effectiveAt)",
+  "event TimingChangeQueued(uint64 proposerGracePeriod, uint64 challengeWindow, uint64 vetoCooldown, uint64 effectiveAt)",
+  "event PrimaryProposerSet(address indexed primaryProposer)",
   "event SeedReceived(uint256 indexed drawId, uint64 indexed requestId, bytes32 seed)",
   "event Deposit(address indexed recipient, uint256 amount)",
 ];
@@ -111,6 +115,10 @@ async function notify(message) {
   }
 }
 
+export function challengeDeadlineMismatch({ eventDeadline, storedDeadline }) {
+  return BigInt(eventDeadline) !== BigInt(storedDeadline);
+}
+
 export function proposalCoverageFailure({ challengeEndsAt, observedAt, minRemainingSec = MIN_VETO_REMAINING_SEC }) {
   const remaining = Number(challengeEndsAt) - Number(observedAt);
   if (remaining >= Number(minRemainingSec)) return undefined;
@@ -153,11 +161,13 @@ export async function main() {
   const iface = new Interface(ABI);
   const rootTopic = iface.getEvent("RootProposed").topicHash;
   const drawPeriodChangeTopic = iface.getEvent("DrawPeriodChangeQueued").topicHash;
+  const timingChangeTopic = iface.getEvent("TimingChangeQueued").topicHash;
+  const proposerChangeTopic = iface.getEvent("PrimaryProposerSet").topicHash;
   const eventCache = new DrawInputEventCache({
     drawManagerAddress,
     file: process.env.WATCHER_EVENT_CACHE_FILE || path.join(os.tmpdir(), "everdraw-v5-watcher-event-cache.json"),
   });
-  const manager = new Contract(drawManagerAddress, ["function vault() view returns (address)"], headProvider);
+  const manager = new Contract(drawManagerAddress, ABI, headProvider);
   const vaultAddress = getAddress(await retryTransient(
     () => withRpcTimeout(manager.vault(), "watcher vault read"),
     "watcher vault read",
@@ -174,7 +184,7 @@ export async function main() {
       provider,
       {
         address: [drawManagerAddress, vaultAddress],
-        topics: [[rootTopic, seedTopic, depositTopic, drawPeriodChangeTopic]],
+        topics: [[rootTopic, seedTopic, depositTopic, drawPeriodChangeTopic, timingChangeTopic, proposerChangeTopic]],
       },
       scanFromBlock,
       runEnd,
@@ -197,6 +207,34 @@ export async function main() {
             );
           }
 
+          const timingChanges = logs
+            .filter(
+              (log) =>
+                log.address.toLowerCase() === drawManagerAddress.toLowerCase() &&
+                log.topics[0]?.toLowerCase() === timingChangeTopic.toLowerCase(),
+            )
+            .sort((a, b) => a.blockNumber - b.blockNumber || (a.index ?? 0) - (b.index ?? 0));
+          for (const log of timingChanges) {
+            const queued = iface.parseLog(log);
+            await notify(
+              `EverDraw V5 timing change queued\nproposerGrace=${queued.args.proposerGracePeriod} seconds\nchallengeWindow=${queued.args.challengeWindow} seconds\nvetoCooldown=${queued.args.vetoCooldown} seconds\neffectiveAt=${new Date(Number(queued.args.effectiveAt) * 1000).toISOString()}\ntx=${log.transactionHash}`,
+            );
+          }
+
+          const proposerChanges = logs
+            .filter(
+              (log) =>
+                log.address.toLowerCase() === drawManagerAddress.toLowerCase() &&
+                log.topics[0]?.toLowerCase() === proposerChangeTopic.toLowerCase(),
+            )
+            .sort((a, b) => a.blockNumber - b.blockNumber || (a.index ?? 0) - (b.index ?? 0));
+          for (const log of proposerChanges) {
+            const changed = iface.parseLog(log);
+            await notify(
+              `EverDraw V5 primary proposer changed\nprimaryProposer=${changed.args.primaryProposer}\ntx=${log.transactionHash}`,
+            );
+          }
+
           const proposals = logs
             .filter((log) => log.address.toLowerCase() === drawManagerAddress.toLowerCase() && log.topics[0]?.toLowerCase() === rootTopic.toLowerCase())
             .sort((a, b) => a.blockNumber - b.blockNumber || (a.index ?? 0) - (b.index ?? 0));
@@ -205,6 +243,20 @@ export async function main() {
             const proposal = iface.parseLog(log);
             const drawId = proposal.args.drawId.toString();
             const proposedRoot = proposal.args.root.toLowerCase();
+            const storedChallengeEndsAt = await retryTransient(
+              () => withRpcTimeout(manager.challengeEndsAt(drawId), `draw ${drawId} challenge deadline`),
+              `draw ${drawId} challenge deadline`,
+            );
+            if (challengeDeadlineMismatch({
+              eventDeadline: proposal.args.challengeEndsAt,
+              storedDeadline: storedChallengeEndsAt,
+            })) {
+              const message = `EverDraw V5 challenge deadline mismatch draw ${drawId}\nevent=${proposal.args.challengeEndsAt}\nonchain=${storedChallengeEndsAt}`;
+              coverageFailures.push(message);
+              rootMismatches.push(message);
+              await alarm(message);
+            }
+            console.log(`watcher draw ${drawId} storedChallengeEndsAt=${storedChallengeEndsAt}`);
             const input = await retryTransient(
               () => buildDrawInput({
                 provider,
@@ -226,7 +278,7 @@ export async function main() {
             }
             if (enforceLiveWindow) {
               const timingFailure = proposalCoverageFailure({
-                challengeEndsAt: proposal.args.challengeEndsAt,
+                challengeEndsAt: storedChallengeEndsAt,
                 observedAt: Math.floor(Date.now() / 1000),
               });
               if (timingFailure) {
