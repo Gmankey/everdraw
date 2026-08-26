@@ -52,6 +52,7 @@ const DRAW_MANAGER_ABI = [
   "function currentDrawId() view returns (uint256)",
   "function minPrizeThreshold() view returns (uint256)",
   "function challengeWindow() view returns (uint64)",
+  "function challengeEndsAt(uint256) view returns (uint64)",
   "function seedRequestTimeout() view returns (uint64)",
   "function seedRequestedAt(uint256) view returns (uint64)",
   "function draws(uint256) view returns (uint64 periodStart,uint64 periodEnd,uint64 randomnessRequestId,bytes32 seed,uint256 totalTwab,uint256 totalPayout,uint32 winnerCount,uint32 rewardLegCount,bytes32 root,uint64 proposedAt,address proposer,uint8 status,uint256 grossYield,uint256 sponsorYield,uint256 feeAmount)",
@@ -331,8 +332,9 @@ async function maybeFinalize({ manager, signer, provider, drawId }) {
   const draw = await rpcRead(`manager.draws(${drawId})`, () => manager.draws(drawId));
   if (Number(draw.status) !== 3) return false;
   const latest = await rpcRead("provider.getBlock(latest)", () => provider.getBlock("latest"));
-  const challengeWindow = await rpcRead("manager.challengeWindow", () => manager.challengeWindow());
-  const finalizeAfter = Number(draw.proposedAt + challengeWindow);
+  const finalizeAfter = Number(
+    await rpcRead(`manager.challengeEndsAt(${drawId})`, () => manager.challengeEndsAt(drawId)),
+  );
   if (latest.timestamp < finalizeAfter) {
     console.log(`draw ${drawId} challenge window active until ${finalizeAfter}`);
     return false;

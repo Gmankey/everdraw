@@ -69,6 +69,11 @@ contract DrawManagerV5Test is Test {
     event DrawPeriodChangeCommitted(uint64 drawPeriod, uint64 activationPeriodStart);
     event DrawPeriodChanged(uint64 previousDrawPeriod, uint64 drawPeriod, uint64 activationPeriodStart);
     event DrawPeriodChangeCancelled();
+    event TimingChangeQueued(
+        uint64 proposerGracePeriod, uint64 challengeWindow, uint64 vetoCooldown, uint64 effectiveAt
+    );
+    event TimingUpdated(uint64 proposerGracePeriod, uint64 challengeWindow, uint64 vetoCooldown);
+    event TimingChangeCancelled();
 
     EverdrawTwabController twab;
     MockERC4626YieldVault shmon;
@@ -487,6 +492,105 @@ contract DrawManagerV5Test is Test {
         vm.prank(guardian);
         vm.expectRevert(DrawManagerV5.DrawAlreadyFinalized.selector);
         manager.vetoRoot(1);
+    }
+
+    function test_timingChangeIsTimelockedAndOwnerControlled() public {
+        uint64 newGrace = 2 hours;
+        uint64 newChallenge = 4 hours;
+        uint64 newCooldown = 30 minutes;
+        uint64 effectiveAt = uint64(block.timestamp + manager.TIMING_CHANGE_DELAY());
+
+        vm.prank(alice);
+        vm.expectRevert(DrawManagerV5.NotOwner.selector);
+        manager.queueTimingChange(newGrace, newChallenge, newCooldown);
+
+        vm.expectEmit(false, false, false, true, address(manager));
+        emit TimingChangeQueued(newGrace, newChallenge, newCooldown, effectiveAt);
+        manager.queueTimingChange(newGrace, newChallenge, newCooldown);
+
+        vm.expectRevert(DrawManagerV5.TimingChangeAlreadyQueued.selector);
+        manager.queueTimingChange(newGrace, newChallenge, newCooldown);
+
+        vm.prank(alice);
+        vm.expectRevert(DrawManagerV5.NotOwner.selector);
+        manager.commitTimingChange();
+
+        vm.expectRevert(DrawManagerV5.TimelockNotElapsed.selector);
+        manager.commitTimingChange();
+
+        vm.warp(effectiveAt);
+        vm.expectEmit(false, false, false, true, address(manager));
+        emit TimingUpdated(newGrace, newChallenge, newCooldown);
+        manager.commitTimingChange();
+
+        assertEq(manager.proposerGracePeriod(), newGrace);
+        assertEq(manager.challengeWindow(), newChallenge);
+        assertEq(manager.vetoCooldown(), newCooldown);
+        assertEq(manager.pendingTimingEffectiveAt(), 0);
+
+        manager.queueTimingChange(GRACE, CHALLENGE, 1 hours);
+        vm.prank(alice);
+        vm.expectRevert(DrawManagerV5.NotOwner.selector);
+        manager.cancelTimingChange();
+        vm.expectEmit(false, false, false, true, address(manager));
+        emit TimingChangeCancelled();
+        manager.cancelTimingChange();
+    }
+
+    function test_mainnetChallengeWindowCannotBeConfiguredBelowEightHours() public {
+        vm.chainId(143);
+        vm.expectRevert(DrawManagerV5.BadConfig.selector);
+        manager.queueTimingChange(GRACE, 8 hours - 1, 1 hours);
+
+        manager.queueTimingChange(GRACE, 8 hours, 1 hours);
+        assertEq(manager.pendingChallengeWindow(), 8 hours);
+    }
+
+    function test_mainnetVetoAndReproposalReceiveFreshEightHourWindow() public {
+        vm.chainId(143);
+        _startSeededDraw();
+
+        vm.prank(keeper);
+        manager.proposeRoot(1, bytes32(uint256(0xabc)), 1, 5 ether);
+        uint64 firstDeadline = manager.challengeEndsAt(1);
+        assertEq(firstDeadline, uint64(block.timestamp + 8 hours));
+
+        vm.prank(guardian);
+        manager.vetoRoot(1);
+        assertEq(manager.challengeEndsAt(1), 0);
+
+        vm.expectRevert(DrawManagerV5.BadConfig.selector);
+        manager.queueTimingChange(GRACE, 1 hours, 1 hours);
+
+        vm.warp(block.timestamp + 1 hours);
+        vm.prank(keeper);
+        manager.proposeRoot(1, bytes32(uint256(0xdef)), 1, 5 ether);
+        assertEq(manager.challengeEndsAt(1), firstDeadline + 1 hours);
+    }
+
+    function test_activeProposalKeepsSnapshottedDeadlineAfterTimingCommit() public {
+        manager.queueTimingChange(GRACE, 1 hours, 1 hours);
+        vm.warp(block.timestamp + manager.TIMING_CHANGE_DELAY());
+
+        _startSeededDraw();
+        uint64 proposedAt = uint64(block.timestamp);
+        vm.prank(keeper);
+        manager.proposeRoot(1, bytes32(uint256(0xabc)), 1, 5 ether);
+
+        uint64 storedDeadline = manager.challengeEndsAt(1);
+        assertEq(storedDeadline, proposedAt + CHALLENGE);
+
+        manager.commitTimingChange();
+        assertEq(manager.challengeWindow(), 1 hours);
+        assertEq(manager.challengeEndsAt(1), storedDeadline);
+
+        vm.warp(proposedAt + 1 hours);
+        vm.expectRevert(DrawManagerV5.ChallengeWindowActive.selector);
+        manager.finalizeRoot(1);
+
+        vm.warp(storedDeadline);
+        manager.finalizeRoot(1);
+        assertEq(uint8(_status(1)), uint8(DrawManagerV5.DrawStatus.Finalized));
     }
 
     function test_permissionlessFallbackAfterGraceButNotBefore() public {

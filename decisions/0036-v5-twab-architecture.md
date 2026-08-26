@@ -148,6 +148,7 @@ The chain cannot enumerate accounts or iterate TWAB history affordably, but it c
 ### 4.4 Challenge window and guardian veto (the honest trust statement)
 
 - `proposeRoot` opens a `challengeWindow` (launch proposal: **8 hours**; §10-Q4) before the root finalizes and claims open.
+- **External-audit amendment (2026-08-26):** every proposal snapshots its own on-chain `challengeEndsAt`; later timing changes cannot alter that deadline. Timing changes use a 24-hour queue/commit flow, and Monad mainnet rejects challenge windows below eight hours. A veto/reproposal creates a fresh full protected window under the then-active configuration.
 - During the window, anyone can recompute the root with the reference implementation. The independent **watcher** (existing alert-watcher infra, extended) recomputes every proposal automatically and alarms on mismatch.
 - A mismatch is resolved by the **guardian** (owner; pauser may also hold the veto key) calling `vetoRoot(drawId)` — which discards the proposal and reopens proposing. Veto can never move funds, never touch a finalized root, and never block principal withdrawals.
 - **Limitation, stated plainly:** V5.0's challenge is guardian-veto, not a bonded permissionless fraud proof. If the guardian and the proposer collude (or the guardian sleeps through a bad root's window), a wrong winner set finalizes — bounded to that draw's prize, never principal. This must appear in user-facing docs in this honest form. Bonded challenges are the named upgrade path.

@@ -17,6 +17,8 @@ interface IERC20DrawManagerV5 {
 contract DrawManagerV5 is IRandomnessOracleConsumer {
     uint64 public constant ORACLE_CHANGE_DELAY = 24 hours;
     uint64 public constant DRAW_PERIOD_CHANGE_DELAY = 24 hours;
+    uint64 public constant TIMING_CHANGE_DELAY = 24 hours;
+    uint64 public constant MAINNET_MIN_CHALLENGE_WINDOW = 8 hours;
     bytes32 public constant ALGORITHM_VERSION_HASH = keccak256("everdraw-v5-draw-algorithm/1");
     uint16 public constant MAX_FEE_BPS = 2_000;
     uint8 public constant MAX_FEE_RECIPIENTS = 8;
@@ -95,6 +97,10 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     uint64 public proposerGracePeriod;
     uint64 public challengeWindow;
     uint64 public vetoCooldown;
+    uint64 public pendingProposerGracePeriod;
+    uint64 public pendingChallengeWindow;
+    uint64 public pendingVetoCooldown;
+    uint64 public pendingTimingEffectiveAt;
     uint64 public seedRequestTimeout;
     uint256 public minPrizeThreshold;
     uint256 public currentDrawId;
@@ -106,6 +112,7 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     mapping(uint64 => uint256) public drawIdByRequestId;
     mapping(uint256 => uint64) public seedRequestedAt;
     mapping(uint256 => uint64) public vetoedUntil;
+    mapping(uint256 => uint64) public challengeEndsAt;
     mapping(address => bool) public rewardTokenAllowed;
     mapping(uint256 => RewardSchedule) public rewardSchedules;
     mapping(uint256 => RewardLeg[]) internal drawRewardLegs;
@@ -117,7 +124,11 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     event GuardianSet(address indexed guardian);
     event PrimaryProposerSet(address indexed primaryProposer);
+    event TimingChangeQueued(
+        uint64 proposerGracePeriod, uint64 challengeWindow, uint64 vetoCooldown, uint64 effectiveAt
+    );
     event TimingUpdated(uint64 proposerGracePeriod, uint64 challengeWindow, uint64 vetoCooldown);
+    event TimingChangeCancelled();
     event MinPrizeThresholdUpdated(uint256 minPrizeThreshold);
     event DrawPeriodChangeQueued(uint64 drawPeriod, uint64 effectiveAt);
     event DrawPeriodChangeCommitted(uint64 drawPeriod, uint64 activationPeriodStart);
@@ -191,6 +202,8 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     error NotOracle();
     error NoPendingOracleChange();
     error NoPendingDrawPeriodChange();
+    error NoPendingTimingChange();
+    error TimingChangeAlreadyQueued();
     error DrawPeriodChangeAlreadyScheduled();
     error TimelockNotElapsed();
     error BadFeeConfig();
@@ -227,7 +240,8 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
             _vault == address(0) || _twabController == address(0) || _claimManager == address(0)
                 || _randomnessOracle == address(0) || _guardian == address(0)
         ) revert ZeroAddress();
-        if (_drawPeriod == 0 || _challengeWindow == 0) revert BadConfig();
+        if (_drawPeriod == 0) revert BadConfig();
+        _validateChallengeWindow(_challengeWindow);
 
         EverdrawTwabController twab = EverdrawTwabController(_twabController);
         uint32 twabPeriodLength = twab.periodLength();
@@ -284,15 +298,46 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
         emit PrimaryProposerSet(newPrimaryProposer);
     }
 
-    function setTiming(uint64 newProposerGracePeriod, uint64 newChallengeWindow, uint64 newVetoCooldown)
+    function queueTimingChange(uint64 newProposerGracePeriod, uint64 newChallengeWindow, uint64 newVetoCooldown)
         external
         onlyOwner
     {
+        if (pendingTimingEffectiveAt != 0) revert TimingChangeAlreadyQueued();
+        _validateChallengeWindow(newChallengeWindow);
+        pendingProposerGracePeriod = newProposerGracePeriod;
+        pendingChallengeWindow = newChallengeWindow;
+        pendingVetoCooldown = newVetoCooldown;
+        pendingTimingEffectiveAt = uint64(block.timestamp + TIMING_CHANGE_DELAY);
+        emit TimingChangeQueued(newProposerGracePeriod, newChallengeWindow, newVetoCooldown, pendingTimingEffectiveAt);
+    }
+
+    function commitTimingChange() external onlyOwner {
+        uint64 effectiveAt = pendingTimingEffectiveAt;
+        if (effectiveAt == 0) revert NoPendingTimingChange();
+        if (block.timestamp < effectiveAt) revert TimelockNotElapsed();
+
+        proposerGracePeriod = pendingProposerGracePeriod;
+        challengeWindow = pendingChallengeWindow;
+        vetoCooldown = pendingVetoCooldown;
+        pendingProposerGracePeriod = 0;
+        pendingChallengeWindow = 0;
+        pendingVetoCooldown = 0;
+        pendingTimingEffectiveAt = 0;
+        emit TimingUpdated(proposerGracePeriod, challengeWindow, vetoCooldown);
+    }
+
+    function cancelTimingChange() external onlyOwner {
+        if (pendingTimingEffectiveAt == 0) revert NoPendingTimingChange();
+        pendingProposerGracePeriod = 0;
+        pendingChallengeWindow = 0;
+        pendingVetoCooldown = 0;
+        pendingTimingEffectiveAt = 0;
+        emit TimingChangeCancelled();
+    }
+
+    function _validateChallengeWindow(uint64 newChallengeWindow) internal view {
         if (newChallengeWindow == 0) revert BadConfig();
-        proposerGracePeriod = newProposerGracePeriod;
-        challengeWindow = newChallengeWindow;
-        vetoCooldown = newVetoCooldown;
-        emit TimingUpdated(newProposerGracePeriod, newChallengeWindow, newVetoCooldown);
+        if (block.chainid == 143 && newChallengeWindow < MAINNET_MIN_CHALLENGE_WINDOW) revert BadConfig();
     }
 
     /// @notice Queues a cadence change. The committed value activates only after the current
@@ -636,17 +681,13 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
         draw.root = root;
         draw.winnerCount = winnerCount;
         draw.proposedAt = uint64(block.timestamp);
+        uint64 proposalChallengeEndsAt = uint64(block.timestamp + challengeWindow);
+        challengeEndsAt[drawId] = proposalChallengeEndsAt;
         draw.proposer = msg.sender;
         draw.status = DrawStatus.Proposed;
 
         emit RootProposed(
-            drawId,
-            root,
-            winnerCount,
-            totalPayout,
-            msg.sender,
-            ALGORITHM_VERSION_HASH,
-            uint64(block.timestamp + challengeWindow)
+            drawId, root, winnerCount, totalPayout, msg.sender, ALGORITHM_VERSION_HASH, proposalChallengeEndsAt
         );
     }
 
@@ -659,6 +700,7 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
         draw.root = bytes32(0);
         draw.winnerCount = 0;
         draw.proposedAt = 0;
+        challengeEndsAt[drawId] = 0;
         draw.proposer = address(0);
         draw.status = DrawStatus.Seeded;
         vetoedUntil[drawId] = uint64(block.timestamp + vetoCooldown);
@@ -669,7 +711,7 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     function finalizeRoot(uint256 drawId) external {
         Draw storage draw = draws[drawId];
         if (draw.status != DrawStatus.Proposed) revert DrawNotProposed();
-        if (block.timestamp < uint256(draw.proposedAt) + challengeWindow) revert ChallengeWindowActive();
+        if (block.timestamp < challengeEndsAt[drawId]) revert ChallengeWindowActive();
 
         draw.status = DrawStatus.Finalized;
         _registerDistribution(drawId, draw);

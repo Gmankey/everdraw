@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 
-import { canCheckpointBatch, proposalCoverageFailure, shouldEnforceLiveWindow, withRpcTimeout } from "./watch-root-proposals.mjs";
+import {
+  canCheckpointBatch,
+  challengeDeadlineMismatch,
+  proposalCoverageFailure,
+  shouldEnforceLiveWindow,
+  withRpcTimeout,
+} from "./watch-root-proposals.mjs";
 import { isRangeLimitError, isTransientError, retryTransient } from "./write-watch-inputs.mjs";
 
 test("provider startup invalid JSON is retryable", async () => {
@@ -48,6 +54,11 @@ test("deterministic errors are not retried", async () => {
   assert.equal(calls, 1);
 });
 
+test("watcher rejects a RootProposed deadline that differs from stored onchain state", () => {
+  assert.equal(challengeDeadlineMismatch({ eventDeadline: 1_000n, storedDeadline: 1_000n }), false);
+  assert.equal(challengeDeadlineMismatch({ eventDeadline: 1_000n, storedDeadline: 999n }), true);
+});
+
 test("proposal coverage requires five minutes of veto time", () => {
   assert.equal(
     proposalCoverageFailure({ challengeEndsAt: 1_000, observedAt: 600, minRemainingSec: 300 }),
@@ -91,6 +102,8 @@ test("workflow uses configured logs RPC and a five-minute cadence", () => {
   assert.match(watcher, /headProvider\.getBlockNumber\(\)/);
   assert.match(watcher, /shouldEnforceLiveWindow\(state\)/);
   assert.match(watcher, /canCheckpointBatch\(rootMismatches\.length\)/);
+  assert.match(watcher, /TimingChangeQueued/);
+  assert.match(watcher, /PrimaryProposerSet/);
   assert.match(watcher, /liveMonitoring: true/);
   assert.match(workflow, /WATCHER_JOB_DURATION_SEC: "3000"/);
   assert.match(workflow, /WATCHER_POLL_INTERVAL_SEC: "60"/);
