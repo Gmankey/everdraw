@@ -1,13 +1,17 @@
 import nextra from 'nextra'
 
 const withNextra = nextra({
-  theme: 'nextra-theme-docs',
-  themeConfig: './theme.config.jsx',
   defaultShowCopyCode: true,
 })
 
 export default withNextra({
   images: { unoptimized: true },
+  turbopack: {
+    root: import.meta.dirname,
+    resolveAlias: {
+      'next-mdx-import-source-file': './mdx-components.js',
+    },
+  },
   async redirects() {
     return [
       {

@@ -18,7 +18,7 @@
     "dotenv": "^16.4.7",
     "ethers": "^6.13.4",
     "express": "^4.21.2",
-    "hono": "^4.6.10",
+    "hono": "4.12.25",
     "jose": "^5.9.6"
   },
   "devDependencies": {
@@ -28,5 +28,10 @@
     "tsx": "^4.19.2",
     "typescript": "^5.6.3"
   },
-  "version": "0.0.0"
+  "version": "0.0.0",
+  "overrides": {
+    "ethers": {
+      "ws": "8.21.0"
+    }
+  }
 }

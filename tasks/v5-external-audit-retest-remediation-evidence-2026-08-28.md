@@ -63,14 +63,14 @@
 - `web/npm run lint`: pass.
 - `web/node --test src/*.test.js`: 34 passed, 0 failed.
 - `web/npm run build`: pass.
-- `docs-site/npm run build`: pass, 35 static/SSG pages generated.
+- `docs-site/npm run build`: pass, 30 static/SSG pages generated.
 - Root Hardhat build: pass with EVM target Paris.
 - ABI freshness and production source manifest checks: pass.
 - Local CycloneDX SBOM generation succeeded for root, web, indexer, and docs:
   - root: 360,291 bytes;
-  - web: 594,043 bytes;
-  - indexer: 223,189 bytes;
-  - docs: 629,059 bytes.
+  - web: 592,689 bytes;
+  - indexer: 223,196 bytes;
+  - docs: 658,538 bytes.
 - CI `release-sbom` installs every lock, records lock/SBOM SHA-256 values and runtime versions,
   scans the locked tree with Grype, and uploads a 90-day artifact named with the immutable git SHA.
 - All workflow actions are pinned to 40-character commits. Keeper/indexer Docker bases are pinned to
@@ -80,8 +80,11 @@
 
 - Removed direct deprecated `@web3modal/ethers`.
 - Added exact `@reown/appkit@1.8.21` and `@reown/appkit-adapter-ethers@1.8.21`.
+- Raised vulnerable runtime paths to `ws@8.21.0`, `hono@4.12.25`, `postcss@8.5.26`, and `next@16.2.10`.
 - Overrode transitive Axios to patched `1.18.0`; installed tree confirms the override.
 - Overrode docs `@xmldom/xmldom` from warned `0.9.10` to `0.9.12`.
+- Migrated the docs site from Nextra 3 Pages Router to Nextra 4 App Router/content-directory structure while preserving all public routes and redirects.
+- Pinned `zod@4.3.6` because Nextra 4.6.1 is incompatible with Zod 4.4 strict required-key semantics; the pin is lockfile-enforced and the production docs build passes.
 - Residual deprecations, disclosed rather than hidden:
   - Reown's Safe connector still transitively includes deprecated
     `@safe-global/safe-gateway-typescript-sdk@3.23.1`; EverDraw does not call it directly and the
