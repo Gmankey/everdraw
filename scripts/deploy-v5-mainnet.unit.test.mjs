@@ -1,13 +1,18 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import test from "node:test";
 import {
   DEPOSIT_CAP_MON,
   CHALLENGE_WINDOW_SECONDS,
   MAINNET_CHAIN_ID,
   MIN_DEPOSIT_MON,
+  OWNERSHIP_ACCEPTED_STATUS,
+  OWNERSHIP_PENDING_STATUS,
   WEEK_SECONDS,
+  assertDistinctRoleAddresses,
   assertFixedLaunchParameters,
   deriveWeeklyCadence,
+  findLatestOwnershipPendingMainnetV5Record,
   findLatestQueuedMainnetV5Record,
 } from "./lib/v5-mainnet-deploy-config.mjs";
 
@@ -46,29 +51,59 @@ test("rejects calendar overrides", () => {
   }
 });
 
-test("selects the latest queued mainnet V5 deployment only", () => {
-  const first = {
+test("mainnet deploy source enforces the four-contract acceptance lifecycle", () => {
+  const source = fs.readFileSync(new URL("./deploy-v5-mainnet.js", import.meta.url), "utf8");
+  assert.match(source, /requiredAddress\("FINAL_OWNER"\)/);
+  assert.match(source, /assertDistinctRoleAddresses/);
+  assert.equal((source.match(/\.transferOwnership\(finalOwner\)/g) || []).length, 4);
+  assert.match(source, /--record-ownership/);
+  assert.match(source, /TWAB_OWNERSHIP_ACCEPT_TX/);
+  assert.match(source, /DRAW_MANAGER_OWNERSHIP_ACCEPT_TX/);
+  assert.match(source, /verifyOwnershipState/);
+  assert.match(source, /--record-commit/);
+  assert.match(source, /DRAW_MANAGER_COMMIT_TX/);
+});
+test("requires five distinct privileged role addresses", () => {
+  const roles = {
+    deployer: "0x0000000000000000000000000000000000000001",
+    finalOwner: "0x0000000000000000000000000000000000000002",
+    guardian: "0x0000000000000000000000000000000000000003",
+    keeper: "0x0000000000000000000000000000000000000004",
+    pauser: "0x0000000000000000000000000000000000000005",
+  };
+  assert.equal(assertDistinctRoleAddresses(roles), roles);
+  assert.throws(
+    () => assertDistinctRoleAddresses({ ...roles, pauser: roles.guardian }),
+    /guardian and pauser/,
+  );
+});
+
+test("ownership acceptance gates the queued mainnet deployment selector", () => {
+  const pending = {
     source: "src/v5",
     network: "monad-mainnet",
-    status: "deployed-draw-manager-queued",
+    status: OWNERSHIP_PENDING_STATUS,
     addresses: { prizeVault: "0x1", drawManager: "0x2" },
   };
-  const latest = {
-    source: "src/v5",
-    network: "monad-mainnet",
-    status: "deployed-draw-manager-queued",
+  const accepted = {
+    ...pending,
+    status: OWNERSHIP_ACCEPTED_STATUS,
     addresses: { prizeVault: "0x3", drawManager: "0x4" },
   };
+  assert.equal(findLatestOwnershipPendingMainnetV5Record({ contracts: [pending, accepted] }), pending);
   assert.equal(
     findLatestQueuedMainnetV5Record({
       contracts: [
-        first,
-        { ...first, network: "monad-testnet" },
-        { ...first, status: "draw-manager-committed" },
-        latest,
+        pending,
+        { ...accepted, network: "monad-testnet" },
+        { ...accepted, status: "draw-manager-committed" },
+        accepted,
       ],
     }),
-    latest,
+    accepted,
   );
-  assert.throws(() => findLatestQueuedMainnetV5Record({ contracts: [] }), /No queued/);
+  assert.throws(
+    () => findLatestQueuedMainnetV5Record({ contracts: [pending] }),
+    /ownership-accepted-draw-manager-queued/,
+  );
 });

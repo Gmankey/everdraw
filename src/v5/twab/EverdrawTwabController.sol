@@ -15,6 +15,7 @@ contract EverdrawTwabController {
     uint32 public immutable periodLength;
     uint32 public immutable periodOffset;
     address public owner;
+    address public pendingOwner;
 
     struct Observation {
         uint128 cumulativeBalance;
@@ -39,6 +40,7 @@ contract EverdrawTwabController {
     mapping(address => Account) internal participantTotals;
     mapping(address => Account) internal principalTotals;
 
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed pendingOwner);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     event VaultRegistered(address indexed vault);
     event BalanceIncreased(address indexed vault, address indexed account, uint96 amount, uint96 delegateAmount);
@@ -63,6 +65,7 @@ contract EverdrawTwabController {
     );
 
     error NotOwner();
+    error NotPendingOwner();
     error NotRegisteredVault();
     error ZeroAddress();
     error PeriodLengthTooShort();
@@ -98,8 +101,16 @@ contract EverdrawTwabController {
 
     function transferOwnership(address newOwner) external onlyOwner {
         if (newOwner == address(0)) revert ZeroAddress();
-        emit OwnershipTransferred(owner, newOwner);
-        owner = newOwner;
+        pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner, newOwner);
+    }
+
+    function acceptOwnership() external {
+        if (msg.sender != pendingOwner) revert NotPendingOwner();
+        address previousOwner = owner;
+        owner = pendingOwner;
+        pendingOwner = address(0);
+        emit OwnershipTransferred(previousOwner, owner);
     }
 
     function registerVault(address vault) external onlyOwner {

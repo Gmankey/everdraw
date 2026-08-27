@@ -3,6 +3,8 @@ export const WEEK_SECONDS = 7 * 24 * 60 * 60;
 export const DEPOSIT_CAP_MON = "25000";
 export const MIN_DEPOSIT_MON = "0";
 export const CHALLENGE_WINDOW_SECONDS = 8 * 60 * 60;
+export const OWNERSHIP_PENDING_STATUS = "deployed-ownership-pending";
+export const OWNERSHIP_ACCEPTED_STATUS = "ownership-accepted-draw-manager-queued";
 
 export function uintEnv(env, name, fallback) {
   const raw = env[name] ?? String(fallback);
@@ -47,7 +49,6 @@ export function assertFixedLaunchParameters(env) {
     throw new Error(`CHALLENGE_WINDOW_SEC is fixed at ${CHALLENGE_WINDOW_SECONDS} for mainnet and must not be overridden`);
   }
 
-
   return { depositCap, minDeposit };
 }
 
@@ -55,17 +56,40 @@ export function sameAddress(a, b) {
   return Boolean(a && b && a.toLowerCase() === b.toLowerCase());
 }
 
-export function findLatestQueuedMainnetV5Record(data) {
+export function assertDistinctRoleAddresses(roles) {
+  const entries = Object.entries(roles);
+  for (const [name, address] of entries) {
+    if (!address) throw new Error(`Missing role address: ${name}`);
+  }
+  for (let i = 0; i < entries.length; i += 1) {
+    for (let j = i + 1; j < entries.length; j += 1) {
+      if (sameAddress(entries[i][1], entries[j][1])) {
+        throw new Error(`Role addresses must be distinct: ${entries[i][0]} and ${entries[j][0]}`);
+      }
+    }
+  }
+  return roles;
+}
+
+function findLatestMainnetV5RecordWithStatus(data, status) {
   const records = (data.contracts || []).filter(
     (record) =>
       record.source === "src/v5" &&
       record.network === "monad-mainnet" &&
-      record.status === "deployed-draw-manager-queued" &&
+      record.status === status &&
       record.addresses?.prizeVault &&
       record.addresses?.drawManager,
   );
   if (!records.length) {
-    throw new Error("No queued V5 mainnet deployment record found");
+    throw new Error(`No V5 mainnet deployment record found with status=${status}`);
   }
   return records[records.length - 1];
+}
+
+export function findLatestOwnershipPendingMainnetV5Record(data) {
+  return findLatestMainnetV5RecordWithStatus(data, OWNERSHIP_PENDING_STATUS);
+}
+
+export function findLatestQueuedMainnetV5Record(data) {
+  return findLatestMainnetV5RecordWithStatus(data, OWNERSHIP_ACCEPTED_STATUS);
 }

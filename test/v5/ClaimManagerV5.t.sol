@@ -42,6 +42,24 @@ contract ClaimManagerV5Test is Test {
         claims.setAuthorizedSource(source, true);
     }
 
+    function test_ownershipHandoffIsTwoStep() public {
+        claims.transferOwnership(alice);
+        assertEq(claims.owner(), address(this));
+        assertEq(claims.pendingOwner(), alice);
+
+        vm.prank(bob);
+        vm.expectRevert(bytes("not pending owner"));
+        claims.acceptOwnership();
+
+        vm.prank(alice);
+        claims.acceptOwnership();
+        assertEq(claims.owner(), alice);
+        assertEq(claims.pendingOwner(), address(0));
+
+        vm.expectRevert(ClaimManagerV5.NotOwner.selector);
+        claims.setAuthorizedSource(bob, true);
+    }
+
     function test_registerAndClaimNativeLeaf() public {
         ClaimManagerV5.ClaimLeaf memory leaf = _leaf(0, alice, address(0), 1 ether);
         bytes32 root = claims.hashLeaf(leaf);

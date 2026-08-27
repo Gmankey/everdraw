@@ -30,3 +30,13 @@ Before a large mainnet Degen deposit: **(a)** timelock `setDrawManager` + audit 
 
 ## 6. Residual risk (stated plainly)
 Even with all of the above, an undiscovered contract bug can still cause loss — that is the irreducible risk of unaudited (or even audited) DeFi. The safeguards reduce it from "single key / instant drain / unbounded" to "reviewed, verified, tested, timelocked, monitored, withdrawable, phased." Size the deposit accordingly.
+
+## 7. Mainnet ownership handoff (external-audit H-05)
+
+Mainnet deployment is not complete while the deployment signer owns any mutable V5 component. `PrizeVaultV5`, `DrawManagerV5`, `ClaimManagerV5`, and `EverdrawTwabController` all use a two-step nomination/acceptance flow. The deploy script must nominate `FINAL_OWNER` only after wiring and bytecode checks pass; the final Ledger-controlled EOA or multisig then accepts each contract independently.
+
+The deployer, final owner, guardian, pauser, and keeper/proposer addresses must be pairwise distinct. Deployment records progress through `deployed-ownership-pending` -> `ownership-accepted-draw-manager-queued` -> `draw-manager-committed`. They must include all four nomination and acceptance transaction hashes. Receipt verification must fail closed on a wrong actor, target, event, owner, pending owner, role, or chain. The delayed DrawManager activation is performed only after ownership acceptance and by the final owner.
+
+`ShmonStrategy.owner` is only a one-time initializer: after `setVault` pins the deployed vault, every later `setVault` call reverts with `VaultAlreadySet`, so the deployer retains no mutable strategy capability. The deployment verifier records and checks this pinned state.
+
+The independent V5 watcher monitors pending and completed ownership transfers and all emitted privileged configuration changes across the vault, DrawManager, ClaimManager, and TWAB controller. Historical setup events are logged during bootstrap; changes observed after live monitoring begins notify the operator. If the final owner cannot accept, a receipt cannot be verified, or monitoring is unavailable, the deployment remains inactive and deposits must not open.

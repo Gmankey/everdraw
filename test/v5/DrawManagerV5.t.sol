@@ -118,6 +118,24 @@ contract DrawManagerV5Test is Test {
         _activateDrawManager(address(manager));
     }
 
+    function test_ownershipHandoffIsTwoStep() public {
+        manager.transferOwnership(alice);
+        assertEq(manager.owner(), address(this));
+        assertEq(manager.pendingOwner(), alice);
+
+        vm.prank(guardian);
+        vm.expectRevert(bytes("not pending owner"));
+        manager.acceptOwnership();
+
+        vm.prank(alice);
+        manager.acceptOwnership();
+        assertEq(manager.owner(), alice);
+        assertEq(manager.pendingOwner(), address(0));
+
+        vm.expectRevert(DrawManagerV5.NotOwner.selector);
+        manager.setPrimaryProposer(alice);
+    }
+
     function test_driftSimulationEmptyPeriodsAdvanceExactlyNPeriods() public {
         uint256 n = 9;
         vm.warp(START + PERIOD);
