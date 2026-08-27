@@ -522,7 +522,11 @@ export async function buildDrawInput({
   eventCache,
 }) {
   const manager = new Contract(drawManagerAddress, DRAW_MANAGER_ABI, provider);
-  const draw = await manager.draws(drawId);
+  const [network, claimManagerAddress, draw] = await Promise.all([
+    provider.getNetwork(),
+    manager.claimManager(),
+    manager.draws(drawId),
+  ]);
   const status = Number(draw.status);
   if (![2, 3, 4].includes(status)) {
     throw new Error(`Draw ${drawId} is ${drawStatusName(status)}; expected Seeded/Proposed/Finalized`);
@@ -583,7 +587,9 @@ export async function buildDrawInput({
   }
 
   return {
-    algoVersion: "everdraw-v5-draw-algorithm/1",
+    algoVersion: "everdraw-v5-draw-algorithm/2",
+    chainId: network.chainId.toString(),
+    claimManager: getAddress(claimManagerAddress),
     drawId: drawId.toString(),
     drawManager: getAddress(drawManagerAddress),
     vault: vaultAddress,

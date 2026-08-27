@@ -41,6 +41,8 @@ function makeCase(caseId) {
   return {
     drawId: String(caseId + 1),
     drawManager: addr(0xd00d0000 + caseId),
+    chainId: "10143",
+    claimManager: addr(0xc1a10000 + caseId),
     seed: hex(BigInt(caseId + 1) * 0x9e3779b97f4a7c15n, 32),
     accounts,
     totalPayout: String(1_000_000_000_000_000_000n + BigInt(caseId)),

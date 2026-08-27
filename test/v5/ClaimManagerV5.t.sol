@@ -27,6 +27,48 @@ contract RejectNative {
     }
 }
 
+contract NonCanonicalReturnToken is MockERC20 {
+    enum ReturnMode {
+        Malformed,
+        NoReturn,
+        False,
+        Noncanonical
+    }
+
+    ReturnMode public mode;
+
+    constructor() MockERC20("Return Token", "RET", 18) {}
+
+    function setMode(ReturnMode newMode) external {
+        mode = newMode;
+    }
+
+    function transfer(address to, uint256 amount) external override returns (bool) {
+        _transfer(msg.sender, to, amount);
+        if (mode == ReturnMode.NoReturn) {
+            assembly ("memory-safe") {
+                return(0, 0)
+            }
+        }
+        if (mode == ReturnMode.False) {
+            assembly ("memory-safe") {
+                mstore(0, 0)
+                return(0, 32)
+            }
+        }
+        if (mode == ReturnMode.Noncanonical) {
+            assembly ("memory-safe") {
+                mstore(0, 2)
+                return(0, 32)
+            }
+        }
+        assembly ("memory-safe") {
+            mstore(0, 1)
+            return(31, 1)
+        }
+    }
+}
+
 contract ClaimManagerV5Test is Test {
     ClaimManagerV5 claims;
     ToggleBlacklistToken token;
@@ -58,6 +100,45 @@ contract ClaimManagerV5Test is Test {
 
         vm.expectRevert(ClaimManagerV5.NotOwner.selector);
         claims.setAuthorizedSource(bob, true);
+    }
+
+    function test_leafHashBindsVersionChainAndClaimManager() public {
+        ClaimManagerV5.ClaimLeaf memory leaf = _leaf(0, alice, address(token), 1 ether);
+        bytes32 original = claims.hashLeaf(leaf);
+        assertEq(
+            original,
+            keccak256(
+                abi.encode(
+                    claims.LEAF_DOMAIN(),
+                    uint256(2),
+                    block.chainid,
+                    address(claims),
+                    leaf.distributionId,
+                    leaf.leafIndex,
+                    leaf.account,
+                    leaf.token,
+                    leaf.amount
+                )
+            )
+        );
+
+        ClaimManagerV5 other = new ClaimManagerV5();
+        assertEq(claims.CLAIM_LEAF_VERSION(), 2);
+        assertTrue(original != other.hashLeaf(leaf));
+
+        vm.chainId(block.chainid + 1);
+        assertTrue(original != claims.hashLeaf(leaf));
+    }
+
+    function test_onlyAuthorizedSourceCanFundNativeEscrow() public {
+        vm.deal(alice, 1 ether);
+        vm.prank(alice);
+        vm.expectRevert(ClaimManagerV5.NotAuthorizedSource.selector);
+        (bool ok,) = address(claims).call{value: 1 ether}("");
+        ok;
+
+        _fundNative(1 ether);
+        assertEq(address(claims).balance, 1 ether);
     }
 
     function test_registerAndClaimNativeLeaf() public {
@@ -110,6 +191,25 @@ contract ClaimManagerV5Test is Test {
         assertEq(deferredAmount, 10 ether);
         assertEq(token.balanceOf(bob), 20 ether);
         assertEq(claims.reservedByToken(address(token)), 10 ether);
+    }
+
+    function test_badTokenReturnsDeferWithoutLeakingTokenState() public {
+        _assertBadReturnDefers(NonCanonicalReturnToken.ReturnMode.Malformed);
+        _assertBadReturnDefers(NonCanonicalReturnToken.ReturnMode.False);
+        _assertBadReturnDefers(NonCanonicalReturnToken.ReturnMode.Noncanonical);
+    }
+
+    function test_noReturnTokenPaysSuccessfully() public {
+        NonCanonicalReturnToken noReturn = new NonCanonicalReturnToken();
+        noReturn.setMode(NonCanonicalReturnToken.ReturnMode.NoReturn);
+        noReturn.mint(address(claims), 10 ether);
+        ClaimManagerV5.ClaimLeaf memory leaf = _leaf(0, alice, address(noReturn), 10 ether);
+        _register(claims.hashLeaf(leaf), 1, _tokenTotals(address(noReturn), 10 ether));
+
+        claims.claim(leaf, new bytes32[](0));
+
+        assertEq(noReturn.balanceOf(alice), 10 ether);
+        assertEq(claims.reservedByToken(address(noReturn)), 0);
     }
 
     function test_claimDeferredRetriesUntilPayable() public {
@@ -171,6 +271,32 @@ contract ClaimManagerV5Test is Test {
         assertEq(alice.balance, 1 ether);
     }
 
+    function _assertBadReturnDefers(NonCanonicalReturnToken.ReturnMode mode) internal {
+        ClaimManagerV5 isolatedClaims = new ClaimManagerV5();
+        isolatedClaims.setAuthorizedSource(source, true);
+        NonCanonicalReturnToken badToken = new NonCanonicalReturnToken();
+        badToken.setMode(mode);
+        badToken.mint(address(isolatedClaims), 10 ether);
+        ClaimManagerV5.ClaimLeaf memory leaf = ClaimManagerV5.ClaimLeaf({
+            distributionId: isolatedClaims.distributionIdFor(source, sourceKey),
+            leafIndex: 0,
+            account: alice,
+            token: address(badToken),
+            amount: 10 ether
+        });
+        ClaimManagerV5.TokenTotal[] memory totals = _tokenTotals(address(badToken), 10 ether);
+        bytes32 root = isolatedClaims.hashLeaf(leaf);
+        vm.prank(source);
+        isolatedClaims.registerDistribution(sourceKey, root, 1, totals, bytes32("bad-return"));
+
+        isolatedClaims.claim(leaf, new bytes32[](0));
+
+        (,, uint256 deferredAmount) = isolatedClaims.deferredClaims(leaf.distributionId, leaf.leafIndex);
+        assertEq(deferredAmount, 10 ether);
+        assertEq(badToken.balanceOf(alice), 0, "isolated call must roll back token state");
+        assertEq(badToken.balanceOf(address(isolatedClaims)), 10 ether);
+    }
+
     function _register(bytes32 root, uint32 leafCount, ClaimManagerV5.TokenTotal[] memory totals) internal {
         vm.prank(source);
         claims.registerDistribution(sourceKey, root, leafCount, totals, bytes32("metadata"));
@@ -191,7 +317,8 @@ contract ClaimManagerV5Test is Test {
     }
 
     function _fundNative(uint256 amount) internal {
-        vm.deal(address(this), amount);
+        vm.deal(source, amount);
+        vm.prank(source);
         (bool ok,) = address(claims).call{value: amount}("");
         require(ok, "fund failed");
     }

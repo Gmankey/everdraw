@@ -94,6 +94,7 @@ contract PrizeVaultV5 {
     error NotDrawManager();
     error InsufficientYield(uint256 requested, uint256 available);
     error NoStrategyAssets();
+    error UnexpectedNativeTransfer();
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -135,7 +136,9 @@ contract PrizeVaultV5 {
         emit DepositCapUpdated(_depositCap);
     }
 
-    receive() external payable {}
+    receive() external payable {
+        revert UnexpectedNativeTransfer();
+    }
 
     function balanceOf(address account) external view returns (uint256) {
         return principalOf[account];

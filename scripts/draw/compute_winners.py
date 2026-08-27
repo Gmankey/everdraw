@@ -2,7 +2,8 @@
 import json
 import sys
 
-ALGO_VERSION = "everdraw-v5-draw-algorithm/1"
+ALGO_VERSION = "everdraw-v5-draw-algorithm/2"
+CLAIM_LEAF_VERSION = 2
 ZERO_ROOT = "0x" + "00" * 32
 
 RC = [
@@ -109,7 +110,7 @@ def abi_hash(parts):
     return keccak256(bytes(data))
 
 
-LEAF_DOMAIN = hx(keccak256(b"everdraw-v5-claim-leaf/1"))
+LEAF_DOMAIN = hx(keccak256(b"everdraw-v5-claim-leaf/2"))
 
 
 def merkle_root(leaves):
@@ -158,6 +159,8 @@ def allocated_fee_amount(fee_amount, fee_bps, fee_recipients):
 def compute(raw):
     draw_id = int(raw["drawId"])
     draw_manager = norm_addr(raw["drawManager"])
+    chain_id = int(raw["chainId"])
+    claim_manager = norm_addr(raw["claimManager"])
     seed = raw["seed"].lower()
     accounts = sorted(
         [{"address": norm_addr(a["address"]), "twab": int(a["twab"])} for a in raw["accounts"] if int(a["twab"]) > 0],
@@ -197,6 +200,9 @@ def compute(raw):
                 continue
             leaf = hx(abi_hash([
                 ("bytes32", LEAF_DOMAIN),
+                ("uint256", CLAIM_LEAF_VERSION),
+                ("uint256", chain_id),
+                ("address", claim_manager),
                 ("bytes32", distribution_id),
                 ("uint256", leaf_index),
                 ("address", winner),
@@ -215,6 +221,9 @@ def compute(raw):
                 continue
             leaf = hx(abi_hash([
                 ("bytes32", LEAF_DOMAIN),
+                ("uint256", CLAIM_LEAF_VERSION),
+                ("uint256", chain_id),
+                ("address", claim_manager),
                 ("bytes32", distribution_id),
                 ("uint256", leaf_index),
                 ("address", recipient["account"]),

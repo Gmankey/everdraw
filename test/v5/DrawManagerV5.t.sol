@@ -74,6 +74,8 @@ contract DrawManagerV5Test is Test {
     );
     event TimingUpdated(uint64 proposerGracePeriod, uint64 challengeWindow, uint64 vetoCooldown);
     event TimingChangeCancelled();
+    event FallbackProposerAllowedSet(address indexed proposer, bool allowed);
+    event RandomnessCallbackIgnored(uint64 indexed requestId, uint256 indexed drawId);
 
     EverdrawTwabController twab;
     MockERC4626YieldVault shmon;
@@ -611,19 +613,78 @@ contract DrawManagerV5Test is Test {
         assertEq(uint8(_status(1)), uint8(DrawManagerV5.DrawStatus.Finalized));
     }
 
-    function test_permissionlessFallbackAfterGraceButNotBefore() public {
+    function test_fallbackRequiresAuthorizationAndGraceStartsAtSeedReceipt() public {
         _startSeededDraw();
+        uint64 receivedAt = manager.seedReceivedAt(1);
+        assertEq(receivedAt, block.timestamp);
 
+        vm.warp(receivedAt + GRACE);
+        vm.prank(fallbackProposer);
+        vm.expectRevert(DrawManagerV5.NotAuthorizedProposer.selector);
+        manager.proposeRoot(1, bytes32(uint256(0x123)), 1, 5 ether);
+
+        vm.expectEmit(true, false, false, true, address(manager));
+        emit FallbackProposerAllowedSet(fallbackProposer, true);
+        manager.setFallbackProposerAllowed(fallbackProposer, true);
+
+        vm.warp(receivedAt + GRACE - 1);
         vm.prank(fallbackProposer);
         vm.expectRevert(DrawManagerV5.ProposerGraceActive.selector);
         manager.proposeRoot(1, bytes32(uint256(0x123)), 1, 5 ether);
 
-        vm.warp(START + PERIOD + GRACE);
+        vm.warp(receivedAt + GRACE);
         vm.prank(fallbackProposer);
         manager.proposeRoot(1, bytes32(uint256(0x123)), 1, 5 ether);
 
         (,,,,,,,,,, address proposer,,,,) = manager.draws(1);
         assertEq(proposer, fallbackProposer);
+    }
+
+    function test_revokingFallbackStopsRepeatedBadRootAfterGuardianVeto() public {
+        _startSeededDraw();
+        manager.setFallbackProposerAllowed(alice, true);
+        vm.warp(manager.seedReceivedAt(1) + GRACE);
+
+        vm.prank(alice);
+        manager.proposeRoot(1, bytes32(uint256(0xbad)), 1, 5 ether);
+        vm.prank(guardian);
+        manager.vetoRoot(1);
+        manager.setFallbackProposerAllowed(alice, false);
+        vm.warp(manager.vetoedUntil(1));
+
+        vm.prank(alice);
+        vm.expectRevert(DrawManagerV5.NotAuthorizedProposer.selector);
+        manager.proposeRoot(1, bytes32(uint256(0xbad2)), 1, 5 ether);
+
+        vm.prank(keeper);
+        manager.proposeRoot(1, bytes32(uint256(0xabc)), 1, 5 ether);
+        (,,,,,,,,,, address proposer,,,,) = manager.draws(1);
+        assertEq(proposer, keeper);
+    }
+
+    function test_fallbackAuthorizationIsOwnerControlledAndGuardianIsAlwaysFallback() public {
+        vm.prank(alice);
+        vm.expectRevert(DrawManagerV5.NotOwner.selector);
+        manager.setFallbackProposerAllowed(fallbackProposer, true);
+
+        _startSeededDraw();
+        uint64 receivedAt = manager.seedReceivedAt(1);
+        vm.warp(receivedAt + GRACE);
+        vm.prank(guardian);
+        manager.proposeRoot(1, bytes32(uint256(0x456)), 1, 5 ether);
+    }
+
+    function test_unknownAndCompletedRandomnessCallbacksAreIgnored() public {
+        vm.expectEmit(true, true, false, true, address(manager));
+        emit RandomnessCallbackIgnored(999, 0);
+        vm.prank(address(oracle));
+        manager.onRandomnessReceived(999, bytes32(uint256(1)));
+
+        _startSeededDraw();
+        vm.expectEmit(true, true, false, true, address(manager));
+        emit RandomnessCallbackIgnored(1, 0);
+        vm.prank(address(oracle));
+        manager.onRandomnessReceived(1, bytes32(uint256(2)));
     }
 
     function test_totalPayoutMustEqualEscrowedSnapshot() public {
@@ -774,10 +835,73 @@ contract DrawManagerV5Test is Test {
         assertEq(feeLeaf.amount, 0.5 ether);
     }
 
+    function test_rewardFundingEnforcesMinimumActiveCapAndDrawCountCap() public {
+        MockERC20 reward = new MockERC20("Reward", "RWD", 18);
+        reward.mint(alice, 100 ether);
+
+        vm.expectRevert(DrawManagerV5.BadFunding.selector);
+        manager.setRewardTokenAllowed(address(reward), true);
+        manager.setRewardTokenMinimum(address(reward), 1 ether);
+        manager.setRewardTokenAllowed(address(reward), true);
+
+        vm.startPrank(alice);
+        reward.approve(address(manager), type(uint256).max);
+        vm.expectRevert(abi.encodeWithSelector(DrawManagerV5.RewardAmountBelowMinimum.selector, 1 ether, 1 ether - 1));
+        manager.fundPrize(address(reward), 1 ether - 1, 1);
+        uint32 tooManyDraws = manager.MAX_REWARD_DRAWS() + 1;
+        vm.expectRevert(DrawManagerV5.BadFunding.selector);
+        manager.fundPrize(address(reward), 1 ether, tooManyDraws);
+
+        for (uint256 i = 0; i < manager.MAX_ACTIVE_REWARD_SCHEDULES(); i++) {
+            manager.fundPrize(address(reward), 1 ether, 2);
+        }
+        assertEq(manager.activeRewardScheduleCount(), manager.MAX_ACTIVE_REWARD_SCHEDULES());
+        vm.expectRevert(DrawManagerV5.TooManyActiveRewardSchedules.selector);
+        manager.fundPrize(address(reward), 1 ether, 2);
+
+        manager.cancelPrizeFunding(1);
+        assertEq(manager.activeRewardScheduleCount(), manager.MAX_ACTIVE_REWARD_SCHEDULES() - 1);
+        manager.fundPrize(address(reward), 1 ether, 2);
+        assertEq(manager.activeRewardScheduleCount(), manager.MAX_ACTIVE_REWARD_SCHEDULES());
+        vm.stopPrank();
+    }
+
+    function test_rewardSchedulesExpireAtCapWithinGasBudget() public {
+        MockERC20 reward = new MockERC20("Reward", "RWD", 18);
+        uint256 count = manager.MAX_ACTIVE_REWARD_SCHEDULES();
+        reward.mint(alice, count * 1 ether);
+        _allowRewardToken(address(reward));
+
+        vm.startPrank(alice);
+        reward.approve(address(manager), type(uint256).max);
+        for (uint256 i = 0; i < count; i++) {
+            manager.fundPrize(address(reward), 1 ether, 1);
+        }
+        vm.stopPrank();
+
+        _depositAcrossFullPeriod(10 ether);
+        shmon.setRate(2 ether);
+        uint256 gasBefore = gasleft();
+        manager.startDraw();
+        uint256 gasUsed = gasBefore - gasleft();
+
+        assertEq(manager.drawRewardLegCount(1), count);
+        assertEq(manager.activeRewardScheduleCount(), 0);
+        assertLt(gasUsed, 6_000_000, "reward processing exceeds launch gas budget");
+    }
+
+    function test_rawNativeTransferToDrawManagerReverts() public {
+        vm.deal(alice, 1 ether);
+        vm.prank(alice);
+        (bool ok, bytes memory data) = address(manager).call{value: 1 ether}("");
+        assertFalse(ok);
+        assertEq(bytes4(data), DrawManagerV5.UnexpectedNativeTransfer.selector);
+    }
+
     function test_fundPrizeCancelUnstartedRefundsUnreservedTokens() public {
         MockERC20 reward = new MockERC20("Reward", "RWD", 18);
         reward.mint(alice, 10 ether);
-        manager.setRewardTokenAllowed(address(reward), true);
+        _allowRewardToken(address(reward));
 
         vm.startPrank(alice);
         reward.approve(address(manager), 10 ether);
@@ -792,7 +916,7 @@ contract DrawManagerV5Test is Test {
     function test_rewardLegRegisteredWithClaimManagerOnFinalize() public {
         MockERC20 reward = new MockERC20("Reward", "RWD", 18);
         reward.mint(alice, 10 ether);
-        manager.setRewardTokenAllowed(address(reward), true);
+        _allowRewardToken(address(reward));
         vm.startPrank(alice);
         reward.approve(address(manager), 10 ether);
         manager.fundPrize(address(reward), 5 ether, 2);
@@ -818,7 +942,7 @@ contract DrawManagerV5Test is Test {
     function test_fundPrizeCancelAfterOneDrawRefundsOnlyRemainingDraws() public {
         MockERC20 reward = new MockERC20("Reward", "RWD", 18);
         reward.mint(alice, 15 ether);
-        manager.setRewardTokenAllowed(address(reward), true);
+        _allowRewardToken(address(reward));
         vm.startPrank(alice);
         reward.approve(address(manager), 15 ether);
         uint256 scheduleId = manager.fundPrize(address(reward), 5 ether, 3);
@@ -840,7 +964,7 @@ contract DrawManagerV5Test is Test {
     function test_rewardFeeLeavesPayInKindAcrossNativeAndRewardLegs() public {
         MockERC20 reward = new MockERC20("Reward", "RWD", 18);
         reward.mint(alice, 10 ether);
-        manager.setRewardTokenAllowed(address(reward), true);
+        _allowRewardToken(address(reward));
 
         address[] memory recipients = new address[](1);
         uint16[] memory bps = new uint16[](1);
@@ -889,8 +1013,8 @@ contract DrawManagerV5Test is Test {
     function test_sponsor5a5b5c5dEndToEnd() public {
         MockERC20 reward = new MockERC20("Reward", "RWD", 18);
         reward.mint(alice, 3 ether);
-        manager.setRewardTokenAllowed(address(reward), true);
-        manager.setRewardTokenAllowed(address(0), true);
+        _allowRewardToken(address(reward));
+        _allowRewardToken(address(0));
 
         vm.deal(alice, 12 ether);
         vm.startPrank(alice);
@@ -953,6 +1077,11 @@ contract DrawManagerV5Test is Test {
         vault.withdrawSponsorShmon(10 ether);
         assertEq(vault.sponsorPrincipalOf(sponsor), 0);
         assertEq(shmon.balanceOf(sponsor), 5 ether);
+    }
+
+    function _allowRewardToken(address token) internal {
+        manager.setRewardTokenMinimum(token, 1);
+        manager.setRewardTokenAllowed(token, true);
     }
 
     function _activateDrawManager(address drawManager_) internal {

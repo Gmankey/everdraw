@@ -18,6 +18,8 @@ for (let i = 0; i < 100000; i++) {
 const input = {
   drawId: "777",
   drawManager: hex(0xd00d, 20),
+  chainId: "10143",
+  claimManager: hex(0xc1a1, 20),
   seed: hex(0x123456789abcdefn, 32),
   accounts,
   totalPayout: "1000000000000000000000",

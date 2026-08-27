@@ -149,6 +149,8 @@ test("keeper and watcher independently reconstruct transfer recipients to the sa
   const inputFor = (accounts) => ({
     drawId: "9",
     drawManager: manager,
+    chainId: "10143",
+    claimManager: "0x0000000000000000000000000000000000000C11",
     seed: `0x${"42".repeat(32)}`,
     totalPayout: "1000",
     prizeLegs: [{
@@ -165,6 +167,14 @@ test("keeper and watcher independently reconstruct transfer recipients to the sa
   assert.equal(keeperResult.totalTwab, "100");
   assert.equal(watcherResult.totalTwab, "100");
   assert.equal(watcherResult.root, keeperResult.root);
+
+  const otherChain = compute({ ...inputFor(watcher.accounts), chainId: "143" });
+  const otherClaimManager = compute({
+    ...inputFor(watcher.accounts),
+    claimManager: "0x0000000000000000000000000000000000000C12",
+  });
+  assert.notEqual(otherChain.root, watcherResult.root);
+  assert.notEqual(otherClaimManager.root, watcherResult.root);
 });
 
 test("watcher canonical checkpoint detects reorg replacement", async () => {
@@ -208,6 +218,8 @@ test("workflow uses configured logs RPC and a five-minute cadence", () => {
   assert.match(watcher, /canCheckpointBatch\(rootMismatches\.length\)/);
   assert.match(watcher, /TimingChangeQueued/);
   assert.match(watcher, /PrimaryProposerSet/);
+  assert.match(watcher, /FallbackProposerAllowedSet/);
+  assert.match(watcher, /RewardTokenMinimumSet/);
   assert.match(watcher, /OwnershipTransferStarted/);
   assert.match(watcher, /StrategyChangeQueued/);
   assert.match(watcher, /SourceAuthorizationSet/);
