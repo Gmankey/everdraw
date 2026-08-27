@@ -39,7 +39,9 @@ function savePendingMap(map) {
   if (typeof window === 'undefined') return
   try {
     window.localStorage.setItem(PENDING_KEY, JSON.stringify(map))
-  } catch {}
+  } catch {
+    // Storage and event parsing are best-effort; fallback state remains valid.
+  }
 }
 
 function getPendingFor(address) {
@@ -214,7 +216,9 @@ export function useShmon({ account, expectedChainId, getReadProvider, ensureCorr
             parsedEvent = true
             break
           }
-        } catch {}
+        } catch {
+          // Event parsing is best-effort; fallback state remains valid.
+        }
       }
       if (!parsedEvent) {
         console.warn('[shMON] RequestUnstake event parse failed, falling back to currentEpoch + 1. Check ABI drift.')

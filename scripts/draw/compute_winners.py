@@ -2,8 +2,8 @@
 import json
 import sys
 
-ALGO_VERSION = "everdraw-v5-draw-algorithm/2"
-CLAIM_LEAF_VERSION = 2
+ALGO_VERSION = "everdraw-v5-draw-algorithm/3"
+CLAIM_LEAF_VERSION = 3
 ZERO_ROOT = "0x" + "00" * 32
 
 RC = [
@@ -110,7 +110,7 @@ def abi_hash(parts):
     return keccak256(bytes(data))
 
 
-LEAF_DOMAIN = hx(keccak256(b"everdraw-v5-claim-leaf/2"))
+LEAF_DOMAIN = hx(keccak256(b"everdraw-v5-claim-leaf/3"))
 
 
 def merkle_root(leaves):
@@ -190,7 +190,7 @@ def compute(raw):
     leaves = []
     leaf_index = 0
     for pos, winner in enumerate(winners):
-        for leg in prize_legs:
+        for leg_index, leg in enumerate(prize_legs):
             winner_pool = leg["amount"] - allocated_fee_amount(leg["feeAmount"], fee_bps, fee_recipients)
             floor_sum = sum((winner_pool * bps) // 10000 for bps in tier_bps)
             amount = (winner_pool * tier_bps[pos]) // 10000
@@ -208,8 +208,9 @@ def compute(raw):
                 ("address", winner),
                 ("address", leg["token"]),
                 ("uint256", amount),
+                ("uint256", 0 if leg_index == 0 else 2),
             ]))
-            leaves.append({"leafIndex": str(leaf_index), "position": pos, "account": winner, "token": leg["token"], "amount": str(amount), "leaf": leaf})
+            leaves.append({"leafIndex": str(leaf_index), "position": pos, "kind": 0 if leg_index == 0 else 2, "account": winner, "token": leg["token"], "amount": str(amount), "leaf": leaf})
             leaf_index += 1
 
     for leg in prize_legs:
@@ -229,8 +230,9 @@ def compute(raw):
                 ("address", recipient["account"]),
                 ("address", leg["token"]),
                 ("uint256", amount),
+                ("uint256", 1),
             ]))
-            leaves.append({"leafIndex": str(leaf_index), "position": "fee", "account": recipient["account"], "token": leg["token"], "amount": str(amount), "leaf": leaf})
+            leaves.append({"leafIndex": str(leaf_index), "position": "fee", "kind": 1, "account": recipient["account"], "token": leg["token"], "amount": str(amount), "leaf": leaf})
             leaf_index += 1
 
     proofs = merkle_proofs([l["leaf"] for l in leaves])

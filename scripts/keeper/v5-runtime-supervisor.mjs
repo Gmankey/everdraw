@@ -71,8 +71,14 @@ async function pingFailureHealthcheck() {
 async function alert(event) {
   const message = `EverDraw V5 keeper alert: ${event.key}\n${event.message}\ntime=${new Date().toISOString()}`
   log(`ALERT ${event.key}: ${event.message}`)
-  const failurePing = event.failureHealthcheck === false ? Promise.resolve(false) : pingFailureHealthcheck()
-  await Promise.all([sendTelegram(message), failurePing])
+  const actionable = event.failureHealthcheck !== false
+  const failurePing = actionable ? pingFailureHealthcheck() : Promise.resolve(false)
+  const [telegramSent, failureSent] = await Promise.all([sendTelegram(message), failurePing])
+  if (actionable && !telegramSent && !failureSent) {
+    log('FATAL all actionable alert transports failed; terminating so the external success heartbeat expires')
+    process.exitCode = 1
+    stop('SIGTERM')
+  }
 }
 
 function observeStream(stream, output) {

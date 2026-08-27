@@ -238,11 +238,17 @@ export function createDeriveRoundsService(
           case 'PrincipalWithdrawn':
             break;
 
-          case 'ClaimPaid': {
-            const payload = parsePayload<{ account: string; amount: string | number }>(event.payload);
-            acc.winner = payload.account.toLowerCase();
-            acc.winnerWallets.add(payload.account.toLowerCase());
-            acc.monReceived = stringifyNumberish(payload.amount ?? acc.monReceived);
+          case 'ClaimPaid':
+          case 'ClaimDeferred':
+          case 'DeferredClaimPaid': {
+            const payload = parsePayload<{ account: string; amount: string | number; kind: number }>(event.payload);
+            if (payload.kind !== 0) break;
+            const winner = payload.account.toLowerCase();
+            if (acc.winner == null) acc.winner = winner;
+            acc.winnerWallets.add(winner);
+            if (event.eventName !== 'ClaimDeferred') {
+              acc.monReceived = stringifyNumberish(payload.amount ?? acc.monReceived);
+            }
             break;
           }
         }

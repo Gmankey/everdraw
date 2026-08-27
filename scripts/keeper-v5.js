@@ -24,6 +24,10 @@ const LOOP = process.env.KEEPER_LOOP === "true";
 const INTERVAL_MS = Number(process.env.KEEPER_INTERVAL_MS || 60_000);
 const CLAIM_BATCH_SIZE = Number(process.env.CLAIM_BATCH_SIZE || 50);
 const HEALTHCHECK_URL = process.env.KEEPER_HEALTHCHECK_URL;
+const REQUIRE_HEALTHCHECK = process.env.KEEPER_REQUIRE_HEALTHCHECK === "true";
+if (REQUIRE_HEALTHCHECK && !HEALTHCHECK_URL) {
+  throw new Error("KEEPER_HEALTHCHECK_URL is required when KEEPER_REQUIRE_HEALTHCHECK=true");
+}
 const CONFIGURED_LOW_BALANCE_WEI = BigInt(process.env.KEEPER_LOW_BALANCE_WEI || "3000000000000000000");
 const CONFIGURED_LOW_BALANCE_WARN_WEI =
   BigInt(process.env.KEEPER_LOW_BALANCE_WARN_WEI || "6000000000000000000");
@@ -88,7 +92,7 @@ const CLAIM_MANAGER_ABI = [
   "function distributions(bytes32 distributionId) view returns (address source,bytes32 sourceKey,bytes32 root,uint32 leafCount,bytes32 metadata,uint64 registeredAt)",
   "function authorizedSource(address) view returns (bool)",
   "function compoundVaultFor(address) view returns (address)",
-  "function claimMany(tuple(bytes32 distributionId,uint256 leafIndex,address account,address token,uint256 amount)[] leaves, bytes32[][] proofs)",
+  "function claimMany(tuple(bytes32 distributionId,uint256 leafIndex,address account,address token,uint256 amount,uint8 kind)[] leaves, bytes32[][] proofs)",
 ];
 
 function readDeployment() {

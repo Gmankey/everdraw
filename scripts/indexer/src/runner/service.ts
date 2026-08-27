@@ -13,6 +13,12 @@ import type { RunnerConfig } from './config.js';
 import { POOL_EVENT_ABI } from './abi.js';
 
 const LAST_FINALIZED_BLOCK_KEY_PREFIX = 'last_finalized_block';
+const LAST_FINALIZED_BLOCK_HASH_KEY_PREFIX = 'last_finalized_block_hash';
+const CANONICAL_HISTORY_KEY_PREFIX = 'canonical_history';
+const REWIND_COUNT_KEY_PREFIX = 'rewind_count';
+const MAX_CANONICAL_CHECKPOINTS = 512;
+
+type CanonicalCheckpoint = { blockNumber: number; blockHash: string };
 const LAST_POINTS_CHECKPOINT_UNIX_KEY = 'last_points_checkpoint_unix';
 export const SUPPORTED_EVENTS: SupportedEventName[] = [
   // Shared
@@ -58,7 +64,14 @@ export const SUPPORTED_EVENTS: SupportedEventName[] = [
 
 export interface IndexerRunner {
   syncOnce(): Promise<{ fromBlock: number; toBlock: number; inserted: number; latestBlock: number; finalizedHead: number }>;
-  getStatus(): Promise<{ lastScannedBlock: number; chainHead: number; lag: number }>;
+  getStatus(): Promise<{
+    lastScannedBlock: number;
+    chainHead: number;
+    confirmedHead: number;
+    lag: number;
+    canonicalHash: string | null;
+    rewindCount: number;
+  }>;
   start(): Promise<never>;
 }
 
@@ -71,12 +84,16 @@ export function createIndexerRunner(input: {
   deriveWalletStatsService: DeriveWalletStatsService;
   deriveV5TranchesService?: DeriveV5TranchesService;
   derivePointsService?: DerivePointsService;
+  provider?: AbstractProvider;
 }): IndexerRunner {
   const { config, rawEventsRepo, indexerStateRepo, deriveRoundsService, deriveWalletRoundsService, deriveWalletStatsService, deriveV5TranchesService, derivePointsService } = input;
-  const provider = makeProvider(config.rpcUrl, config.rpcUrlFallback);
+  const provider = input.provider ?? makeProvider(config.rpcUrl, config.rpcUrlFallback);
   const iface = new Interface(POOL_EVENT_ABI);
-  const lastFinalizedBlockKey =
-    LAST_FINALIZED_BLOCK_KEY_PREFIX + ':' + config.poolAddresses.map((address) => address.toLowerCase()).sort().join(',');
+  const stateScope = config.chainId + ':' + config.poolAddresses.map((address) => address.toLowerCase()).sort().join(',');
+  const lastFinalizedBlockKey = LAST_FINALIZED_BLOCK_KEY_PREFIX + ':' + stateScope;
+  const lastFinalizedBlockHashKey = LAST_FINALIZED_BLOCK_HASH_KEY_PREFIX + ':' + stateScope;
+  const canonicalHistoryKey = CANONICAL_HISTORY_KEY_PREFIX + ':' + stateScope;
+  const rewindCountKey = REWIND_COUNT_KEY_PREFIX + ':' + stateScope;
 
   // Streak/tier/multiplier progression only advances via this checkpoint; it must run on its
   // own cadence (independent of block-scan frequency) or every wallet stays frozen at week 0.
@@ -92,12 +109,89 @@ export function createIndexerRunner(input: {
     console.log('[indexer] points checkpoint', result);
   }
 
+  function rebuildDerivedState(): void {
+    deriveRoundsService.rebuildFromRaw();
+    deriveWalletRoundsService.rebuildFromRaw();
+    deriveV5TranchesService?.rebuildFromRaw();
+    deriveWalletStatsService.rebuild();
+    derivePointsService?.rebuildSettlementPoints();
+  }
+
+  function canonicalHistory(): CanonicalCheckpoint[] {
+    const raw = indexerStateRepo.get(canonicalHistoryKey)?.value;
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw) as CanonicalCheckpoint[];
+      return parsed.filter(
+        (item) =>
+          Number.isInteger(item.blockNumber) &&
+          item.blockNumber >= config.deployBlock &&
+          /^0x[0-9a-f]{64}$/i.test(item.blockHash)
+      );
+    } catch {
+      return [];
+    }
+  }
+
+  function saveCanonicalHistory(history: CanonicalCheckpoint[]): void {
+    indexerStateRepo.set(
+      canonicalHistoryKey,
+      JSON.stringify(history.slice(-MAX_CANONICAL_CHECKPOINTS)),
+      nowIso()
+    );
+  }
+
+  async function recordCanonicalCheckpoint(blockNumber: number): Promise<void> {
+    const block = await provider.getBlock(blockNumber);
+    if (!block?.hash) throw new Error(`Missing canonical block hash for ${blockNumber}`);
+    const checkpoint = { blockNumber, blockHash: block.hash.toLowerCase() };
+    const history = canonicalHistory().filter((item) => item.blockNumber < blockNumber);
+    history.push(checkpoint);
+    saveCanonicalHistory(history);
+    indexerStateRepo.set(lastFinalizedBlockKey, String(blockNumber), nowIso());
+    indexerStateRepo.set(lastFinalizedBlockHashKey, checkpoint.blockHash, nowIso());
+  }
+
+  async function reconcileCanonicalCursor(): Promise<number> {
+    const cursor = Number(indexerStateRepo.get(lastFinalizedBlockKey)?.value ?? (config.deployBlock - 1));
+    if (cursor < config.deployBlock) return cursor;
+
+    const expectedHash = indexerStateRepo.get(lastFinalizedBlockHashKey)?.value.toLowerCase();
+    const current = await provider.getBlock(cursor);
+    if (current?.hash && (!expectedHash || current.hash.toLowerCase() === expectedHash)) {
+      if (!expectedHash) await recordCanonicalCheckpoint(cursor);
+      return cursor;
+    }
+
+    let ancestor = config.deployBlock - 1;
+    let ancestorHash: string | null = null;
+    const history = canonicalHistory().filter((item) => item.blockNumber < cursor).reverse();
+    for (const checkpoint of history) {
+      const block = await provider.getBlock(checkpoint.blockNumber);
+      if (block?.hash?.toLowerCase() === checkpoint.blockHash.toLowerCase()) {
+        ancestor = checkpoint.blockNumber;
+        ancestorHash = checkpoint.blockHash.toLowerCase();
+        break;
+      }
+    }
+
+    rawEventsRepo.deleteFromBlock(ancestor + 1);
+    indexerStateRepo.set(lastFinalizedBlockKey, String(ancestor), nowIso());
+    indexerStateRepo.set(lastFinalizedBlockHashKey, ancestorHash ?? '', nowIso());
+    saveCanonicalHistory(canonicalHistory().filter((item) => item.blockNumber <= ancestor));
+    const rewindCount = Number(indexerStateRepo.get(rewindCountKey)?.value ?? 0) + 1;
+    indexerStateRepo.set(rewindCountKey, String(rewindCount), nowIso());
+    rebuildDerivedState();
+    console.warn(`[indexer] canonical divergence at ${cursor}; rewound to ${ancestor}`);
+    return ancestor;
+  }
+
   return {
     async syncOnce() {
       console.log('[indexer] syncOnce starting...');
       const latestBlock = await provider.getBlockNumber();
       const finalizedHead = Math.max(config.deployBlock, latestBlock - config.confirmations);
-      const lastFinalizedBlock = Number(indexerStateRepo.get(lastFinalizedBlockKey)?.value ?? (config.deployBlock - 1));
+      const lastFinalizedBlock = await reconcileCanonicalCursor();
       const fromBlock = Math.max(config.deployBlock, lastFinalizedBlock + 1);
       const toBlock = Math.min(finalizedHead, fromBlock + config.maxBlocksPerSync - 1);
       console.log(`[indexer] chain head: ${latestBlock}, will scan from ${fromBlock} to ${toBlock}`);
@@ -121,33 +215,31 @@ export function createIndexerRunner(input: {
         rawEventsRepo.upsertMany(rows);
         inserted += rows.length;
         chunkCount++;
+        await recordCanonicalCheckpoint(end);
         if (chunkCount % 1000 === 0) {
-          indexerStateRepo.set(lastFinalizedBlockKey, String(end), nowIso());
           console.log(`[indexer] checkpoint block ${end} (${chunkCount} chunks, ${inserted} events)`);
         }
       }
 
       console.log(`[indexer] batch done: scanned ${fromBlock}-${toBlock}, ${inserted} events in ${chunkCount} chunks`);
       if (toBlock >= finalizedHead - 500) {
-        deriveRoundsService.rebuildFromRaw();
-        deriveWalletRoundsService.rebuildFromRaw();
-        deriveV5TranchesService?.rebuildFromRaw();
-        deriveWalletStatsService.rebuild();
-        derivePointsService?.rebuildSettlementPoints();
+        rebuildDerivedState();
         maybeRunPointsCheckpoint();
       }
-      indexerStateRepo.set(lastFinalizedBlockKey, String(toBlock), nowIso());
-
       return { fromBlock, toBlock, inserted, latestBlock, finalizedHead };
     },
 
     async getStatus() {
       const chainHead = await provider.getBlockNumber();
+      const confirmedHead = Math.max(config.deployBlock, chainHead - config.confirmations);
       const lastScannedBlock = Number(indexerStateRepo.get(lastFinalizedBlockKey)?.value ?? (config.deployBlock - 1));
       return {
         lastScannedBlock,
         chainHead,
-        lag: Math.max(0, chainHead - lastScannedBlock),
+        confirmedHead,
+        lag: Math.max(0, confirmedHead - lastScannedBlock),
+        canonicalHash: indexerStateRepo.get(lastFinalizedBlockHashKey)?.value || null,
+        rewindCount: Number(indexerStateRepo.get(rewindCountKey)?.value ?? 0),
       };
     },
 
@@ -480,6 +572,7 @@ function normalizeArgs(eventName: SupportedEventName, args: any): Record<string,
         account: String(args.account).toLowerCase(),
         token: String(args.token).toLowerCase(),
         amount: String(args.amount),
+        kind: Number(args.kind),
       };
 
     case 'PrizeCompounded':

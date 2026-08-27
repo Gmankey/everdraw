@@ -158,6 +158,13 @@ export type V5PoolType = 'vault' | 'degen';
 export type V5PositionAction = 'deposit' | 'withdraw' | 'transfer_in' | 'transfer_out';
 export type V5PositionEventSource = 'user' | 'prize_compound' | 'transfer';
 
+export interface V5DeploymentScope {
+  chainId: number;
+  vaultAddress: string;
+  drawManagerAddress: string;
+  claimManagerAddress: string;
+}
+
 export interface V5PositionEventRow {
   txHash: string;
   logIndex: number;

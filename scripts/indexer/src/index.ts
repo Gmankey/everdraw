@@ -31,15 +31,16 @@ async function main(): Promise<void> {
   const indexerStateRepo = createIndexerStateRepo(db);
   const pointsRepo = createPointsRepo(db);
   const v5TranchesRepo = createV5TranchesRepo(db);
+  const runnerConfig = getRunnerConfig();
 
   const deriveRoundsService = createDeriveRoundsService(rawEventsRepo, roundsRepo);
   const deriveWalletRoundsService = createDeriveWalletRoundsService(rawEventsRepo, walletRoundsRepo);
   const deriveWalletStatsService = createDeriveWalletStatsService(walletRoundsRepo, walletStatsRepo);
-  const deriveV5TranchesService = createDeriveV5TranchesService(rawEventsRepo, v5TranchesRepo, walletRoundsRepo);
+  const deriveV5TranchesService = createDeriveV5TranchesService(rawEventsRepo, v5TranchesRepo, walletRoundsRepo, runnerConfig.v5Deployments);
   const derivePointsService = createDerivePointsService({ pointsRepo, roundsRepo, walletRoundsRepo });
 
   const runner = createIndexerRunner({
-    config: getRunnerConfig(),
+    config: runnerConfig,
     rawEventsRepo,
     indexerStateRepo,
     deriveRoundsService,

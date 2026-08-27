@@ -16,5 +16,8 @@
   },
   "devDependencies": {
     "typescript": "5.8.3"
+  },
+  "overrides": {
+    "@xmldom/xmldom": "0.9.12"
   }
 }

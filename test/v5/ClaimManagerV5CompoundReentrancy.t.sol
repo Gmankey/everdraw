@@ -84,7 +84,8 @@ contract ClaimManagerV5CompoundReentrancyTest is Test {
             leafIndex: leafIndex,
             account: account,
             token: address(0),
-            amount: amount
+            amount: amount,
+            kind: ClaimManagerV5.ClaimKind.Winner
         });
     }
 

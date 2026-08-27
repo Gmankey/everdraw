@@ -54,8 +54,8 @@ export const POOL_EVENT_ABI = [
 
   // ── V5 ClaimManagerV5 events ────────────────────────────────────────────
   'event DistributionRegistered(bytes32 indexed distributionId, address indexed source, bytes32 indexed sourceKey, bytes32 root, uint32 leafCount, bytes32 metadata)',
-  'event ClaimPaid(bytes32 indexed distributionId, uint256 indexed leafIndex, address indexed account, address token, uint256 amount)',
-  'event ClaimDeferred(bytes32 indexed distributionId, uint256 indexed leafIndex, address indexed account, address token, uint256 amount)',
-  'event DeferredClaimPaid(bytes32 indexed distributionId, uint256 indexed leafIndex, address indexed account, address token, uint256 amount)',
+  'event ClaimPaid(bytes32 indexed distributionId, uint256 indexed leafIndex, address indexed account, address token, uint256 amount, uint8 kind)',
+  'event ClaimDeferred(bytes32 indexed distributionId, uint256 indexed leafIndex, address indexed account, address token, uint256 amount, uint8 kind)',
+  'event DeferredClaimPaid(bytes32 indexed distributionId, uint256 indexed leafIndex, address indexed account, address token, uint256 amount, uint8 kind)',
   'event PrizeCompounded(bytes32 indexed distributionId, uint256 indexed leafIndex, address indexed account, uint256 amount)',
 ] as const;

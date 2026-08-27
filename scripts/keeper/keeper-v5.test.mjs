@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -127,4 +128,19 @@ test("large recent window, not V5_KEEPER_FROM_BLOCK, keeps legacy draw ids eligi
 test("a successful claim still reports lifecycle activity", async () => {
   const claimed = await claimFinalizedDrawSafely(83n, async () => true);
   assert.equal(claimed, true);
+});
+
+test("managed keeper refuses to start without its required success heartbeat", () => {
+  const result = spawnSync(process.execPath, ["-e", "import('./scripts/keeper-v5.js')"], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      KEEPER_REQUIRE_HEALTHCHECK: "true",
+      KEEPER_HEALTHCHECK_URL: "",
+    },
+    encoding: "utf8",
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /KEEPER_HEALTHCHECK_URL is required/);
 });

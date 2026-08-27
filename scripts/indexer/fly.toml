@@ -8,6 +8,8 @@ primary_region = "sjc"
   DB_PATH = "/data/everdraw.db"
   NODE_ENV = "production"
   POINTS_START_UNIX = "0"
+  INDEXER_CONFIRMATIONS = "12"
+  # RPC_URL, INDEXER_CHAIN_ID, V5_DEPLOYMENTS_JSON, POOL_ADDRESSES, and START_BLOCK are Fly secrets.
 
 [mounts]
   source = "everdraw_indexer_data"

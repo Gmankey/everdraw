@@ -1,0 +1,63 @@
+name: release-sbom
+
+on:
+  pull_request:
+    branches: [staging]
+  push:
+    branches: [staging]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            web/package-lock.json
+            scripts/indexer/package-lock.json
+            docs-site/package-lock.json
+      - name: Install locked dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm ci --ignore-scripts --prefix web
+          npm ci --ignore-scripts --prefix scripts/indexer
+          npm ci --ignore-scripts --prefix docs-site
+      - name: Generate CycloneDX SBOMs
+        run: |
+          mkdir -p release-sbom
+          npm sbom --sbom-format cyclonedx > release-sbom/root.cdx.json
+          npm sbom --prefix web --sbom-format cyclonedx > release-sbom/web.cdx.json
+          npm sbom --prefix scripts/indexer --sbom-format cyclonedx > release-sbom/indexer.cdx.json
+          npm sbom --prefix docs-site --sbom-format cyclonedx > release-sbom/docs.cdx.json
+          sha256sum \
+            package-lock.json \
+            web/package-lock.json \
+            scripts/indexer/package-lock.json \
+            docs-site/package-lock.json \
+            release-sbom/*.json > release-sbom/SHA256SUMS
+          printf '%s\n' "git_sha=${GITHUB_SHA}" "node=$(node --version)" "npm=$(npm --version)" > release-sbom/PROVENANCE.txt
+      - name: Scan locked release dependencies
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2
+        with:
+          path: "."
+          fail-build: true
+          severity-cutoff: high
+          only-fixed: true
+          output-format: json
+          output-file: release-sbom/grype.json
+      - name: Upload immutable SBOM artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-sbom-${{ github.sha }}
+          path: release-sbom/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 9

@@ -33,6 +33,9 @@ export function createApiServer(params: {
       res.json({
         lastScannedBlock: status.lastScannedBlock,
         chainHead: status.chainHead,
+        confirmedHead: status.confirmedHead,
+        canonicalHash: status.canonicalHash,
+        rewindCount: status.rewindCount,
         lag: status.lag,
         dbStatus: 'ok',
         uptime: Math.floor((Date.now() - startedAt) / 1000),

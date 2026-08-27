@@ -1,7 +1,7 @@
 import type { RawEventsRepo } from '../repositories/rawEventsRepo.js';
 import type { V5TranchesRepo } from '../repositories/v5TranchesRepo.js';
 import type { WalletRoundsRepo } from '../repositories/walletRoundsRepo.js';
-import type { RawEventRow, V5PoolType, V5PositionAction, V5PositionEventSource } from '../types/domain.js';
+import type { RawEventRow, V5DeploymentScope, V5PoolType, V5PositionAction, V5PositionEventSource } from '../types/domain.js';
 import { multiplierForTranche } from './pointsMath.js';
 
 // Locked ticket rate: 0.005 entries/MON/minute (see v5-odds-display-ux ticket).
@@ -51,7 +51,8 @@ export function firstFullWeightDrawId(startDrawId: number | null): number | null
 export function createDeriveV5TranchesService(
   rawEventsRepo: RawEventsRepo,
   v5TranchesRepo: V5TranchesRepo,
-  walletRoundsRepo?: WalletRoundsRepo
+  walletRoundsRepo?: WalletRoundsRepo,
+  configuredScopes: V5DeploymentScope[] = []
 ): DeriveV5TranchesService {
   return {
     rebuildFromRaw(range) {
@@ -62,86 +63,145 @@ export function createDeriveV5TranchesService(
       const finalizedEvents = allEvents
         .filter((event) => event.finalized === 1)
         .sort(sortEvents);
-      const drawWindows = finalizedEvents
-        .filter((event) => event.eventName === 'DrawStarted' || event.eventName === 'DrawSkipped')
-        .map(toDrawWindow)
-        .filter((window): window is DrawWindow => window != null)
-        .sort((a, b) => a.periodStart - b.periodStart || a.drawId - b.drawId);
-
-      // Map each V5 draw to the DrawManager that emitted it (= the round's pool_address).
-      const drawManagerByDrawId = new Map<number, string>();
-      for (const event of finalizedEvents) {
-        if (event.eventName !== 'DrawStarted' && event.eventName !== 'DrawSkipped') continue;
-        const window = toDrawWindow(event);
-        if (window) drawManagerByDrawId.set(window.drawId, event.contractAddress.toLowerCase());
-      }
-
-      const prizeCompoundDeposits = buildPrizeCompoundDeposits(finalizedEvents);
-
+      const scopes = resolveDeploymentScopes(finalizedEvents, configuredScopes);
       v5TranchesRepo.deleteAll();
 
-      for (const event of finalizedEvents) {
-        const positions = toPositionEvents(event);
-        for (const position of positions) {
-          v5TranchesRepo.insertPositionEvent({
-            txHash: event.txHash,
-            logIndex: event.logIndex,
-            blockNumber: event.blockNumber,
-            blockTimestamp: event.blockTimestamp,
-            vaultAddress: event.contractAddress,
-            wallet: position.wallet,
-            poolType: position.poolType,
-            action: position.action,
-            amount: position.amount.toString(),
-            balanceAfter: position.balanceAfter?.toString() ?? null,
-            rawEventName: event.eventName,
-            source: sourceForPositionEvent(event, position, prizeCompoundDeposits),
-          });
+      for (const scope of scopes) {
+        const roleAddresses = new Set([
+          scope.vaultAddress,
+          scope.drawManagerAddress,
+          scope.claimManagerAddress,
+        ]);
+        const stackEvents = finalizedEvents.filter((event) =>
+          roleAddresses.has(event.contractAddress.toLowerCase())
+        );
+        const drawWindows = stackEvents
+          .filter(
+            (event) =>
+              event.contractAddress.toLowerCase() === scope.drawManagerAddress &&
+              (event.eventName === 'DrawStarted' || event.eventName === 'DrawSkipped')
+          )
+          .map(toDrawWindow)
+          .filter((window): window is DrawWindow => window != null)
+          .sort((a, b) => a.periodStart - b.periodStart || a.drawId - b.drawId);
+        const drawManagerByDrawId = new Map<number, string>(
+          drawWindows.map((window) => [window.drawId, scope.drawManagerAddress])
+        );
+        const prizeCompoundDeposits = buildPrizeCompoundDeposits(stackEvents);
 
-          if (position.action === 'deposit' || position.action === 'transfer_in') {
-            v5TranchesRepo.insertTranche({
+        for (const event of stackEvents) {
+          if (event.contractAddress.toLowerCase() !== scope.vaultAddress) continue;
+          const positions = toPositionEvents(event);
+          for (const position of positions) {
+            v5TranchesRepo.insertPositionEvent({
+              txHash: event.txHash,
+              logIndex: event.logIndex,
+              blockNumber: event.blockNumber,
+              blockTimestamp: event.blockTimestamp,
+              vaultAddress: scope.vaultAddress,
               wallet: position.wallet,
-              vaultAddress: event.contractAddress,
               poolType: position.poolType,
+              action: position.action,
               amount: position.amount.toString(),
-              remainingAmount: position.amount.toString(),
-              openedBlockNumber: event.blockNumber,
-              openedLogIndex: event.logIndex,
-              openedAt: event.blockTimestamp,
-              openedTxHash: event.txHash,
-              startDrawId: findDrawId(drawWindows, event.blockTimestamp),
-              closedAt: null,
-              closedBlockNumber: null,
-              closedLogIndex: null,
-              closedTxHash: null,
+              balanceAfter: position.balanceAfter?.toString() ?? null,
+              rawEventName: event.eventName,
+              source: sourceForPositionEvent(event, position, prizeCompoundDeposits),
             });
-          } else {
-            consumeNewestTranches({
+
+            if (position.action === 'deposit' || position.action === 'transfer_in') {
+              v5TranchesRepo.insertTranche({
+                wallet: position.wallet,
+                vaultAddress: scope.vaultAddress,
+                poolType: position.poolType,
+                amount: position.amount.toString(),
+                remainingAmount: position.amount.toString(),
+                openedBlockNumber: event.blockNumber,
+                openedLogIndex: event.logIndex,
+                openedAt: event.blockTimestamp,
+                openedTxHash: event.txHash,
+                startDrawId: findDrawId(drawWindows, event.blockTimestamp),
+                closedAt: null,
+                closedBlockNumber: null,
+                closedLogIndex: null,
+                closedTxHash: null,
+              });
+            } else {
+              consumeNewestTranches({
+                repo: v5TranchesRepo,
+                wallet: position.wallet,
+                vaultAddress: scope.vaultAddress,
+                poolType: position.poolType,
+                amount: position.amount,
+                event,
+              });
+            }
+            assertBalanceAfter({
               repo: v5TranchesRepo,
               wallet: position.wallet,
-              vaultAddress: event.contractAddress,
+              vaultAddress: scope.vaultAddress,
               poolType: position.poolType,
-              amount: position.amount,
+              expected: position.balanceAfter,
               event,
             });
           }
-          assertBalanceAfter({
-            repo: v5TranchesRepo,
-            wallet: position.wallet,
-            vaultAddress: event.contractAddress,
-            poolType: position.poolType,
-            expected: position.balanceAfter,
-            event,
+        }
+
+        if (walletRoundsRepo) {
+          writeV5ResolvedBase({
+            finalizedEvents: stackEvents.filter(
+              (event) => event.contractAddress.toLowerCase() === scope.vaultAddress
+            ),
+            drawWindows,
+            drawManagerByDrawId,
+            walletRoundsRepo,
           });
         }
       }
-
-      // Per-wallet per-draw entries → resolved base points (per-tranche tenure multiplier, §2b).
-      if (walletRoundsRepo) {
-        writeV5ResolvedBase({ finalizedEvents, drawWindows, drawManagerByDrawId, walletRoundsRepo });
-      }
     },
   };
+}
+
+function resolveDeploymentScopes(
+  events: RawEventRow[],
+  configuredScopes: V5DeploymentScope[]
+): V5DeploymentScope[] {
+  if (configuredScopes.length > 0) {
+    return configuredScopes.map(normalizeScope);
+  }
+
+  const vaults = uniqueRoleAddresses(events, ['Deposit', 'Withdraw', 'Transfer', 'BoostDeposit', 'BoostWithdraw']);
+  const managers = uniqueRoleAddresses(events, ['DrawStarted', 'DrawSkipped', 'SeedReceived', 'RootProposed', 'RootFinalized']);
+  const claims = uniqueRoleAddresses(events, ['DistributionRegistered', 'ClaimPaid', 'ClaimDeferred', 'DeferredClaimPaid', 'PrizeCompounded']);
+
+  if (vaults.length === 0 && managers.length === 0 && claims.length === 0) return [];
+  if (vaults.length !== 1 || managers.length !== 1 || claims.length > 1) {
+    throw new Error(
+      `Ambiguous V5 contract roles: vaults=${vaults.join(',')} managers=${managers.join(',')} claims=${claims.join(',')}`
+    );
+  }
+  return [{ chainId: 0, vaultAddress: vaults[0], drawManagerAddress: managers[0], claimManagerAddress: claims[0] ?? '0x0000000000000000000000000000000000000000' }];
+}
+
+function normalizeScope(scope: V5DeploymentScope): V5DeploymentScope {
+  const normalized = {
+    chainId: scope.chainId,
+    vaultAddress: scope.vaultAddress.toLowerCase(),
+    drawManagerAddress: scope.drawManagerAddress.toLowerCase(),
+    claimManagerAddress: scope.claimManagerAddress.toLowerCase(),
+  };
+  if (new Set([normalized.vaultAddress, normalized.drawManagerAddress, normalized.claimManagerAddress]).size !== 3) {
+    throw new Error('Ambiguous V5 contract roles in deployment scope');
+  }
+  return normalized;
+}
+
+function uniqueRoleAddresses(events: RawEventRow[], names: RawEventRow['eventName'][]): string[] {
+  const accepted = new Set(names);
+  return [...new Set(
+    events
+      .filter((event) => accepted.has(event.eventName))
+      .map((event) => event.contractAddress.toLowerCase())
+  )].sort();
 }
 
 function buildPrizeCompoundDeposits(events: RawEventRow[]): Set<string> {

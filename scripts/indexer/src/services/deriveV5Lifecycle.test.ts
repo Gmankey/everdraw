@@ -20,6 +20,10 @@ const deriveWalletRounds = createDeriveWalletRoundsService(rawEventsRepo, wallet
 const drawManager = '0x0000000000000000000000000000000000000d22';
 const claimManager = '0x0000000000000000000000000000000000000c33';
 const wallet = '0x00000000000000000000000000000000000000aa';
+const deferredWinner = '0x00000000000000000000000000000000000000bb';
+const feeRecipient = '0x00000000000000000000000000000000000000f1';
+const secondFeeRecipient = '0x00000000000000000000000000000000000000f3';
+const rewardRecipient = '0x00000000000000000000000000000000000000f2';
 const distributionId = '0xda651a1a74429ad1ded3bcdd697bd79960751762a782ed8b32d2a912eebcc16e';
 
 function raw(partial: Partial<RawEventRow> & Pick<RawEventRow, 'eventName' | 'logIndex' | 'payload'>): RawEventRow {
@@ -59,30 +63,66 @@ rawEventsRepo.upsertMany([
     eventName: 'RootProposed',
     logIndex: 3,
     roundId: 1,
-    payload: JSON.stringify({ drawId: 1, root: '0x02', winnerCount: 1, totalPayout: '3109263465519218066' }),
+    payload: JSON.stringify({ drawId: 1, root: '0x02', winnerCount: 2, totalPayout: '3109263465519218066' }),
   }),
   raw({
     eventName: 'DistributionRegistered',
     logIndex: 4,
     roundId: 1,
     contractAddress: claimManager,
-    payload: JSON.stringify({ distributionId, source: drawManager, sourceKey: `0x${'1'.padStart(64, '0')}`, root: '0x02', leafCount: 1 }),
+    payload: JSON.stringify({ distributionId, source: drawManager, sourceKey: `0x${'1'.padStart(64, '0')}`, root: '0x02', leafCount: 6 }),
   }),
   raw({
     eventName: 'RootFinalized',
     logIndex: 5,
     roundId: 1,
-    payload: JSON.stringify({ drawId: 1, root: '0x02', winnerCount: 1, totalPayout: '3109263465519218066' }),
+    payload: JSON.stringify({ drawId: 1, root: '0x02', winnerCount: 2, totalPayout: '3109263465519218066' }),
   }),
   raw({
     eventName: 'ClaimPaid',
     logIndex: 6,
     contractAddress: claimManager,
-    wallet,
-    payload: JSON.stringify({ distributionId, leafIndex: '0', account: wallet, token: '0x0000000000000000000000000000000000000000', amount: '3109263465519218066' }),
-  }),  raw({
-    eventName: 'DrawEconomicsSnapshot',
+    wallet: feeRecipient,
+    payload: JSON.stringify({ distributionId, leafIndex: '2', account: feeRecipient, token: '0x0000000000000000000000000000000000000000', amount: '100', kind: 1 }),
+  }),
+  raw({
+    eventName: 'ClaimPaid',
     logIndex: 7,
+    contractAddress: claimManager,
+    wallet: rewardRecipient,
+    payload: JSON.stringify({ distributionId, leafIndex: '3', account: rewardRecipient, token: '0x0000000000000000000000000000000000000000', amount: '200', kind: 2 }),
+  }),
+  raw({
+    eventName: 'ClaimPaid',
+    logIndex: 8,
+    contractAddress: claimManager,
+    wallet,
+    payload: JSON.stringify({ distributionId, leafIndex: '0', account: wallet, token: '0x0000000000000000000000000000000000000000', amount: '3109263465519218066', kind: 0 }),
+  }),
+  raw({
+    eventName: 'PrizeCompounded',
+    logIndex: 9,
+    contractAddress: claimManager,
+    wallet,
+    payload: JSON.stringify({ distributionId, leafIndex: '0', account: wallet, amount: '3109263465519218066' }),
+  }),
+  raw({
+    eventName: 'ClaimDeferred',
+    logIndex: 10,
+    contractAddress: claimManager,
+    wallet: deferredWinner,
+    payload: JSON.stringify({ distributionId, leafIndex: '1', account: deferredWinner, token: '0x0000000000000000000000000000000000000000', amount: '500', kind: 0 }),
+  }),
+  raw({
+    eventName: 'DeferredClaimPaid',
+    logIndex: 11,
+    contractAddress: claimManager,
+    wallet: deferredWinner,
+    payload: JSON.stringify({ distributionId, leafIndex: '1', account: deferredWinner, token: '0x0000000000000000000000000000000000000000', amount: '500', kind: 0 }),
+  }),
+  raw({
+    eventName: 'DrawEconomicsSnapshot',
+    logIndex: 12,
     roundId: 1,
     payload: JSON.stringify({
       drawId: 1,
@@ -91,6 +131,13 @@ rawEventsRepo.upsertMany([
       feeAmount: '0',
       totalPayout: '3109263465519218066',
     }),
+  }),
+  raw({
+    eventName: 'ClaimPaid',
+    logIndex: 13,
+    contractAddress: claimManager,
+    wallet: secondFeeRecipient,
+    payload: JSON.stringify({ distributionId, leafIndex: '4', account: secondFeeRecipient, token: '0x0000000000000000000000000000000000000000', amount: '50', kind: 1 }),
   }),
 ]);
 
@@ -102,11 +149,19 @@ assert.equal(round.roundId, 1);
 assert.equal(round.poolAddress, drawManager);
 assert.equal(round.state, 'settled');
 assert.equal(round.winner, wallet);
+assert.equal(round.winnerWalletsCount, 2);
 assert.equal(round.yieldMon, '6218526931038436132');
 
-const [walletRound] = walletRoundsRepo.listByRound(1, drawManager);
-assert.equal(walletRound.wallet, wallet);
-assert.equal(walletRound.won, 1);
-assert.equal(walletRound.prizeClaimed, '3109263465519218066');
+const walletRounds = walletRoundsRepo.listByRound(1, drawManager);
+assert.equal(walletRounds.length, 2);
+const paidWinner = walletRounds.find((row) => row.wallet === wallet);
+const paidDeferredWinner = walletRounds.find((row) => row.wallet === deferredWinner);
+assert.equal(paidWinner?.won, 1);
+assert.equal(paidWinner?.prizeClaimed, '3109263465519218066');
+assert.equal(paidDeferredWinner?.won, 1);
+assert.equal(paidDeferredWinner?.prizeClaimed, '500');
+assert.equal(walletRounds.some((row) => row.wallet === feeRecipient), false);
+assert.equal(walletRounds.some((row) => row.wallet === secondFeeRecipient), false);
+assert.equal(walletRounds.some((row) => row.wallet === rewardRecipient), false);
 
 console.log('deriveV5Lifecycle.test.ts ok');

@@ -9,7 +9,8 @@ primary_region = "sjc"
   NODE_ENV = "production"
   POINTS_START_UNIX = "0"
   POINTS_CHECKPOINT_INTERVAL_SEC = "3600"
-  # RPC_URL, POOL_ADDRESSES, and START_BLOCK are set as Fly secrets.
+  INDEXER_CONFIRMATIONS = "12"
+  # RPC_URL, INDEXER_CHAIN_ID, V5_DEPLOYMENTS_JSON, POOL_ADDRESSES, and START_BLOCK are Fly secrets.
 
 [mounts]
   source = "everdraw_indexer_uat_data"

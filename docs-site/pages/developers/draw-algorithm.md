@@ -1,6 +1,6 @@
 # V5 Draw Algorithm
 
-**Version:** `everdraw-v5-draw-algorithm/2`
+**Version:** `everdraw-v5-draw-algorithm/3`
 
 This is the canonical M3 winner-selection algorithm for V5 draws. It is deterministic: given the same on-chain seed, period, account TWABs, prize legs, draw id, and DrawManager address, every implementation must produce the same leaves and merkle root.
 
@@ -43,21 +43,25 @@ Per-leg floor dust is assigned to position `0`.
 
 For every `(position, leg)` payout, in ascending position and configured leg order:
 
+`kind` is `Winner (0)` for the shMON winner leg, `Fee (1)` for a fee recipient, and
+`Reward (2)` for an additional reward-token winner leg.
+
 ```text
 leaf = keccak256(abi.encode(
   LEAF_DOMAIN,
-  2,
+  3,
   chainId,
   claimManager,
   distributionId,
   leafIndex,
   account,
   token,
-  amount
+  amount,
+  kind
 ))
 ```
 
-`LEAF_DOMAIN = keccak256("everdraw-v5-claim-leaf/2")`. The chain and ClaimManager binding prevents cross-deployment replay.
+`LEAF_DOMAIN = keccak256("everdraw-v5-claim-leaf/3")`. The chain and ClaimManager binding prevents cross-deployment replay; the explicit kind prevents fee and reward payments from being attributed as winner claims.
 
 Leaves are sorted ascending by hash. The tree is OpenZeppelin-compatible sorted-pair keccak. If a level has an odd leaf count, the final node is promoted unchanged. A single leaf is its own root; no leaves produces `0x00...00`.
 

@@ -76,7 +76,8 @@ contract ClaimManagerV5CompoundTest is Test {
             leafIndex: 0,
             account: winner,
             token: address(0),
-            amount: 1 ether
+            amount: 1 ether,
+            kind: ClaimManagerV5.ClaimKind.Winner
         });
         vm.deal(source, 1 ether);
         vm.prank(source);
@@ -116,7 +117,8 @@ contract ClaimManagerV5CompoundTest is Test {
             leafIndex: 0,
             account: winner,
             token: address(dummyToken),
-            amount: 5 ether
+            amount: 5 ether,
+            kind: ClaimManagerV5.ClaimKind.Winner
         });
         ClaimManagerV5.TokenTotal[] memory totals = new ClaimManagerV5.TokenTotal[](1);
         totals[0] = ClaimManagerV5.TokenTotal({token: address(dummyToken), amount: 5 ether});
@@ -139,7 +141,8 @@ contract ClaimManagerV5CompoundTest is Test {
             leafIndex: leafIndex,
             account: account,
             token: address(0),
-            amount: amount
+            amount: amount,
+            kind: ClaimManagerV5.ClaimKind.Winner
         });
     }
 

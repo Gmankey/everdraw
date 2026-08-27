@@ -19,6 +19,63 @@ contract RejectNativeFeeRecipient {
     }
 }
 
+contract ReentrantRewardToken {
+    string public constant name = "Reentrant Reward";
+    string public constant symbol = "RRWD";
+    uint8 public constant decimals = 18;
+
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
+
+    DrawManagerV5 public manager;
+    address public callbackToken;
+    uint256 public callbackAmount;
+    uint32 public callbackDrawCount;
+    uint256 public callbackScheduleId;
+    bool public callbackAttempted;
+    bool public callbackReverted;
+
+    function mint(address to, uint256 amount) external {
+        balanceOf[to] += amount;
+    }
+
+    function approve(address spender, uint256 amount) external returns (bool) {
+        allowance[msg.sender][spender] = amount;
+        return true;
+    }
+
+    function arm(DrawManagerV5 manager_, address callbackToken_, uint256 callbackAmount_, uint32 callbackDrawCount_)
+        external
+    {
+        manager = manager_;
+        callbackToken = callbackToken_;
+        callbackAmount = callbackAmount_;
+        callbackDrawCount = callbackDrawCount_;
+    }
+
+    function approveCallbackToken(address token, uint256 amount) external {
+        MockERC20(token).approve(address(manager), amount);
+    }
+
+    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+        uint256 allowed = allowance[from][msg.sender];
+        require(allowed >= amount, "allowance");
+        if (allowed != type(uint256).max) allowance[from][msg.sender] = allowed - amount;
+        require(balanceOf[from] >= amount, "balance");
+        balanceOf[from] -= amount;
+        balanceOf[to] += amount;
+        if (!callbackAttempted && address(manager) != address(0)) {
+            callbackAttempted = true;
+            try manager.fundPrize(callbackToken, callbackAmount, callbackDrawCount) returns (uint256 scheduleId) {
+                callbackScheduleId = scheduleId;
+            } catch {
+                callbackReverted = true;
+            }
+        }
+        return true;
+    }
+}
+
 contract ConsumerBoundRandomnessOracle is IRandomnessOracle {
     address public immutable consumer;
     uint64 public nextRequestId = 1;
@@ -863,6 +920,95 @@ contract DrawManagerV5Test is Test {
         assertEq(manager.activeRewardScheduleCount(), manager.MAX_ACTIVE_REWARD_SCHEDULES() - 1);
         manager.fundPrize(address(reward), 1 ether, 2);
         assertEq(manager.activeRewardScheduleCount(), manager.MAX_ACTIVE_REWARD_SCHEDULES());
+        vm.stopPrank();
+    }
+
+    function test_rewardScheduleCapRejectsCrossTokenReentrancy() public {
+        _fillRewardScheduleSlots(manager.MAX_ACTIVE_REWARD_SCHEDULES() - 1);
+        ReentrantRewardToken outer = _newReentrantOuter();
+        MockERC20 callbackToken = new MockERC20("Callback Reward", "CRWD", 18);
+        callbackToken.mint(address(outer), 1 ether);
+        _allowRewardToken(address(callbackToken));
+        outer.approveCallbackToken(address(callbackToken), type(uint256).max);
+        outer.arm(manager, address(callbackToken), 1 ether, 2);
+
+        vm.prank(alice);
+        manager.fundPrize(address(outer), 1 ether, 2);
+
+        assertTrue(outer.callbackAttempted());
+        assertTrue(outer.callbackReverted());
+        assertEq(outer.callbackScheduleId(), 0);
+        assertEq(manager.activeRewardScheduleCount(), manager.MAX_ACTIVE_REWARD_SCHEDULES());
+    }
+
+    function test_rewardScheduleCapRejectsSameTokenReentrancy() public {
+        _fillRewardScheduleSlots(manager.MAX_ACTIVE_REWARD_SCHEDULES() - 1);
+        ReentrantRewardToken outer = _newReentrantOuter();
+        outer.mint(address(outer), 1 ether);
+        outer.approveCallbackToken(address(outer), type(uint256).max);
+        outer.arm(manager, address(outer), 1 ether, 2);
+
+        vm.prank(alice);
+        manager.fundPrize(address(outer), 1 ether, 2);
+
+        assertTrue(outer.callbackAttempted());
+        assertTrue(outer.callbackReverted());
+        assertEq(manager.activeRewardScheduleCount(), manager.MAX_ACTIVE_REWARD_SCHEDULES());
+    }
+
+    function test_rewardScheduleCapRejectsNativeReentrancy() public {
+        _fillRewardScheduleSlots(manager.MAX_ACTIVE_REWARD_SCHEDULES() - 1);
+        ReentrantRewardToken outer = _newReentrantOuter();
+        outer.arm(manager, address(0), 1 ether, 2);
+
+        vm.prank(alice);
+        manager.fundPrize(address(outer), 1 ether, 2);
+
+        assertTrue(outer.callbackAttempted());
+        assertTrue(outer.callbackReverted());
+        assertEq(manager.activeRewardScheduleCount(), manager.MAX_ACTIVE_REWARD_SCHEDULES());
+    }
+
+    function test_rewardScheduleCapRejectsChainedReentrancy() public {
+        _fillRewardScheduleSlots(manager.MAX_ACTIVE_REWARD_SCHEDULES() - 1);
+        ReentrantRewardToken outer = _newReentrantOuter();
+        ReentrantRewardToken middle = new ReentrantRewardToken();
+        MockERC20 tail = new MockERC20("Tail Reward", "TRWD", 18);
+        _allowRewardToken(address(middle));
+        _allowRewardToken(address(tail));
+        middle.mint(address(outer), 1 ether);
+        tail.mint(address(middle), 1 ether);
+        outer.approveCallbackToken(address(middle), type(uint256).max);
+        middle.arm(manager, address(tail), 1 ether, 2);
+        middle.approveCallbackToken(address(tail), type(uint256).max);
+        outer.arm(manager, address(middle), 1 ether, 2);
+
+        vm.prank(alice);
+        manager.fundPrize(address(outer), 1 ether, 2);
+
+        assertTrue(outer.callbackAttempted());
+        assertTrue(outer.callbackReverted());
+        assertFalse(middle.callbackAttempted());
+        assertEq(manager.activeRewardScheduleCount(), manager.MAX_ACTIVE_REWARD_SCHEDULES());
+    }
+
+    function _newReentrantOuter() internal returns (ReentrantRewardToken outer) {
+        outer = new ReentrantRewardToken();
+        outer.mint(alice, 2 ether);
+        _allowRewardToken(address(outer));
+        vm.prank(alice);
+        outer.approve(address(manager), type(uint256).max);
+    }
+
+    function _fillRewardScheduleSlots(uint256 count) internal {
+        MockERC20 base = new MockERC20("Base Reward", "BRWD", 18);
+        base.mint(alice, count * 2 ether);
+        _allowRewardToken(address(base));
+        vm.startPrank(alice);
+        base.approve(address(manager), type(uint256).max);
+        for (uint256 i = 0; i < count; i++) {
+            manager.fundPrize(address(base), 1 ether, 2);
+        }
         vm.stopPrank();
     }
 
