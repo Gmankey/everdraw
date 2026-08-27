@@ -19,9 +19,11 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     uint64 public constant DRAW_PERIOD_CHANGE_DELAY = 24 hours;
     uint64 public constant TIMING_CHANGE_DELAY = 24 hours;
     uint64 public constant MAINNET_MIN_CHALLENGE_WINDOW = 8 hours;
-    bytes32 public constant ALGORITHM_VERSION_HASH = keccak256("everdraw-v5-draw-algorithm/1");
+    bytes32 public constant ALGORITHM_VERSION_HASH = keccak256("everdraw-v5-draw-algorithm/2");
     uint16 public constant MAX_FEE_BPS = 2_000;
     uint8 public constant MAX_FEE_RECIPIENTS = 8;
+    uint256 public constant MAX_ACTIVE_REWARD_SCHEDULES = 16;
+    uint32 public constant MAX_REWARD_DRAWS = 365;
     address public constant NATIVE_TOKEN = address(0);
 
     enum FeeBase {
@@ -111,19 +113,25 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     mapping(uint256 => Draw) public draws;
     mapping(uint64 => uint256) public drawIdByRequestId;
     mapping(uint256 => uint64) public seedRequestedAt;
+    mapping(uint256 => uint64) public seedReceivedAt;
     mapping(uint256 => uint64) public vetoedUntil;
     mapping(uint256 => uint64) public challengeEndsAt;
+    mapping(address => bool) public fallbackProposerAllowed;
     mapping(address => bool) public rewardTokenAllowed;
+    mapping(address => uint256) public rewardTokenMinAmountPerDraw;
     mapping(uint256 => RewardSchedule) public rewardSchedules;
+    mapping(uint256 => uint256) internal activeRewardScheduleIndexPlusOne;
     mapping(uint256 => RewardLeg[]) internal drawRewardLegs;
     mapping(uint256 => FeeRecipient[]) internal drawFeeRecipients;
     mapping(uint256 => uint16) internal drawTotalFeeBps;
     FeeRecipient[] internal feeRecipients;
+    uint256[] internal activeRewardScheduleIds;
 
     event OwnershipTransferStarted(address indexed previousOwner, address indexed pendingOwner);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     event GuardianSet(address indexed guardian);
     event PrimaryProposerSet(address indexed primaryProposer);
+    event FallbackProposerAllowedSet(address indexed proposer, bool allowed);
     event TimingChangeQueued(
         uint64 proposerGracePeriod, uint64 challengeWindow, uint64 vetoCooldown, uint64 effectiveAt
     );
@@ -154,6 +162,7 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
         string reason
     );
     event SeedReceived(uint256 indexed drawId, uint64 indexed requestId, bytes32 seed);
+    event RandomnessCallbackIgnored(uint64 indexed requestId, uint256 indexed drawId);
     event RootProposed(
         uint256 indexed drawId,
         bytes32 indexed root,
@@ -170,6 +179,7 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     event FeeConfigUpdated(FeeBase feeBase, uint16 totalFeeBps);
     event FeeRecipientsUpdated(uint16 totalFeeBps);
     event RewardTokenAllowedSet(address indexed token, bool allowed);
+    event RewardTokenMinimumSet(address indexed token, uint256 minAmountPerDraw);
     event PrizeFunded(
         uint256 indexed scheduleId,
         address indexed funder,
@@ -194,6 +204,7 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     error ActiveProposal();
     error SeedRequestStillActive(uint64 retryAfter);
     error ProposerGraceActive();
+    error NotAuthorizedProposer();
     error ChallengeWindowActive();
     error VetoCooldownActive(uint64 proposeAfter);
     error BadPayout(uint256 expected, uint256 actual);
@@ -209,7 +220,10 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     error BadFeeConfig();
     error TokenNotAllowed();
     error BadFunding();
+    error TooManyActiveRewardSchedules();
+    error RewardAmountBelowMinimum(uint256 minimum, uint256 actual);
     error NotFunder();
+    error UnexpectedNativeTransfer();
     error BadTwabPeriodAlignment(
         uint64 firstPeriodStart, uint64 drawPeriod, uint32 twabPeriodLength, uint32 twabPeriodOffset
     );
@@ -271,7 +285,9 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
         emit SeedRequestTimeoutUpdated(seedRequestTimeout);
     }
 
-    receive() external payable {}
+    receive() external payable {
+        revert UnexpectedNativeTransfer();
+    }
 
     function transferOwnership(address newOwner) external onlyOwner {
         if (newOwner == address(0)) revert ZeroAddress();
@@ -296,6 +312,12 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     function setPrimaryProposer(address newPrimaryProposer) external onlyOwner {
         primaryProposer = newPrimaryProposer;
         emit PrimaryProposerSet(newPrimaryProposer);
+    }
+
+    function setFallbackProposerAllowed(address proposer, bool allowed) external onlyOwner {
+        if (proposer == address(0)) revert ZeroAddress();
+        fallbackProposerAllowed[proposer] = allowed;
+        emit FallbackProposerAllowedSet(proposer, allowed);
     }
 
     function queueTimingChange(uint64 newProposerGracePeriod, uint64 newChallengeWindow, uint64 newVetoCooldown)
@@ -410,8 +432,15 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     }
 
     function setRewardTokenAllowed(address token, bool allowed) external onlyOwner {
+        if (allowed && rewardTokenMinAmountPerDraw[token] == 0) revert BadFunding();
         rewardTokenAllowed[token] = allowed;
         emit RewardTokenAllowedSet(token, allowed);
+    }
+
+    function setRewardTokenMinimum(address token, uint256 minAmountPerDraw) external onlyOwner {
+        if (minAmountPerDraw == 0 && rewardTokenAllowed[token]) revert BadFunding();
+        rewardTokenMinAmountPerDraw[token] = minAmountPerDraw;
+        emit RewardTokenMinimumSet(token, minAmountPerDraw);
     }
 
     function fundPrize(address token, uint256 amountPerDraw, uint32 drawCount)
@@ -419,8 +448,13 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
         payable
         returns (uint256 scheduleId)
     {
-        if (amountPerDraw == 0 || drawCount == 0) revert BadFunding();
+        if (amountPerDraw == 0 || drawCount == 0 || drawCount > MAX_REWARD_DRAWS) revert BadFunding();
         if (!rewardTokenAllowed[token]) revert TokenNotAllowed();
+        uint256 minimum = rewardTokenMinAmountPerDraw[token];
+        if (amountPerDraw < minimum) revert RewardAmountBelowMinimum(minimum, amountPerDraw);
+        if (activeRewardScheduleIds.length >= MAX_ACTIVE_REWARD_SCHEDULES) {
+            revert TooManyActiveRewardSchedules();
+        }
         uint256 total = amountPerDraw * uint256(drawCount);
 
         if (token == NATIVE_TOKEN) {
@@ -444,6 +478,8 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
             remainingDraws: drawCount,
             cancelled: false
         });
+        activeRewardScheduleIds.push(scheduleId);
+        activeRewardScheduleIndexPlusOne[scheduleId] = activeRewardScheduleIds.length;
         emit PrizeFunded(scheduleId, msg.sender, token, amountPerDraw, uint32(currentDrawId + 1), drawCount);
     }
 
@@ -454,6 +490,7 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
         uint256 refund = schedule.amountPerDraw * uint256(schedule.remainingDraws);
         schedule.remainingDraws = 0;
         schedule.cancelled = true;
+        _removeActiveRewardSchedule(scheduleId);
         claimManager.releaseUnreserved(schedule.token, schedule.funder, refund);
         emit PrizeFundingCancelled(scheduleId, msg.sender, refund);
     }
@@ -469,6 +506,14 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
 
     function drawRewardLegCount(uint256 drawId) external view returns (uint256) {
         return drawRewardLegs[drawId].length;
+    }
+
+    function activeRewardScheduleCount() external view returns (uint256) {
+        return activeRewardScheduleIds.length;
+    }
+
+    function activeRewardScheduleIdAt(uint256 index) external view returns (uint256) {
+        return activeRewardScheduleIds[index];
     }
 
     function drawRewardLegAt(uint256 drawId, uint256 index) external view returns (address token, uint256 amount) {
@@ -657,12 +702,20 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     function onRandomnessReceived(uint64 requestId, bytes32 randomNumber) external {
         if (msg.sender != address(randomnessOracle)) revert NotOracle();
         uint256 drawId = drawIdByRequestId[requestId];
-        if (drawId == 0) revert UnknownRequest();
+        if (drawId == 0) {
+            emit RandomnessCallbackIgnored(requestId, 0);
+            return;
+        }
 
         Draw storage draw = draws[drawId];
-        if (draw.status != DrawStatus.AwaitingSeed) revert BadConfig();
+        if (draw.status != DrawStatus.AwaitingSeed || draw.randomnessRequestId != requestId) {
+            emit RandomnessCallbackIgnored(requestId, drawId);
+            return;
+        }
+        delete drawIdByRequestId[requestId];
         draw.seed = randomNumber;
         draw.status = DrawStatus.Seeded;
+        seedReceivedAt[drawId] = uint64(block.timestamp);
         emit SeedReceived(drawId, requestId, randomNumber);
     }
 
@@ -672,8 +725,9 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
         if (draw.status != DrawStatus.Seeded) revert DrawNotSeeded();
         if (vetoedUntil[drawId] > block.timestamp) revert VetoCooldownActive(vetoedUntil[drawId]);
         if (draw.root != bytes32(0)) revert ActiveProposal();
-        if (primaryProposer != address(0) && msg.sender != primaryProposer) {
-            uint256 graceEndsAt = uint256(draw.periodEnd) + proposerGracePeriod;
+        if (msg.sender != primaryProposer) {
+            if (msg.sender != guardian && !fallbackProposerAllowed[msg.sender]) revert NotAuthorizedProposer();
+            uint256 graceEndsAt = uint256(seedReceivedAt[drawId]) + proposerGracePeriod;
             if (block.timestamp < graceEndsAt) revert ProposerGraceActive();
         }
         if (totalPayout != draw.totalPayout) revert BadPayout(draw.totalPayout, totalPayout);
@@ -719,13 +773,42 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     }
 
     function _consumeRewardSchedules(uint256 drawId) internal returns (uint256 count) {
-        for (uint256 scheduleId = 1; scheduleId <= nextRewardScheduleId; scheduleId++) {
+        uint256 index;
+        while (index < activeRewardScheduleIds.length) {
+            uint256 scheduleId = activeRewardScheduleIds[index];
             RewardSchedule storage schedule = rewardSchedules[scheduleId];
-            if (schedule.cancelled || schedule.remainingDraws == 0 || drawId < schedule.startDrawId) continue;
+            if (schedule.cancelled || schedule.remainingDraws == 0) {
+                _removeActiveRewardSchedule(scheduleId);
+                continue;
+            }
+            if (drawId < schedule.startDrawId) {
+                index++;
+                continue;
+            }
             drawRewardLegs[drawId].push(RewardLeg({token: schedule.token, amount: schedule.amountPerDraw}));
             schedule.remainingDraws -= 1;
             count++;
+            if (schedule.remainingDraws == 0) {
+                _removeActiveRewardSchedule(scheduleId);
+            } else {
+                index++;
+            }
         }
+    }
+
+    function _removeActiveRewardSchedule(uint256 scheduleId) internal {
+        uint256 indexPlusOne = activeRewardScheduleIndexPlusOne[scheduleId];
+        if (indexPlusOne == 0) return;
+
+        uint256 index = indexPlusOne - 1;
+        uint256 lastIndex = activeRewardScheduleIds.length - 1;
+        if (index != lastIndex) {
+            uint256 movedScheduleId = activeRewardScheduleIds[lastIndex];
+            activeRewardScheduleIds[index] = movedScheduleId;
+            activeRewardScheduleIndexPlusOne[movedScheduleId] = index + 1;
+        }
+        activeRewardScheduleIds.pop();
+        delete activeRewardScheduleIndexPlusOne[scheduleId];
     }
 
     function _registerDistribution(uint256 drawId, Draw storage draw) internal {

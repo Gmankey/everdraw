@@ -16,7 +16,8 @@ interface IPrizeVaultV5Compound {
 /// @title ClaimManagerV5
 /// @notice Generalized V5 payout substrate for merkle distributions.
 contract ClaimManagerV5 {
-    bytes32 public constant LEAF_DOMAIN = keccak256("everdraw-v5-claim-leaf/1");
+    bytes32 public constant LEAF_DOMAIN = keccak256("everdraw-v5-claim-leaf/2");
+    uint256 public constant CLAIM_LEAF_VERSION = 2;
     address public constant NATIVE_TOKEN = address(0);
 
     struct TokenTotal {
@@ -103,6 +104,7 @@ contract ClaimManagerV5 {
     );
     event CompoundVaultSet(address indexed source, address indexed vault);
     event CompoundOptOutSet(address indexed account, bool optedOut);
+    event NativeEscrowReceived(address indexed source, uint256 amount);
 
     error NotOwner();
     error NotAuthorizedSource();
@@ -116,6 +118,8 @@ contract ClaimManagerV5 {
     error TokenBudgetExceeded();
     error InsufficientEscrow(address token, uint256 required, uint256 available);
     error NothingDeferred();
+    error OnlySelf();
+    error TokenCallFailed();
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -134,7 +138,10 @@ contract ClaimManagerV5 {
         emit OwnershipTransferred(address(0), msg.sender);
     }
 
-    receive() external payable {}
+    receive() external payable {
+        if (!authorizedSource[msg.sender]) revert NotAuthorizedSource();
+        emit NativeEscrowReceived(msg.sender, msg.value);
+    }
 
     function transferOwnership(address newOwner) external onlyOwner {
         if (newOwner == address(0)) revert ZeroAddress();
@@ -174,11 +181,20 @@ contract ClaimManagerV5 {
         return keccak256(abi.encode(source, sourceKey));
     }
 
-    function hashLeaf(ClaimLeaf memory leaf) public pure returns (bytes32) {
-        return
-            keccak256(
-                abi.encode(LEAF_DOMAIN, leaf.distributionId, leaf.leafIndex, leaf.account, leaf.token, leaf.amount)
-            );
+    function hashLeaf(ClaimLeaf memory leaf) public view returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                LEAF_DOMAIN,
+                CLAIM_LEAF_VERSION,
+                block.chainid,
+                address(this),
+                leaf.distributionId,
+                leaf.leafIndex,
+                leaf.account,
+                leaf.token,
+                leaf.amount
+            )
+        );
     }
 
     function isClaimed(bytes32 distributionId, uint256 leafIndex) public view returns (bool) {
@@ -342,9 +358,31 @@ contract ClaimManagerV5 {
     }
 
     function _tryApprove(address token, address spender, uint256 amount) internal returns (bool) {
-        (bool ok, bytes memory data) =
-            token.call(abi.encodeWithSelector(IERC20ClaimManagerV5.approve.selector, spender, amount));
-        return ok && (data.length == 0 || abi.decode(data, (bool)));
+        return _tryTokenCall(token, abi.encodeWithSelector(IERC20ClaimManagerV5.approve.selector, spender, amount));
+    }
+
+    /// @dev External self-call gives each token interaction its own rollback boundary.
+    function executeTokenCall(address token, bytes calldata callData) external returns (bool) {
+        if (msg.sender != address(this)) revert OnlySelf();
+        (bool ok, bytes memory data) = token.call(callData);
+        if (!ok) revert TokenCallFailed();
+        if (data.length == 0) return true;
+        if (data.length != 32) revert TokenCallFailed();
+
+        uint256 result;
+        assembly ("memory-safe") {
+            result := mload(add(data, 0x20))
+        }
+        if (result != 1) revert TokenCallFailed();
+        return true;
+    }
+
+    function _tryTokenCall(address token, bytes memory callData) internal returns (bool) {
+        try this.executeTokenCall(token, callData) returns (bool ok) {
+            return ok;
+        } catch {
+            return false;
+        }
     }
 
     function _setClaimed(bytes32 distributionId, uint256 leafIndex) internal {
@@ -370,8 +408,7 @@ contract ClaimManagerV5 {
             return nativeOk;
         }
 
-        (bool tokenOk, bytes memory data) = token.call(abi.encodeWithSignature("transfer(address,uint256)", to, amount));
-        return tokenOk && (data.length == 0 || abi.decode(data, (bool)));
+        return _tryTokenCall(token, abi.encodeWithSignature("transfer(address,uint256)", to, amount));
     }
 
     function _escrowBalance(address token) internal view returns (uint256) {

@@ -93,7 +93,7 @@ contract V5M6IntegrationAuditTest is Test {
         assertEq(twab.balanceOf(address(vault), bob), 0);
     }
 
-    function test_m6_keeperDeathFallsBackToPermissionlessStartAndProposeAfterGrace() public {
+    function test_m6_keeperDeathFallsBackToAuthorizedProposerAfterSeedGrace() public {
         _depositNative(alice, 10 ether);
         vm.warp(START + PERIOD);
         shmon.setRate(2 ether);
@@ -104,10 +104,15 @@ contract V5M6IntegrationAuditTest is Test {
         oracle.fulfill(1, bytes32(uint256(0x51)));
 
         vm.prank(permissionless);
+        vm.expectRevert(DrawManagerV5.NotAuthorizedProposer.selector);
+        manager.proposeRoot(1, bytes32(uint256(0xabc)), 1, 5 ether);
+
+        manager.setFallbackProposerAllowed(permissionless, true);
+        vm.prank(permissionless);
         vm.expectRevert(DrawManagerV5.ProposerGraceActive.selector);
         manager.proposeRoot(1, bytes32(uint256(0xabc)), 1, 5 ether);
 
-        vm.warp(START + PERIOD + GRACE);
+        vm.warp(manager.seedReceivedAt(1) + GRACE);
         vm.prank(permissionless);
         manager.proposeRoot(1, bytes32(uint256(0xabc)), 1, 5 ether);
 
@@ -142,8 +147,8 @@ contract V5M6IntegrationAuditTest is Test {
         manager.rerequestSeed(1);
         assertEq(oracle.nextRequestId(), 3);
 
-        vm.expectRevert(DrawManagerV5.UnknownRequest.selector);
         oracle.fulfill(1, bytes32(uint256(0xdead)));
+        assertEq(uint8(_status(1)), uint8(DrawManagerV5.DrawStatus.AwaitingSeed));
 
         oracle.fulfill(2, bytes32(uint256(0xbeef)));
         assertEq(uint8(_status(1)), uint8(DrawManagerV5.DrawStatus.Seeded));

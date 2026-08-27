@@ -40,10 +40,11 @@ contract PrizeVaultV5ShareBackingHardeningTest is Test {
         address donor = makeAddr("native donor");
         vm.deal(donor, 1 ether);
         vm.prank(donor);
-        (bool donated,) = payable(address(strategy)).call{value: 1 ether}("");
-        assertTrue(donated);
+        (bool donated, bytes memory data) = payable(address(strategy)).call{value: 1 ether}("");
+        assertFalse(donated);
+        assertEq(bytes4(data), ShmonStrategy.UnexpectedNativeTransfer.selector);
 
-        assertEq(address(strategy).balance, 1 ether);
+        assertEq(address(strategy).balance, 0);
         assertEq(strategy.totalAssets(), 4 ether);
         assertEq(vault.availableYield(), 0);
 
@@ -65,7 +66,7 @@ contract PrizeVaultV5ShareBackingHardeningTest is Test {
         assertEq(vault.principalOf(alice), 0);
         assertEq(vault.totalPrincipal(), 0);
         assertEq(twab.balanceOf(address(vault), alice), 0);
-        assertEq(address(strategy).balance, 1 ether);
+        assertEq(address(strategy).balance, 0);
     }
 
     function test_participantExitRevertsAtomicallyWhenStrategyLacksRequiredShares() public {

@@ -3,8 +3,9 @@ import fs from "node:fs";
 import { AbiCoder, getAddress, keccak256, solidityPacked } from "ethers";
 
 const abi = AbiCoder.defaultAbiCoder();
-export const ALGO_VERSION = "everdraw-v5-draw-algorithm/1";
-export const LEAF_DOMAIN = keccak256(Buffer.from("everdraw-v5-claim-leaf/1", "utf8"));
+export const ALGO_VERSION = "everdraw-v5-draw-algorithm/2";
+export const LEAF_DOMAIN = keccak256(Buffer.from("everdraw-v5-claim-leaf/2", "utf8"));
+export const CLAIM_LEAF_VERSION = 2n;
 const ZERO_ROOT = "0x" + "00".repeat(32);
 
 function hex32(value) {
@@ -21,6 +22,8 @@ function uint(value) {
 function normalize(input) {
   const drawId = uint(input.drawId);
   const drawManager = getAddress(input.drawManager);
+  const chainId = uint(input.chainId);
+  const claimManager = getAddress(input.claimManager);
   const seed = hex32(input.seed);
   const accounts = [...input.accounts]
     .map((account) => ({ address: getAddress(account.address), twab: uint(account.twab) }))
@@ -39,7 +42,7 @@ function normalize(input) {
   const tierSum = tierBps.reduce((sum, bps) => sum + bps, 0n);
   if (tierBps.length === 0 || tierSum !== 10000n) throw new Error(`tierBps must sum to 10000, got ${tierSum}`);
   const feeBps = feeRecipients.reduce((sum, recipient) => sum + recipient.bps, 0n);
-  return { drawId, drawManager, seed, accounts, prizeLegs, tierBps, feeRecipients, feeBps, totalPayout: uint(input.totalPayout) };
+  return { drawId, drawManager, chainId, claimManager, seed, accounts, prizeLegs, tierBps, feeRecipients, feeBps, totalPayout: uint(input.totalPayout) };
 }
 
 function encodedHash(types, values) {
@@ -76,8 +79,8 @@ function buildLeaves(input) {
       const amount = base + dust;
       if (amount === 0n) continue;
       const leaf = encodedHash(
-        ["bytes32", "bytes32", "uint256", "address", "address", "uint256"],
-        [LEAF_DOMAIN, distributionId, leafIndex, winners[position], leg.token, amount]
+        ["bytes32", "uint256", "uint256", "address", "bytes32", "uint256", "address", "address", "uint256"],
+        [LEAF_DOMAIN, CLAIM_LEAF_VERSION, input.chainId, input.claimManager, distributionId, leafIndex, winners[position], leg.token, amount]
       );
       leaves.push({
         leafIndex: leafIndex.toString(),
@@ -97,8 +100,8 @@ function buildLeaves(input) {
       const amount = (leg.feeAmount * recipient.bps) / input.feeBps;
       if (amount === 0n) continue;
       const leaf = encodedHash(
-        ["bytes32", "bytes32", "uint256", "address", "address", "uint256"],
-        [LEAF_DOMAIN, distributionId, leafIndex, recipient.account, leg.token, amount]
+        ["bytes32", "uint256", "uint256", "address", "bytes32", "uint256", "address", "address", "uint256"],
+        [LEAF_DOMAIN, CLAIM_LEAF_VERSION, input.chainId, input.claimManager, distributionId, leafIndex, recipient.account, leg.token, amount]
       );
       leaves.push({
         leafIndex: leafIndex.toString(),

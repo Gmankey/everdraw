@@ -150,7 +150,8 @@ contract ClaimManagerV5CompoundAcceptanceTest is Test {
     }
 
     function _fundNativeAndRegister(ClaimManagerV5.ClaimLeaf memory leaf, uint256 amount) internal {
-        vm.deal(address(this), amount);
+        vm.deal(source, amount);
+        vm.prank(source);
         (bool ok,) = address(claims).call{value: amount}("");
         require(ok, "fund failed");
         ClaimManagerV5.TokenTotal[] memory totals = new ClaimManagerV5.TokenTotal[](1);

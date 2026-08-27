@@ -29,6 +29,7 @@ contract ShmonStrategy is IYieldStrategyV5 {
     error InsufficientShares(uint256 required, uint256 held);
     error ShareTransferFailed();
     error NativeTransferFailed();
+    error UnexpectedNativeTransfer();
 
     modifier onlyVault() {
         if (msg.sender != vault) revert NotVault();
@@ -46,7 +47,9 @@ contract ShmonStrategy is IYieldStrategyV5 {
         owner = msg.sender;
     }
 
-    receive() external payable {}
+    receive() external payable {
+        revert UnexpectedNativeTransfer();
+    }
 
     function setVault(address _vault) external onlyOwner {
         if (_vault == address(0)) revert ZeroAddress();

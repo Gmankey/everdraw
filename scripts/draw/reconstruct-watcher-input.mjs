@@ -3,6 +3,7 @@ import { Contract, Interface, getAddress } from "ethers";
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const MANAGER_ABI = [
   "function vault() view returns (address)",
+  "function claimManager() view returns (address)",
   "function twabController() view returns (address)",
   "function payoutToken() view returns (address)",
   "function draws(uint256) view returns (uint64 periodStart,uint64 periodEnd,uint64 randomnessRequestId,bytes32 seed,uint256 totalTwab,uint256 totalPayout,uint32 winnerCount,uint32 rewardLegCount,bytes32 root,uint64 proposedAt,address proposer,uint8 status,uint256 grossYield,uint256 sponsorYield,uint256 feeAmount)",
@@ -85,7 +86,11 @@ export async function buildWatcherDrawInput({
   participantAccounts,
 }) {
   const manager = new Contract(drawManagerAddress, MANAGER_ABI, provider);
-  const draw = await manager.draws(drawId);
+  const [network, claimManagerAddress, draw] = await Promise.all([
+    provider.getNetwork(),
+    manager.claimManager(),
+    manager.draws(drawId),
+  ]);
   const status = Number(draw.status);
   if (![2, 3, 4].includes(status)) {
     throw new Error(`Draw ${drawId} status ${status}; expected Seeded/Proposed/Finalized`);
@@ -144,7 +149,9 @@ export async function buildWatcherDrawInput({
   }
 
   return {
-    algoVersion: "everdraw-v5-draw-algorithm/1",
+    algoVersion: "everdraw-v5-draw-algorithm/2",
+    chainId: network.chainId.toString(),
+    claimManager: getAddress(claimManagerAddress),
     drawId: drawId.toString(),
     drawManager: getAddress(drawManagerAddress),
     vault: vaultAddress,

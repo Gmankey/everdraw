@@ -78,7 +78,8 @@ contract ClaimManagerV5CompoundTest is Test {
             token: address(0),
             amount: 1 ether
         });
-        vm.deal(address(this), 1 ether);
+        vm.deal(source, 1 ether);
+        vm.prank(source);
         (bool ok,) = address(plainClaims).call{value: 1 ether}("");
         require(ok, "fund failed");
         ClaimManagerV5.TokenTotal[] memory totals = new ClaimManagerV5.TokenTotal[](1);
@@ -143,7 +144,8 @@ contract ClaimManagerV5CompoundTest is Test {
     }
 
     function _fundNativeAndRegister(ClaimManagerV5.ClaimLeaf memory leaf, uint256 amount) internal {
-        vm.deal(address(this), amount);
+        vm.deal(source, amount);
+        vm.prank(source);
         (bool ok,) = address(claims).call{value: amount}("");
         require(ok, "fund failed");
         ClaimManagerV5.TokenTotal[] memory totals = new ClaimManagerV5.TokenTotal[](1);

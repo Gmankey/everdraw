@@ -18,6 +18,9 @@ contract PythRandomnessOracle is IRandomnessOracle, IEntropyConsumer {
     error WrongProvider();
     error BadSeed();
 
+    event RandomnessForwarded(uint64 indexed sequence, bytes32 randomNumber);
+    event RandomnessCallbackIgnored(uint64 indexed sequence, bytes32 randomNumber, bytes reason);
+
     constructor(address _entropy, address _provider, address _consumer) {
         if (_entropy == address(0) || _provider == address(0) || _consumer == address(0)) {
             revert ZeroAddress();
@@ -49,6 +52,10 @@ contract PythRandomnessOracle is IRandomnessOracle, IEntropyConsumer {
 
     function entropyCallback(uint64 sequence, address callbackProvider, bytes32 randomNumber) internal override {
         if (callbackProvider != provider) revert WrongProvider();
-        IRandomnessOracleConsumer(consumer).onRandomnessReceived(sequence, randomNumber);
+        try IRandomnessOracleConsumer(consumer).onRandomnessReceived(sequence, randomNumber) {
+            emit RandomnessForwarded(sequence, randomNumber);
+        } catch (bytes memory reason) {
+            emit RandomnessCallbackIgnored(sequence, randomNumber, reason);
+        }
     }
 }
