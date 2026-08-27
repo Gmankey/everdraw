@@ -70,7 +70,7 @@
   - root: 360,291 bytes;
   - web: 592,689 bytes;
   - indexer: 223,196 bytes;
-  - docs: 658,538 bytes.
+  - docs: 657,193 bytes.
 - CI `release-sbom` installs every lock, records lock/SBOM SHA-256 values and runtime versions,
   scans the locked tree with Grype, and uploads a 90-day artifact named with the immutable git SHA.
 - All workflow actions are pinned to 40-character commits. Keeper/indexer Docker bases are pinned to
@@ -80,7 +80,7 @@
 
 - Removed direct deprecated `@web3modal/ethers`.
 - Added exact `@reown/appkit@1.8.21` and `@reown/appkit-adapter-ethers@1.8.21`.
-- Raised vulnerable runtime paths to `ws@8.21.0`, `hono@4.12.25`, `postcss@8.5.26`, and `next@16.2.10`.
+- Raised vulnerable runtime paths to `ws@8.21.0`, `hono@4.12.25`, `postcss@8.5.26`, `sharp@0.35.0`, and `next@16.3.3`.
 - Overrode transitive Axios to patched `1.18.0`; installed tree confirms the override.
 - Overrode docs `@xmldom/xmldom` from warned `0.9.10` to `0.9.12`.
 - Migrated the docs site from Nextra 3 Pages Router to Nextra 4 App Router/content-directory structure while preserving all public routes and redirects.
