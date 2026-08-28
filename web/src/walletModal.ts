@@ -1,15 +1,23 @@
 // mainnet config - chain 143
-import { createWeb3Modal, defaultConfig } from '@web3modal/ethers'
+import { createAppKit } from '@reown/appkit/react'
+import { EthersAdapter } from '@reown/appkit-adapter-ethers'
 
 const chainId = Number(import.meta.env.VITE_CHAIN_ID) || 143
 const isMainnet = chainId === 143
 
 const monadChain = {
-  chainId,
+  id: chainId,
   name: isMainnet ? 'Monad' : 'Monad Testnet',
-  currency: 'MON',
-  explorerUrl: isMainnet ? 'https://monadexplorer.com' : 'https://testnet.monadexplorer.com',
-  rpcUrl: import.meta.env.VITE_RPC_URL || (isMainnet ? 'https://rpc.monad.xyz' : 'https://testnet-rpc.monad.xyz'),
+  nativeCurrency: { name: 'Monad', symbol: 'MON', decimals: 18 },
+  rpcUrls: {
+    default: {
+      http: [import.meta.env.VITE_RPC_URL || (isMainnet ? 'https://rpc.monad.xyz' : 'https://testnet-rpc.monad.xyz')],
+    },
+  },
+  blockExplorers: {
+    default: { name: 'Monad Explorer', url: isMainnet ? 'https://monadexplorer.com' : 'https://testnet.monadexplorer.com' },
+  },
+  testnet: !isMainnet,
 }
 
 const metadata = {
@@ -19,22 +27,16 @@ const metadata = {
   icons: ['https://everdraw.xyz/favicon.png'],
 }
 
-export const modal = createWeb3Modal({
-  ethersConfig: defaultConfig({
-    metadata,
-    enableEIP6963: true,
-    enableInjected: true,
-    enableCoinbase: false,
-    auth: {
-      email: false,
-      socials: [],
-      showWallets: true,
-      walletFeatures: false,
-    },
-  }),
-  chains: [monadChain],
+export const modal = createAppKit({
+  adapters: [new EthersAdapter()],
+  networks: [monadChain],
+  metadata,
   projectId: import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || 'demo-project-id',
-  enableAnalytics: false,
-  enableSwaps: false,
-  enableOnramp: false,
+  features: {
+    analytics: false,
+    email: false,
+    socials: [],
+    swaps: false,
+    onramp: false,
+  },
 })

@@ -7,7 +7,7 @@ import { StatsPage } from './Stats.jsx'
 import { modal } from './walletModal.ts'
 import monIcon from './assets/MON.png'
 import shmonIcon from './assets/shmon.png'
-import { _cached, assertNotAborted, getCachedRoundInfo, isAbortError, withAbort } from './rpcCache.js'
+import { _cached, assertNotAborted, getCachedRoundInfo, isAbortError } from './rpcCache.js'
 import './App.css'
 import { buildV5DrawHealth } from './v5DrawHealth.js'
 import { scopeV5RowsToVault } from './v5VaultScope.js'
@@ -16,6 +16,7 @@ import { walletParticipatedInDraw } from './v5DrawParticipation.js'
 import { v5PageFromHash } from './v5Navigation.js'
 import { V5_NETWORK_RETRY_MESSAGE, v5UserError, withRpcReadRetry } from './v5RpcRead.js'
 import { v5HistoryResult } from './v5HistoryResult.js'
+import { buildV5ClaimManyArgs } from "./v5ClaimProofs.js"
 import { formatV5MaxInput } from './v5AmountInput.js'
 import { runV5ConfirmedFollowups } from './v5TransactionLifecycle.js'
 import { awardedMilestones, tierName } from './v5PointsView.js'
@@ -671,7 +672,8 @@ async function getReadProvider() {
       _readProvider.send = async function(method, params) {
         if (method === 'eth_call' && params?.[0]?.gas !== undefined) {
           const [tx, ...rest] = params
-          const { gas, ...txNoGas } = tx
+          const txNoGas = { ...tx }
+          delete txNoGas.gas
           return _origSend(method, [txNoGas, ...rest])
         }
         return _origSend(method, params)
@@ -1308,7 +1310,9 @@ const V5_DRAW_MANAGER_ABI = [
 const V5_CLAIM_MANAGER_ABI = [
   'function authorizedSource(address) view returns (bool)',
   'function compoundVaultFor(address) view returns (address)',
-  'function claimMany(tuple(bytes32 distributionId,uint256 leafIndex,address account,address token,uint256 amount)[] leaves, bytes32[][] proofs)',
+  "function isClaimed(bytes32 distributionId,uint256 leafIndex) view returns (bool)",
+  "function distributions(bytes32 distributionId) view returns (address source,bytes32 sourceKey,bytes32 root,uint32 leafCount,bytes32 metadata,uint64 registeredAt)",
+  'function claimMany(tuple(bytes32 distributionId,uint256 leafIndex,address account,address token,uint256 amount,uint8 kind)[] leaves, bytes32[][] proofs)',
 ]
 
 const V5_STRATEGY_ABI = [
@@ -1382,41 +1386,6 @@ async function switchToV5Chain(provider, config) {
   }
   const walletChainId = await provider.request({ method: 'eth_chainId' })
   assertV5WalletChain(config, BigInt(walletChainId))
-}
-
-function v5ClaimUrl(template, account, cfg) {
-  if (!template) return ''
-  const encodedAccount = encodeURIComponent(account)
-  const join = template.includes('?') ? '&' : '?'
-  if (template.includes('{account}')) {
-    return template
-      .replaceAll('{account}', encodedAccount)
-      .replaceAll('{claimManager}', encodeURIComponent(cfg.claimManager))
-      .replaceAll('{vault}', encodeURIComponent(cfg.prizeVault))
-  }
-  return `${template}${join}account=${encodedAccount}&claimManager=${encodeURIComponent(cfg.claimManager)}&vault=${encodeURIComponent(cfg.prizeVault)}`
-}
-
-function normalizeV5ClaimPayload(payload) {
-  const leaves = payload?.leaves || payload?.claims || payload?.claim?.leaves || (payload?.leaf ? [payload.leaf] : [])
-  const proofs = payload?.proofs || payload?.claim?.proofs || leaves.map((leaf) => leaf.proof || [])
-  if (!Array.isArray(leaves) || leaves.length === 0) return null
-  return {
-    leaves: leaves.map((leaf) => ({
-      distributionId: leaf.distributionId,
-      leafIndex: leaf.leafIndex,
-      account: leaf.account,
-      token: leaf.token,
-      amount: leaf.amount,
-    })),
-    proofs,
-    total: payload?.total || payload?.amount || leaves.reduce((sum, leaf) => sum + BigInt(leaf.amount || 0), 0n).toString(),
-  }
-}
-
-function v5EventDate(block) {
-  if (!block?.timestamp) return '—'
-  return new Date(Number(block.timestamp) * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 function v5ExplorerTx(hash, explorerUrl) {
@@ -1510,22 +1479,55 @@ async function fetchV5Json(url, label) {
   return response.json()
 }
 
-async function v5BuildHistoryData({ account, vault, manager, indexerUrl }) {
-  if (!account) return { rows: [], positionEvents: [] }
+async function v5BuildHistoryData({ account, vault, manager, claimManager, indexerUrl, claimProofUrl }) {
+  if (!account) return { rows: [], positionEvents: [], claimProofs: [] }
   const base = indexerUrl
   const drawManagerLc = String(manager?.target || '').toLowerCase()
   const vaultAddress = String(vault?.target || '')
   const vaultQuery = encodeURIComponent(vaultAddress)
-  const [positionEvents, rounds, tranches] = await Promise.all([
-    fetchV5Json(`${base}/api/v5/wallets/${account}/position-events?vault=${vaultQuery}`, 'V5 position history'),
-    fetchV5Json(`${base}/api/rounds`, 'V5 draw history'),
-    fetchV5Json(`${base}/api/v5/wallets/${account}/tranches?vault=${vaultQuery}`, 'V5 tranche history'),
+  const walletPath = encodeURIComponent(account)
+  const claimProofRequest = claimProofUrl
+    ? claimProofUrl + (claimProofUrl.includes('?') ? '&' : '?') + 'account=' + walletPath + '&vault=' + vaultQuery
+    : base + '/api/v5/wallets/' + walletPath + '/claim-proofs?vault=' + vaultQuery
+  const [positionEvents, rounds, tranches, publishedProofs] = await Promise.all([
+    fetchV5Json(base + '/api/v5/wallets/' + walletPath + '/position-events?vault=' + vaultQuery, 'V5 position history'),
+    fetchV5Json(base + '/api/rounds', 'V5 draw history'),
+    fetchV5Json(base + '/api/v5/wallets/' + walletPath + '/tranches?vault=' + vaultQuery, 'V5 tranche history'),
+    fetchV5Json(claimProofRequest, "V5 claim proofs"),
   ])
 
   const scopedEvents = scopeV5RowsToVault(positionEvents, vaultAddress)
   const scopedTranches = scopeV5RowsToVault(tranches, vaultAddress)
-  const prizeWins = buildV5PrizeWins(scopedEvents, scopedTranches)
-  const prizeByDraw = new Map(prizeWins.filter((win) => win.drawId != null).map((win) => [win.drawId, win]))
+  const eventPrizeWins = buildV5PrizeWins(scopedEvents, scopedTranches)
+  const proofStates = await Promise.all((Array.isArray(publishedProofs) ? publishedProofs : []).map(async (proof) => {
+    const [claimed, distribution] = await withRpcReadRetry(() => Promise.all([
+      claimManager.isClaimed(proof.distribution_id, proof.leaf_index),
+      claimManager.distributions(proof.distribution_id),
+    ]), { attempts: 4, baseDelayMs: 500 })
+    const rootMatches = String(distribution.root || distribution[2] || '').toLowerCase() === String(proof.root || '').toLowerCase()
+    return { ...proof, claimable: !claimed && rootMatches }
+  }))
+  const prizeByDraw = new Map(eventPrizeWins.filter((win) => win.drawId != null).map((win) => [win.drawId, win]))
+  for (const proof of proofStates) {
+    const drawId = Number(proof.draw_id)
+    if (!Number.isSafeInteger(drawId)) continue
+    const existing = prizeByDraw.get(drawId)
+    if (existing) {
+      prizeByDraw.set(drawId, { ...existing, claimProof: proof, claimable: proof.claimable })
+    } else {
+      prizeByDraw.set(drawId, {
+        key: 'claim-proof-' + proof.distribution_id + '-' + proof.leaf_index,
+        txHash: null,
+        blockTimestamp: null,
+        drawId,
+        compoundedAmount: String(proof.amount || '0'),
+        remainingAmount: '0',
+        claimProof: proof,
+        claimable: proof.claimable,
+      })
+    }
+  }
+  const prizeWins = [...prizeByDraw.values()]
 
   const positionRows = scopedEvents
     .filter((ev) => ev.source !== 'prize_compound')
@@ -1537,12 +1539,12 @@ async function v5BuildHistoryData({ account, vault, manager, indexerUrl }) {
         ? (isCredit ? 'Transfer in' : 'Transfer out')
         : isDegen ? (isCredit ? 'Patron Pool deposit' : 'Patron Pool withdraw') : (isCredit ? 'Deposit' : 'Withdraw')
       return {
-        key: `${ev.tx_hash}-${ev.log_index}`,
+        key: ev.tx_hash + '-' + ev.log_index,
         sortAt: Date.parse(ev.block_timestamp || '') || 0,
         date: v5EventDateFromIso(ev.block_timestamp),
         transaction,
         result: isDegen ? 'Prize excluded' : (isCredit ? 'Entered' : 'Exited'),
-        principal: `${isCredit ? '+' : '-'}${formatV5Mon(ev.amount)} MON`,
+        principal: (isCredit ? '+' : '-') + formatV5Mon(ev.amount) + ' MON',
         prize: '\u2014',
         tx: ev.tx_hash,
       }
@@ -1557,13 +1559,13 @@ async function v5BuildHistoryData({ account, vault, manager, indexerUrl }) {
       const walletResult = v5HistoryResult(prizeWin)
       if (prizeWin) matchedPrizeKeys.add(prizeWin.key)
       return {
-        key: `draw-${r.roundId}`,
+        key: 'draw-' + r.roundId,
         sortAt: Date.parse(r.settledAt || '') || 0,
         date: v5EventDateFromIso(r.settledAt),
-        transaction: `Prize draw #${r.roundId}`,
+        transaction: 'Prize draw #' + r.roundId,
         result: walletResult.result,
         principal: '\u2014',
-        prize: walletResult.prizeAmount ? `${formatV5Mon(walletResult.prizeAmount)} MON` : '\u2014',
+        prize: walletResult.prizeAmount ? formatV5Mon(walletResult.prizeAmount) + ' MON' : '\u2014',
         tx: null,
         prizeWin,
       }
@@ -1575,15 +1577,19 @@ async function v5BuildHistoryData({ account, vault, manager, indexerUrl }) {
       key: win.key,
       sortAt: Date.parse(win.blockTimestamp || '') || 0,
       date: v5EventDateFromIso(win.blockTimestamp),
-      transaction: win.drawId == null ? 'Prize draw' : `Prize draw #${win.drawId}`,
+      transaction: win.drawId == null ? 'Prize draw' : 'Prize draw #' + win.drawId,
       result: 'WINNER',
       principal: '\u2014',
-      prize: `${formatV5Mon(win.compoundedAmount)} MON`,
+      prize: formatV5Mon(win.compoundedAmount) + ' MON',
       tx: null,
       prizeWin: win,
     }))
 
-  return { rows: [...positionRows, ...drawRows, ...unmatchedPrizeRows].sort((a, b) => b.sortAt - a.sortAt).slice(0, 24), positionEvents: scopedEvents }
+  return {
+    rows: [...positionRows, ...drawRows, ...unmatchedPrizeRows].sort((a, b) => b.sortAt - a.sortAt).slice(0, 24),
+    positionEvents: scopedEvents,
+    claimProofs: proofStates.filter((proof) => proof.claimable),
+  }
 }
 
 async function v5LoadPreviousDraw(drawManagerAddress, indexerUrl) {
@@ -1842,7 +1848,7 @@ function V5PreviousRound({ state, onBack, status, error }) {
   )
 }
 
-function V5HistoryTable({ account, rows, explorerUrl, isUat = false }) {
+function V5HistoryTable({ account, rows, explorerUrl, isUat = false, onClaim }) {
   return (
     <section className="participants-card v5-history-card">
       <div className="participants-head">
@@ -1861,7 +1867,7 @@ function V5HistoryTable({ account, rows, explorerUrl, isUat = false }) {
           <div className="participants-row v5-history-row" key={row.key}>
             <span>{row.date}</span>
             <span>{row.tx ? <a className="stats-winner-link" href={v5ExplorerTx(row.tx, explorerUrl)} target="_blank" rel="noopener noreferrer">{row.transaction}</a> : row.transaction}</span>
-            <span>{row.prizeWin ? <span className="v5-history-winner">WINNER</span> : row.result}</span>
+            <span>{row.prizeWin ? (row.prizeWin.claimable ? <button type="button" className="v5-history-winner v5-history-winner-button" onClick={onClaim}>WINNER</button> : <span className="v5-history-winner">WINNER</span>) : row.result}</span>
             <span>{row.principal}</span>
             <span>{row.prize}</span>
           </div>
@@ -2077,7 +2083,7 @@ export function V5UatExperience() {
       ? await withRpcReadRetry(() => shmon.convertToAssets(shmonShares), { attempts: 4, baseDelayMs: 500 })
       : 0n
     const [historyData, previousDraw] = await Promise.all([
-      v5BuildHistoryData({ account: user, vault, manager, indexerUrl: cfg.indexerUrl }),
+      v5BuildHistoryData({ account: user, vault, manager, claimManager, indexerUrl: cfg.indexerUrl, claimProofUrl: cfg.claimProofUrl }),
       v5LoadPreviousDraw(manager.target, cfg.indexerUrl),
     ])
     const historyRows = historyData.rows
@@ -2111,6 +2117,7 @@ export function V5UatExperience() {
       shmonBalance,
       shmonShares,
       historyRows,
+      claimProofs: historyData.claimProofs,
       previousDraw,
       lastDrawAdvancedAtMs,
       periodAccountEvents: periodLogs,
@@ -2118,7 +2125,7 @@ export function V5UatExperience() {
       boosterSupported: true,
     })
     setDataAvailable(true)
-  }, [account, cfg.chainName, cfg.indexerUrl, manager, readProvider, shmon, vault, verifyRuntime])
+  }, [account, cfg.chainName, cfg.claimProofUrl, cfg.indexerUrl, claimManager, manager, readProvider, shmon, vault, verifyRuntime])
 
   const checkedRefresh = useCallback(async (...args) => {
     try {
@@ -2359,7 +2366,9 @@ export function V5UatExperience() {
         shmonadWindow.document.write('<!doctype html><title>Opening shmonad.xyz</title><body style="font-family:system-ui;background:#100d1e;color:#fff;display:grid;place-items:center;height:100vh;margin:0"><main style="text-align:center"><h1>Withdrawing shMON…</h1><p>shmonad.xyz will open after your wallet confirms.</p></main></body>')
         shmonadWindow.document.close()
       }
-    } catch {}
+    } catch {
+      // Best-effort popup setup; navigation fallback runs after confirmation.
+    }
     return transact(request.label, (signer) => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer)[request.convertMethodName](request.amount), {
       afterSubmit: request.clearAmount,
       afterReceipt: () => {
@@ -2380,6 +2389,16 @@ export function V5UatExperience() {
         }
       },
     })
+  }
+  const claimUnclaimedWinnings = () => {
+    const { leaves, proofs } = buildV5ClaimManyArgs(state?.claimProofs)
+    if (leaves.length === 0) {
+      setStatus('No unclaimed prizes found.')
+      return
+    }
+    return transact('Claim prize', (signer) => (
+      new ethers.Contract(cfg.claimManager, V5_CLAIM_MANAGER_ABI, signer).claimMany(leaves, proofs)
+    ))
   }
   return (
     <div className={`app-shell v5-release-mode ${cfg.isUat ? 'v5-uat-mode' : 'v5-mainnet-mode'}`}>
@@ -2476,7 +2495,7 @@ export function V5UatExperience() {
             error=""
           />
         ) : v5Page === 'history' ? (
-          <V5HistoryTable account={account} rows={state?.historyRows || []} explorerUrl={cfg.explorerUrl} isUat={cfg.isUat} />
+          <V5HistoryTable account={account} rows={state?.historyRows || []} explorerUrl={cfg.explorerUrl} isUat={cfg.isUat} onClaim={claimUnclaimedWinnings} />
         ) : (
         <>
         <section className="main-grid">
@@ -2716,34 +2735,29 @@ export default function App() {
   const [yieldPeriod, setYieldPeriod] = useState(0)
   const [now, setNow] = useState(Math.floor(Date.now() / 1000))
   const [showWinnersView, setShowWinnersView] = useState(false)
-  const [winnersTransitioning, setWinnersTransitioning] = useState(false)
   const [mainView, setMainView] = useState('vaultA')
   const [participants, setParticipants] = useState([])
   const [previousRoundId, setPreviousRoundId] = useState('0')
   const [previousRoundInfo, setPreviousRoundInfo] = useState(null)
   const [previousParticipants, setPreviousParticipants] = useState([])
-  const participantsCacheRef = useRef(new Map())
   const [winnersUserPrincipalWei, setWinnersUserPrincipalWei] = useState(0n)
   const [claimFlow, setClaimFlow] = useState({ open: false, mode: 'winner', rid: null, poolAddr: '', principalWei: 0n, prizeWei: 0n, claimPrize: false, withdrawPrincipal: false })
   const [claimRedirectWarningOpen, setClaimRedirectWarningOpen] = useState(false)
   const [actionBusy, setActionBusy] = useState(false)
-  const [withdrawingRid, setWithdrawingRid] = useState(null)
+  const [withdrawingRid] = useState(null)
   const [actionStatus, setActionStatus] = useState('')
   const [actionError, setActionError] = useState('')
   const [myRounds, setMyRounds] = useState([])
-  const [vaultSummaries, setVaultSummaries] = useState([])
+  const [, setVaultSummaries] = useState([])
   const [settledRoundId, setSettledRoundId] = useState('0')
   const [settledRoundInfo, setSettledRoundInfo] = useState(null)
   const [settledPoolAddress, setSettledPoolAddress] = useState('')
   const [settledParticipants, setSettledParticipants] = useState([])
-  const participantLoadRef = useRef({ key: '' })
   const settledRidCacheRef = useRef(null)
   const [latestBlockNumber, setLatestBlockNumber] = useState(0)
   const [currentInternalEpoch, setCurrentInternalEpoch] = useState(0)
   const [shmonMonBalance, setShmonMonBalance] = useState(0n)
   const [commitAfterTime, setCommitAfterTime] = useState(0)
-  const unlockAudioRef = useRef(null)
-  const doorAudioRef = useRef(null)
   const [buyWithShmon, setBuyWithShmon] = useState(false)
   const [vaultBPending, setVaultBPending] = useState(false)
   const [tokenDropdownOpen, setTokenDropdownOpen] = useState(false)
@@ -2761,26 +2775,6 @@ export default function App() {
     }
   }, [activeVaultAddresses, allPoolAddresses, selectedPoolAddress])
 
-  useEffect(() => {
-    // Load user-provided vault SFX from public/sfx
-    const unlock = new Audio('/sfx/vault_unlock.WAV')
-    unlock.preload = 'auto'
-    unlock.volume = 0.85
-
-    const door = new Audio('/sfx/VAULT_DOOR_heaavy.WAV')
-    door.preload = 'auto'
-    door.volume = 0.95
-
-    unlockAudioRef.current = unlock
-    doorAudioRef.current = door
-
-    return () => {
-      unlock.pause()
-      door.pause()
-      unlockAudioRef.current = null
-      doorAudioRef.current = null
-    }
-  }, [])
 
 
   useEffect(() => {
@@ -3126,17 +3120,18 @@ export default function App() {
     }
   }, [])
 
-  // Reactively handle wallet connect/disconnect via web3modal
+  // Reactively handle wallet connect/disconnect via Reown AppKit.
   useEffect(() => {
-    const unsubscribe = modal.subscribeProvider(async (state) => {
-      if (!state.isConnected || !state.provider) {
+    const unsubscribe = modal.subscribeAccount(async (state) => {
+      const walletProvider = modal.getWalletProvider()
+      if (!state.isConnected || !walletProvider) {
         setAccount('')
         setBalance('0')
         setConnectedChainId(null)
         return
       }
       try {
-        const provider = new ethers.BrowserProvider(state.provider)
+        const provider = new ethers.BrowserProvider(walletProvider)
         await ensureCorrectNetwork(provider, expectedChainId)
         const signer = await provider.getSigner()
         const addr = await signer.getAddress()
@@ -3370,11 +3365,7 @@ export default function App() {
     return Math.max(contractDepositWindowSec, fallbackDepositWindowSec)
   }, [roundDuration, configuredDepositWindowSec])
 
-  const progressPct = useMemo(() => {
-    if (!depositWindowSec || !roundInfo) return 0
-    const elapsed = Math.max(0, depositWindowSec - secondsRemaining)
-    return Math.min(100, Math.round((elapsed / depositWindowSec) * 100))
-  }, [depositWindowSec, secondsRemaining, roundInfo])
+
 
   const poolDisplayLabel = useCallback((addr, isV2 = false) => {
     const lc = String(addr || '').toLowerCase()
@@ -3795,11 +3786,11 @@ export default function App() {
     }
   }, [estimatedApyPercent, isV2Pool, isV3Pool, roundDuration, roundInfo])
 
-  const winnersSource = {
+  const winnersSource = useMemo(() => ({
     rid: shownRoundId,
     info: shownRoundInfo ?? roundInfo,
     participants: shownParticipants,
-  }
+  }), [roundInfo, shownParticipants, shownRoundId, shownRoundInfo])
 
   const winnerParticipant = useMemo(() => {
     if (!winnersSource.info?.winner) return null
@@ -3822,7 +3813,7 @@ export default function App() {
   const winnersYieldWei = roundYieldWei(winnersSource?.info, winnersUsesSharePrizeAccounting)
   const isWinnerWallet = !!account && !!winnersSource?.info?.winner && account.toLowerCase() === String(winnersSource.info.winner).toLowerCase()
   const winnersTerminal = isTerminalRound(winnersSource?.info?.state ?? -1, winnersIsV2Pool)
-  const canClaimPrize = isWinnerWallet && winnersYieldWei > 0n && winnersTerminal && !Boolean(winnersSource?.info?.prizeClaimed)
+  const canClaimPrize = isWinnerWallet && winnersYieldWei > 0n && winnersTerminal && !winnersSource?.info?.prizeClaimed
   const canWithdrawPrincipal = !!account && winnersUserPrincipalWei > 0n && winnersTerminal
   const canRedeemWinnersRound = canClaimPrize || canWithdrawPrincipal
 
@@ -3831,8 +3822,6 @@ export default function App() {
     : Number(winnersSource?.info?.totalTickets ?? 0) > 0
       ? '—'
       : 0
-
-  const sfxTestMode = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('sfxtest') === '1'
 
   useEffect(() => {
     const ac = new AbortController()
@@ -3912,7 +3901,7 @@ export default function App() {
                 withdrawableShares: 0n,
                 withdrawableMon: principal,
                 prizeWei: roundYieldWei(info, false),
-                canClaimPrize: isWinner && roundYieldWei(info, false) > 0n && !Boolean(info.prizeClaimed) && Number(info.state) === 3,
+                canClaimPrize: isWinner && roundYieldWei(info, false) > 0n && !info.prizeClaimed && Number(info.state) === 3,
                 canWithdraw: Number(info.state) === 3 && principal > 0n,
               })
             }
@@ -4208,7 +4197,9 @@ export default function App() {
         shmonadWindow.document.write('<!doctype html><title>Opening shmonad.xyz</title><body style="font-family:system-ui;background:#100d1e;color:#fff;display:grid;place-items:center;height:100vh;margin:0"><main style="text-align:center"><h1>Redeeming…</h1><p>shmonad.xyz will open after your wallet confirms. Then click Unstake.</p></main></body>')
         shmonadWindow.document.close()
       }
-    } catch {}
+    } catch {
+      // Best-effort popup setup; navigation fallback runs after confirmation.
+    }
     const openShmonad = () => {
       try {
         if (shmonadWindow && !shmonadWindow.closed) {
@@ -4216,7 +4207,9 @@ export default function App() {
           shmonadWindow.focus?.()
           return
         }
-      } catch {}
+      } catch {
+        // Best-effort popup setup; navigation fallback runs after confirmation.
+      }
       window.location.assign('https://shmonad.xyz')
     }
 
@@ -4366,29 +4359,7 @@ export default function App() {
     }
   }, [balance, buyWithShmon, isV2Pool, isV4Pool, remainingTicketAllowance, shmonMonBalance, ticketPrice])
 
-  const openWinnersWithTransition = useCallback(() => {
-    if (winnersTransitioning) return
 
-    const unlock = unlockAudioRef.current
-    const door = doorAudioRef.current
-
-    if (unlock) {
-      unlock.currentTime = 0
-      unlock.play().catch(() => {})
-    }
-
-    setTimeout(() => {
-      if (!door) return
-      door.currentTime = 0
-      door.play().catch(() => {})
-    }, 330)
-
-    setWinnersTransitioning(true)
-    setTimeout(() => {
-      setShowWinnersView(true)
-      setWinnersTransitioning(false)
-    }, 1800)
-  }, [winnersTransitioning])
 
   if (!poolAddress && currentPage !== 'article') {
     return (
@@ -4735,7 +4706,7 @@ export default function App() {
             ) : drawFinished ? (
               <VaultAnimationTest onComplete={() => setShowWinnersView(true)} />
             ) : (
-              <div className={`card filled vault-card ${winnersTransitioning ? 'to-winners' : ''}`} id="vault-card">
+              <div className="card filled vault-card" id="vault-card">
                 <VaultDoorBackground progressPct={shownState === 3 ? 100 : shownIsCurrentRound ? timerProgressPct : 50} salesOpen={shownIsCurrentRound ? salesOpen : false} />
 
                 <div className="card-header vault-layer">

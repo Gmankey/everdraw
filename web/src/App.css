@@ -1803,6 +1803,7 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
   cursor: default;
   animation: v5-winner-rainbow 4s linear infinite;
 }
+.v5-history-winner-button { cursor: pointer; }
 
 
 @keyframes v5-winner-rainbow {

@@ -21,14 +21,15 @@ const walletRoundsRepo = createWalletRoundsRepo(db);
 const walletStatsRepo = createWalletStatsRepo(db);
 const indexerStateRepo = createIndexerStateRepo(db);
 const v5TranchesRepo = createV5TranchesRepo(db);
+const runnerConfig = getRunnerConfig();
 
 const deriveRoundsService = createDeriveRoundsService(rawEventsRepo, roundsRepo);
 const deriveWalletRoundsService = createDeriveWalletRoundsService(rawEventsRepo, walletRoundsRepo);
 const deriveWalletStatsService = createDeriveWalletStatsService(walletRoundsRepo, walletStatsRepo);
-const deriveV5TranchesService = createDeriveV5TranchesService(rawEventsRepo, v5TranchesRepo);
+const deriveV5TranchesService = createDeriveV5TranchesService(rawEventsRepo, v5TranchesRepo, undefined, runnerConfig.v5Deployments);
 
 const runner = createIndexerRunner({
-  config: getRunnerConfig(),
+  config: runnerConfig,
   rawEventsRepo,
   indexerStateRepo,
   deriveRoundsService,

@@ -110,20 +110,21 @@ contract ClaimManagerV5Test is Test {
             keccak256(
                 abi.encode(
                     claims.LEAF_DOMAIN(),
-                    uint256(2),
+                    uint256(3),
                     block.chainid,
                     address(claims),
                     leaf.distributionId,
                     leaf.leafIndex,
                     leaf.account,
                     leaf.token,
-                    leaf.amount
+                    leaf.amount,
+                    leaf.kind
                 )
             )
         );
 
         ClaimManagerV5 other = new ClaimManagerV5();
-        assertEq(claims.CLAIM_LEAF_VERSION(), 2);
+        assertEq(claims.CLAIM_LEAF_VERSION(), 3);
         assertTrue(original != other.hashLeaf(leaf));
 
         vm.chainId(block.chainid + 1);
@@ -187,7 +188,7 @@ contract ClaimManagerV5Test is Test {
 
         claims.claimMany(batch, proofs);
 
-        (, , uint256 deferredAmount) = claims.deferredClaims(blocked.distributionId, blocked.leafIndex);
+        (,, uint256 deferredAmount,) = claims.deferredClaims(blocked.distributionId, blocked.leafIndex);
         assertEq(deferredAmount, 10 ether);
         assertEq(token.balanceOf(bob), 20 ether);
         assertEq(claims.reservedByToken(address(token)), 10 ether);
@@ -239,7 +240,7 @@ contract ClaimManagerV5Test is Test {
 
         claims.claim(leaf, new bytes32[](0));
 
-        (address account, address pendingToken, uint256 amount) =
+        (address account, address pendingToken, uint256 amount,) =
             claims.deferredClaims(leaf.distributionId, leaf.leafIndex);
         assertEq(account, address(receiver));
         assertEq(pendingToken, address(0));
@@ -282,7 +283,8 @@ contract ClaimManagerV5Test is Test {
             leafIndex: 0,
             account: alice,
             token: address(badToken),
-            amount: 10 ether
+            amount: 10 ether,
+            kind: ClaimManagerV5.ClaimKind.Winner
         });
         ClaimManagerV5.TokenTotal[] memory totals = _tokenTotals(address(badToken), 10 ether);
         bytes32 root = isolatedClaims.hashLeaf(leaf);
@@ -291,7 +293,7 @@ contract ClaimManagerV5Test is Test {
 
         isolatedClaims.claim(leaf, new bytes32[](0));
 
-        (,, uint256 deferredAmount) = isolatedClaims.deferredClaims(leaf.distributionId, leaf.leafIndex);
+        (,, uint256 deferredAmount,) = isolatedClaims.deferredClaims(leaf.distributionId, leaf.leafIndex);
         assertEq(deferredAmount, 10 ether);
         assertEq(badToken.balanceOf(alice), 0, "isolated call must roll back token state");
         assertEq(badToken.balanceOf(address(isolatedClaims)), 10 ether);
@@ -312,7 +314,8 @@ contract ClaimManagerV5Test is Test {
             leafIndex: leafIndex,
             account: account,
             token: claimToken,
-            amount: amount
+            amount: amount,
+            kind: ClaimManagerV5.ClaimKind.Winner
         });
     }
 
@@ -447,7 +450,8 @@ contract ClaimManagerV5InvariantHandler is Test {
             leafIndex: index,
             account: account,
             token: address(token),
-            amount: amount
+            amount: amount,
+            kind: ClaimManagerV5.ClaimKind.Winner
         });
     }
 }
@@ -476,9 +480,10 @@ contract ClaimManagerV5FuzzTest is Test {
         _assertAccountingBounds();
     }
 
-    function testFuzz_claimAccountingBoundsAcrossClaimRetrySequences(uint8[32] calldata opSeeds, bool[32] calldata blockedFlags)
-        public
-    {
+    function testFuzz_claimAccountingBoundsAcrossClaimRetrySequences(
+        uint8[32] calldata opSeeds,
+        bool[32] calldata blockedFlags
+    ) public {
         for (uint256 i = 0; i < opSeeds.length; i++) {
             handler.setBlocked(blockedFlags[i]);
             if (opSeeds[i] & 1 == 0) {

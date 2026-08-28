@@ -5,6 +5,7 @@ import { createRoundsRepo } from './repositories/roundsRepo.js';
 import { createWalletRoundsRepo } from './repositories/walletRoundsRepo.js';
 import { createWalletStatsRepo } from './repositories/walletStatsRepo.js';
 import { createIndexerStateRepo } from './repositories/indexerStateRepo.js';
+import { createV5ClaimProofsRepo } from "./repositories/v5ClaimProofsRepo.js";
 import { createPointsRepo } from './repositories/pointsRepo.js';
 import { createV5TranchesRepo } from './repositories/v5TranchesRepo.js';
 import { createDeriveRoundsService } from './services/deriveRounds.js';
@@ -31,15 +32,17 @@ async function main(): Promise<void> {
   const indexerStateRepo = createIndexerStateRepo(db);
   const pointsRepo = createPointsRepo(db);
   const v5TranchesRepo = createV5TranchesRepo(db);
+  const v5ClaimProofsRepo = createV5ClaimProofsRepo(db);
+  const runnerConfig = getRunnerConfig();
 
   const deriveRoundsService = createDeriveRoundsService(rawEventsRepo, roundsRepo);
   const deriveWalletRoundsService = createDeriveWalletRoundsService(rawEventsRepo, walletRoundsRepo);
   const deriveWalletStatsService = createDeriveWalletStatsService(walletRoundsRepo, walletStatsRepo);
-  const deriveV5TranchesService = createDeriveV5TranchesService(rawEventsRepo, v5TranchesRepo, walletRoundsRepo);
+  const deriveV5TranchesService = createDeriveV5TranchesService(rawEventsRepo, v5TranchesRepo, walletRoundsRepo, runnerConfig.v5Deployments);
   const derivePointsService = createDerivePointsService({ pointsRepo, roundsRepo, walletRoundsRepo });
 
   const runner = createIndexerRunner({
-    config: getRunnerConfig(),
+    config: runnerConfig,
     rawEventsRepo,
     indexerStateRepo,
     deriveRoundsService,
@@ -49,6 +52,10 @@ async function main(): Promise<void> {
     derivePointsService,
   });
 
+  const claimProofIngestSecret = process.env.CLAIM_PROOF_INGEST_SECRET;
+  if (runnerConfig.v5Deployments.length > 0 && (!claimProofIngestSecret || claimProofIngestSecret.length < 32)) {
+    throw new Error("CLAIM_PROOF_INGEST_SECRET must be at least 32 characters for V5 deployments");
+  }
   const server = createApiServer({
     port,
     runner,
@@ -56,6 +63,9 @@ async function main(): Promise<void> {
     walletRoundsRepo,
     pointsRepo,
     v5TranchesRepo,
+    v5ClaimProofsRepo,
+    v5Deployments: runnerConfig.v5Deployments,
+    claimProofIngestSecret,
     startedAt,
   });
 

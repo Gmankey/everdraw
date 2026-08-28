@@ -6,6 +6,9 @@ import type { RoundsRepo } from './repositories/roundsRepo.js';
 import type { WalletRoundsRepo } from './repositories/walletRoundsRepo.js';
 import type { PointsRepo } from './repositories/pointsRepo.js';
 import type { V5TranchesRepo } from './repositories/v5TranchesRepo.js';
+import type { V5ClaimProofsRepo } from "./repositories/v5ClaimProofsRepo.js";
+import type { V5DeploymentScope } from "./types/domain.js";
+import { secureSecretEqual, validatePublishedClaimProofs } from "./services/v5ClaimProofs.js";
 import { calculateRoundPoints, getMultiplierX100, getTier, lossStreakThresholdBonus, nextMilestone, nextTierThreshold } from './services/pointsMath.js';
 import { firstFullWeightDrawId } from './services/deriveV5Tranches.js';
 import { normalizeVaultQuery, scopeRowsByVault } from './vaultFilter.js';
@@ -21,11 +24,15 @@ export function createApiServer(params: {
   walletRoundsRepo: WalletRoundsRepo;
   pointsRepo: PointsRepo;
   v5TranchesRepo?: V5TranchesRepo;
+  v5ClaimProofsRepo?: V5ClaimProofsRepo;
+  v5Deployments?: V5DeploymentScope[];
+  claimProofIngestSecret?: string;
   startedAt: number;
 }): ApiServer {
-  const { port, runner, roundsRepo, walletRoundsRepo, pointsRepo, v5TranchesRepo, startedAt } = params;
+  const { port, runner, roundsRepo, walletRoundsRepo, pointsRepo, v5TranchesRepo, v5ClaimProofsRepo, v5Deployments = [], claimProofIngestSecret, startedAt } = params;
   const app = express();
   app.use(cors());
+  app.use(express.json({ limit: "1mb" }));
 
   app.get('/api/health', async (_req, res) => {
     try {
@@ -33,6 +40,9 @@ export function createApiServer(params: {
       res.json({
         lastScannedBlock: status.lastScannedBlock,
         chainHead: status.chainHead,
+        confirmedHead: status.confirmedHead,
+        canonicalHash: status.canonicalHash,
+        rewindCount: status.rewindCount,
         lag: status.lag,
         dbStatus: 'ok',
         uptime: Math.floor((Date.now() - startedAt) / 1000),
@@ -207,6 +217,57 @@ export function createApiServer(params: {
       balance_after: row.balanceAfter,
       raw_event_name: row.rawEventName,
       source: row.source,
+    })));
+  });
+
+  app.post('/api/internal/v5/claim-proofs', (req, res) => {
+    if (!v5ClaimProofsRepo || !claimProofIngestSecret) {
+      res.status(503).json({ error: 'claim-proof ingestion is not configured' });
+      return;
+    }
+    const authorization = String(req.headers.authorization || '');
+    const supplied = authorization.startsWith('Bearer ') ? authorization.slice(7) : undefined;
+    if (!secureSecretEqual(claimProofIngestSecret, supplied)) {
+      res.status(401).json({ error: 'unauthorized' });
+      return;
+    }
+    try {
+      const rows = validatePublishedClaimProofs(req.body, v5Deployments);
+      v5ClaimProofsRepo.replaceDraw(rows);
+      res.json({ stored: rows.length, drawId: rows[0]?.drawId ?? null, root: rows[0]?.root ?? null });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : 'invalid claim proofs' });
+    }
+  });
+
+  app.get(['/api/v5/wallets/:wallet/claim-proofs', '/api/v5/claims'], (req, res) => {
+    if (!v5ClaimProofsRepo) {
+      res.status(501).json({ error: 'claim-proof storage is not configured' });
+      return;
+    }
+    const wallet = String(req.params.wallet || req.query.account || '').toLowerCase();
+    if (!/^0x[0-9a-fA-F]{40}$/i.test(wallet)) {
+      res.status(400).json({ error: 'invalid wallet address' });
+      return;
+    }
+    const vault = normalizeVaultQuery(req.query.vault);
+    if (!vault.valid || !vault.address) {
+      res.status(400).json({ error: 'a valid vault address is required' });
+      return;
+    }
+    res.json(v5ClaimProofsRepo.listWinnerProofs(wallet, vault.address).map((row) => ({
+      draw_id: row.drawId,
+      distribution_id: row.distributionId,
+      leaf_index: row.leafIndex,
+      account: row.account,
+      token: row.token,
+      amount: row.amount,
+      kind: row.kind,
+      proof: JSON.parse(row.proof),
+      root: row.root,
+      draw_manager_address: row.drawManagerAddress,
+      claim_manager_address: row.claimManagerAddress,
+      vault_address: row.vaultAddress,
     })));
   });
 

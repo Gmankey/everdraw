@@ -17,6 +17,47 @@ const CONFIGURED_DRAW_MANAGER_ADDRESS = process.env.DRAW_MANAGER_ADDRESS;
 const CONFIGURED_FROM_BLOCK = process.env.WATCHER_FROM_BLOCK || process.env.V5_WATCHER_FROM_BLOCK;
 const STATE_FILE = process.env.WATCHER_STATE_FILE || path.join(os.tmpdir(), "everdraw-v5-watcher-state.json");
 const MAX_BLOCKS_PER_RUN = Number(process.env.WATCHER_MAX_BLOCKS_PER_RUN || "250000");
+const CLAIM_PROOF_URL = process.env.WATCHER_CLAIM_PROOF_URL;
+const CLAIM_PROOF_TOKEN = process.env.WATCHER_CLAIM_PROOF_TOKEN;
+const REQUIRE_CLAIM_PROOF_PUBLISH = process.env.WATCHER_REQUIRE_CLAIM_PROOF_PUBLISH === 'true';
+
+export async function publishClaimProofs({ input, result, vaultAddress, fetchImpl = fetch, url = CLAIM_PROOF_URL, token = CLAIM_PROOF_TOKEN, required = REQUIRE_CLAIM_PROOF_PUBLISH }) {
+  if (!url || !token) {
+    if (required) throw new Error('Watcher claim-proof publishing is required but not configured');
+    return false;
+  }
+  const body = {
+    algoVersion: result.algoVersion,
+    chainId: input.chainId,
+    vaultAddress,
+    drawManagerAddress: input.drawManager,
+    claimManagerAddress: input.claimManager,
+    drawId: input.drawId,
+    root: result.root,
+    leafCount: result.leafCount,
+    leaves: result.leaves,
+  };
+  let lastError;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const response = await fetchImpl(url, {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer ' + token,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) throw new Error('claim-proof API returned HTTP ' + response.status);
+      return true;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 500));
+    }
+  }
+  throw lastError;
+}
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const HEALTHCHECKS_PING_URL = process.env.WATCHER_HEALTHCHECKS_PING_URL;
@@ -407,6 +448,9 @@ export async function main() {
               coverageFailures.push(message);
               rootMismatches.push(message);
               await alarm(message);
+            }
+            if (recomputed.root.toLowerCase() === proposedRoot) {
+              await publishClaimProofs({ input, result: recomputed, vaultAddress });
             }
             if (enforceLiveWindow) {
               const timingFailure = proposalCoverageFailure({

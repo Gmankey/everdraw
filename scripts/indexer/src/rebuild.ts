@@ -8,6 +8,7 @@ import { createDeriveRoundsService } from './services/deriveRounds.js';
 import { createDeriveWalletRoundsService } from './services/deriveWalletRounds.js';
 import { createDeriveWalletStatsService } from './services/deriveWalletStats.js';
 import { createDeriveV5TranchesService } from './services/deriveV5Tranches.js';
+import { getRunnerConfig } from './runner/config.js';
 
 function main(): void {
   const db = openDatabase();
@@ -18,6 +19,7 @@ function main(): void {
   const walletRoundsRepo = createWalletRoundsRepo(db);
   const walletStatsRepo = createWalletStatsRepo(db);
   const v5TranchesRepo = createV5TranchesRepo(db);
+  const runnerConfig = getRunnerConfig();
 
   roundsRepo.deleteAll();
   walletRoundsRepo.deleteAll();
@@ -27,7 +29,7 @@ function main(): void {
   const deriveRounds = createDeriveRoundsService(rawEventsRepo, roundsRepo);
   const deriveWalletRounds = createDeriveWalletRoundsService(rawEventsRepo, walletRoundsRepo);
   const deriveWalletStats = createDeriveWalletStatsService(walletRoundsRepo, walletStatsRepo);
-  const deriveV5Tranches = createDeriveV5TranchesService(rawEventsRepo, v5TranchesRepo, walletRoundsRepo);
+  const deriveV5Tranches = createDeriveV5TranchesService(rawEventsRepo, v5TranchesRepo, walletRoundsRepo, runnerConfig.v5Deployments);
 
   deriveRounds.rebuildFromRaw();
   deriveWalletRounds.rebuildFromRaw();

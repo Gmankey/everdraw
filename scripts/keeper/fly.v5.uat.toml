@@ -32,6 +32,7 @@ primary_region = "sjc"
   V5_KEEPER_EVENT_CACHE_FILE = "/data/keeper-v5-event-cache.json"
   V5_KEEPER_CLAIM_STATE_FILE = "/data/keeper-v5-claim-state.json"
   KEEPER_LOOP = "true"
+  KEEPER_REQUIRE_HEALTHCHECK = "true"
   KEEPER_INTERVAL_MS = "60000"
   KEEPER_RECENT_CLAIM_WINDOW = "1000"
   KEEPER_CLAIM_TRANSIENT_ALERT_THRESHOLD = "3"
@@ -47,8 +48,9 @@ primary_region = "sjc"
   KEEPER_ALERT_REPEAT_MS = "3600000"
   TELEGRAM_TIMEOUT_MS = "8000"
   TELEGRAM_RETRIES = "2"
-  # TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, and KEEPER_HEALTHCHECK_FAIL_URL are
-  # runtime Fly secrets. Configure at least one alert transport before relying on this keeper.
+  # TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, and KEEPER_HEALTHCHECK_URL and KEEPER_HEALTHCHECK_FAIL_URL are
+  # runtime Fly secrets. KEEPER_HEALTHCHECK_URL is mandatory: its external deadline detects a dead machine.
+  # Telegram and the separate failure URL cover actionable errors while the machine is still alive.
   # PRIVATE_KEY is intentionally NOT set here. It is the primary-proposer key and must be set as
   # a Fly secret by the operator (never committed, never held by the builder):
   #   flyctl secrets set PRIVATE_KEY=0x<primary-proposer key> -c scripts/keeper/fly.v5.uat.toml

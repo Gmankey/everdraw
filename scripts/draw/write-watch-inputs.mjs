@@ -178,12 +178,6 @@ async function getLogsRange(provider, filter, from, to) {
       }
       break;
     }
-      if (isRangeLimitError(err) && to > from) {
-        const mid = Math.floor((from + to) / 2);
-        const left = await getLogsRange(provider, filter, from, mid);
-        const right = await getLogsRange(provider, filter, mid + 1, to);
-        return [...left, ...right];
-      }
   }
   if (USE_CALLER_LOGS_PROVIDER) throw lastErr;
   // Fast logs RPC exhausted retries for this window — fall back to the caller's reliable provider.
@@ -587,7 +581,7 @@ export async function buildDrawInput({
   }
 
   return {
-    algoVersion: "everdraw-v5-draw-algorithm/2",
+    algoVersion: "everdraw-v5-draw-algorithm/3",
     chainId: network.chainId.toString(),
     claimManager: getAddress(claimManagerAddress),
     drawId: drawId.toString(),

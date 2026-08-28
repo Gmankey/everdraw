@@ -239,18 +239,23 @@ TELEGRAM_RETRIES = "2"
 ```
 
 Set the proposer key and alert routes only as Fly secrets. Configure Telegram plus the independent
-healthcheck-failure route so a Fly crash loop cannot fail silently in the same channel:
+success heartbeat and failure route. The success URL is mandatory because only an external deadline
+can detect a dead or network-isolated Fly machine:
 
 ```bash
 flyctl secrets set -a everdraw-keeper-v5-mainnet \
   PRIVATE_KEY=0x<primary-proposer-key> \
   TELEGRAM_BOT_TOKEN='<operator bot token>' \
   TELEGRAM_CHAT_ID='<operator chat id>' \
+  KEEPER_HEALTHCHECK_URL='<dead-man success URL>' \
   KEEPER_HEALTHCHECK_FAIL_URL='<dead-man failure URL>'
 ```
 
 The runtime supervisor alerts before `KEEPER_LOW_BALANCE_WEI` is reached and after repeated
 non-zero exits. A 5-second restart loop is deduplicated by `KEEPER_ALERT_REPEAT_MS`, not hidden.
+`KEEPER_REQUIRE_HEALTHCHECK=true` makes deployment fail closed when the success URL is absent.
+Configure the external check with a deadline greater than two keeper intervals plus RPC timeout,
+and route its DOWN notification independently of the keeper process.
 
 Deploy from repo root:
 
@@ -265,7 +270,17 @@ flyctl status -a everdraw-keeper-v5-mainnet
 flyctl logs -a everdraw-keeper-v5-mainnet -f
 ```
 
-Confirm startup logs show mainnet chain, V5 draw manager, V5 claim manager, loop mode, and preflight success. Force a Fly machine restart before launch signoff and confirm the keeper resumes without human intervention.
+Confirm startup logs show mainnet chain, V5 draw manager, V5 claim manager, loop mode, and preflight success.
+Before launch signoff, record evidence for every drill below:
+
+1. Stop the child process and confirm supervisor Telegram plus the failure endpoint alert.
+2. Stop the Fly machine long enough for the external success check to turn DOWN, then restart it and confirm recovery.
+3. Point a disposable UAT deployment at an unreachable RPC and confirm thresholded failure alerting.
+4. Block outbound network access in the disposable drill and confirm the external success check turns DOWN.
+5. Make Telegram and the failure endpoint return errors; confirm the supervisor exits and the external success check turns DOWN.
+
+Never perform drills 3-5 against the funded production machine. The external health service owns
+the machine-death alarm; Fly logs are supporting evidence, not the alert channel.
 
 ## Step 6 - Mainnet indexer cutover
 
@@ -276,8 +291,29 @@ Configure mainnet indexer with V5 addresses and backfill start block:
 ```bash
 flyctl secrets set -a everdraw-indexer \
   POOL_ADDRESSES="<V4_1_B_POOL>,<V5_PRIZE_VAULT>,<V5_DRAW_MANAGER>,<V5_CLAIM_MANAGER>" \
-  START_BLOCK="<V5 deployment startBlock>"
+  START_BLOCK="<V5 deployment startBlock>" \
+  INDEXER_CHAIN_ID="143" \
+  INDEXER_CONFIRMATIONS="12" \
+  V5_DEPLOYMENTS_JSON='[{"chainId":143,"vaultAddress":"<V5_PRIZE_VAULT>","drawManagerAddress":"<V5_DRAW_MANAGER>","claimManagerAddress":"<V5_CLAIM_MANAGER>"}]'
 ```
+
+Claim-proof recovery is mandatory for V5. Before starting the indexer, the operator creates one
+high-entropy service credential and sets the same value on the indexer and GitHub Actions without
+printing or committing it:
+
+```bash
+flyctl secrets set -a everdraw-indexer \
+  CLAIM_PROOF_INGEST_SECRET="<operator-generated 32+ character secret>"
+
+gh secret set V5_CLAIM_PROOF_INGEST_TOKEN --repo Gmankey/everdraw
+gh secret set V5_CLAIM_PROOF_MAINNET_URL --repo Gmankey/everdraw \
+  --body "https://<production-indexer>/api/internal/v5/claim-proofs"
+```
+
+The mainnet watcher runs with `WATCHER_REQUIRE_CLAIM_PROOF_PUBLISH=true`. It checkpoints a matched
+root only after authenticated proof publication succeeds, so a missing secret or unavailable proof
+API fails visibly instead of silently removing self-claim recovery. Never place the ingest
+credential in the frontend manifest.
 
 Verification:
 
@@ -285,6 +321,9 @@ Verification:
 curl -s https://<production-indexer-health>/api/health
 flyctl logs -a everdraw-indexer -f
 ```
+
+The indexer must reject ambiguous contract roles and zero-confirmation configuration. Health must
+show the confirmed head, canonical cursor hash, and rewind count before frontend cutover.
 
 Confirm V5 `Deposit`, `Withdraw`, `BoostDeposit`, `BoostWithdraw`, draw lifecycle, `ClaimPaid`, and `PrizeCompounded` rows are ingested. Confirm a sample wallet's tranche ledger and position history match on-chain events.
 
@@ -302,7 +341,7 @@ export V5_RELEASE_MANIFEST="$(node scripts/v5-frontend-release-manifest.mjs \
   --rpc-url "<approved browser-facing Monad mainnet RPC>" \
   --explorer-url "https://monadvision.com" \
   --indexer-url "<production V5 indexer URL>" \
-  --claim-proof-url "<production claim-proof URL, if separate>")"
+  --claim-proof-url "https://<production-indexer>/api/v5/claims")"
 
 cd web
 VITE_V5_ENABLED=true \

@@ -68,7 +68,7 @@ rawEventsRepo.upsertMany([
   raw({ eventName: 'RootProposed', logIndex: 5, roundId: 1, blockTimestamp: iso(periodEnd), payload: JSON.stringify({ drawId: 1, root: '0x02', winnerCount: 1, totalPayout: '1000000000000000000' }) }),
   raw({ eventName: 'DistributionRegistered', logIndex: 6, roundId: 1, contractAddress: claimManager, blockTimestamp: iso(periodEnd), payload: JSON.stringify({ distributionId, source: drawManager, sourceKey: `0x${'1'.padStart(64, '0')}`, root: '0x02', leafCount: 1 }) }),
   raw({ eventName: 'RootFinalized', logIndex: 7, roundId: 1, blockTimestamp: iso(periodEnd), payload: JSON.stringify({ drawId: 1, root: '0x02', winnerCount: 1, totalPayout: '1000000000000000000' }) }),
-  raw({ eventName: 'ClaimPaid', logIndex: 8, contractAddress: claimManager, wallet, blockTimestamp: iso(periodEnd), payload: JSON.stringify({ distributionId, leafIndex: '0', account: wallet, token: '0x0000000000000000000000000000000000000000', amount: '1000000000000000000' }) }),
+  raw({ eventName: 'ClaimPaid', logIndex: 8, contractAddress: claimManager, wallet, blockTimestamp: iso(periodEnd), payload: JSON.stringify({ distributionId, leafIndex: '0', account: wallet, token: '0x0000000000000000000000000000000000000000', amount: '1000000000000000000', kind: 0 }) }),
 ]);
 
 deriveRounds.rebuildFromRaw();

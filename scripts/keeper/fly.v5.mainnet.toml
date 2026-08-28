@@ -15,6 +15,7 @@ primary_region = "sjc"
 #     V5_KEEPER_FROM_BLOCK='<fresh V5 deploy block>' \
 #     TELEGRAM_BOT_TOKEN='<operator token>' \
 #     TELEGRAM_CHAT_ID='<operator chat>' \
+#     KEEPER_HEALTHCHECK_URL='<dead-man success URL>' \
 #     KEEPER_HEALTHCHECK_FAIL_URL='<dead-man failure URL>'
 #
 # Do not deploy or set target addresses until PrizeVaultV5.drawManager() equals the
@@ -31,6 +32,7 @@ primary_region = "sjc"
   V5_KEEPER_EVENT_CACHE_FILE = "/data/keeper-v5-event-cache.json"
   V5_KEEPER_CLAIM_STATE_FILE = "/data/keeper-v5-claim-state.json"
   KEEPER_LOOP = "true"
+  KEEPER_REQUIRE_HEALTHCHECK = "true"
   KEEPER_INTERVAL_MS = "60000"
   KEEPER_RECENT_CLAIM_WINDOW = "1000"
   KEEPER_CLAIM_TRANSIENT_ALERT_THRESHOLD = "3"
@@ -49,7 +51,7 @@ primary_region = "sjc"
   TELEGRAM_RETRIES = "2"
   # RPC_URL, PRIVATE_KEY, DRAW_MANAGER_ADDRESS, CLAIM_MANAGER_ADDRESS,
   # V5_KEEPER_FROM_BLOCK, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, and
-  # KEEPER_HEALTHCHECK_FAIL_URL are intentionally omitted. They are operator secrets.
+  # KEEPER_HEALTHCHECK_URL and KEEPER_HEALTHCHECK_FAIL_URL are intentionally omitted. They are operator secrets.
 
 [[vm]]
   size = "shared-cpu-1x"

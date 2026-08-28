@@ -1,0 +1,60 @@
+import type Database from 'better-sqlite3';
+
+export interface V5ClaimProofRow {
+  chainId: number;
+  vaultAddress: string;
+  drawManagerAddress: string;
+  claimManagerAddress: string;
+  drawId: number;
+  distributionId: string;
+  leafIndex: number;
+  account: string;
+  token: string;
+  amount: string;
+  kind: number;
+  leafHash: string;
+  proof: string;
+  root: string;
+  publishedAt: string;
+}
+
+export interface V5ClaimProofsRepo {
+  replaceDraw(rows: V5ClaimProofRow[]): void;
+  listWinnerProofs(account: string, vaultAddress: string): V5ClaimProofRow[];
+}
+
+export function createV5ClaimProofsRepo(db: Database.Database): V5ClaimProofsRepo {
+  const deleteDraw = db.prepare('DELETE FROM v5_claim_proofs WHERE claim_manager_address = ? AND distribution_id = ?');
+  const insert = db.prepare([
+    'INSERT INTO v5_claim_proofs (',
+    'chain_id, vault_address, draw_manager_address, claim_manager_address, draw_id,',
+    'distribution_id, leaf_index, account, token, amount, kind, leaf_hash, proof, root, published_at',
+    ') VALUES (',
+    '@chainId, @vaultAddress, @drawManagerAddress, @claimManagerAddress, @drawId,',
+    '@distributionId, @leafIndex, @account, @token, @amount, @kind, @leafHash, @proof, @root, @publishedAt',
+    ')',
+  ].join(' '));
+  const replace = db.transaction((rows: V5ClaimProofRow[]) => {
+    if (rows.length === 0) return;
+    deleteDraw.run(rows[0].claimManagerAddress, rows[0].distributionId);
+    for (const row of rows) insert.run(row);
+  });
+  const list = db.prepare([
+    'SELECT chain_id AS chainId, vault_address AS vaultAddress,',
+    'draw_manager_address AS drawManagerAddress, claim_manager_address AS claimManagerAddress,',
+    'draw_id AS drawId, distribution_id AS distributionId, leaf_index AS leafIndex,',
+    'account, token, amount, kind, leaf_hash AS leafHash, proof, root, published_at AS publishedAt',
+    'FROM v5_claim_proofs',
+    'WHERE account = ? AND vault_address = ? AND kind = 0',
+    'ORDER BY draw_id DESC, leaf_index ASC',
+  ].join(' '));
+
+  return {
+    replaceDraw(rows) {
+      replace(rows);
+    },
+    listWinnerProofs(account, vaultAddress) {
+      return list.all(account.toLowerCase(), vaultAddress.toLowerCase()) as V5ClaimProofRow[];
+    },
+  };
+}

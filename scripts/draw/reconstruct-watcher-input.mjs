@@ -149,7 +149,7 @@ export async function buildWatcherDrawInput({
   }
 
   return {
-    algoVersion: "everdraw-v5-draw-algorithm/2",
+    algoVersion: "everdraw-v5-draw-algorithm/3",
     chainId: network.chainId.toString(),
     claimManager: getAddress(claimManagerAddress),
     drawId: drawId.toString(),

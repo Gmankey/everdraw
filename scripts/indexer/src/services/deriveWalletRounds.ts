@@ -57,6 +57,14 @@ export function createDeriveWalletRoundsService(
         }
         if (roundId == null) continue;
         if (!event.wallet) continue;
+        if (
+          event.eventName === 'ClaimPaid' ||
+          event.eventName === 'ClaimDeferred' ||
+          event.eventName === 'DeferredClaimPaid'
+        ) {
+          const claim = parsePayload<{ kind: number }>(event.payload);
+          if (claim.kind !== 0) continue;
+        }
 
         const acc = getOrCreate(grouped, poolAddress, event.wallet, roundId);
 
@@ -112,14 +120,14 @@ export function createDeriveWalletRoundsService(
             break;
           }
 
-          case 'ClaimPaid': {
-            const payload = parsePayload<{
-              distributionId: string;
-              account: string;
-              amount: string | number;
-            }>(event.payload);
+          case 'ClaimPaid':
+          case 'ClaimDeferred':
+          case 'DeferredClaimPaid': {
+            const payload = parsePayload<{ amount: string | number }>(event.payload);
             acc.won = 1;
-            acc.prizeClaimed += BigInt(stringifyNumberish(payload.amount ?? '0'));
+            if (event.eventName !== 'ClaimDeferred') {
+              acc.prizeClaimed += BigInt(stringifyNumberish(payload.amount ?? '0'));
+            }
             break;
           }
 

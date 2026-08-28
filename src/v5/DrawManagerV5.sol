@@ -19,7 +19,7 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     uint64 public constant DRAW_PERIOD_CHANGE_DELAY = 24 hours;
     uint64 public constant TIMING_CHANGE_DELAY = 24 hours;
     uint64 public constant MAINNET_MIN_CHALLENGE_WINDOW = 8 hours;
-    bytes32 public constant ALGORITHM_VERSION_HASH = keccak256("everdraw-v5-draw-algorithm/2");
+    bytes32 public constant ALGORITHM_VERSION_HASH = keccak256("everdraw-v5-draw-algorithm/3");
     uint16 public constant MAX_FEE_BPS = 2_000;
     uint8 public constant MAX_FEE_RECIPIENTS = 8;
     uint256 public constant MAX_ACTIVE_REWARD_SCHEDULES = 16;
@@ -109,6 +109,7 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     FeeBase public feeBase;
     uint16 public totalFeeBps;
     uint256 public nextRewardScheduleId;
+    uint256 private rewardMutationLock = 1;
 
     mapping(uint256 => Draw) public draws;
     mapping(uint64 => uint256) public drawIdByRequestId;
@@ -224,6 +225,7 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     error RewardAmountBelowMinimum(uint256 minimum, uint256 actual);
     error NotFunder();
     error UnexpectedNativeTransfer();
+    error RewardMutationReentrancy();
     error BadTwabPeriodAlignment(
         uint64 firstPeriodStart, uint64 drawPeriod, uint32 twabPeriodLength, uint32 twabPeriodOffset
     );
@@ -236,6 +238,13 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     modifier onlyGuardian() {
         if (msg.sender != guardian) revert NotGuardian();
         _;
+    }
+
+    modifier nonReentrantRewardMutation() {
+        if (rewardMutationLock != 1) revert RewardMutationReentrancy();
+        rewardMutationLock = 2;
+        _;
+        rewardMutationLock = 1;
     }
 
     constructor(
@@ -446,6 +455,7 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
     function fundPrize(address token, uint256 amountPerDraw, uint32 drawCount)
         external
         payable
+        nonReentrantRewardMutation
         returns (uint256 scheduleId)
     {
         if (amountPerDraw == 0 || drawCount == 0 || drawCount > MAX_REWARD_DRAWS) revert BadFunding();
@@ -483,7 +493,7 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
         emit PrizeFunded(scheduleId, msg.sender, token, amountPerDraw, uint32(currentDrawId + 1), drawCount);
     }
 
-    function cancelPrizeFunding(uint256 scheduleId) external {
+    function cancelPrizeFunding(uint256 scheduleId) external nonReentrantRewardMutation {
         RewardSchedule storage schedule = rewardSchedules[scheduleId];
         if (schedule.funder != msg.sender) revert NotFunder();
         if (schedule.cancelled || schedule.remainingDraws == 0) revert BadFunding();
@@ -568,7 +578,8 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
                 leafIndex: index,
                 account: winner,
                 token: token,
-                amount: amount - _allocatedFeeAmount(drawId, feeAmount)
+                amount: amount - _allocatedFeeAmount(drawId, feeAmount),
+                kind: legIndex == 0 ? ClaimManagerV5.ClaimKind.Winner : ClaimManagerV5.ClaimKind.Reward
             });
         }
 
@@ -578,7 +589,8 @@ contract DrawManagerV5 is IRandomnessOracleConsumer {
             leafIndex: index,
             account: recipient.account,
             token: token,
-            amount: _recipientFeeAmount(drawId, feeAmount, recipient.bps)
+            amount: _recipientFeeAmount(drawId, feeAmount, recipient.bps),
+            kind: ClaimManagerV5.ClaimKind.Fee
         });
     }
 

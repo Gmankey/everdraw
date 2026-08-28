@@ -16,9 +16,15 @@ interface IPrizeVaultV5Compound {
 /// @title ClaimManagerV5
 /// @notice Generalized V5 payout substrate for merkle distributions.
 contract ClaimManagerV5 {
-    bytes32 public constant LEAF_DOMAIN = keccak256("everdraw-v5-claim-leaf/2");
-    uint256 public constant CLAIM_LEAF_VERSION = 2;
+    bytes32 public constant LEAF_DOMAIN = keccak256("everdraw-v5-claim-leaf/3");
+    uint256 public constant CLAIM_LEAF_VERSION = 3;
     address public constant NATIVE_TOKEN = address(0);
+
+    enum ClaimKind {
+        Winner,
+        Fee,
+        Reward
+    }
 
     struct TokenTotal {
         address token;
@@ -40,12 +46,14 @@ contract ClaimManagerV5 {
         address account;
         address token;
         uint256 amount;
+        ClaimKind kind;
     }
 
     struct DeferredClaim {
         address account;
         address token;
         uint256 amount;
+        ClaimKind kind;
     }
 
     address public owner;
@@ -83,21 +91,24 @@ contract ClaimManagerV5 {
         uint256 indexed leafIndex,
         address indexed account,
         address token,
-        uint256 amount
+        uint256 amount,
+        ClaimKind kind
     );
     event ClaimDeferred(
         bytes32 indexed distributionId,
         uint256 indexed leafIndex,
         address indexed account,
         address token,
-        uint256 amount
+        uint256 amount,
+        ClaimKind kind
     );
     event DeferredClaimPaid(
         bytes32 indexed distributionId,
         uint256 indexed leafIndex,
         address indexed account,
         address token,
-        uint256 amount
+        uint256 amount,
+        ClaimKind kind
     );
     event PrizeCompounded(
         bytes32 indexed distributionId, uint256 indexed leafIndex, address indexed account, uint256 amount
@@ -192,7 +203,8 @@ contract ClaimManagerV5 {
                 leaf.leafIndex,
                 leaf.account,
                 leaf.token,
-                leaf.amount
+                leaf.amount,
+                leaf.kind
             )
         );
     }
@@ -261,7 +273,9 @@ contract ClaimManagerV5 {
         if (_tryPay(pending.token, pending.account, pending.amount)) {
             delete deferredClaims[distributionId][leafIndex];
             reservedByToken[pending.token] -= pending.amount;
-            emit DeferredClaimPaid(distributionId, leafIndex, pending.account, pending.token, pending.amount);
+            emit DeferredClaimPaid(
+                distributionId, leafIndex, pending.account, pending.token, pending.amount, pending.kind
+            );
         }
     }
 
@@ -277,7 +291,7 @@ contract ClaimManagerV5 {
                 delete deferredClaims[distributionIds[i]][leafIndexes[i]];
                 reservedByToken[pending.token] -= pending.amount;
                 emit DeferredClaimPaid(
-                    distributionIds[i], leafIndexes[i], pending.account, pending.token, pending.amount
+                    distributionIds[i], leafIndexes[i], pending.account, pending.token, pending.amount, pending.kind
                 );
             }
         }
@@ -306,28 +320,29 @@ contract ClaimManagerV5 {
         if (accounted > distributionTokenTotal[leaf.distributionId][leaf.token]) revert TokenBudgetExceeded();
         distributionTokenAccounted[leaf.distributionId][leaf.token] = accounted;
 
-        (bool paid, bool compounded) = _tryCompoundOrPay(distribution.source, leaf.token, leaf.account, leaf.amount);
+        (bool paid, bool compounded) =
+            _tryCompoundOrPay(distribution.source, leaf.token, leaf.account, leaf.amount, leaf.kind);
         if (paid) {
             reservedByToken[leaf.token] -= leaf.amount;
-            emit ClaimPaid(leaf.distributionId, leaf.leafIndex, leaf.account, leaf.token, leaf.amount);
+            emit ClaimPaid(leaf.distributionId, leaf.leafIndex, leaf.account, leaf.token, leaf.amount, leaf.kind);
             if (compounded) {
                 emit PrizeCompounded(leaf.distributionId, leaf.leafIndex, leaf.account, leaf.amount);
             }
         } else {
             deferredClaims[leaf.distributionId][leaf.leafIndex] =
-                DeferredClaim({account: leaf.account, token: leaf.token, amount: leaf.amount});
-            emit ClaimDeferred(leaf.distributionId, leaf.leafIndex, leaf.account, leaf.token, leaf.amount);
+                DeferredClaim({account: leaf.account, token: leaf.token, amount: leaf.amount, kind: leaf.kind});
+            emit ClaimDeferred(leaf.distributionId, leaf.leafIndex, leaf.account, leaf.token, leaf.amount, leaf.kind);
         }
     }
 
     /// @notice Auto-compound the configured vault's canonical prize token as a fresh tranche.
     /// Native-token support remains for legacy distributions. Any compound failure falls through
     /// to direct payment, then the existing deferred-claim path, so claims never brick.
-    function _tryCompoundOrPay(address source, address token, address account, uint256 amount)
+    function _tryCompoundOrPay(address source, address token, address account, uint256 amount, ClaimKind kind)
         internal
         returns (bool paid, bool compounded)
     {
-        if (!compoundOptOut[account]) {
+        if (kind == ClaimKind.Winner && !compoundOptOut[account]) {
             address vault = compoundVaultFor[source];
             if (vault != address(0)) {
                 if (token == NATIVE_TOKEN) {

@@ -55,5 +55,10 @@
   "devDependencies": {
     "@nomicfoundation/hardhat-ethers": "^3.0.8",
     "hardhat": "^2.22.16"
+  },
+  "overrides": {
+    "ethers": {
+      "ws": "8.21.0"
+    }
   }
 }
