@@ -188,3 +188,24 @@ CREATE TABLE IF NOT EXISTS v5_tranches (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_v5_tranches_opening_event ON v5_tranches(opened_tx_hash, opened_log_index);
 CREATE INDEX IF NOT EXISTS idx_v5_tranches_wallet_pool ON v5_tranches(wallet, vault_address, pool_type);
 CREATE INDEX IF NOT EXISTS idx_v5_tranches_open ON v5_tranches(wallet, vault_address, pool_type, remaining_amount);
+
+CREATE TABLE IF NOT EXISTS v5_claim_proofs (
+  chain_id INTEGER NOT NULL,
+  vault_address TEXT NOT NULL,
+  draw_manager_address TEXT NOT NULL,
+  claim_manager_address TEXT NOT NULL,
+  draw_id INTEGER NOT NULL,
+  distribution_id TEXT NOT NULL,
+  leaf_index INTEGER NOT NULL,
+  account TEXT NOT NULL,
+  token TEXT NOT NULL,
+  amount TEXT NOT NULL,
+  kind INTEGER NOT NULL CHECK (kind IN (0, 1, 2)),
+  leaf_hash TEXT NOT NULL,
+  proof TEXT NOT NULL,
+  root TEXT NOT NULL,
+  published_at TEXT NOT NULL,
+  PRIMARY KEY (claim_manager_address, distribution_id, leaf_index)
+);
+CREATE INDEX IF NOT EXISTS idx_v5_claim_proofs_wallet_vault
+  ON v5_claim_proofs(account, vault_address, kind, draw_id);

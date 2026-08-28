@@ -16,6 +16,7 @@ import { walletParticipatedInDraw } from './v5DrawParticipation.js'
 import { v5PageFromHash } from './v5Navigation.js'
 import { V5_NETWORK_RETRY_MESSAGE, v5UserError, withRpcReadRetry } from './v5RpcRead.js'
 import { v5HistoryResult } from './v5HistoryResult.js'
+import { buildV5ClaimManyArgs } from "./v5ClaimProofs.js"
 import { formatV5MaxInput } from './v5AmountInput.js'
 import { runV5ConfirmedFollowups } from './v5TransactionLifecycle.js'
 import { awardedMilestones, tierName } from './v5PointsView.js'
@@ -1309,6 +1310,8 @@ const V5_DRAW_MANAGER_ABI = [
 const V5_CLAIM_MANAGER_ABI = [
   'function authorizedSource(address) view returns (bool)',
   'function compoundVaultFor(address) view returns (address)',
+  "function isClaimed(bytes32 distributionId,uint256 leafIndex) view returns (bool)",
+  "function distributions(bytes32 distributionId) view returns (address source,bytes32 sourceKey,bytes32 root,uint32 leafCount,bytes32 metadata,uint64 registeredAt)",
   'function claimMany(tuple(bytes32 distributionId,uint256 leafIndex,address account,address token,uint256 amount,uint8 kind)[] leaves, bytes32[][] proofs)',
 ]
 
@@ -1476,22 +1479,55 @@ async function fetchV5Json(url, label) {
   return response.json()
 }
 
-async function v5BuildHistoryData({ account, vault, manager, indexerUrl }) {
-  if (!account) return { rows: [], positionEvents: [] }
+async function v5BuildHistoryData({ account, vault, manager, claimManager, indexerUrl, claimProofUrl }) {
+  if (!account) return { rows: [], positionEvents: [], claimProofs: [] }
   const base = indexerUrl
   const drawManagerLc = String(manager?.target || '').toLowerCase()
   const vaultAddress = String(vault?.target || '')
   const vaultQuery = encodeURIComponent(vaultAddress)
-  const [positionEvents, rounds, tranches] = await Promise.all([
-    fetchV5Json(`${base}/api/v5/wallets/${account}/position-events?vault=${vaultQuery}`, 'V5 position history'),
-    fetchV5Json(`${base}/api/rounds`, 'V5 draw history'),
-    fetchV5Json(`${base}/api/v5/wallets/${account}/tranches?vault=${vaultQuery}`, 'V5 tranche history'),
+  const walletPath = encodeURIComponent(account)
+  const claimProofRequest = claimProofUrl
+    ? claimProofUrl + (claimProofUrl.includes('?') ? '&' : '?') + 'account=' + walletPath + '&vault=' + vaultQuery
+    : base + '/api/v5/wallets/' + walletPath + '/claim-proofs?vault=' + vaultQuery
+  const [positionEvents, rounds, tranches, publishedProofs] = await Promise.all([
+    fetchV5Json(base + '/api/v5/wallets/' + walletPath + '/position-events?vault=' + vaultQuery, 'V5 position history'),
+    fetchV5Json(base + '/api/rounds', 'V5 draw history'),
+    fetchV5Json(base + '/api/v5/wallets/' + walletPath + '/tranches?vault=' + vaultQuery, 'V5 tranche history'),
+    fetchV5Json(claimProofRequest, "V5 claim proofs"),
   ])
 
   const scopedEvents = scopeV5RowsToVault(positionEvents, vaultAddress)
   const scopedTranches = scopeV5RowsToVault(tranches, vaultAddress)
-  const prizeWins = buildV5PrizeWins(scopedEvents, scopedTranches)
-  const prizeByDraw = new Map(prizeWins.filter((win) => win.drawId != null).map((win) => [win.drawId, win]))
+  const eventPrizeWins = buildV5PrizeWins(scopedEvents, scopedTranches)
+  const proofStates = await Promise.all((Array.isArray(publishedProofs) ? publishedProofs : []).map(async (proof) => {
+    const [claimed, distribution] = await withRpcReadRetry(() => Promise.all([
+      claimManager.isClaimed(proof.distribution_id, proof.leaf_index),
+      claimManager.distributions(proof.distribution_id),
+    ]), { attempts: 4, baseDelayMs: 500 })
+    const rootMatches = String(distribution.root || distribution[2] || '').toLowerCase() === String(proof.root || '').toLowerCase()
+    return { ...proof, claimable: !claimed && rootMatches }
+  }))
+  const prizeByDraw = new Map(eventPrizeWins.filter((win) => win.drawId != null).map((win) => [win.drawId, win]))
+  for (const proof of proofStates) {
+    const drawId = Number(proof.draw_id)
+    if (!Number.isSafeInteger(drawId)) continue
+    const existing = prizeByDraw.get(drawId)
+    if (existing) {
+      prizeByDraw.set(drawId, { ...existing, claimProof: proof, claimable: proof.claimable })
+    } else {
+      prizeByDraw.set(drawId, {
+        key: 'claim-proof-' + proof.distribution_id + '-' + proof.leaf_index,
+        txHash: null,
+        blockTimestamp: null,
+        drawId,
+        compoundedAmount: String(proof.amount || '0'),
+        remainingAmount: '0',
+        claimProof: proof,
+        claimable: proof.claimable,
+      })
+    }
+  }
+  const prizeWins = [...prizeByDraw.values()]
 
   const positionRows = scopedEvents
     .filter((ev) => ev.source !== 'prize_compound')
@@ -1503,12 +1539,12 @@ async function v5BuildHistoryData({ account, vault, manager, indexerUrl }) {
         ? (isCredit ? 'Transfer in' : 'Transfer out')
         : isDegen ? (isCredit ? 'Patron Pool deposit' : 'Patron Pool withdraw') : (isCredit ? 'Deposit' : 'Withdraw')
       return {
-        key: `${ev.tx_hash}-${ev.log_index}`,
+        key: ev.tx_hash + '-' + ev.log_index,
         sortAt: Date.parse(ev.block_timestamp || '') || 0,
         date: v5EventDateFromIso(ev.block_timestamp),
         transaction,
         result: isDegen ? 'Prize excluded' : (isCredit ? 'Entered' : 'Exited'),
-        principal: `${isCredit ? '+' : '-'}${formatV5Mon(ev.amount)} MON`,
+        principal: (isCredit ? '+' : '-') + formatV5Mon(ev.amount) + ' MON',
         prize: '\u2014',
         tx: ev.tx_hash,
       }
@@ -1523,13 +1559,13 @@ async function v5BuildHistoryData({ account, vault, manager, indexerUrl }) {
       const walletResult = v5HistoryResult(prizeWin)
       if (prizeWin) matchedPrizeKeys.add(prizeWin.key)
       return {
-        key: `draw-${r.roundId}`,
+        key: 'draw-' + r.roundId,
         sortAt: Date.parse(r.settledAt || '') || 0,
         date: v5EventDateFromIso(r.settledAt),
-        transaction: `Prize draw #${r.roundId}`,
+        transaction: 'Prize draw #' + r.roundId,
         result: walletResult.result,
         principal: '\u2014',
-        prize: walletResult.prizeAmount ? `${formatV5Mon(walletResult.prizeAmount)} MON` : '\u2014',
+        prize: walletResult.prizeAmount ? formatV5Mon(walletResult.prizeAmount) + ' MON' : '\u2014',
         tx: null,
         prizeWin,
       }
@@ -1541,15 +1577,19 @@ async function v5BuildHistoryData({ account, vault, manager, indexerUrl }) {
       key: win.key,
       sortAt: Date.parse(win.blockTimestamp || '') || 0,
       date: v5EventDateFromIso(win.blockTimestamp),
-      transaction: win.drawId == null ? 'Prize draw' : `Prize draw #${win.drawId}`,
+      transaction: win.drawId == null ? 'Prize draw' : 'Prize draw #' + win.drawId,
       result: 'WINNER',
       principal: '\u2014',
-      prize: `${formatV5Mon(win.compoundedAmount)} MON`,
+      prize: formatV5Mon(win.compoundedAmount) + ' MON',
       tx: null,
       prizeWin: win,
     }))
 
-  return { rows: [...positionRows, ...drawRows, ...unmatchedPrizeRows].sort((a, b) => b.sortAt - a.sortAt).slice(0, 24), positionEvents: scopedEvents }
+  return {
+    rows: [...positionRows, ...drawRows, ...unmatchedPrizeRows].sort((a, b) => b.sortAt - a.sortAt).slice(0, 24),
+    positionEvents: scopedEvents,
+    claimProofs: proofStates.filter((proof) => proof.claimable),
+  }
 }
 
 async function v5LoadPreviousDraw(drawManagerAddress, indexerUrl) {
@@ -1808,7 +1848,7 @@ function V5PreviousRound({ state, onBack, status, error }) {
   )
 }
 
-function V5HistoryTable({ account, rows, explorerUrl, isUat = false }) {
+function V5HistoryTable({ account, rows, explorerUrl, isUat = false, onClaim }) {
   return (
     <section className="participants-card v5-history-card">
       <div className="participants-head">
@@ -1827,7 +1867,7 @@ function V5HistoryTable({ account, rows, explorerUrl, isUat = false }) {
           <div className="participants-row v5-history-row" key={row.key}>
             <span>{row.date}</span>
             <span>{row.tx ? <a className="stats-winner-link" href={v5ExplorerTx(row.tx, explorerUrl)} target="_blank" rel="noopener noreferrer">{row.transaction}</a> : row.transaction}</span>
-            <span>{row.prizeWin ? <span className="v5-history-winner">WINNER</span> : row.result}</span>
+            <span>{row.prizeWin ? (row.prizeWin.claimable ? <button type="button" className="v5-history-winner v5-history-winner-button" onClick={onClaim}>WINNER</button> : <span className="v5-history-winner">WINNER</span>) : row.result}</span>
             <span>{row.principal}</span>
             <span>{row.prize}</span>
           </div>
@@ -2043,7 +2083,7 @@ export function V5UatExperience() {
       ? await withRpcReadRetry(() => shmon.convertToAssets(shmonShares), { attempts: 4, baseDelayMs: 500 })
       : 0n
     const [historyData, previousDraw] = await Promise.all([
-      v5BuildHistoryData({ account: user, vault, manager, indexerUrl: cfg.indexerUrl }),
+      v5BuildHistoryData({ account: user, vault, manager, claimManager, indexerUrl: cfg.indexerUrl, claimProofUrl: cfg.claimProofUrl }),
       v5LoadPreviousDraw(manager.target, cfg.indexerUrl),
     ])
     const historyRows = historyData.rows
@@ -2077,6 +2117,7 @@ export function V5UatExperience() {
       shmonBalance,
       shmonShares,
       historyRows,
+      claimProofs: historyData.claimProofs,
       previousDraw,
       lastDrawAdvancedAtMs,
       periodAccountEvents: periodLogs,
@@ -2084,7 +2125,7 @@ export function V5UatExperience() {
       boosterSupported: true,
     })
     setDataAvailable(true)
-  }, [account, cfg.chainName, cfg.indexerUrl, manager, readProvider, shmon, vault, verifyRuntime])
+  }, [account, cfg.chainName, cfg.claimProofUrl, cfg.indexerUrl, claimManager, manager, readProvider, shmon, vault, verifyRuntime])
 
   const checkedRefresh = useCallback(async (...args) => {
     try {
@@ -2349,6 +2390,16 @@ export function V5UatExperience() {
       },
     })
   }
+  const claimUnclaimedWinnings = () => {
+    const { leaves, proofs } = buildV5ClaimManyArgs(state?.claimProofs)
+    if (leaves.length === 0) {
+      setStatus('No unclaimed prizes found.')
+      return
+    }
+    return transact('Claim prize', (signer) => (
+      new ethers.Contract(cfg.claimManager, V5_CLAIM_MANAGER_ABI, signer).claimMany(leaves, proofs)
+    ))
+  }
   return (
     <div className={`app-shell v5-release-mode ${cfg.isUat ? 'v5-uat-mode' : 'v5-mainnet-mode'}`}>
       {cfg.isUat ? <div className="beta-corner-ribbon" title="Testnet UAT only"></div> : null}
@@ -2444,7 +2495,7 @@ export function V5UatExperience() {
             error=""
           />
         ) : v5Page === 'history' ? (
-          <V5HistoryTable account={account} rows={state?.historyRows || []} explorerUrl={cfg.explorerUrl} isUat={cfg.isUat} />
+          <V5HistoryTable account={account} rows={state?.historyRows || []} explorerUrl={cfg.explorerUrl} isUat={cfg.isUat} onClaim={claimUnclaimedWinnings} />
         ) : (
         <>
         <section className="main-grid">

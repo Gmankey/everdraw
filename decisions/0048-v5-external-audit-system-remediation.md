@@ -62,6 +62,20 @@ attempt Telegram and the failure endpoint. If both alert transports fail, the su
 the independently hosted success heartbeat expires. Terminal quarantined claims remain nonfatal and
 do not flap the dead-man check.
 
+### Verified claim proofs remain available for self-service recovery
+
+The independent root watcher publishes winner proofs only after its recomputed v3 root exactly
+matches the proposed root. Publication uses an authenticated private indexer endpoint and persistent
+storage scoped to the exact chain, vault, DrawManager, and ClaimManager tuple. The public API exposes
+only winner proofs for the requested wallet and active vault. Before submitting a claim, the frontend
+checks the stored proof against the live distribution root and filters already-claimed leaves
+on-chain. It batches every remaining winner leaf into one `claimMany` transaction.
+
+Proof publication is fail-closed: a required publication failure prevents the watcher from
+checkpointing the matched proposal. The ingest credential is never exposed to the browser. This
+recovery path lets a winner claim if keeper auto-claiming is unavailable without weakening the
+independent root-verification boundary.
+
 ## External dependencies and failure behavior
 
 - **Monad RPC:** transient errors are retried; confirmed indexing and canonical hash checks prevent a
@@ -77,6 +91,9 @@ do not flap the dead-man check.
   alert routes forces process exit so the external deadline detects the outage.
 - **Indexer database volume:** corruption or canonical divergence triggers deterministic rebuild from
   finalized raw logs; health exposes rewind state.
+- **Claim-proof publication and storage:** authentication or storage failure blocks watcher
+  checkpointing and expires its health signal; the frontend verifies persisted proofs against the
+  live ClaimManager root and claimed state before enabling the recovery transaction.
 
 ## Consequences
 
@@ -85,5 +102,7 @@ do not flap the dead-man check.
 - Indexer deployments must set `INDEXER_CHAIN_ID`, positive `INDEXER_CONFIRMATIONS`, and
   `V5_DEPLOYMENTS_JSON`; ambiguous legacy configuration fails closed.
 - Mainnet keeper deployment requires the external success URL before the process can start.
+- V5 watcher and indexer deployments require a shared high-entropy claim-proof ingest credential;
+  fresh UAT must prove publication, retrieval, and a one-transaction self-claim before mainnet.
 - Release CI may block on a fixed High or Critical dependency advisory and emits reviewable SBOM and
   scan artifacts for every staging commit.

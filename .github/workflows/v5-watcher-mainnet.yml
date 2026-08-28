@@ -57,6 +57,9 @@ jobs:
           WATCHER_MAX_BLOCKS_PER_RUN: "250000"
           WATCHER_STATE_FILE: .watcher-cache-mainnet/state.json
           WATCHER_HEALTHCHECKS_PING_URL: ${{ secrets.V5_WATCHER_MAINNET_HEALTHCHECK_URL }}
+          WATCHER_REQUIRE_CLAIM_PROOF_PUBLISH: "true"
+          WATCHER_CLAIM_PROOF_URL: ${{ secrets.V5_CLAIM_PROOF_MAINNET_URL }}
+          WATCHER_CLAIM_PROOF_TOKEN: ${{ secrets.V5_CLAIM_PROOF_INGEST_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |

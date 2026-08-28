@@ -11,6 +11,7 @@ import {
   challengeDeadlineMismatch,
   formatPrivilegedChange,
   proposalCoverageFailure,
+  publishClaimProofs,
   shouldEnforceLiveWindow,
   withRpcTimeout,
 } from "./watch-root-proposals.mjs";
@@ -236,3 +237,39 @@ test("workflow uses configured logs RPC and a five-minute cadence", () => {
   assert.match(workflow, /SECONDS - last_success > WATCHER_MAX_STALE_SUCCESS_SEC/);
 });
 
+
+test('publishes matched claim proofs with bearer authentication', async () => {
+  let request;
+  const published = await publishClaimProofs({
+    input: {
+      chainId: '143',
+      drawManager: '0x0000000000000000000000000000000000000022',
+      claimManager: '0x0000000000000000000000000000000000000033',
+      drawId: '9',
+    },
+    result: {
+      algoVersion: 'everdraw-v5-draw-algorithm/3',
+      root: '0x' + '11'.repeat(32),
+      leafCount: 1,
+      leaves: [{ leafIndex: '0', proof: [] }],
+    },
+    vaultAddress: '0x0000000000000000000000000000000000000011',
+    url: 'https://indexer.example/api/internal/v5/claim-proofs',
+    token: 'test-secret',
+    required: true,
+    fetchImpl: async (url, options) => {
+      request = { url, options };
+      return { ok: true, status: 200 };
+    },
+  });
+  assert.equal(published, true);
+  assert.equal(request.options.headers.authorization, 'Bearer test-secret');
+  assert.equal(JSON.parse(request.options.body).drawId, '9');
+});
+
+test('fails closed when proof publication is required but unconfigured', async () => {
+  await assert.rejects(
+    publishClaimProofs({ input: {}, result: {}, vaultAddress: '', url: '', token: '', required: true }),
+    /required but not configured/,
+  );
+});

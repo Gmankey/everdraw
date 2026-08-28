@@ -3,7 +3,7 @@
 **ADR:** ADR-0048
 **Audit input:** `tasks/v5-external-audit-remediation-retest-report-2026-08-27.md`
 **Base:** `staging` at `056ff47`
-**Scope:** M-01, M-02, M-03, M-04, M-06, M-07; informational I-01 and I-03
+**Scope:** M-01, M-02, M-03, M-04, M-06, M-07; informational I-01 through I-04
 
 ## Finding closure map
 
@@ -15,6 +15,10 @@
 | M-04 | Contract-wide reward mutation lock around funding and cancellation | four callback-token tests in `DrawManagerV5.t.sol` |
 | M-06 | Reown replacement, exact direct versions, patched transitive overrides, all locks, full-SHA Actions, digest images, SBOM/scan/provenance workflow | frontend lint/build, docs build, local CycloneDX generation, PR release-sbom check |
 | M-07 | Required success heartbeat; alert fallback causes process exit; Fly/runbook configuration and five failure drills | 18 keeper tests including missing-heartbeat startup and both-alert-routes-down |
+| I-01 | Frontend lint errors removed | web lint passes |
+| I-02 | Independent watcher publishes matched v3 proofs to authenticated persistent indexer storage; History batches all unclaimed winner leaves into one claimMany transaction | claim-proof validation/repository, watcher publication, and frontend batching tests |
+| I-03 | Removed unreachable out-of-scope error range split | watcher input tests |
+| I-04 | Added winner-role, canonical reorg, deployment isolation, keeper-death, and reward callback coverage | dedicated fixtures listed above |
 
 ## Contract and root evidence
 
@@ -36,7 +40,7 @@
 ## Indexer evidence
 
 - `npm run build`: TypeScript passes.
-- `npx tsx --test src/**/*.test.ts`: 12 passed, 0 failed.
+- `npx tsx --test src/**/*.test.ts`: 17 passed, 0 failed.
 - Deployment-isolation fixture overlaps two stacks with the same wallet, draw ID, and period and
   proves isolated tranches, resolved bases, entries, points, winners, and position events.
 - Lifecycle fixture covers two winners, two fee recipients, a reward leg, fee-before-winner payment,
@@ -48,7 +52,7 @@
 ## Keeper and watcher evidence
 
 - `npm run keeper:v5:test`: 18 passed, 0 failed.
-- `npm run draw:watch:test`: 15 passed, 0 failed.
+- `npm run draw:watch:test`: 17 passed, 0 failed.
 - Managed UAT and mainnet configs set `KEEPER_REQUIRE_HEALTHCHECK=true`.
 - Missing success URL exits at startup.
 - If Telegram and failure-ping delivery both fail for an actionable condition, the supervisor stops
@@ -61,7 +65,7 @@
 ## Frontend, docs, and release evidence
 
 - `web/npm run lint`: pass.
-- `web/node --test src/*.test.js`: 34 passed, 0 failed.
+- `web/node --test src/*.test.js`: 35 passed, 0 failed.
 - `web/npm run build`: pass.
 - `docs-site/npm run build`: pass, 30 static/SSG pages generated.
 - Root Hardhat build: pass with EVM target Paris.
@@ -97,7 +101,7 @@
 
 ## Remaining external gates
 
-1. The PR's `release-sbom` scan must pass and its artifact digest must be retained with the audit.
-2. Run the Cancun real-shMON fork suite with the approved archive RPC.
-3. After a fresh UAT deployment, execute and record all five M-07 dead-man drills.
+1. Run the Cancun real-shMON fork suite with the approved archive RPC.
+2. Fresh UAT proves matched proof publication, wallet proof retrieval, and one-transaction self-claim.
+3. Fresh UAT executes and records all five M-07 dead-man drills.
 4. Re-auditor retests the exact merged commit. Mainnet remains blocked until that verdict.

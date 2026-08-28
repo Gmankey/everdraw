@@ -297,6 +297,24 @@ flyctl secrets set -a everdraw-indexer \
   V5_DEPLOYMENTS_JSON='[{"chainId":143,"vaultAddress":"<V5_PRIZE_VAULT>","drawManagerAddress":"<V5_DRAW_MANAGER>","claimManagerAddress":"<V5_CLAIM_MANAGER>"}]'
 ```
 
+Claim-proof recovery is mandatory for V5. Before starting the indexer, the operator creates one
+high-entropy service credential and sets the same value on the indexer and GitHub Actions without
+printing or committing it:
+
+```bash
+flyctl secrets set -a everdraw-indexer \
+  CLAIM_PROOF_INGEST_SECRET="<operator-generated 32+ character secret>"
+
+gh secret set V5_CLAIM_PROOF_INGEST_TOKEN --repo Gmankey/everdraw
+gh secret set V5_CLAIM_PROOF_MAINNET_URL --repo Gmankey/everdraw \
+  --body "https://<production-indexer>/api/internal/v5/claim-proofs"
+```
+
+The mainnet watcher runs with `WATCHER_REQUIRE_CLAIM_PROOF_PUBLISH=true`. It checkpoints a matched
+root only after authenticated proof publication succeeds, so a missing secret or unavailable proof
+API fails visibly instead of silently removing self-claim recovery. Never place the ingest
+credential in the frontend manifest.
+
 Verification:
 
 ```bash
@@ -323,7 +341,7 @@ export V5_RELEASE_MANIFEST="$(node scripts/v5-frontend-release-manifest.mjs \
   --rpc-url "<approved browser-facing Monad mainnet RPC>" \
   --explorer-url "https://monadvision.com" \
   --indexer-url "<production V5 indexer URL>" \
-  --claim-proof-url "<production claim-proof URL, if separate>")"
+  --claim-proof-url "https://<production-indexer>/api/v5/claims")"
 
 cd web
 VITE_V5_ENABLED=true \
