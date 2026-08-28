@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09
         with:
-          version: stable
+          version: v1.7.1
       - name: Require archive RPC
         run: test -n "$MONAD_MAINNET_RPC_URL"
       - name: Run V5 against real mainnet shMON under Cancun
