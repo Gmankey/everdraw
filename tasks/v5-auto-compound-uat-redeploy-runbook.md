@@ -198,7 +198,11 @@ timeout 90s flyctl logs -a everdraw-indexer-uat
 
 Vercel project: `everdraw-v5-uat` (`https://everdraw-v5-uat.vercel.app`). This is a separate project from production `everdraw`; do not change the production project's variables or domain.
 
-Set all four public contract variables for the UAT project's Production environment:
+Set `VITE_V5_RELEASE_MANIFEST` for the UAT project's Production environment to the exact JSON
+manifest for the activated deployment. The manifest is authoritative and must include the chain,
+deploy commit, start block, all six V5 contract addresses, shMON, and the UAT indexer URL.
+
+Keep these four public compatibility variables aligned with the same manifest:
 
 - `VITE_V5_PRIZE_VAULT_ADDRESS` -> active prize vault
 - `VITE_V5_DRAW_MANAGER_ADDRESS` -> new committed draw manager
