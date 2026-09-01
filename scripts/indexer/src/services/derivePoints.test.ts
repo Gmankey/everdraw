@@ -211,4 +211,55 @@ function bonuses(ctx: ReturnType<typeof context>, roundId: number, w = wallet): 
   assert.equal(ctx.pointsRepo.getProfile(wallet)!.hasReceivedPrizePatronBonus, 1);
 }
 
+{
+  const ctx = context();
+  const checkpointUnix = Date.parse('2026-05-01T00:00:00.000Z') / 1000;
+  ctx.pointsRepo.ensureWallet(wallet, checkpointUnix);
+  ctx.pointsRepo.ensureWallet(otherWallet, checkpointUnix);
+  ctx.pointsRepo.upsertWalletStreak({
+    wallet,
+    currentStreakWeeks: 26,
+    longestStreakWeeks: 52,
+    lastCheckpointUnix: checkpointUnix,
+    consecutiveNonWins: 7,
+    consecutiveMissedDraws: 3,
+    updatedAt: checkpointUnix,
+  });
+  ctx.pointsRepo.upsertWalletStreak({
+    wallet: otherWallet,
+    currentStreakWeeks: 26,
+    longestStreakWeeks: 52,
+    lastCheckpointUnix: checkpointUnix,
+    consecutiveNonWins: 7,
+    consecutiveMissedDraws: 3,
+    updatedAt: checkpointUnix,
+  });
+  const insertExit = ctx.db.prepare(`
+    INSERT INTO v5_position_events (
+      tx_hash, log_index, block_number, block_timestamp, vault_address, wallet,
+      pool_type, action, amount, balance_after, raw_event_name
+    ) VALUES (?, 1, 100, '2026-05-02T00:00:00.000Z', ?, ?, 'vault', 'withdraw', '100', ?, 'Withdraw')
+  `);
+  insertExit.run(
+    '0x00000000000000000000000000000000000000000000000000000000000000ee',
+    pool,
+    wallet,
+    '0',
+  );
+  insertExit.run(
+    '0x00000000000000000000000000000000000000000000000000000000000000ef',
+    pool,
+    otherWallet,
+    '1',
+  );
+
+  ctx.service.rebuildSettlementPoints();
+
+  const reset = ctx.pointsRepo.getProfile(wallet)!;
+  assert.equal(reset.currentStreakWeeks, 0, 'a full V5 vault exit resets the current streak immediately');
+  assert.equal(reset.longestStreakWeeks, 52, 'a full exit preserves the historical longest streak');
+  const partial = ctx.pointsRepo.getProfile(otherWallet)!;
+  assert.equal(partial.currentStreakWeeks, 26, 'a partial V5 vault exit preserves the current streak');
+}
+
 console.log('derivePoints.test.ts ok');
