@@ -6,6 +6,7 @@ export interface PointsProfile extends WalletPointsRow, WalletStreakRow {}
 
 export interface PointsRepo {
   resetRoundPointsAndTotals(): void;
+  resetCurrentStreaksAfterFullV5Exits(): number;
   ensureWallet(wallet: string, nowUnix: number): void;
   getWalletPoints(wallet: string): WalletPointsRow | null;
   getWalletStreak(wallet: string): WalletStreakRow | null;
@@ -45,6 +46,24 @@ export function createPointsRepo(db: Database.Database): PointsRepo {
     `).run();
     db.prepare("UPDATE wallet_streaks SET consecutive_non_wins = 0, consecutive_missed_draws = 0, updated_at = CAST(strftime('%s','now') AS INTEGER)").run();
   });
+
+  const resetCurrentStreaksAfterFullV5ExitsStmt = db.prepare(`
+    UPDATE wallet_streaks
+    SET current_streak_weeks = 0,
+      consecutive_non_wins = 0,
+      consecutive_missed_draws = 0,
+      updated_at = CAST(strftime('%s','now') AS INTEGER)
+    WHERE EXISTS (
+      SELECT 1
+      FROM v5_position_events exit_event
+      WHERE LOWER(exit_event.wallet) = LOWER(wallet_streaks.wallet)
+        AND exit_event.pool_type = 'vault'
+        AND exit_event.action = 'withdraw'
+        AND exit_event.balance_after = '0'
+        AND CAST(strftime('%s', exit_event.block_timestamp) AS INTEGER)
+          > COALESCE(wallet_streaks.last_checkpoint_unix, 0)
+    )
+  `);
 
   const ensureWalletStmt = db.prepare(`
     INSERT INTO wallet_points (wallet, updated_at) VALUES (LOWER(?), ?)
@@ -116,6 +135,9 @@ export function createPointsRepo(db: Database.Database): PointsRepo {
 
   return {
     resetRoundPointsAndTotals() { resetTx(); },
+    resetCurrentStreaksAfterFullV5Exits() {
+      return resetCurrentStreaksAfterFullV5ExitsStmt.run().changes;
+    },
     ensureWallet(wallet, nowUnix) { ensureWalletStmt.run(wallet, nowUnix); ensureStreakStmt.run(wallet, nowUnix); },
     getWalletPoints(wallet) { return (getPointsStmt.get(wallet) as WalletPointsRow | undefined) ?? null; },
     getWalletStreak(wallet) { return (getStreakStmt.get(wallet) as WalletStreakRow | undefined) ?? null; },

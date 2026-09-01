@@ -22,6 +22,7 @@ export function createDerivePointsService(input: {
     rebuildSettlementPoints() {
       const timestamp = nowUnix();
       pointsRepo.resetRoundPointsAndTotals();
+      pointsRepo.resetCurrentStreaksAfterFullV5Exits();
       const rounds = roundsRepo.listAll()
         .filter((round) => ['settled', 'skipped'].includes(round.state))
         .filter((round) => {
