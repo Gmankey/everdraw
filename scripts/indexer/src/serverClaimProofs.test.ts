@@ -68,6 +68,7 @@ test('claim-proof API rejects unauthenticated writes and serves vault-scoped win
     pointsRepo: {} as never,
     v5ClaimProofsRepo: {
       publishDraw(rows) { storedRows = rows; },
+      listWinnerAccounts() { return []; },
       listWinnerProofs(account, vault) {
         return account === row.account && vault === row.vaultAddress ? [row] : [];
       },

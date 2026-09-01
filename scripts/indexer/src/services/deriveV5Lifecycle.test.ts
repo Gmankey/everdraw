@@ -93,13 +93,6 @@ rawEventsRepo.upsertMany([
     payload: JSON.stringify({ distributionId, leafIndex: '3', account: rewardRecipient, token: '0x0000000000000000000000000000000000000000', amount: '200', kind: 2 }),
   }),
   raw({
-    eventName: 'ClaimPaid',
-    logIndex: 8,
-    contractAddress: claimManager,
-    wallet,
-    payload: JSON.stringify({ distributionId, leafIndex: '0', account: wallet, token: '0x0000000000000000000000000000000000000000', amount: '3109263465519218066', kind: 0 }),
-  }),
-  raw({
     eventName: 'PrizeCompounded',
     logIndex: 9,
     contractAddress: claimManager,

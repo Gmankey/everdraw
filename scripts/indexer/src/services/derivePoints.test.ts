@@ -4,6 +4,8 @@ import { applySchema } from '../db/database.js';
 import { createRoundsRepo } from '../repositories/roundsRepo.js';
 import { createWalletRoundsRepo } from '../repositories/walletRoundsRepo.js';
 import { createPointsRepo } from '../repositories/pointsRepo.js';
+import { createV5ClaimProofsRepo } from '../repositories/v5ClaimProofsRepo.js';
+import { createV5TranchesRepo } from '../repositories/v5TranchesRepo.js';
 import { createDerivePointsService } from './derivePoints.js';
 
 const wallet = '0x00000000000000000000000000000000000000aa';
@@ -16,8 +18,15 @@ function context() {
   const roundsRepo = createRoundsRepo(db);
   const walletRoundsRepo = createWalletRoundsRepo(db);
   const pointsRepo = createPointsRepo(db);
-  const service = createDerivePointsService({ pointsRepo, roundsRepo, walletRoundsRepo });
-  return { db, roundsRepo, walletRoundsRepo, pointsRepo, service };
+  const v5ClaimProofsRepo = createV5ClaimProofsRepo(db);
+  const v5TranchesRepo = createV5TranchesRepo(db);
+  const service = createDerivePointsService({
+    pointsRepo,
+    roundsRepo,
+    walletRoundsRepo,
+    v5ClaimProofsRepo,
+  });
+  return { db, roundsRepo, walletRoundsRepo, pointsRepo, v5ClaimProofsRepo, v5TranchesRepo, service };
 }
 
 function round(
@@ -234,24 +243,38 @@ function bonuses(ctx: ReturnType<typeof context>, roundId: number, w = wallet): 
     consecutiveMissedDraws: 3,
     updatedAt: checkpointUnix,
   });
-  const insertExit = ctx.db.prepare(`
-    INSERT INTO v5_position_events (
-      tx_hash, log_index, block_number, block_timestamp, vault_address, wallet,
-      pool_type, action, amount, balance_after, raw_event_name
-    ) VALUES (?, 1, 100, '2026-05-02T00:00:00.000Z', ?, ?, 'vault', 'withdraw', '100', ?, 'Withdraw')
-  `);
-  insertExit.run(
-    '0x00000000000000000000000000000000000000000000000000000000000000ee',
-    pool,
+  ctx.v5TranchesRepo.insertTranche({
     wallet,
-    '0',
-  );
-  insertExit.run(
-    '0x00000000000000000000000000000000000000000000000000000000000000ef',
-    pool,
-    otherWallet,
-    '1',
-  );
+    vaultAddress: pool,
+    poolType: 'vault',
+    amount: '100',
+    remainingAmount: '0',
+    openedBlockNumber: 90,
+    openedLogIndex: 1,
+    openedAt: '2026-04-01T00:00:00.000Z',
+    openedTxHash: '0x00000000000000000000000000000000000000000000000000000000000000ed',
+    startDrawId: 1,
+    closedAt: '2026-05-02T00:00:00.000Z',
+    closedBlockNumber: 100,
+    closedLogIndex: 1,
+    closedTxHash: '0x00000000000000000000000000000000000000000000000000000000000000ee',
+  });
+  ctx.v5TranchesRepo.insertTranche({
+    wallet: otherWallet,
+    vaultAddress: pool,
+    poolType: 'vault',
+    amount: '100',
+    remainingAmount: '1',
+    openedBlockNumber: 90,
+    openedLogIndex: 2,
+    openedAt: '2026-04-01T00:00:00.000Z',
+    openedTxHash: '0x00000000000000000000000000000000000000000000000000000000000000ef',
+    startDrawId: 1,
+    closedAt: null,
+    closedBlockNumber: null,
+    closedLogIndex: null,
+    closedTxHash: null,
+  });
 
   ctx.service.rebuildSettlementPoints();
 
@@ -260,6 +283,215 @@ function bonuses(ctx: ReturnType<typeof context>, roundId: number, w = wallet): 
   assert.equal(reset.longestStreakWeeks, 52, 'a full exit preserves the historical longest streak');
   const partial = ctx.pointsRepo.getProfile(otherWallet)!;
   assert.equal(partial.currentStreakWeeks, 26, 'a partial V5 vault exit preserves the current streak');
+}
+
+
+{
+  const ctx = context();
+  round(ctx, 1, 'skipped', '2026-05-03T00:00:00.000Z');
+  wr(ctx, 1, 0);
+  ctx.walletRoundsRepo.upsertV5ResolvedBase(wallet, 1, pool, 5);
+  ctx.v5TranchesRepo.insertTranche({
+    wallet,
+    vaultAddress: pool,
+    poolType: 'vault',
+    amount: '100',
+    remainingAmount: '100',
+    openedBlockNumber: 1,
+    openedLogIndex: 1,
+    openedAt: '2026-05-01T00:00:00.000Z',
+    openedTxHash: '0x00000000000000000000000000000000000000000000000000000000000000a1',
+    startDrawId: 1,
+    closedAt: null,
+    closedBlockNumber: null,
+    closedLogIndex: null,
+    closedTxHash: null,
+  });
+  const fromUnix = Date.parse('2026-05-01T00:00:00.000Z') / 1000;
+  const checkpointUnix = Date.parse('2026-05-04T00:00:00.000Z') / 1000;
+  const result = ctx.service.runWeeklyCheckpoint(checkpointUnix, fromUnix);
+  assert.equal(result.skipped, false);
+  assert.equal(ctx.pointsRepo.getProfile(wallet)!.currentStreakWeeks, 1);
+}
+
+{
+  const ctx = context();
+  round(ctx, 1, 'settled', '2026-05-03T00:00:00.000Z');
+  wr(ctx, 1, 1);
+  ctx.pointsRepo.ensureWallet(wallet, 1);
+  ctx.pointsRepo.upsertWalletStreak({
+    wallet,
+    currentStreakWeeks: 3,
+    longestStreakWeeks: 3,
+    lastCheckpointUnix: 1,
+    consecutiveNonWins: 0,
+    consecutiveMissedDraws: 0,
+    updatedAt: 1,
+  });
+  ctx.v5TranchesRepo.insertTranche({
+    wallet,
+    vaultAddress: pool,
+    poolType: 'vault',
+    amount: '100',
+    remainingAmount: '100',
+    openedBlockNumber: 1,
+    openedLogIndex: 2,
+    openedAt: '2026-05-01T00:00:00.000Z',
+    openedTxHash: '0x00000000000000000000000000000000000000000000000000000000000000a2',
+    startDrawId: 1,
+    closedAt: null,
+    closedBlockNumber: null,
+    closedLogIndex: null,
+    closedTxHash: null,
+  });
+  const checkpointUnix = Date.parse('2026-05-04T00:00:00.000Z') / 1000;
+  ctx.service.runWeeklyCheckpoint(checkpointUnix, 1);
+  const once = ctx.pointsRepo.getProfile(wallet)!;
+  ctx.service.runWeeklyCheckpoint(checkpointUnix, 1);
+  const twice = ctx.pointsRepo.getProfile(wallet)!;
+  assert.equal(once.currentStreakWeeks, 4);
+  assert.equal(twice.currentStreakWeeks, 4);
+  assert.equal(twice.lifetimePoints, once.lifetimePoints);
+}
+
+{
+  const ctx = context();
+  round(ctx, 1, 'settled', '2026-05-03T00:00:00.000Z');
+  wr(ctx, 1, 1);
+  ctx.v5ClaimProofsRepo.publishDraw([{
+    chainId: 10143,
+    vaultAddress: pool,
+    drawManagerAddress: pool,
+    claimManagerAddress: '0x00000000000000000000000000000000000000c1',
+    drawId: 1,
+    distributionId: '0x' + '11'.repeat(32),
+    leafIndex: 0,
+    account: wallet,
+    token: '0x00000000000000000000000000000000000000d1',
+    amount: '100',
+    kind: 0,
+    leafHash: '0x' + '22'.repeat(32),
+    proof: '[]',
+    root: '0x' + '33'.repeat(32),
+    publishedAt: '2026-05-03T00:00:00.000Z',
+  }]);
+  ctx.service.rebuildSettlementPoints();
+  assert.equal(bonuses(ctx, 1).win, 25_000);
+  assert.equal(ctx.pointsRepo.getProfile(wallet)!.hasReceivedFirstWinBonus, 1);
+}
+
+{
+  const ctx = context();
+  for (let id = 1; id <= 12; id += 1) {
+    const settledAt = new Date(Date.UTC(2026, 4, id + 2)).toISOString();
+    round(ctx, id, 'settled', settledAt);
+    if (id <= 9 || id === 12) wr(ctx, id, 1, 0);
+  }
+  ctx.v5TranchesRepo.insertTranche({
+    wallet,
+    vaultAddress: pool,
+    poolType: 'vault',
+    amount: '100',
+    remainingAmount: '0',
+    openedBlockNumber: 1,
+    openedLogIndex: 1,
+    openedAt: '2026-05-01T00:00:00.000Z',
+    openedTxHash: '0x0000000000000000000000000000000000000000000000000000000000000f01',
+    startDrawId: 1,
+    closedAt: '2026-05-11T12:00:00.000Z',
+    closedBlockNumber: 100,
+    closedLogIndex: 1,
+    closedTxHash: '0x0000000000000000000000000000000000000000000000000000000000000f02',
+  });
+
+  ctx.service.rebuildSettlementPoints();
+
+  assert.equal(bonuses(ctx, 12).loss_streak, undefined, 'a full exit resets the pre-exit loss streak');
+  assert.equal(bonuses(ctx, 12).comeback_king, 100_000, 'two genuinely absent draws still earn Comeback King');
+  assert.equal(ctx.pointsRepo.getProfile(wallet)!.consecutiveNonWins, 1);
+}
+
+{
+  const ctx = context();
+  round(ctx, 1, 'settled', '2026-04-20T00:00:00.000Z');
+  wr(ctx, 1, 1, 0, wallet);
+  round(ctx, 2, 'settled', '2026-05-03T00:00:00.000Z');
+  wr(ctx, 2, 1, 0, otherWallet);
+  ctx.v5TranchesRepo.insertTranche({
+    wallet,
+    vaultAddress: pool,
+    poolType: 'vault',
+    amount: '100',
+    remainingAmount: '100',
+    openedBlockNumber: 200,
+    openedLogIndex: 1,
+    openedAt: '2026-05-04T00:00:00.000Z',
+    openedTxHash: '0x0000000000000000000000000000000000000000000000000000000000000f03',
+    startDrawId: 2,
+    closedAt: null,
+    closedBlockNumber: null,
+    closedLogIndex: null,
+    closedTxHash: null,
+  });
+
+  const fromUnix = Date.parse('2026-05-01T00:00:00.000Z') / 1000;
+  const checkpointUnix = Date.parse('2026-05-10T00:00:00.000Z') / 1000;
+  ctx.service.runWeeklyCheckpoint(checkpointUnix, fromUnix);
+
+  assert.equal(
+    ctx.pointsRepo.getProfile(wallet)!.currentStreakWeeks,
+    0,
+    'depositing after the completed draw must not earn a checkpoint streak week',
+  );
+}
+
+{
+  const ctx = context();
+  round(ctx, 1, 'settled', '2026-05-02T00:00:00.000Z');
+  wr(ctx, 1, 1);
+  round(ctx, 2, 'settled', '2026-05-03T00:00:00.000Z');
+  wr(ctx, 2, 1);
+  const fromUnix = Date.parse('2026-05-01T00:00:00.000Z') / 1000;
+  const checkpointUnix = Date.parse('2026-05-04T00:00:00.000Z') / 1000;
+  ctx.pointsRepo.ensureWallet(wallet, fromUnix);
+  const priorPoints = ctx.pointsRepo.getWalletPoints(wallet)!;
+  ctx.pointsRepo.upsertWalletPoints({
+    ...priorPoints,
+    highestStreakMilestoneAwarded: 2,
+    updatedAt: fromUnix,
+  });
+  ctx.pointsRepo.upsertWalletStreak({
+    wallet,
+    currentStreakWeeks: 3,
+    longestStreakWeeks: 3,
+    lastCheckpointUnix: fromUnix,
+    consecutiveNonWins: 0,
+    consecutiveMissedDraws: 0,
+    updatedAt: fromUnix,
+  });
+  ctx.v5TranchesRepo.insertTranche({
+    wallet,
+    vaultAddress: pool,
+    poolType: 'vault',
+    amount: '100',
+    remainingAmount: '100',
+    openedBlockNumber: 1,
+    openedLogIndex: 1,
+    openedAt: '2026-04-01T00:00:00.000Z',
+    openedTxHash: '0x0000000000000000000000000000000000000000000000000000000000000f04',
+    startDrawId: 1,
+    closedAt: null,
+    closedBlockNumber: null,
+    closedLogIndex: null,
+    closedTxHash: null,
+  });
+
+  ctx.service.runWeeklyCheckpoint(checkpointUnix, fromUnix);
+
+  const profile = ctx.pointsRepo.getProfile(wallet)!;
+  assert.equal(profile.currentStreakWeeks, 5, 'two catch-up draws advance two earned streak periods');
+  assert.equal(profile.highestStreakMilestoneAwarded, 4, 'crossing week 4 during catch-up awards the milestone');
+  assert.equal(profile.lifetimePoints, 50_000);
 }
 
 console.log('derivePoints.test.ts ok');

@@ -57,7 +57,7 @@ export function createDeriveRoundsService(
       for (const event of finalizedEvents) {
         let roundId = event.roundId;
         let poolAddress = event.contractAddress;
-        if (event.eventName === 'ClaimPaid' || event.eventName === 'ClaimDeferred' || event.eventName === 'DeferredClaimPaid') {
+        if (event.eventName === 'ClaimPaid' || event.eventName === 'ClaimDeferred' || event.eventName === 'DeferredClaimPaid' || event.eventName === 'PrizeCompounded') {
           const payload = parsePayload<{ distributionId: string }>(event.payload);
           const mapped = distributionDrawIds.get(payload.distributionId.toLowerCase());
           if (mapped) {
@@ -249,6 +249,14 @@ export function createDeriveRoundsService(
             if (event.eventName !== 'ClaimDeferred') {
               acc.monReceived = stringifyNumberish(payload.amount ?? acc.monReceived);
             }
+            break;
+          }
+          case 'PrizeCompounded': {
+            const payload = parsePayload<{ account: string; amount: string | number }>(event.payload);
+            const winner = payload.account.toLowerCase();
+            if (acc.winner == null) acc.winner = winner;
+            acc.winnerWallets.add(winner);
+            acc.monReceived = stringifyNumberish(payload.amount ?? acc.monReceived);
             break;
           }
         }

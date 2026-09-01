@@ -19,7 +19,7 @@ import { v5HistoryResult } from './v5HistoryResult.js'
 import { verifyV5ClaimManyArgs } from "./v5ClaimProofs.js"
 import { formatV5MaxInput } from './v5AmountInput.js'
 import { runV5ConfirmedFollowups } from './v5TransactionLifecycle.js'
-import { awardedMilestones, tierName } from './v5PointsView.js'
+import { awardedMilestones, effectiveTrancheMultiplierX100, tierName } from './v5PointsView.js'
 import { latestSettledDraw, participantRowsForDraw } from './v5PreviousDraw.js'
 import { assertV5RuntimeSnapshot, assertV5WalletChain, v5ReleaseConfigFromEnv, verifyV5WritePreconditions } from './v5ReleaseConfig.js'
 import { v5PeriodAccountEvents } from './v5PeriodAccountEvents.js'
@@ -496,21 +496,23 @@ function ProfilePage({ account, points, history, tranches, currentDrawId, curren
   const dotCount = 52
   const litDots = Math.max(0, Math.min(dotCount, streakWeeks))
 
+  const oldestVault = oldestOpenTranche(openTranches, 'vault', drawId)
   const oldestDegen = degenTranches
     .map((tranche) => ({ weeks: trancheWeeks(tranche, drawId), amount: trancheRemainingMon(tranche) }))
     .filter((row) => row.amount > 0)
     .sort((a, b) => b.weeks - a.weeks || b.amount - a.amount)[0]
 
-  const mainVaultMultiplierX100 = Number(points?.current_multiplier_x100 || 100)
-  const hasPatronPosition = Boolean(oldestDegen)
-  const patronVaultMultiplierX100 = oldestDegen ? degenMultiplierForWeeks(oldestDegen.weeks) : 200
+  const mainVaultMultiplierX100 = effectiveTrancheMultiplierX100(openTranches, 'vault', drawId)
+  const patronVaultMultiplierX100 = effectiveTrancheMultiplierX100(openTranches, 'degen', drawId)
+  const hasMainPosition = mainVaultMultiplierX100 != null
+  const hasPatronPosition = patronVaultMultiplierX100 != null
 
-  const nextVault = nextVaultThreshold(streakWeeks)
+  const nextVault = oldestVault ? nextVaultThreshold(oldestVault.weeks) : null
   const nextDegen = oldestDegen ? nextDegenThreshold(oldestDegen.weeks) : 2
   // Hover-only detail (title attribute) -- not rendered as persistent copy on the page.
-  const nextMainVaultCopy = nextVault
-    ? `Reaches ${formatMultiplier(vaultMultiplierForWeeks(nextVault))} in ${Math.max(1, nextVault - streakWeeks)} draw${Math.max(1, nextVault - streakWeeks) === 1 ? '' : 's'}.`
-    : 'At the top multiplier tier.'
+  const nextMainVaultCopy = oldestVault && nextVault
+    ? `Oldest tranche reaches ${formatMultiplier(vaultMultiplierForWeeks(nextVault))} in ${Math.max(1, nextVault - oldestVault.weeks)} draw${Math.max(1, nextVault - oldestVault.weeks) === 1 ? '' : 's'}.`
+    : oldestVault ? 'All open tranches are at the top multiplier tier.' : 'No main vault position.'
   const nextPatronCopy = oldestDegen && nextDegen
     ? `${Math.max(1, nextDegen - oldestDegen.weeks)} more draw${Math.max(1, nextDegen - oldestDegen.weeks) === 1 ? '' : 's'} to ${formatMultiplier(degenMultiplierForWeeks(nextDegen))}.`
     : oldestDegen ? 'At the 5x Patron Pool cap.' : 'No Patron Pool position — starts at 2x and builds to 5x.'
@@ -546,7 +548,7 @@ function ProfilePage({ account, points, history, tranches, currentDrawId, curren
           <div className={`points-profile-total rewards-total rewards-total-${tierName(points)}`}>{Number(points?.lifetime_points || 0).toLocaleString()}</div>
 
           <div className="rewards-pill-row">
-            <div className="points-multiplier-pill rewards-multiplier-pill" title={nextMainVaultCopy}><span>Main vault multiplier</span><strong>{formatMultiplier(mainVaultMultiplierX100)}</strong></div>
+            <div className={`points-multiplier-pill rewards-multiplier-pill ${hasMainPosition ? '' : 'muted'}`} title={nextMainVaultCopy}><span>Main vault multiplier</span><strong>{hasMainPosition ? formatMultiplier(mainVaultMultiplierX100) : '—'}</strong></div>
             <div className={`points-multiplier-pill rewards-multiplier-pill degen-multiplier-pill ${hasPatronPosition ? '' : 'muted'}`} title={nextPatronCopy}><span>Patron vault multiplier</span><strong>{hasPatronPosition ? formatMultiplier(patronVaultMultiplierX100) : '—'}</strong></div>
             <div className={`${tierClass(tier)} rewards-tier-pill`}>{tier}</div>
           </div>

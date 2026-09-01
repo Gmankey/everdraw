@@ -17,6 +17,7 @@ const vault = '0x0000000000000000000000000000000000000a11';
 const drawManager = '0x0000000000000000000000000000000000000d22';
 const wallet = '0x00000000000000000000000000000000000000aa';
 const compoundWallet = '0x00000000000000000000000000000000000000bb';
+const prePeriodWallet = '0x00000000000000000000000000000000000000cc';
 const claimManager = '0x0000000000000000000000000000000000000c33';
 
 function raw(partial: Partial<RawEventRow> & Pick<RawEventRow, 'eventName' | 'logIndex' | 'payload'>): RawEventRow {
@@ -38,6 +39,14 @@ function raw(partial: Partial<RawEventRow> & Pick<RawEventRow, 'eventName' | 'lo
 }
 
 rawEventsRepo.upsertMany([
+  raw({
+    eventName: 'Deposit',
+    logIndex: 0,
+    blockNumber: 99,
+    blockTimestamp: '2026-07-01T23:00:00.000Z',
+    wallet: prePeriodWallet,
+    payload: JSON.stringify({ recipient: prePeriodWallet, amount: '10' }),
+  }),
   raw({
     eventName: 'DrawStarted',
     logIndex: 1,
@@ -90,6 +99,9 @@ assert.equal(degenTranches.length, 1);
 assert.equal(degenTranches[0].remainingAmount, '40');
 assert.equal(vaultTranches[0].startDrawId, 7);
 assert.equal(firstFullWeightDrawId(vaultTranches[0].startDrawId), 8);
+const prePeriodTranche = v5TranchesRepo.listByWallet(prePeriodWallet)[0];
+assert.equal(prePeriodTranche.startDrawId, 6);
+assert.equal(firstFullWeightDrawId(prePeriodTranche.startDrawId), 7);
 assert.equal(v5TranchesRepo.sumOpenRemaining(wallet, vault, 'degen'), '40');
 
 const events = v5TranchesRepo.listPositionEvents(wallet);
