@@ -66,6 +66,8 @@ function logs(version: ChainVersion): FakeLog[] {
 
 class FakeProvider {
   version: ChainVersion = 'a';
+  reorgDuringFetch = false;
+  getLogsCalls = 0;
 
   async getBlockNumber(): Promise<number> {
     return 107;
@@ -76,12 +78,17 @@ class FakeProvider {
   }
 
   async getLogs(filter: { address: string; fromBlock: number; toBlock: number }): Promise<FakeLog[]> {
-    return logs(this.version).filter(
+    const result = logs(this.version).filter(
       (log) =>
         log.address.toLowerCase() === filter.address.toLowerCase() &&
         log.blockNumber >= Number(filter.fromBlock) &&
         log.blockNumber <= Number(filter.toBlock)
     );
+    this.getLogsCalls += 1;
+    if (this.reorgDuringFetch && this.getLogsCalls === 3) {
+      this.version = 'b';
+    }
+    return result;
   }
 }
 
@@ -102,6 +109,7 @@ const config: RunnerConfig = {
     drawManagerAddress: manager,
     claimManagerAddress: claims,
   }],
+  claimProofIngestSecret: 'a'.repeat(32),
   deployBlock: 100,
   confirmations: 1,
   chunkSize: 1,
@@ -162,5 +170,45 @@ assert.equal(shallowRows.some((row) => row.blockNumber === 106 && row.txHash.end
 const shallowStatus = await runner.getStatus();
 assert.equal(shallowStatus.canonicalHash, hash(106, 'c'));
 assert.equal(shallowStatus.rewindCount, 2);
+
+const raceDb = new Database(':memory:');
+applySchema(raceDb);
+const raceRawEventsRepo = createRawEventsRepo(raceDb);
+const raceProvider = new FakeProvider();
+raceProvider.reorgDuringFetch = true;
+const raceRunner = createIndexerRunner({
+  config: { ...config, chunkSize: 7 },
+  rawEventsRepo: raceRawEventsRepo,
+  indexerStateRepo: createIndexerStateRepo(raceDb),
+  provider: raceProvider as unknown as AbstractProvider,
+  deriveRoundsService: { rebuildFromRaw() {} },
+  deriveWalletRoundsService: { rebuildFromRaw() {} },
+  deriveWalletStatsService: { rebuild() {} },
+  deriveV5TranchesService: { rebuildFromRaw() {} },
+});
+
+await assert.rejects(
+  raceRunner.syncOnce(),
+  /Canonical (log mismatch|range changed during fetch)/,
+  'an in-flight reorg must reject the whole unverified chunk'
+);
+assert.equal(
+  raceRawEventsRepo.getRange(100, 106).length,
+  0,
+  'chain-A rows must not survive a chain-B checkpoint race'
+);
+const rejectedStatus = await raceRunner.getStatus();
+assert.equal(rejectedStatus.lastScannedBlock, 99, 'an unverified cursor must not advance');
+assert.equal(rejectedStatus.canonicalHash, null);
+
+raceProvider.reorgDuringFetch = false;
+raceProvider.getLogsCalls = 0;
+await raceRunner.syncOnce();
+const recoveredRows = raceRawEventsRepo.getRange(100, 106);
+assert.equal(recoveredRows.length, 7);
+assert.equal(recoveredRows[0].wallet, walletB, 'retry must ingest only the canonical chain-B row');
+const recoveredStatus = await raceRunner.getStatus();
+assert.equal(recoveredStatus.lastScannedBlock, 106);
+assert.equal(recoveredStatus.canonicalHash, hash(106, 'b'));
 
 console.log('canonicalReorg.test.ts ok');

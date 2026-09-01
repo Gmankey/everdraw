@@ -59,6 +59,7 @@ test('claim-proof API rejects unauthenticated writes and serves vault-scoped win
     }],
   };
   let storedRows: unknown[] = [];
+  let liveRoot = '0x' + 'ff'.repeat(32);
   const api = createApiServer({
     port: 0,
     runner: {} as never,
@@ -66,7 +67,7 @@ test('claim-proof API rejects unauthenticated writes and serves vault-scoped win
     walletRoundsRepo: {} as never,
     pointsRepo: {} as never,
     v5ClaimProofsRepo: {
-      replaceDraw(rows) { storedRows = rows; },
+      publishDraw(rows) { storedRows = rows; },
       listWinnerProofs(account, vault) {
         return account === row.account && vault === row.vaultAddress ? [row] : [];
       },
@@ -78,6 +79,13 @@ test('claim-proof API rejects unauthenticated writes and serves vault-scoped win
       claimManagerAddress: row.claimManagerAddress,
     }],
     claimProofIngestSecret: 'x'.repeat(32),
+    claimProofDistributionReader: async () => ({
+      source: row.drawManagerAddress,
+      sourceKey: '0x' + BigInt(row.drawId).toString(16).padStart(64, '0'),
+      root: liveRoot,
+      leafCount: 1,
+      registeredAt: 1,
+    }),
     startedAt: Date.now(),
   });
   const server = await api.start();
@@ -92,6 +100,18 @@ test('claim-proof API rejects unauthenticated writes and serves vault-scoped win
   });
   assert.equal(denied.status, 401);
 
+  const wrongRoot = await fetch(base + '/api/internal/v5/claim-proofs', {
+    method: 'POST',
+    headers: {
+      authorization: 'Bearer ' + 'x'.repeat(32),
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  assert.equal(wrongRoot.status, 400);
+  assert.equal(storedRows.length, 0);
+
+  liveRoot = leafHash;
   const accepted = await fetch(base + '/api/internal/v5/claim-proofs', {
     method: 'POST',
     headers: {

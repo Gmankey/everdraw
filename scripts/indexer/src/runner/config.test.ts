@@ -16,6 +16,7 @@ const KEYS = [
   'CHAIN_ID',
   'INDEXER_CONFIRMATIONS',
   'V5_DEPLOYMENTS_JSON',
+  'CLAIM_PROOF_INGEST_SECRET',
 ] as const;
 const saved = Object.fromEntries(KEYS.map((key) => [key, process.env[key]]));
 
@@ -31,6 +32,7 @@ function resetEnv(): void {
     drawManagerAddress: DRAW_MANAGER,
     claimManagerAddress: CLAIM_MANAGER,
   }]);
+  process.env.CLAIM_PROOF_INGEST_SECRET = 'a'.repeat(32);
 }
 
 try {
@@ -39,6 +41,38 @@ try {
   assert.equal(config.confirmations, 12);
   assert.equal(config.v5Deployments.length, 1);
 
+  resetEnv();
+  delete process.env.V5_DEPLOYMENTS_JSON;
+  assert.throws(() => getRunnerConfig(), /Missing V5_DEPLOYMENTS_JSON/);
+
+  resetEnv();
+  process.env.V5_DEPLOYMENTS_JSON = '[]';
+  assert.throws(() => getRunnerConfig(), /at least one deployment tuple/);
+
+  resetEnv();
+  delete process.env.CLAIM_PROOF_INGEST_SECRET;
+  assert.throws(() => getRunnerConfig(), /CLAIM_PROOF_INGEST_SECRET/);
+
+  resetEnv();
+  const deployment = {
+    chainId: 143,
+    vaultAddress: VAULT,
+    drawManagerAddress: DRAW_MANAGER,
+    claimManagerAddress: CLAIM_MANAGER,
+  };
+  process.env.V5_DEPLOYMENTS_JSON = JSON.stringify([deployment, deployment]);
+  assert.throws(() => getRunnerConfig(), /Duplicate V5 deployment tuple/);
+
+  resetEnv();
+  process.env.V5_DEPLOYMENTS_JSON = JSON.stringify([{
+    chainId: 10143,
+    vaultAddress: VAULT,
+    drawManagerAddress: DRAW_MANAGER,
+    claimManagerAddress: CLAIM_MANAGER,
+  }]);
+  assert.throws(() => getRunnerConfig(), /V5 deployment chain mismatch/);
+
+  resetEnv();
   process.env.INDEXER_CONFIRMATIONS = '0';
   assert.throws(() => getRunnerConfig(), /positive integer/);
 

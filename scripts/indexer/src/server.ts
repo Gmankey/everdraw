@@ -8,7 +8,12 @@ import type { PointsRepo } from './repositories/pointsRepo.js';
 import type { V5TranchesRepo } from './repositories/v5TranchesRepo.js';
 import type { V5ClaimProofsRepo } from "./repositories/v5ClaimProofsRepo.js";
 import type { V5DeploymentScope } from "./types/domain.js";
-import { secureSecretEqual, validatePublishedClaimProofs } from "./services/v5ClaimProofs.js";
+import {
+  assertPublishedProofsMatchDistribution,
+  secureSecretEqual,
+  validatePublishedClaimProofs,
+  type ClaimProofDistributionSnapshot,
+} from "./services/v5ClaimProofs.js";
 import { calculateRoundPoints, getMultiplierX100, getTier, lossStreakThresholdBonus, nextMilestone, nextTierThreshold } from './services/pointsMath.js';
 import { firstFullWeightDrawId } from './services/deriveV5Tranches.js';
 import { normalizeVaultQuery, scopeRowsByVault } from './vaultFilter.js';
@@ -27,9 +32,25 @@ export function createApiServer(params: {
   v5ClaimProofsRepo?: V5ClaimProofsRepo;
   v5Deployments?: V5DeploymentScope[];
   claimProofIngestSecret?: string;
+  claimProofDistributionReader?: (
+    claimManagerAddress: string,
+    distributionId: string,
+  ) => Promise<ClaimProofDistributionSnapshot>;
   startedAt: number;
 }): ApiServer {
-  const { port, runner, roundsRepo, walletRoundsRepo, pointsRepo, v5TranchesRepo, v5ClaimProofsRepo, v5Deployments = [], claimProofIngestSecret, startedAt } = params;
+  const {
+    port,
+    runner,
+    roundsRepo,
+    walletRoundsRepo,
+    pointsRepo,
+    v5TranchesRepo,
+    v5ClaimProofsRepo,
+    v5Deployments = [],
+    claimProofIngestSecret,
+    claimProofDistributionReader,
+    startedAt,
+  } = params;
   const app = express();
   app.use(cors());
   app.use(express.json({ limit: "1mb" }));
@@ -43,6 +64,7 @@ export function createApiServer(params: {
         confirmedHead: status.confirmedHead,
         canonicalHash: status.canonicalHash,
         rewindCount: status.rewindCount,
+        v5Deployments: status.v5Deployments,
         lag: status.lag,
         dbStatus: 'ok',
         uptime: Math.floor((Date.now() - startedAt) / 1000),
@@ -220,8 +242,8 @@ export function createApiServer(params: {
     })));
   });
 
-  app.post('/api/internal/v5/claim-proofs', (req, res) => {
-    if (!v5ClaimProofsRepo || !claimProofIngestSecret) {
+  app.post('/api/internal/v5/claim-proofs', async (req, res) => {
+    if (!v5ClaimProofsRepo || !claimProofIngestSecret || !claimProofDistributionReader) {
       res.status(503).json({ error: 'claim-proof ingestion is not configured' });
       return;
     }
@@ -233,7 +255,12 @@ export function createApiServer(params: {
     }
     try {
       const rows = validatePublishedClaimProofs(req.body, v5Deployments);
-      v5ClaimProofsRepo.replaceDraw(rows);
+      const distribution = await claimProofDistributionReader(
+        rows[0].claimManagerAddress,
+        rows[0].distributionId,
+      );
+      assertPublishedProofsMatchDistribution(rows, distribution);
+      v5ClaimProofsRepo.publishDraw(rows);
       res.json({ stored: rows.length, drawId: rows[0]?.drawId ?? null, root: rows[0]?.root ?? null });
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : 'invalid claim proofs' });
@@ -256,6 +283,7 @@ export function createApiServer(params: {
       return;
     }
     res.json(v5ClaimProofsRepo.listWinnerProofs(wallet, vault.address).map((row) => ({
+      chain_id: row.chainId,
       draw_id: row.drawId,
       distribution_id: row.distributionId,
       leaf_index: row.leafIndex,
@@ -263,6 +291,7 @@ export function createApiServer(params: {
       token: row.token,
       amount: row.amount,
       kind: row.kind,
+      leaf_hash: row.leafHash,
       proof: JSON.parse(row.proof),
       root: row.root,
       draw_manager_address: row.drawManagerAddress,

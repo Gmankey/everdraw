@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { Contract, Interface, JsonRpcProvider, getAddress } from "ethers";
 import { spawnSync } from "node:child_process";
-import { queryLogsChunked, retryTransient } from "./write-watch-inputs.mjs";
+import { assertCanonicalLogBatch, queryLogsChunked, retryTransient } from "./write-watch-inputs.mjs";
 import { buildWatcherDrawInput, ingestWatcherReconstructionLogs } from "./reconstruct-watcher-input.mjs";
 import { readActiveV5Deployment, resolveV5RuntimeTargets } from "../keeper/v5-deployment.mjs";
 
@@ -67,6 +67,7 @@ const ABI = [
   "function vault() view returns (address)",
   "function challengeEndsAt(uint256) view returns (uint64)",
   "event RootProposed(uint256 indexed drawId, bytes32 indexed root, uint32 winnerCount, uint256 totalPayout, address indexed proposer, bytes32 algorithmVersion, uint64 challengeEndsAt)",
+  "event RootFinalized(uint256 indexed drawId, bytes32 indexed root, uint32 winnerCount, uint256 totalPayout)",
   "event SeedReceived(uint256 indexed drawId, uint64 indexed requestId, bytes32 seed)",
   "event Transfer(address indexed from,address indexed to,uint256 amount)",
   "event OwnershipTransferStarted(address indexed previousOwner,address indexed pendingOwner)",
@@ -322,6 +323,7 @@ export async function main() {
   );
   const iface = new Interface(ABI);
   const rootTopic = iface.getEvent("RootProposed").topicHash;
+  const finalizedTopic = iface.getEvent("RootFinalized").topicHash;
   const privilegedTopics = new Map(
     [...PRIVILEGED_EVENT_NAMES].map((name) => [iface.getEvent(name).topicHash.toLowerCase(), name]),
   );
@@ -369,13 +371,13 @@ export async function main() {
       provider,
       {
         address: monitoredAddresses,
-        topics: [[rootTopic, seedTopic, transferTopic, ...privilegedTopics.keys()]],
+        topics: [[rootTopic, finalizedTopic, seedTopic, transferTopic, ...privilegedTopics.keys()]],
       },
       scanFromBlock,
       runEnd,
       "watcher-events",
       {
-        onBatch: async ({ windows, logs }) => {
+        onBatch: async ({ windows, logs, canonical }) => {
           const batchEnd = windows[windows.length - 1][1];
           reconstruction = ingestWatcherReconstructionLogs({
             logs,
@@ -384,12 +386,7 @@ export async function main() {
             initialAccounts: reconstruction.accounts,
             initialSeedBlocks: reconstruction.seedBlocks,
           });
-          const checkpoint = await retryTransient(
-            () => provider.getBlock(batchEnd),
-            `watcher checkpoint block ${batchEnd}`,
-          );
-          if (!checkpoint?.hash) throw new Error(`Missing watcher checkpoint block ${batchEnd}`);
-          lastCheckpointHash = checkpoint.hash.toLowerCase();
+          lastCheckpointHash = canonical.checkpointHash;
           const privilegedChanges = logs
             .filter((log) => privilegedTopics.has(log.topics[0]?.toLowerCase()))
             .sort((a, b) => a.blockNumber - b.blockNumber || (a.index ?? 0) - (b.index ?? 0));
@@ -449,9 +446,6 @@ export async function main() {
               rootMismatches.push(message);
               await alarm(message);
             }
-            if (recomputed.root.toLowerCase() === proposedRoot) {
-              await publishClaimProofs({ input, result: recomputed, vaultAddress });
-            }
             if (enforceLiveWindow) {
               const timingFailure = proposalCoverageFailure({
                 challengeEndsAt: storedChallengeEndsAt,
@@ -464,6 +458,50 @@ export async function main() {
               }
             }
           }
+
+          const finalizations = logs
+            .filter((log) => (
+              log.address.toLowerCase() === drawManagerAddress.toLowerCase()
+              && log.topics[0]?.toLowerCase() === finalizedTopic.toLowerCase()
+            ))
+            .sort((a, b) => a.blockNumber - b.blockNumber || (a.index ?? 0) - (b.index ?? 0));
+
+          for (const log of finalizations) {
+            const finalized = iface.parseLog(log);
+            const drawId = finalized.args.drawId.toString();
+            const finalizedRoot = finalized.args.root.toLowerCase();
+            const seedBlock = reconstruction.seedBlocks[drawId];
+            if (!seedBlock) throw new Error(`Watcher has no SeedReceived block for finalized draw ${drawId}`);
+            const input = await retryTransient(
+              () => buildWatcherDrawInput({
+                provider,
+                drawManagerAddress,
+                drawId,
+                seedBlock,
+                participantAccounts: reconstruction.accounts,
+              }),
+              `finalized draw ${drawId} independent reconstruction`,
+            );
+            const recomputed = recompute(input);
+            if (recomputed.root.toLowerCase() !== finalizedRoot) {
+              const message = `EverDraw V5 finalized root mismatch draw ${drawId}\nfinalized=${finalizedRoot}\nrecomputed=${recomputed.root.toLowerCase()}`;
+              coverageFailures.push(message);
+              rootMismatches.push(message);
+              await alarm(message);
+              continue;
+            }
+            await publishClaimProofs({ input, result: recomputed, vaultAddress });
+          }
+
+          // Recheck immediately before persistence. Proposal reconstruction can take
+          // long enough for the canonical chain to change after the initial log read.
+          const verified = await assertCanonicalLogBatch(provider, {
+            windows,
+            logs,
+            boundaryHashes: canonical.boundaryHashes,
+            label: "watcher:checkpoint",
+          });
+          lastCheckpointHash = verified.checkpointHash;
 
           // A root mismatch must remain at the cursor for operator resolution. A late
           // observation is still an incident, but retrying the same expired proposal
@@ -495,6 +533,14 @@ export async function main() {
     throw err;
   }
   if (caughtUp) {
+    const finalCanonical = await retryTransient(
+      () => canonicalCheckpointMatches(provider, {
+        lastScannedBlock: runEnd,
+        lastScannedBlockHash: lastCheckpointHash,
+      }),
+      "watcher final canonical checkpoint",
+    );
+    if (!finalCanonical) throw new Error(`Watcher canonical checkpoint changed at block ${runEnd}`);
     writeState({
       chainId,
       drawManagerAddress,

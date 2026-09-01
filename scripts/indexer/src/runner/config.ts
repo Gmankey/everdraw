@@ -6,6 +6,7 @@ export interface RunnerConfig {
   chainId: number;
   poolAddresses: string[];
   v5Deployments: V5DeploymentScope[];
+  claimProofIngestSecret: string;
   deployBlock: number;
   confirmations: number;
   chunkSize: number;
@@ -22,7 +23,12 @@ export function getRunnerConfig(): RunnerConfig {
   const deployBlock = Number(process.env.START_BLOCK ?? process.env.INDEXER_DEPLOY_BLOCK ?? 0);
   const chainId = Number(process.env.INDEXER_CHAIN_ID ?? process.env.CHAIN_ID ?? 0);
   const confirmations = Number(process.env.INDEXER_CONFIRMATIONS ?? 12);
-  const v5Deployments = parseV5Deployments(process.env.V5_DEPLOYMENTS_JSON ?? '[]');
+  const rawV5Deployments = process.env.V5_DEPLOYMENTS_JSON;
+  if (!rawV5Deployments?.trim()) {
+    throw new Error('Missing V5_DEPLOYMENTS_JSON; managed V5 indexing requires an explicit deployment tuple');
+  }
+  const v5Deployments = parseV5Deployments(rawV5Deployments);
+  const claimProofIngestSecret = process.env.CLAIM_PROOF_INGEST_SECRET?.trim() ?? '';
 
   if (!rpcUrl) throw new Error('Missing RPC_URL');
   if (!poolAddresses.length) throw new Error('Missing POOL_ADDRESSES');
@@ -30,6 +36,9 @@ export function getRunnerConfig(): RunnerConfig {
   if (!Number.isInteger(chainId) || chainId <= 0) throw new Error('Missing or invalid INDEXER_CHAIN_ID');
   if (!Number.isInteger(confirmations) || confirmations <= 0) {
     throw new Error('INDEXER_CONFIRMATIONS must be a positive integer');
+  }
+  if (claimProofIngestSecret.length < 32) {
+    throw new Error('CLAIM_PROOF_INGEST_SECRET must be at least 32 characters for V5 deployments');
   }
 
   for (const deployment of v5Deployments) {
@@ -49,6 +58,7 @@ export function getRunnerConfig(): RunnerConfig {
     chainId,
     poolAddresses,
     v5Deployments,
+    claimProofIngestSecret,
     deployBlock,
     confirmations,
     chunkSize: Number(process.env.INDEXER_CHUNK_SIZE ?? 100),
@@ -66,8 +76,12 @@ function parseV5Deployments(raw: string): V5DeploymentScope[] {
     throw new Error('V5_DEPLOYMENTS_JSON must be valid JSON');
   }
   if (!Array.isArray(parsed)) throw new Error('V5_DEPLOYMENTS_JSON must be an array');
+  if (parsed.length === 0) {
+    throw new Error('V5_DEPLOYMENTS_JSON must contain at least one deployment tuple');
+  }
 
   const seenRoles = new Set<string>();
+  const seenTuples = new Set<string>();
   return parsed.map((item, index) => {
     if (item == null || typeof item !== 'object') throw new Error(`Invalid V5 deployment at index ${index}`);
     const value = item as Record<string, unknown>;
@@ -77,6 +91,11 @@ function parseV5Deployments(raw: string): V5DeploymentScope[] {
       drawManagerAddress: normalizeAddress(value.drawManagerAddress, 'drawManagerAddress', index),
       claimManagerAddress: normalizeAddress(value.claimManagerAddress, 'claimManagerAddress', index),
     };
+    const tupleKey = [deployment.chainId, deployment.vaultAddress, deployment.drawManagerAddress, deployment.claimManagerAddress].join(':');
+    if (seenTuples.has(tupleKey)) {
+      throw new Error(`Duplicate V5 deployment tuple at index ${index}`);
+    }
+    seenTuples.add(tupleKey);
     for (const [role, address] of [
       ['vault', deployment.vaultAddress],
       ['drawManager', deployment.drawManagerAddress],

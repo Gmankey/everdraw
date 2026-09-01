@@ -33,9 +33,12 @@ claimable but cannot be interpreted as wins. This supersedes ADR-0047's version-
 ### Indexed state follows the canonical chain
 
 The indexer uses a nonzero confirmation depth, stores canonical block hashes with its cursor, and
-checks the cursor before each sync. On divergence it rewinds to a known ancestor, deletes orphan raw
-events, and deterministically rebuilds all derived data. Health reports the confirmed head,
-canonical cursor hash, and rewind count.
+checks the cursor before each sync. Every scan captures its boundary hashes before and after log
+retrieval and verifies each returned log's block hash against the canonical block. Raw rows and the
+verified cursor commit in one database transaction; a mismatch advances neither. The independent
+watcher and its input cache apply the same canonical verification independently before persistence.
+On divergence each path rewinds to a known ancestor, deletes orphan state, and deterministically
+rebuilds. Health reports the confirmed head, canonical cursor hash, and rewind count.
 
 ### Reward schedule mutation is contract-wide nonreentrant
 
@@ -45,15 +48,18 @@ callbacks cannot interleave schedule mutation or exceed the cap.
 
 ### Release inputs are immutable and auditable
 
-Production lockfiles are committed. Wallet integration uses pinned Reown AppKit packages instead of
+Production lockfiles are committed. A production Monad-mainnet build rejects a missing or known
+placeholder Reown project ID. Wallet integration uses pinned Reown AppKit packages instead of
 deprecated Web3Modal; the vulnerable transitive Axios line is overridden to patched version 1.18.0.
 Known critical `@xmldom/xmldom` build exposure is overridden to 0.9.12. GitHub Actions use full
 commit SHAs and container bases use image digests. CI emits CycloneDX SBOMs, lockfile hashes, runtime
 versions, a vulnerability scan, and a git-SHA-named immutable artifact.
 
 Residual deprecated transitive packages that cannot be removed without replacing their maintained
-parent are disclosed by dependency path and runtime reachability in release evidence. They are not
-treated as silent acceptance and remain subject to the release vulnerability scan.
+parent are disclosed by dependency path and runtime reachability in release evidence. Fixed High and
+Critical advisories are not waived merely because they are build-only; patched compatible
+transitives are pinned where a build-tool major migration would alter the reviewed deployment path.
+They are not treated as silent acceptance and remain subject to the release vulnerability scan.
 
 ### A success heartbeat is mandatory
 
@@ -64,15 +70,20 @@ do not flap the dead-man check.
 
 ### Verified claim proofs remain available for self-service recovery
 
-The independent root watcher publishes winner proofs only after its recomputed v3 root exactly
-matches the proposed root. Publication uses an authenticated private indexer endpoint and persistent
-storage scoped to the exact chain, vault, DrawManager, and ClaimManager tuple. The public API exposes
-only winner proofs for the requested wallet and active vault. Before submitting a claim, the frontend
-checks the stored proof against the live distribution root and filters already-claimed leaves
-on-chain. It batches every remaining winner leaf into one `claimMany` transaction.
+The independent root watcher verifies proposed roots during the veto window, then publishes winner
+proofs only after its independently recomputed v3 root exactly matches the finalized root. Publication
+uses an authenticated private indexer endpoint and persistent
+append-only storage scoped to the exact chain, vault, DrawManager, and ClaimManager tuple. The
+indexer accepts a publication only when the ClaimManager's finalized distribution has the expected
+source, draw key, root, and leaf count; an existing distribution cannot be replaced. The public API
+exposes only winner proofs for the requested wallet and active vault. Before submitting a claim, the
+frontend independently binds chain, manager, vault, draw, wallet, and claim kind; recomputes each
+v3 leaf and Merkle proof; checks finalized on-chain distribution state and claimed status; and
+simulates `claimMany`. It batches every remaining winner leaf into one transaction.
 
 Proof publication is fail-closed: a required publication failure prevents the watcher from
-checkpointing the matched proposal. The ingest credential is never exposed to the browser. This
+checkpointing the finalized event, while proposal-time mismatch detection remains independent of
+publication availability. The ingest credential is never exposed to the browser. This
 recovery path lets a winner claim if keeper auto-claiming is unavailable without weakening the
 independent root-verification boundary.
 

@@ -198,7 +198,56 @@ async function getLogsRange(provider, filter, from, to) {
   }
 }
 
-export async function queryLogsChunked(provider, filter, fromBlock, toBlock, label = "logs", { onBatch } = {}) {
+async function canonicalBlockHashes(provider, blockNumbers, label) {
+  const unique = [...new Set(blockNumbers.map(Number))];
+  const entries = await Promise.all(unique.map(async (blockNumber) => {
+    const block = await retryTransient(
+      () => withTimeout(provider.getBlock(blockNumber), `${label} canonical block ${blockNumber}`),
+      `${label} canonical block ${blockNumber}`,
+    );
+    if (!block?.hash) throw new Error(`Missing canonical block ${blockNumber} for ${label}`);
+    return [blockNumber, block.hash.toLowerCase()];
+  }));
+  return new Map(entries);
+}
+
+export async function assertCanonicalLogBatch(
+  provider,
+  { windows, logs, boundaryHashes, label = "logs" },
+) {
+  const boundaryBlocks = [...new Set(windows.flat().map(Number))];
+  const logBlocks = logs.map((log) => Number(log.blockNumber));
+  const canonical = await canonicalBlockHashes(provider, [...boundaryBlocks, ...logBlocks], label);
+
+  for (const blockNumber of boundaryBlocks) {
+    const expected = boundaryHashes.get(blockNumber);
+    if (!expected || canonical.get(blockNumber) !== expected) {
+      throw new Error(`Canonical range changed during ${label} at block ${blockNumber}`);
+    }
+  }
+  for (const log of logs) {
+    const blockNumber = Number(log.blockNumber);
+    const logHash = String(log.blockHash || "").toLowerCase();
+    if (!logHash || logHash !== canonical.get(blockNumber)) {
+      throw new Error(`Canonical log mismatch during ${label} at block ${blockNumber}`);
+    }
+  }
+
+  return {
+    boundaryHashes: canonical,
+    checkpointBlock: boundaryBlocks[boundaryBlocks.length - 1],
+    checkpointHash: canonical.get(boundaryBlocks[boundaryBlocks.length - 1]),
+  };
+}
+
+export async function queryLogsChunked(
+  provider,
+  filter,
+  fromBlock,
+  toBlock,
+  label = "logs",
+  { onBatch, getLogs = (f, t) => getLogsRange(provider, filter, f, t) } = {},
+) {
   // Build all [from,to] windows, then fetch them in bounded batches. Default to sequential:
   // Tenderly has hung under concurrent getLogs during live keeper proposeRoot.
   const effectiveFrom = Math.max(Number(fromBlock), Number(toBlock) - MAX_LOG_LOOKBACK);
@@ -211,10 +260,21 @@ export async function queryLogsChunked(provider, filter, fromBlock, toBlock, lab
   console.log(`[${label}] scanning ${windows.length} windows of ${CHUNK_SIZE} blocks (${effectiveFrom}..${toBlock})`);
   for (let i = 0; i < windows.length; i += LOG_CONCURRENCY) {
     const batch = windows.slice(i, i + LOG_CONCURRENCY);
-    const results = await Promise.all(batch.map(([f, t]) => getLogsRange(provider, filter, f, t)));
+    const boundaryHashes = await canonicalBlockHashes(
+      provider,
+      batch.flat(),
+      `${label} pre-scan`,
+    );
+    const results = await Promise.all(batch.map(([f, t]) => getLogs(f, t)));
     const batchLogs = results.flat();
+    const canonical = await assertCanonicalLogBatch(provider, {
+      windows: batch,
+      logs: batchLogs,
+      boundaryHashes,
+      label,
+    });
     logs.push(...batchLogs);
-    if (onBatch) await onBatch({ windows: batch, logs: batchLogs });
+    if (onBatch) await onBatch({ windows: batch, logs: batchLogs, canonical });
     if ((i / LOG_CONCURRENCY) % 10 === 0) {
       console.log(`[${label}] ${Math.min(i + LOG_CONCURRENCY, windows.length)}/${windows.length} windows, ${Math.round((Date.now() - t0) / 1000)}s, ${logs.length} logs`);
     }
@@ -411,12 +471,19 @@ export class DrawInputEventCache {
       target,
       "participants:delta",
       {
-        onBatch: async ({ windows, logs }) => {
+        onBatch: async ({ windows, logs, canonical }) => {
           const scannedThrough = windows[windows.length - 1][1];
-          accounts = participantAccountsFromLogs(logs, accounts);
+          const nextAccounts = participantAccountsFromLogs(logs, accounts);
+          const verified = await assertCanonicalLogBatch(provider, {
+            windows,
+            logs,
+            boundaryHashes: canonical.boundaryHashes,
+            label: "participants:checkpoint",
+          });
+          accounts = nextAccounts;
           this.state.participants = {
             lastScannedBlock: scannedThrough,
-            lastScannedBlockHash: await this.#checkpointHash(provider, scannedThrough),
+            lastScannedBlockHash: verified.checkpointHash,
             accounts,
           };
           this.save();
@@ -434,7 +501,7 @@ export class DrawInputEventCache {
     const iface = new Interface(DRAW_MANAGER_ABI);
     const topic0 = iface.getEvent("SeedReceived").topicHash;
     const from = last + 1;
-    const blocks = { ...(this.state.seeds.blocks || {}) };
+    let blocks = { ...(this.state.seeds.blocks || {}) };
     await queryLogsChunked(
       provider,
       { address: getAddress(drawManagerAddress), topics: [topic0] },
@@ -442,15 +509,23 @@ export class DrawInputEventCache {
       target,
       "seeds:delta",
       {
-        onBatch: async ({ windows, logs }) => {
+        onBatch: async ({ windows, logs, canonical }) => {
+          const nextBlocks = { ...blocks };
           for (const log of sortLogs(logs)) {
             const parsed = iface.parseLog(log);
-            blocks[parsed.args.drawId.toString()] = log.blockNumber;
+            nextBlocks[parsed.args.drawId.toString()] = log.blockNumber;
           }
           const scannedThrough = windows[windows.length - 1][1];
+          const verified = await assertCanonicalLogBatch(provider, {
+            windows,
+            logs,
+            boundaryHashes: canonical.boundaryHashes,
+            label: "seeds:checkpoint",
+          });
+          blocks = nextBlocks;
           this.state.seeds = {
             lastScannedBlock: scannedThrough,
-            lastScannedBlockHash: await this.#checkpointHash(provider, scannedThrough),
+            lastScannedBlockHash: verified.checkpointHash,
             blocks,
           };
           this.save();
