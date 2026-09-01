@@ -1,6 +1,7 @@
 // mainnet config - chain 143
 import { createAppKit } from '@reown/appkit/react'
 import { EthersAdapter } from '@reown/appkit-adapter-ethers'
+import { resolveWalletConnectProjectId } from './walletProjectId.js'
 
 const chainId = Number(import.meta.env.VITE_CHAIN_ID) || 143
 const isMainnet = chainId === 143
@@ -31,7 +32,11 @@ export const modal = createAppKit({
   adapters: [new EthersAdapter()],
   networks: [monadChain],
   metadata,
-  projectId: import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || 'demo-project-id',
+  projectId: resolveWalletConnectProjectId({
+    projectId: import.meta.env.VITE_WALLETCONNECT_PROJECT_ID,
+    chainId,
+    production: import.meta.env.PROD,
+  }),
   features: {
     analytics: false,
     email: false,

@@ -24,14 +24,15 @@ const row: V5ClaimProofRow = {
   publishedAt: new Date(0).toISOString(),
 };
 
-test('claim proofs replace idempotently and remain vault scoped', () => {
+test('claim proofs publish idempotently, reject replacement, and remain vault scoped', () => {
   const db = new Database(':memory:');
   applySchema(db);
   const repo = createV5ClaimProofsRepo(db);
-  repo.replaceDraw([row]);
-  repo.replaceDraw([{ ...row, amount: '101' }]);
+  repo.publishDraw([row]);
+  repo.publishDraw([row]);
+  assert.throws(() => repo.publishDraw([{ ...row, amount: '101' }]), /immutable/);
   assert.equal(repo.listWinnerProofs(wallet, vault).length, 1);
-  assert.equal(repo.listWinnerProofs(wallet, vault)[0].amount, '101');
+  assert.equal(repo.listWinnerProofs(wallet, vault)[0].amount, '100');
   assert.equal(repo.listWinnerProofs(wallet, '0x0000000000000000000000000000000000000099').length, 0);
   db.close();
 });

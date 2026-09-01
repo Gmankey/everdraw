@@ -23,19 +23,45 @@ class FakeLogsProvider {
     this.calls = [];
   }
 
+  async getNetwork() {
+    return { chainId: 10143n };
+  }
+
+  async getBlock(blockNumber) {
+    return { number: Number(blockNumber), hash: blockHash(blockNumber) };
+  }
+
   async getLogs(filter) {
     this.calls.push({ address: filter.address, fromBlock: Number(filter.fromBlock), toBlock: Number(filter.toBlock), topics: filter.topics });
     return this.logs.filter((log) => {
       if (getAddress(log.address) !== getAddress(filter.address)) return false;
       if (log.blockNumber < Number(filter.fromBlock) || log.blockNumber > Number(filter.toBlock)) return false;
-      return (filter.topics || []).every((topic, index) => !topic || log.topics[index]?.toLowerCase() === topic.toLowerCase());
+      return (filter.topics || []).every((topic, index) => {
+        if (!topic) return true;
+        const actual = log.topics[index]?.toLowerCase();
+        return Array.isArray(topic)
+          ? topic.some((candidate) => candidate.toLowerCase() === actual)
+          : topic.toLowerCase() === actual;
+      });
     });
   }
 }
 
+function blockHash(blockNumber) {
+  return '0x' + BigInt(blockNumber).toString(16).padStart(64, '0');
+}
+
 function encodedLog({ iface, event, address, args, blockNumber, logIndex }) {
   const encoded = iface.encodeEventLog(iface.getEvent(event), args);
-  return { address, blockNumber, logIndex, index: logIndex, topics: encoded.topics, data: encoded.data };
+  return {
+    address,
+    blockNumber,
+    blockHash: blockHash(blockNumber),
+    logIndex,
+    index: logIndex,
+    topics: encoded.topics,
+    data: encoded.data,
+  };
 }
 
 test("firstRecentDrawId keeps the configured recent claim window", () => {

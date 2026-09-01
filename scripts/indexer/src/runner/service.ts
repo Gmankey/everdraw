@@ -1,7 +1,7 @@
 import { FallbackProvider, JsonRpcProvider, Interface, ethers } from 'ethers';
 import type { Block, AbstractProvider } from 'ethers';
 import { nowIso } from '../utils/time.js';
-import type { SupportedEventName, RawEventRow } from '../types/domain.js';
+import type { SupportedEventName, RawEventRow, V5DeploymentScope } from '../types/domain.js';
 import type { RawEventsRepo } from '../repositories/rawEventsRepo.js';
 import type { IndexerStateRepo } from '../repositories/indexerStateRepo.js';
 import type { DeriveRoundsService } from '../services/deriveRounds.js';
@@ -63,6 +63,7 @@ export const SUPPORTED_EVENTS: SupportedEventName[] = [
 ];
 
 export interface IndexerRunner {
+  validateConfiguration(): Promise<void>;
   syncOnce(): Promise<{ fromBlock: number; toBlock: number; inserted: number; latestBlock: number; finalizedHead: number }>;
   getStatus(): Promise<{
     lastScannedBlock: number;
@@ -71,6 +72,7 @@ export interface IndexerRunner {
     lag: number;
     canonicalHash: string | null;
     rewindCount: number;
+    v5Deployments: V5DeploymentScope[];
   }>;
   start(): Promise<never>;
 }
@@ -85,15 +87,23 @@ export function createIndexerRunner(input: {
   deriveV5TranchesService?: DeriveV5TranchesService;
   derivePointsService?: DerivePointsService;
   provider?: AbstractProvider;
+  deploymentWiringReader?: (deployment: V5DeploymentScope) => Promise<{
+    vaultDrawManager: string;
+    managerVault: string;
+    managerClaimManager: string;
+    sourceAuthorized: boolean;
+  }>;
 }): IndexerRunner {
   const { config, rawEventsRepo, indexerStateRepo, deriveRoundsService, deriveWalletRoundsService, deriveWalletStatsService, deriveV5TranchesService, derivePointsService } = input;
   const provider = input.provider ?? makeProvider(config.rpcUrl, config.rpcUrlFallback);
+  const deploymentWiringReader = input.deploymentWiringReader ?? createDeploymentWiringReader(provider);
   const iface = new Interface(POOL_EVENT_ABI);
   const stateScope = config.chainId + ':' + config.poolAddresses.map((address) => address.toLowerCase()).sort().join(',');
   const lastFinalizedBlockKey = LAST_FINALIZED_BLOCK_KEY_PREFIX + ':' + stateScope;
   const lastFinalizedBlockHashKey = LAST_FINALIZED_BLOCK_HASH_KEY_PREFIX + ':' + stateScope;
   const canonicalHistoryKey = CANONICAL_HISTORY_KEY_PREFIX + ':' + stateScope;
   const rewindCountKey = REWIND_COUNT_KEY_PREFIX + ':' + stateScope;
+  let configurationValidated = false;
 
   // Streak/tier/multiplier progression only advances via this checkpoint; it must run on its
   // own cadence (independent of block-scan frequency) or every wallet stays frozen at week 0.
@@ -186,7 +196,53 @@ export function createIndexerRunner(input: {
     return ancestor;
   }
 
+  async function canonicalBlockHash(blockNumber: number): Promise<string> {
+    const block = await withRetry(() => provider.getBlock(blockNumber));
+    if (!block?.hash) throw new Error(`Missing canonical block hash for ${blockNumber}`);
+    return block.hash.toLowerCase();
+  }
+
+  function canonicalStateUpdates(blockNumber: number, blockHash: string) {
+    const history = canonicalHistory().filter((item) => item.blockNumber < blockNumber);
+    history.push({ blockNumber, blockHash });
+    const updatedAt = nowIso();
+    return [
+      {
+        key: canonicalHistoryKey,
+        value: JSON.stringify(history.slice(-MAX_CANONICAL_CHECKPOINTS)),
+        updatedAt,
+      },
+      { key: lastFinalizedBlockKey, value: String(blockNumber), updatedAt },
+      { key: lastFinalizedBlockHashKey, value: blockHash, updatedAt },
+    ];
+  }
+
   return {
+    async validateConfiguration() {
+      if (configurationValidated) return;
+      for (const deployment of config.v5Deployments) {
+        const wiring = await deploymentWiringReader(deployment);
+        const expected = {
+          vaultDrawManager: deployment.drawManagerAddress,
+          managerVault: deployment.vaultAddress,
+          managerClaimManager: deployment.claimManagerAddress,
+        };
+        for (const key of Object.keys(expected) as Array<keyof typeof expected>) {
+          if (wiring[key].toLowerCase() !== expected[key].toLowerCase()) {
+            throw new Error(
+              `V5 deployment wiring mismatch for ${key}: expected ${expected[key]}, got ${wiring[key]}`
+            );
+          }
+        }
+        if (!wiring.sourceAuthorized) {
+          throw new Error(
+            `V5 deployment source is not authorized: ${deployment.drawManagerAddress} -> ${deployment.claimManagerAddress}`
+          );
+        }
+      }
+      configurationValidated = true;
+    },
+
     async syncOnce() {
       console.log('[indexer] syncOnce starting...');
       const latestBlock = await provider.getBlockNumber();
@@ -204,18 +260,31 @@ export function createIndexerRunner(input: {
       let chunkCount = 0;
       for (let start = fromBlock; start <= toBlock; start += config.chunkSize) {
         const end = Math.min(toBlock, start + config.chunkSize - 1);
+        const [beforeStartHash, beforeEndHash] = await Promise.all([
+          canonicalBlockHash(start),
+          canonicalBlockHash(end),
+        ]);
         const rowArrays = await Promise.all(
           config.poolAddresses.map((addr) =>
             fetchChunk({ provider, iface, contractAddress: addr, fromBlock: start, toBlock: end, interChunkDelayMs: 50 })
           )
         );
         const rows = rowArrays.flat();
-        if (rows.length > 0) await sleep(500);
-        rawEventsRepo.deleteForBlockRange(start, end);
-        rawEventsRepo.upsertMany(rows);
+        const [afterStartHash, afterEndHash] = await Promise.all([
+          canonicalBlockHash(start),
+          canonicalBlockHash(end),
+        ]);
+        if (beforeStartHash !== afterStartHash || beforeEndHash !== afterEndHash) {
+          throw new Error(`Canonical range changed during fetch: ${start}-${end}`);
+        }
+        rawEventsRepo.commitCanonicalRange({
+          fromBlock: start,
+          toBlock: end,
+          rows,
+          stateUpdates: canonicalStateUpdates(end, afterEndHash),
+        });
         inserted += rows.length;
         chunkCount++;
-        await recordCanonicalCheckpoint(end);
         if (chunkCount % 1000 === 0) {
           console.log(`[indexer] checkpoint block ${end} (${chunkCount} chunks, ${inserted} events)`);
         }
@@ -240,10 +309,12 @@ export function createIndexerRunner(input: {
         lag: Math.max(0, confirmedHead - lastScannedBlock),
         canonicalHash: indexerStateRepo.get(lastFinalizedBlockHashKey)?.value || null,
         rewindCount: Number(indexerStateRepo.get(rewindCountKey)?.value ?? 0),
+        v5Deployments: config.v5Deployments,
       };
     },
 
     async start() {
+      await this.validateConfiguration();
       for (;;) {
         try {
           const result = await this.syncOnce();
@@ -295,6 +366,9 @@ async function fetchChunk(input: {
  block = fetched;
  blockCache.set(log.blockNumber, block);
  }
+ if (!block.hash || !log.blockHash || block.hash.toLowerCase() !== String(log.blockHash).toLowerCase()) {
+ throw new Error(`Canonical log mismatch at block ${log.blockNumber}`);
+ }
  output.push(toRawEventRow({ log, parsed, blockTimestamp: new Date(Number(block.timestamp) * 1000).toISOString() }));
  }
 
@@ -302,6 +376,34 @@ async function fetchChunk(input: {
  return output.sort((a, b) => a.blockNumber !== b.blockNumber ? a.blockNumber - b.blockNumber : a.logIndex - b.logIndex);
 }
 
+
+function createDeploymentWiringReader(provider: AbstractProvider) {
+  const vaultInterface = new Interface(['function drawManager() view returns (address)']);
+  const managerInterface = new Interface([
+    'function vault() view returns (address)',
+    'function claimManager() view returns (address)',
+  ]);
+  const claimInterface = new Interface(['function authorizedSource(address) view returns (bool)']);
+  const read = async (to: string, iface: Interface, method: string, args: unknown[] = []) => {
+    const data = iface.encodeFunctionData(method, args);
+    const result = await withRetry(() => provider.call({ to, data }));
+    return iface.decodeFunctionResult(method, result);
+  };
+  return async (deployment: V5DeploymentScope) => {
+    const [vaultDrawManager, managerVault, managerClaimManager, sourceAuthorized] = await Promise.all([
+      read(deployment.vaultAddress, vaultInterface, 'drawManager'),
+      read(deployment.drawManagerAddress, managerInterface, 'vault'),
+      read(deployment.drawManagerAddress, managerInterface, 'claimManager'),
+      read(deployment.claimManagerAddress, claimInterface, 'authorizedSource', [deployment.drawManagerAddress]),
+    ]);
+    return {
+      vaultDrawManager: String(vaultDrawManager[0]),
+      managerVault: String(managerVault[0]),
+      managerClaimManager: String(managerClaimManager[0]),
+      sourceAuthorized: Boolean(sourceAuthorized[0]),
+    };
+  };
+}
 function makeProvider(rpcUrl: string, rpcUrlFallback?: string): AbstractProvider {
   const primary = new JsonRpcProvider(rpcUrl);
   if (!rpcUrlFallback) return primary;

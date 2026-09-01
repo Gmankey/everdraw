@@ -16,7 +16,7 @@ import { walletParticipatedInDraw } from './v5DrawParticipation.js'
 import { v5PageFromHash } from './v5Navigation.js'
 import { V5_NETWORK_RETRY_MESSAGE, v5UserError, withRpcReadRetry } from './v5RpcRead.js'
 import { v5HistoryResult } from './v5HistoryResult.js'
-import { buildV5ClaimManyArgs } from "./v5ClaimProofs.js"
+import { verifyV5ClaimManyArgs } from "./v5ClaimProofs.js"
 import { formatV5MaxInput } from './v5AmountInput.js'
 import { runV5ConfirmedFollowups } from './v5TransactionLifecycle.js'
 import { awardedMilestones, tierName } from './v5PointsView.js'
@@ -2391,14 +2391,22 @@ export function V5UatExperience() {
     })
   }
   const claimUnclaimedWinnings = () => {
-    const { leaves, proofs } = buildV5ClaimManyArgs(state?.claimProofs)
-    if (leaves.length === 0) {
+    if (!(state?.claimProofs || []).some((proof) => proof?.claimable)) {
       setStatus('No unclaimed prizes found.')
       return
     }
-    return transact('Claim prize', (signer) => (
-      new ethers.Contract(cfg.claimManager, V5_CLAIM_MANAGER_ABI, signer).claimMany(leaves, proofs)
-    ))
+    return transact('Claim prize', async (signer) => {
+      const contract = new ethers.Contract(cfg.claimManager, V5_CLAIM_MANAGER_ABI, signer)
+      const { leaves, proofs } = await verifyV5ClaimManyArgs({
+        claimProofs: state.claimProofs,
+        config: cfg,
+        account,
+        claimManager: contract,
+      })
+      if (leaves.length === 0) throw new Error('No unclaimed prizes found.')
+      await contract.claimMany.staticCall(leaves, proofs)
+      return contract.claimMany(leaves, proofs)
+    })
   }
   return (
     <div className={`app-shell v5-release-mode ${cfg.isUat ? 'v5-uat-mode' : 'v5-mainnet-mode'}`}>

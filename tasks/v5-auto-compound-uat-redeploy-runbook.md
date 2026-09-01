@@ -163,6 +163,9 @@ Confirm it boots against the new draw/claim manager addresses and advances draws
 flyctl secrets set -a everdraw-indexer-uat \
   POOL_ADDRESSES="<VAULT_ADDRESS_UNCHANGED>,<NEW_DRAW_MANAGER>,<NEW_CLAIM_MANAGER>" \
   START_BLOCK="<startBlock from the Step 1 deployment record>" \
+  INDEXER_CHAIN_ID="10143" \
+  INDEXER_CONFIRMATIONS="12" \
+  V5_DEPLOYMENTS_JSON='[{"chainId":10143,"vaultAddress":"<VAULT_ADDRESS_UNCHANGED>","drawManagerAddress":"<NEW_DRAW_MANAGER>","claimManagerAddress":"<NEW_CLAIM_MANAGER>"}]' \
   CLAIM_PROOF_INGEST_SECRET="<operator-generated 32+ character secret>"
 ```
 
@@ -175,8 +178,9 @@ gh secret set V5_CLAIM_PROOF_UAT_URL --repo Gmankey/everdraw \
   --body 'https://everdraw-indexer-uat.fly.dev/api/internal/v5/claim-proofs'
 ~~~
 
-A watcher run must publish a matched root successfully before UAT acceptance. Verify the wallet
-endpoint returns its winner leaf, and verify one History WINNER click submits all unclaimed leaves
+A watcher run must match the proposed root during the veto window, then publish the independently
+recomputed proofs after that root is finalized. Verify the wallet endpoint returns its winner leaf,
+and verify one History WINNER click submits all unclaimed leaves
 in one claimMany transaction.
 
 Setting a Fly secret restarts the machine. Confirm backfill before assuming the API is fresh:

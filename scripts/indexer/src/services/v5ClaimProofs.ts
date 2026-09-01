@@ -126,3 +126,36 @@ export function validatePublishedClaimProofs(
     };
   });
 }
+
+
+export interface ClaimProofDistributionSnapshot {
+  source: string;
+  sourceKey: string;
+  root: string;
+  leafCount: number | bigint;
+  registeredAt: number | bigint;
+}
+
+export function assertPublishedProofsMatchDistribution(
+  rows: V5ClaimProofRow[],
+  distribution: ClaimProofDistributionSnapshot,
+): void {
+  if (rows.length === 0) throw new Error('Claim-proof publication cannot be empty');
+  const first = rows[0];
+  const expectedSourceKey = '0x' + BigInt(first.drawId).toString(16).padStart(64, '0');
+  if (getAddress(distribution.source).toLowerCase() !== first.drawManagerAddress) {
+    throw new Error('Claim-proof distribution source does not match DrawManager');
+  }
+  if (bytes32(distribution.sourceKey, 'distribution source key') !== expectedSourceKey) {
+    throw new Error('Claim-proof distribution source key does not match draw');
+  }
+  if (bytes32(distribution.root, 'distribution root') !== first.root) {
+    throw new Error('Claim-proof root does not match finalized on-chain distribution');
+  }
+  if (BigInt(distribution.leafCount) !== BigInt(rows.length)) {
+    throw new Error('Claim-proof leaf count does not match finalized on-chain distribution');
+  }
+  if (BigInt(distribution.registeredAt) === 0n) {
+    throw new Error('Claim-proof distribution is not finalized on-chain');
+  }
+}

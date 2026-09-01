@@ -273,3 +273,14 @@ test('fails closed when proof publication is required but unconfigured', async (
     /required but not configured/,
   );
 });
+
+
+test("claim-proof publication is gated by RootFinalized, not RootProposed", () => {
+  const source = fs.readFileSync("scripts/draw/watch-root-proposals.mjs", "utf8");
+  assert.match(source, /event RootFinalized\(uint256 indexed drawId/);
+  const finalizationBranch = source.indexOf("const finalizations = logs");
+  const publication = source.indexOf("await publishClaimProofs({ input, result: recomputed, vaultAddress })");
+  assert.ok(finalizationBranch >= 0);
+  assert.ok(publication > finalizationBranch);
+  assert.equal(source.match(/await publishClaimProofs\(\{ input, result: recomputed, vaultAddress \}\)/g)?.length, 1);
+});

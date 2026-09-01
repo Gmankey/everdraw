@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { Contract, JsonRpcProvider } from 'ethers';
 import { applySchema, openDatabase } from './db/database.js';
 import { createRawEventsRepo } from './repositories/rawEventsRepo.js';
 import { createRoundsRepo } from './repositories/roundsRepo.js';
@@ -52,10 +53,11 @@ async function main(): Promise<void> {
     derivePointsService,
   });
 
-  const claimProofIngestSecret = process.env.CLAIM_PROOF_INGEST_SECRET;
-  if (runnerConfig.v5Deployments.length > 0 && (!claimProofIngestSecret || claimProofIngestSecret.length < 32)) {
-    throw new Error("CLAIM_PROOF_INGEST_SECRET must be at least 32 characters for V5 deployments");
-  }
+  await runner.validateConfiguration();
+  const claimProofProvider = new JsonRpcProvider(runnerConfig.rpcUrl);
+  const distributionAbi = [
+    'function distributions(bytes32) view returns (address source,bytes32 sourceKey,bytes32 root,uint32 leafCount,bytes32 metadata,uint64 registeredAt)',
+  ];
   const server = createApiServer({
     port,
     runner,
@@ -65,7 +67,21 @@ async function main(): Promise<void> {
     v5TranchesRepo,
     v5ClaimProofsRepo,
     v5Deployments: runnerConfig.v5Deployments,
-    claimProofIngestSecret,
+    claimProofIngestSecret: runnerConfig.claimProofIngestSecret,
+    claimProofDistributionReader: async (claimManagerAddress, distributionId) => {
+      const distribution = await new Contract(
+        claimManagerAddress,
+        distributionAbi,
+        claimProofProvider,
+      ).distributions(distributionId);
+      return {
+        source: distribution.source,
+        sourceKey: distribution.sourceKey,
+        root: distribution.root,
+        leafCount: distribution.leafCount,
+        registeredAt: distribution.registeredAt,
+      };
+    },
     startedAt,
   });
 

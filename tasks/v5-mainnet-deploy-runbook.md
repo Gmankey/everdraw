@@ -310,10 +310,11 @@ gh secret set V5_CLAIM_PROOF_MAINNET_URL --repo Gmankey/everdraw \
   --body "https://<production-indexer>/api/internal/v5/claim-proofs"
 ```
 
-The mainnet watcher runs with `WATCHER_REQUIRE_CLAIM_PROOF_PUBLISH=true`. It checkpoints a matched
-root only after authenticated proof publication succeeds, so a missing secret or unavailable proof
-API fails visibly instead of silently removing self-claim recovery. Never place the ingest
-credential in the frontend manifest.
+The mainnet watcher runs with `WATCHER_REQUIRE_CLAIM_PROOF_PUBLISH=true`. It independently matches
+each proposed root during the veto window, then reconstructs and publishes proofs only after that
+root is finalized. A missing secret or unavailable proof API pins the finalized event for retry and
+fails visibly instead of silently removing self-claim recovery. Never place the ingest credential
+in the frontend manifest.
 
 Verification:
 

@@ -8,6 +8,12 @@ export interface RawEventsRepo {
   upsertMany(rows: RawEventRow[]): void;
   deleteFromBlock(fromBlock: number): void;
   deleteForBlockRange(fromBlock: number, toBlock: number): void;
+  commitCanonicalRange(input: {
+    fromBlock: number;
+    toBlock: number;
+    rows: RawEventRow[];
+    stateUpdates: Array<{ key: string; value: string; updatedAt: string }>;
+  }): void;
 }
 
 export function createRawEventsRepo(db: Database.Database): RawEventsRepo {
@@ -109,11 +115,29 @@ export function createRawEventsRepo(db: Database.Database): RawEventsRepo {
     DELETE FROM raw_events
     WHERE block_number >= ? AND block_number <= ?
   `);
+  const setStateStmt = db.prepare(`
+    INSERT INTO indexer_state (key, value, updated_at)
+    VALUES (@key, @value, @updatedAt)
+    ON CONFLICT(key) DO UPDATE SET
+      value = excluded.value,
+      updated_at = excluded.updated_at
+  `);
+
 
   const upsertManyTx = db.transaction((rows: RawEventRow[]) => {
     for (const row of rows) {
       upsertStmt.run(row);
     }
+  });
+  const commitCanonicalRangeTx = db.transaction((input: {
+    fromBlock: number;
+    toBlock: number;
+    rows: RawEventRow[];
+    stateUpdates: Array<{ key: string; value: string; updatedAt: string }>;
+  }) => {
+    deleteForBlockRangeStmt.run(input.fromBlock, input.toBlock);
+    for (const row of input.rows) upsertStmt.run(row);
+    for (const update of input.stateUpdates) setStateStmt.run(update);
   });
 
   return {
@@ -135,6 +159,9 @@ export function createRawEventsRepo(db: Database.Database): RawEventsRepo {
     },
     deleteForBlockRange(fromBlock, toBlock) {
       deleteForBlockRangeStmt.run(fromBlock, toBlock);
+    },
+    commitCanonicalRange(input) {
+      commitCanonicalRangeTx(input);
     },
   };
 }
