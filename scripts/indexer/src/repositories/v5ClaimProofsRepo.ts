@@ -21,6 +21,7 @@ export interface V5ClaimProofRow {
 export interface V5ClaimProofsRepo {
   publishDraw(rows: V5ClaimProofRow[]): void;
   listWinnerProofs(account: string, vaultAddress: string): V5ClaimProofRow[];
+  listWinnerAccounts(drawManagerAddress: string, drawId: number): string[];
 }
 
 export function createV5ClaimProofsRepo(db: Database.Database): V5ClaimProofsRepo {
@@ -40,6 +41,11 @@ export function createV5ClaimProofsRepo(db: Database.Database): V5ClaimProofsRep
     'account, token, amount, kind, leaf_hash AS leafHash, proof, root, published_at AS publishedAt',
     'FROM v5_claim_proofs WHERE claim_manager_address = ? AND distribution_id = ?',
     'ORDER BY leaf_index ASC',
+  ].join(' '));
+  const listWinnerAccounts = db.prepare([
+    'SELECT DISTINCT account FROM v5_claim_proofs',
+    'WHERE draw_manager_address = ? AND draw_id = ? AND kind = 0',
+    'ORDER BY account ASC',
   ].join(' '));
   const publish = db.transaction((rows: V5ClaimProofRow[]) => {
     if (rows.length === 0) return;
@@ -76,6 +82,10 @@ export function createV5ClaimProofsRepo(db: Database.Database): V5ClaimProofsRep
     },
     listWinnerProofs(account, vaultAddress) {
       return list.all(account.toLowerCase(), vaultAddress.toLowerCase()) as V5ClaimProofRow[];
+    },
+    listWinnerAccounts(drawManagerAddress, drawId) {
+      return (listWinnerAccounts.all(drawManagerAddress.toLowerCase(), drawId) as Array<{ account: string }>)
+        .map((row) => row.account.toLowerCase());
     },
   };
 }

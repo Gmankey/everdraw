@@ -20,6 +20,7 @@ const MAX_CANONICAL_CHECKPOINTS = 512;
 
 type CanonicalCheckpoint = { blockNumber: number; blockHash: string };
 const LAST_POINTS_CHECKPOINT_UNIX_KEY = 'last_points_checkpoint_unix';
+const PENDING_POINTS_CHECKPOINT_UNIX_KEY = 'pending_points_checkpoint_unix';
 export const SUPPORTED_EVENTS: SupportedEventName[] = [
   // Shared
   'RoundStarted',
@@ -112,10 +113,22 @@ export function createIndexerRunner(input: {
     const nowUnix = Math.floor(Date.now() / 1000);
     const lastRunUnix = Number(indexerStateRepo.get(LAST_POINTS_CHECKPOINT_UNIX_KEY)?.value ?? 0);
     if (!isPointsCheckpointDue(nowUnix, lastRunUnix, config.pointsCheckpointIntervalSec)) return;
-    const result = derivePointsService.runWeeklyCheckpoint(nowUnix);
-    if (!result.skipped) {
-      indexerStateRepo.set(LAST_POINTS_CHECKPOINT_UNIX_KEY, String(nowUnix), nowIso());
-    }
+    const pendingUnix = Number(indexerStateRepo.get(PENDING_POINTS_CHECKPOINT_UNIX_KEY)?.value ?? 0);
+    const checkpointUnix = pendingUnix > lastRunUnix
+      ? pendingUnix
+      : lastRunUnix > 0
+        ? lastRunUnix + config.pointsCheckpointIntervalSec
+        : Math.floor(nowUnix / config.pointsCheckpointIntervalSec) * config.pointsCheckpointIntervalSec;
+    const fromUnix = lastRunUnix > 0
+      ? lastRunUnix
+      : checkpointUnix - config.pointsCheckpointIntervalSec;
+
+    // Persist the exact boundary before processing so a crash retries the same checkpoint.
+    indexerStateRepo.set(PENDING_POINTS_CHECKPOINT_UNIX_KEY, String(checkpointUnix), nowIso());
+    const result = derivePointsService.runWeeklyCheckpoint(checkpointUnix, fromUnix);
+    // A checkpoint with no completed draw is deliberately consumed, not retried forever.
+    indexerStateRepo.set(LAST_POINTS_CHECKPOINT_UNIX_KEY, String(checkpointUnix), nowIso());
+    indexerStateRepo.set(PENDING_POINTS_CHECKPOINT_UNIX_KEY, '0', nowIso());
     console.log('[indexer] points checkpoint', result);
   }
 

@@ -33,6 +33,7 @@ test('claim proofs publish idempotently, reject replacement, and remain vault sc
   assert.throws(() => repo.publishDraw([{ ...row, amount: '101' }]), /immutable/);
   assert.equal(repo.listWinnerProofs(wallet, vault).length, 1);
   assert.equal(repo.listWinnerProofs(wallet, vault)[0].amount, '100');
+  assert.deepEqual(repo.listWinnerAccounts(row.drawManagerAddress, row.drawId), [wallet]);
   assert.equal(repo.listWinnerProofs(wallet, '0x0000000000000000000000000000000000000099').length, 0);
   db.close();
 });

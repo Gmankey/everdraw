@@ -359,7 +359,9 @@ function findDrawId(windows: DrawWindow[], isoTimestamp: string): number | null 
   const unix = Math.floor(Date.parse(isoTimestamp) / 1000);
   if (!Number.isFinite(unix)) return null;
   const match = windows.find((window) => window.periodStart <= unix && unix < window.periodEnd);
-  return match?.drawId ?? null;
+  if (match) return match.drawId;
+  const first = windows[0];
+  return first && unix < first.periodStart ? first.drawId - 1 : null;
 }
 
 function sortEvents(a: RawEventRow, b: RawEventRow): number {
@@ -370,7 +372,9 @@ function sortEvents(a: RawEventRow, b: RawEventRow): number {
 
 function findDrawIdUnix(windows: DrawWindow[], unix: number): number | null {
   const match = windows.find((window) => window.periodStart <= unix && unix < window.periodEnd);
-  return match?.drawId ?? null;
+  if (match) return match.drawId;
+  const first = windows[0];
+  return first && unix < first.periodStart ? first.drawId - 1 : null;
 }
 
 type TrancheState = { remaining: bigint; startDrawId: number | null };

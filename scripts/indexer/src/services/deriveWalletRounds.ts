@@ -47,7 +47,7 @@ export function createDeriveWalletRoundsService(
       for (const event of finalizedEvents) {
         let roundId = event.roundId;
         let poolAddress = event.contractAddress;
-        if (event.eventName === 'ClaimPaid' || event.eventName === 'ClaimDeferred' || event.eventName === 'DeferredClaimPaid') {
+        if (event.eventName === 'ClaimPaid' || event.eventName === 'ClaimDeferred' || event.eventName === 'DeferredClaimPaid' || event.eventName === 'PrizeCompounded') {
           const payload = parsePayload<{ distributionId: string }>(event.payload);
           const mapped = distributionDrawIds.get(payload.distributionId.toLowerCase());
           if (mapped) {
@@ -122,7 +122,8 @@ export function createDeriveWalletRoundsService(
 
           case 'ClaimPaid':
           case 'ClaimDeferred':
-          case 'DeferredClaimPaid': {
+          case 'DeferredClaimPaid':
+          case 'PrizeCompounded': {
             const payload = parsePayload<{ amount: string | number }>(event.payload);
             acc.won = 1;
             if (event.eventName !== 'ClaimDeferred') {

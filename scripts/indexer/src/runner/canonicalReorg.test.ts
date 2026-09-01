@@ -133,6 +133,11 @@ const runner = createIndexerRunner({
 });
 
 await runner.syncOnce();
+assert.ok(
+  Number(indexerStateRepo.get('last_points_checkpoint_unix')?.value || 0) > 0,
+  'a skipped checkpoint must still advance its deterministic cursor',
+);
+assert.equal(indexerStateRepo.get('pending_points_checkpoint_unix')?.value, '0');
 assert.deepEqual(rawEventsRepo.getRange(100, 106).map((row) => row.eventName), [
   'Deposit',
   'Transfer',

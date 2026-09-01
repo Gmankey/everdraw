@@ -19,7 +19,8 @@ export interface PointsRepo {
   listLeaderboard(limit: number, period: 'all' | 'month'): Array<{ wallet: string; lifetimePoints: number; monthPoints?: number; currentStreakWeeks: number }>;
   getRank(wallet: string, period: 'all' | 'month'): number | null;
   listWalletsWithDeposits(): string[];
-  hasAnySettledRoundBetween(fromUnix: number, toUnix: number): boolean;
+  hasAnyCompletedDrawBetween(fromUnix: number, toUnix: number): boolean;
+  listCompletedDrawParticipationBetween(wallet: string, fromUnix: number, toUnix: number): boolean[];
   hasActivePositionAt(wallet: string, checkpointUnix: number, poolAddress?: string): boolean;
   hadV5VaultFullExitBetween(wallet: string, fromUnix: number, toUnix: number): boolean;
   hadFirstDepositBefore(wallet: string, roundId: number): boolean;
@@ -55,13 +56,34 @@ export function createPointsRepo(db: Database.Database): PointsRepo {
       updated_at = CAST(strftime('%s','now') AS INTEGER)
     WHERE EXISTS (
       SELECT 1
-      FROM v5_position_events exit_event
-      WHERE LOWER(exit_event.wallet) = LOWER(wallet_streaks.wallet)
-        AND exit_event.pool_type = 'vault'
-        AND exit_event.action = 'withdraw'
-        AND exit_event.balance_after = '0'
-        AND CAST(strftime('%s', exit_event.block_timestamp) AS INTEGER)
+      FROM v5_tranches closed
+      WHERE LOWER(closed.wallet) = LOWER(wallet_streaks.wallet)
+        AND closed.pool_type = 'vault'
+        AND closed.closed_at IS NOT NULL
+        AND CAST(strftime('%s', closed.closed_at) AS INTEGER)
           > COALESCE(wallet_streaks.last_checkpoint_unix, 0)
+        AND NOT EXISTS (
+          SELECT 1
+          FROM v5_tranches active
+          WHERE LOWER(active.wallet) = LOWER(closed.wallet)
+            AND LOWER(active.vault_address) = LOWER(closed.vault_address)
+            AND active.pool_type = 'vault'
+            AND (
+              active.opened_block_number < closed.closed_block_number
+              OR (
+                active.opened_block_number = closed.closed_block_number
+                AND active.opened_log_index <= closed.closed_log_index
+              )
+            )
+            AND (
+              active.closed_block_number IS NULL
+              OR active.closed_block_number > closed.closed_block_number
+              OR (
+                active.closed_block_number = closed.closed_block_number
+                AND active.closed_log_index > closed.closed_log_index
+              )
+            )
+        )
     )
   `);
 
@@ -192,9 +214,28 @@ export function createPointsRepo(db: Database.Database): PointsRepo {
         ORDER BY wallet ASC
       `).all().map((r: any) => r.wallet as string);
     },
-    hasAnySettledRoundBetween(fromUnix, toUnix) {
-      const row = db.prepare(`SELECT COUNT(*) AS c FROM rounds WHERE state = 'settled' AND settled_at IS NOT NULL AND CAST(strftime('%s', settled_at) AS INTEGER) >= ? AND CAST(strftime('%s', settled_at) AS INTEGER) < ?`).get(fromUnix, toUnix) as { c: number };
+    hasAnyCompletedDrawBetween(fromUnix, toUnix) {
+      const row = db.prepare(`SELECT COUNT(*) AS c FROM rounds WHERE state IN ('settled', 'skipped') AND settled_at IS NOT NULL AND CAST(strftime('%s', settled_at) AS INTEGER) >= ? AND CAST(strftime('%s', settled_at) AS INTEGER) < ?`).get(fromUnix, toUnix) as { c: number };
       return row.c > 0;
+    },
+    listCompletedDrawParticipationBetween(wallet, fromUnix, toUnix) {
+      const rows = db.prepare(`
+        SELECT CASE
+          WHEN wr.wallet IS NOT NULL AND (wr.tickets > 0 OR wr.v5_resolved_base > 0) THEN 1
+          ELSE 0
+        END AS participated
+        FROM rounds r
+        LEFT JOIN wallet_rounds wr
+          ON r.round_id = wr.round_id
+          AND r.pool_address = wr.pool_address
+          AND LOWER(wr.wallet) = LOWER(?)
+        WHERE r.state IN ('settled', 'skipped')
+          AND r.settled_at IS NOT NULL
+          AND CAST(strftime('%s', r.settled_at) AS INTEGER) >= ?
+          AND CAST(strftime('%s', r.settled_at) AS INTEGER) < ?
+        ORDER BY CAST(strftime('%s', r.settled_at) AS INTEGER), r.round_id, r.pool_address
+      `).all(wallet, fromUnix, toUnix) as Array<{ participated: number }>;
+      return rows.map((row) => row.participated === 1);
     },
     hasActivePositionAt(wallet, checkpointUnix, poolAddress) {
       const params: Array<string | number> = [wallet, checkpointUnix, checkpointUnix];
