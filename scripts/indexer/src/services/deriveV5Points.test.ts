@@ -83,9 +83,11 @@ assert.ok(r1, 'expected a points row for draw 1');
 assert.ok(Math.abs(r1!.basePoints - 5.4) < 1e-6, `base should be 5.4, got ${r1!.basePoints}`);
 assert.equal(r1!.multiplierX100, 100, 'account streak multiplier must NOT be applied to V5 base');
 const bonuses = JSON.parse(r1!.bonusesBreakdown);
-assert.equal(bonuses.win, 25000);
-assert.equal(bonuses.first_deposit, 25000);
-assert.equal(bonuses.prize_patron, 25000);
-assert.equal(r1!.totalPoints, 75005, `total should be round(5.4)+75000=75005, got ${r1!.totalPoints}`);
+assert.equal(bonuses.win, 2500);
+assert.equal(bonuses.first_deposit, 2500);
+assert.equal(bonuses.prize_patron, 2500);
+// ADR-0049 §2: win 2,500 + first_deposit 2,500 + prize_patron 2,500 = 7,500 bonuses,
+// plus round(5.4) = 5 base.
+assert.equal(r1!.totalPoints, 7505, `total should be round(5.4)+7500=7505, got ${r1!.totalPoints}`);
 
 console.log('deriveV5Points.test.ts ok');

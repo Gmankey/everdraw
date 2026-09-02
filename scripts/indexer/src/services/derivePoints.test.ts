@@ -93,8 +93,8 @@ function bonuses(ctx: ReturnType<typeof context>, roundId: number, w = wallet): 
 
   const [row] = ctx.pointsRepo.listHistory(wallet, 10);
   assert.equal(row.basePoints, 10);
-  assert.equal(row.totalPoints, 25_010);
-  assert.deepEqual(bonuses(ctx, 1), { first_deposit: 25_000 });
+  assert.equal(row.totalPoints, 2_510);
+  assert.deepEqual(bonuses(ctx, 1), { first_deposit: 2_500 });
   assert.equal(ctx.pointsRepo.getProfile(wallet)!.consecutiveNonWins, 1);
 }
 
@@ -107,7 +107,7 @@ function bonuses(ctx: ReturnType<typeof context>, roundId: number, w = wallet): 
 
   ctx.service.rebuildSettlementPoints();
 
-  assert.equal(bonuses(ctx, 10).loss_streak, 50_000);
+  assert.equal(bonuses(ctx, 10).loss_streak, 5_000);
   assert.equal(ctx.pointsRepo.getProfile(wallet)!.highestLossStreakBonusAwarded, 10);
   assert.equal(ctx.pointsRepo.getProfile(wallet)!.consecutiveNonWins, 10);
 }
@@ -127,8 +127,14 @@ function bonuses(ctx: ReturnType<typeof context>, roundId: number, w = wallet): 
 
   ctx.service.rebuildSettlementPoints();
 
-  assert.equal(bonuses(ctx, 4).comeback_king, 100_000);
-  assert.equal(bonuses(ctx, 7).comeback_king, 100_000);
+  assert.equal(bonuses(ctx, 4).comeback_king, 10_000, 'first genuine comeback is awarded');
+  // ADR-0049 §2 — Comeback King is now ONE-TIME. It was previously repeatable, which made
+  // "exit -> miss 2 draws -> rejoin" an unbounded farming loop worth 100,000 per cycle.
+  assert.equal(
+    bonuses(ctx, 7).comeback_king,
+    undefined,
+    'a second comeback must NOT be awarded: the bonus is one-time per wallet',
+  );
   assert.equal(ctx.pointsRepo.getProfile(wallet)!.consecutiveMissedDraws, 0);
 }
 
@@ -216,7 +222,7 @@ function bonuses(ctx: ReturnType<typeof context>, roundId: number, w = wallet): 
 
   ctx.service.rebuildSettlementPoints();
 
-  assert.equal(bonuses(ctx, 1).prize_patron, 25_000);
+  assert.equal(bonuses(ctx, 1).prize_patron, 2_500);
   assert.equal(ctx.pointsRepo.getProfile(wallet)!.hasReceivedPrizePatronBonus, 1);
 }
 
@@ -376,7 +382,7 @@ function bonuses(ctx: ReturnType<typeof context>, roundId: number, w = wallet): 
     publishedAt: '2026-05-03T00:00:00.000Z',
   }]);
   ctx.service.rebuildSettlementPoints();
-  assert.equal(bonuses(ctx, 1).win, 25_000);
+  assert.equal(bonuses(ctx, 1).win, 2_500);
   assert.equal(ctx.pointsRepo.getProfile(wallet)!.hasReceivedFirstWinBonus, 1);
 }
 
@@ -407,7 +413,7 @@ function bonuses(ctx: ReturnType<typeof context>, roundId: number, w = wallet): 
   ctx.service.rebuildSettlementPoints();
 
   assert.equal(bonuses(ctx, 12).loss_streak, undefined, 'a full exit resets the pre-exit loss streak');
-  assert.equal(bonuses(ctx, 12).comeback_king, 100_000, 'two genuinely absent draws still earn Comeback King');
+  assert.equal(bonuses(ctx, 12).comeback_king, 10_000, 'two genuinely absent draws still earn Comeback King');
   assert.equal(ctx.pointsRepo.getProfile(wallet)!.consecutiveNonWins, 1);
 }
 
@@ -491,7 +497,7 @@ function bonuses(ctx: ReturnType<typeof context>, roundId: number, w = wallet): 
   const profile = ctx.pointsRepo.getProfile(wallet)!;
   assert.equal(profile.currentStreakWeeks, 5, 'two catch-up draws advance two earned streak periods');
   assert.equal(profile.highestStreakMilestoneAwarded, 4, 'crossing week 4 during catch-up awards the milestone');
-  assert.equal(profile.lifetimePoints, 50_000);
+  assert.equal(profile.lifetimePoints, 10_000);
 }
 
 console.log('derivePoints.test.ts ok');
