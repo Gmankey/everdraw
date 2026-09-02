@@ -22,6 +22,7 @@ export interface PointsRepo {
   hasAnyCompletedDrawBetween(fromUnix: number, toUnix: number): boolean;
   listCompletedDrawParticipationBetween(wallet: string, fromUnix: number, toUnix: number): boolean[];
   hasActivePositionAt(wallet: string, checkpointUnix: number, poolAddress?: string): boolean;
+  hasQualifyingPositionAt(wallet: string, atUnix: number, minWei: string): boolean;
   hadV5VaultFullExitBetween(wallet: string, fromUnix: number, toUnix: number): boolean;
   hadFirstDepositBefore(wallet: string, roundId: number): boolean;
   hasDegenDepositAtOrBefore(wallet: string, atUnix: number): boolean;
@@ -267,6 +268,35 @@ export function createPointsRepo(db: Database.Database): PointsRepo {
           ${v5PoolSql}
       `).get(...v5Params) as { c: number };
       return v5Row.c > 0;
+    },
+    hasQualifyingPositionAt(wallet, atUnix, minWei) {
+      // ADR-0049 §3 — does this wallet hold at least `minWei` of vault principal at
+      // `atUnix`? Used to gate one-time streak-milestone bonuses.
+      //
+      // The sum is done in JS with BigInt, NOT in SQL: remaining_amount is wei stored as
+      // TEXT, and SQLite's INTEGER is 64-bit (max ~9.22e18), so SUM(CAST(... AS INTEGER))
+      // would overflow above ~9 MON and silently produce wrong answers.
+      const threshold = BigInt(minWei);
+      if (threshold <= 0n) return true;
+      const rows = db.prepare(`
+        SELECT remaining_amount AS remainingAmount
+        FROM v5_tranches
+        WHERE LOWER(wallet) = LOWER(?)
+          AND pool_type = 'vault'
+          AND CAST(strftime('%s', opened_at) AS INTEGER) <= ?
+          AND (closed_at IS NULL OR CAST(strftime('%s', closed_at) AS INTEGER) > ?)
+      `).all(wallet, atUnix, atUnix) as Array<{ remainingAmount: string }>;
+      let total = 0n;
+      for (const row of rows) {
+        try {
+          total += BigInt(row.remainingAmount);
+        } catch {
+          // A malformed row must not silently inflate or deflate the position.
+          continue;
+        }
+        if (total >= threshold) return true;
+      }
+      return total >= threshold;
     },
     hadV5VaultFullExitBetween(wallet, fromUnix, toUnix) {
       const row = db.prepare(`

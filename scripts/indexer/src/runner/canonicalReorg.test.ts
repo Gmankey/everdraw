@@ -116,6 +116,7 @@ const config: RunnerConfig = {
   maxBlocksPerSync: 100,
   pollIntervalMs: 1,
   pointsCheckpointIntervalSec: 604800,
+  pointsMinQualifyingMon: 100,
 };
 const runner = createIndexerRunner({
   config,

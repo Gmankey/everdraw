@@ -1,4 +1,5 @@
 import type { V5DeploymentScope } from '../types/domain.js';
+import { MIN_QUALIFYING_MON } from '../services/pointsMath.js';
 
 export interface RunnerConfig {
   rpcUrl: string;
@@ -13,6 +14,8 @@ export interface RunnerConfig {
   maxBlocksPerSync: number;
   pollIntervalMs: number;
   pointsCheckpointIntervalSec: number;
+  /** ADR-0049 §3 — MON a wallet must hold through a draw to earn one-time bonuses. */
+  pointsMinQualifyingMon: number;
 }
 
 export function getRunnerConfig(): RunnerConfig {
@@ -41,6 +44,13 @@ export function getRunnerConfig(): RunnerConfig {
     throw new Error('CLAIM_PROOF_INGEST_SECRET must be at least 32 characters for V5 deployments');
   }
 
+  // ADR-0049 §3 — Sybil control. Defaults to the ADR value rather than "off", so a
+  // deployment that forgets the env var is still gated. 0 explicitly disables it.
+  const pointsMinQualifyingMon = Number(process.env.POINTS_MIN_QUALIFYING_MON ?? MIN_QUALIFYING_MON);
+  if (!Number.isFinite(pointsMinQualifyingMon) || pointsMinQualifyingMon < 0) {
+    throw new Error('POINTS_MIN_QUALIFYING_MON must be a non-negative number');
+  }
+
   for (const deployment of v5Deployments) {
     if (deployment.chainId !== chainId) {
       throw new Error(`V5 deployment chain mismatch: expected ${chainId}, got ${deployment.chainId}`);
@@ -65,6 +75,7 @@ export function getRunnerConfig(): RunnerConfig {
     maxBlocksPerSync: Number(process.env.INDEXER_MAX_BLOCKS_PER_SYNC ?? 10_000),
     pollIntervalMs: Number(process.env.INDEXER_POLL_INTERVAL_MS ?? 2000),
     pointsCheckpointIntervalSec: Number(process.env.POINTS_CHECKPOINT_INTERVAL_SEC ?? 604_800),
+    pointsMinQualifyingMon,
   };
 }
 

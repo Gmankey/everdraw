@@ -93,6 +93,7 @@ export function createIndexerRunner(input: {
     managerVault: string;
     managerClaimManager: string;
     sourceAuthorized: boolean;
+    drawPeriodSec: number;
   }>;
 }): IndexerRunner {
   const { config, rawEventsRepo, indexerStateRepo, deriveRoundsService, deriveWalletRoundsService, deriveWalletStatsService, deriveV5TranchesService, derivePointsService } = input;
@@ -252,6 +253,22 @@ export function createIndexerRunner(input: {
             `V5 deployment source is not authorized: ${deployment.drawManagerAddress} -> ${deployment.claimManagerAddress}`
           );
         }
+
+        // ADR-0049 §5 - points curves (tier ladder, streak milestones, tranche tenure)
+        // are denominated in "weeks" but advance per DRAW. That is only correct while one
+        // checkpoint window contains exactly one draw. These two values live on separate
+        // surfaces - drawPeriod is a DrawManagerV5 constructor arg, the checkpoint interval
+        // is an env var - and their mismatch is what produced the 486-week UAT streak and
+        // fired milestones that were never earned. Refuse to run rather than silently
+        // corrupt points.
+        if (wiring.drawPeriodSec !== config.pointsCheckpointIntervalSec) {
+          throw new Error(
+            `Points cadence mismatch for ${deployment.drawManagerAddress}: on-chain drawPeriod is `
+            + `${wiring.drawPeriodSec}s but POINTS_CHECKPOINT_INTERVAL_SEC is `
+            + `${config.pointsCheckpointIntervalSec}s. Streak/tier/milestone curves advance per `
+            + `draw, so these must be equal (ADR-0049 §5). Set POINTS_CHECKPOINT_INTERVAL_SEC=${wiring.drawPeriodSec}.`
+          );
+        }
       }
       configurationValidated = true;
     },
@@ -395,6 +412,7 @@ function createDeploymentWiringReader(provider: AbstractProvider) {
   const managerInterface = new Interface([
     'function vault() view returns (address)',
     'function claimManager() view returns (address)',
+    'function drawPeriod() view returns (uint64)',
   ]);
   const claimInterface = new Interface(['function authorizedSource(address) view returns (bool)']);
   const read = async (to: string, iface: Interface, method: string, args: unknown[] = []) => {
@@ -403,17 +421,19 @@ function createDeploymentWiringReader(provider: AbstractProvider) {
     return iface.decodeFunctionResult(method, result);
   };
   return async (deployment: V5DeploymentScope) => {
-    const [vaultDrawManager, managerVault, managerClaimManager, sourceAuthorized] = await Promise.all([
+    const [vaultDrawManager, managerVault, managerClaimManager, sourceAuthorized, drawPeriod] = await Promise.all([
       read(deployment.vaultAddress, vaultInterface, 'drawManager'),
       read(deployment.drawManagerAddress, managerInterface, 'vault'),
       read(deployment.drawManagerAddress, managerInterface, 'claimManager'),
       read(deployment.claimManagerAddress, claimInterface, 'authorizedSource', [deployment.drawManagerAddress]),
+      read(deployment.drawManagerAddress, managerInterface, 'drawPeriod'),
     ]);
     return {
       vaultDrawManager: String(vaultDrawManager[0]),
       managerVault: String(managerVault[0]),
       managerClaimManager: String(managerClaimManager[0]),
       sourceAuthorized: Boolean(sourceAuthorized[0]),
+      drawPeriodSec: Number(drawPeriod[0]),
     };
   };
 }

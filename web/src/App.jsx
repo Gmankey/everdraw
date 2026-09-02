@@ -523,18 +523,18 @@ function ProfilePage({ account, points, history, tranches, currentDrawId, curren
   const noWinDraws = Number(points?.consecutive_non_wins || 0)
   const highestLossAwarded = Number(points?.highest_loss_streak_bonus_awarded || 0)
   const bonusRows = [
-    { key: 'first-deposit', label: 'First Deposit', points: 25000, unlocked: Number(points?.has_received_first_deposit_bonus || 0) === 1 },
-    { key: 'win', label: 'Win', points: 25000, unlocked: Number(points?.has_received_first_win_bonus || 0) === 1 || historyRows.some((row) => Number(row?.bonuses_breakdown?.win || 0) > 0) },
-    { key: 'prize-patron', label: 'Prize Patron', points: 25000, unlocked: Number(points?.has_received_prize_patron_bonus || 0) === 1 },
-    { key: 'comeback-king', label: 'Comeback King', points: 100000, unlocked: historyRows.some((row) => Number(row?.bonuses_breakdown?.comeback_king || 0) > 0) },
-    { key: 'loss-10', label: '10 draw no-win streak', points: 50000, unlocked: highestLossAwarded >= 10 || noWinDraws >= 10 },
-    { key: 'loss-26', label: '26 draw no-win streak', points: 500000, unlocked: highestLossAwarded >= 26 || noWinDraws >= 26 },
-    { key: 'loss-52', label: '52 draw no-win streak', points: 2000000, unlocked: highestLossAwarded >= 52 || noWinDraws >= 52 },
-    { key: 'streak-2', label: '2 week streak', points: 10000, unlocked: highestMilestoneAwarded >= 2 || streakWeeks >= 2 },
-    { key: 'streak-4', label: '4 week streak', points: 50000, unlocked: highestMilestoneAwarded >= 4 || streakWeeks >= 4 },
-    { key: 'streak-13', label: '13 week streak', points: 200000, unlocked: highestMilestoneAwarded >= 13 || streakWeeks >= 13 },
-    { key: 'streak-26', label: '26 week streak', points: 500000, unlocked: highestMilestoneAwarded >= 26 || streakWeeks >= 26 },
-    { key: 'streak-52', label: '52 week streak', points: 1000000, unlocked: highestMilestoneAwarded >= 52 || streakWeeks >= 52 },
+    { key: 'first-deposit', label: 'First Deposit', points: 2500, unlocked: Number(points?.has_received_first_deposit_bonus || 0) === 1 },
+    { key: 'win', label: 'Win', points: 2500, unlocked: Number(points?.has_received_first_win_bonus || 0) === 1 || historyRows.some((row) => Number(row?.bonuses_breakdown?.win || 0) > 0) },
+    { key: 'prize-patron', label: 'Prize Patron', points: 2500, unlocked: Number(points?.has_received_prize_patron_bonus || 0) === 1 },
+    { key: 'comeback-king', label: 'Comeback King', points: 10000, unlocked: historyRows.some((row) => Number(row?.bonuses_breakdown?.comeback_king || 0) > 0) },
+    { key: 'loss-10', label: '10 draw no-win streak', points: 5000, unlocked: highestLossAwarded >= 10 || noWinDraws >= 10 },
+    { key: 'loss-26', label: '26 draw no-win streak', points: 50000, unlocked: highestLossAwarded >= 26 || noWinDraws >= 26 },
+    { key: 'loss-52', label: '52 draw no-win streak', points: 200000, unlocked: highestLossAwarded >= 52 || noWinDraws >= 52 },
+    { key: 'streak-2', label: '2 week streak', points: 5000, unlocked: highestMilestoneAwarded >= 2 || streakWeeks >= 2 },
+    { key: 'streak-4', label: '4 week streak', points: 10000, unlocked: highestMilestoneAwarded >= 4 || streakWeeks >= 4 },
+    { key: 'streak-13', label: '13 week streak', points: 20000, unlocked: highestMilestoneAwarded >= 13 || streakWeeks >= 13 },
+    { key: 'streak-26', label: '26 week streak', points: 50000, unlocked: highestMilestoneAwarded >= 26 || streakWeeks >= 26 },
+    { key: 'streak-52', label: '52 week streak', points: 100000, unlocked: highestMilestoneAwarded >= 52 || streakWeeks >= 52 },
   ].sort((a, b) => Number(b.unlocked) - Number(a.unlocked))
   const recentDraws = historyRows.slice(0, 12)
   const ensName = points?.ens && !ethers.isAddress(points.ens) && points.ens.toLowerCase() !== account.toLowerCase() ? points.ens : ''

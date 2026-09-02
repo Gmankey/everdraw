@@ -1,23 +1,48 @@
 export type PointsTier = 'Bronze' | 'Silver' | 'Gold' | 'Platinum' | 'Diamond';
 
+// ADR-0049 §2 — rebalanced bonus values (operator, 2026-09-02).
+// The previous ×1000 values made the one-off stack worth ~4.36M, i.e. ~99% of a
+// 1,000 MON year (4,392,360 base). These bring the full stack to 455,000 — ~10%
+// of that year, roughly one month of a serious holder.
 export const STREAK_MILESTONE_POINTS = new Map<number, number>([
-  [2, 10_000],
-  [4, 50_000],
-  [13, 200_000],
-  [26, 500_000],
-  [52, 1_000_000],
+  [2, 5_000],
+  [4, 10_000],
+  [13, 20_000],
+  [26, 50_000],
+  [52, 100_000],
 ]);
 
-export const FIRST_DEPOSIT_POINTS = 25_000;
-export const WIN_POINTS = 25_000;
-export const COMEBACK_KING_POINTS = 100_000;
-export const PRIZE_PATRON_POINTS = 25_000;
+export const FIRST_DEPOSIT_POINTS = 2_500;
+export const WIN_POINTS = 2_500;
+export const COMEBACK_KING_POINTS = 10_000;
+export const PRIZE_PATRON_POINTS = 2_500;
 
 export const LOSS_STREAK_THRESHOLD_POINTS = new Map<number, number>([
-  [10, 50_000],
-  [26, 500_000],
-  [52, 2_000_000],
+  [10, 5_000],
+  [26, 50_000],
+  [52, 200_000],
 ]);
+
+// ADR-0049 §3 — one-time bonuses require a qualifying position held THROUGH the
+// awarding draw. Expressed in MON; converted to an entries floor using the draw
+// period so the gate is cadence-independent (§5). Recurring Win is exempt: expected
+// wins scale with share of TWAB, so splitting confers no advantage.
+export const MIN_QUALIFYING_MON = 100;
+
+// Locked ticket rate, mirrors deriveV5Tranches.ENTRIES_RATE_PER_MON_PER_MIN.
+export const ENTRIES_RATE_PER_MON_PER_MIN = 0.005;
+
+/**
+ * Entries a wallet must have earned in a single draw to clear the qualifying
+ * threshold. `entries = 0.005 × MON × minutes`, so holding `minMon` for the whole
+ * draw yields exactly this. Scales with cadence by construction: 5,040 at weekly,
+ * 180 at 6-hourly, for the default 100 MON.
+ */
+export function minQualifyingEntries(drawPeriodSec: number, minMon: number = MIN_QUALIFYING_MON): number {
+  if (!Number.isFinite(drawPeriodSec) || drawPeriodSec <= 0) return 0;
+  if (!Number.isFinite(minMon) || minMon <= 0) return 0;
+  return ENTRIES_RATE_PER_MON_PER_MIN * minMon * (drawPeriodSec / 60);
+}
 
 export function getMultiplierX100(streakWeeks: number): number {
   if (streakWeeks >= 26) return 200;
@@ -71,14 +96,24 @@ export function multiplierForTranche(input: {
 
 export type BonusBreakdown = Record<string, number>;
 
+/**
+ * Awards EVERY newly-crossed loss-streak threshold, not just the highest.
+ * Previously this kept only the last match, so a wallet advancing multiple
+ * thresholds in one processing step (replay / catch-up — the defect-#8 class)
+ * silently lost the lower awards. Matches the streak-milestone loop's behaviour.
+ * `threshold` is the highest crossed, which is what the caller persists as the
+ * new high-water mark; `points` is the sum of all newly crossed.
+ */
 export function lossStreakThresholdBonus(nextConsecutiveNonWins: number, highestAwarded: number): { threshold: number; points: number } | null {
-  let award: { threshold: number; points: number } | null = null;
-  for (const [threshold, points] of LOSS_STREAK_THRESHOLD_POINTS) {
-    if (nextConsecutiveNonWins >= threshold && highestAwarded < threshold) {
-      award = { threshold, points };
+  let points = 0;
+  let threshold = 0;
+  for (const [candidate, candidatePoints] of LOSS_STREAK_THRESHOLD_POINTS) {
+    if (nextConsecutiveNonWins >= candidate && highestAwarded < candidate) {
+      points += candidatePoints;
+      threshold = candidate;
     }
   }
-  return award;
+  return threshold === 0 ? null : { threshold, points };
 }
 
 export function calculateRoundPoints(input: {
@@ -89,7 +124,6 @@ export function calculateRoundPoints(input: {
   firstDeposit: boolean;
   comebackKing: boolean;
   prizePatron?: boolean;
-  skippedOrFailed?: boolean;
   // V5: base already has per-tranche multipliers baked in (§2b), so pass 100 to skip the account-streak multiplier.
   multiplierX100Override?: number;
 }): { basePoints: number; multiplierX100: number; bonuses: BonusBreakdown; totalPoints: number } {
