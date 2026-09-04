@@ -15,6 +15,7 @@
     "test:prize-wins": "node --test src/v5PrizeWins.test.js",
     "preview": "vite preview",
     "test:points-view": "node --test src/v5PointsView.test.js",
+    "test:points-values": "node --test src/v5PointsValues.test.js",
     "test:previous-draw": "node --test src/v5PreviousDraw.test.js",
     "test:history-result": "node --test src/v5HistoryResult.test.js",
     "test:rpc-read": "node --test src/v5RpcRead.test.js",

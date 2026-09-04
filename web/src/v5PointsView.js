@@ -1,5 +1,30 @@
+// SINGLE SOURCE OF TRUTH for points values in the frontend (ADR-0049 §2).
+//
+// These numbers are mirrored from the indexer's scripts/indexer/src/services/pointsMath.ts,
+// which is what actually awards them. The two packages cannot import from each other, so
+// v5PointsValues.test.js reads that file and fails if these drift apart. Previously the values
+// were duplicated inline in App.jsx as well, and a rebalance updated one copy but not the
+// other, so the UI advertised milestone awards 10x larger than what was actually paid.
+//
+// If you change a value here you must change pointsMath.ts too -- the test will tell you.
+
+/** One-time and recurring flat bonuses. */
+export const BONUS_POINTS = {
+  firstDeposit: 2_500,
+  win: 2_500,
+  prizePatron: 2_500,
+  comebackKing: 10_000,
+}
+
+/** Consecutive draws without a win. Counts DRAWS, not calendar time. */
+export const LOSS_STREAK_AWARDS = [
+  { draws: 10, points: 5_000 },
+  { draws: 26, points: 50_000 },
+  { draws: 52, points: 200_000 },
+]
+
 // Streak milestones count DRAWS, not calendar weeks: the streak advances one step per
-// completed draw. Values are ADR-0049 §2.
+// completed draw.
 export const STREAK_MILESTONE_AWARDS = [
   { draws: 2, points: 5_000 },
   { draws: 4, points: 10_000 },
