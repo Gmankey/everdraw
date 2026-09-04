@@ -89,7 +89,23 @@ on-chain drawPeriod  ==  POINTS_CHECKPOINT_INTERVAL_SEC
 
 `drawPeriod` is a `DrawManagerV5` constructor argument; `pointsCheckpointIntervalSec` is an env var validated against nothing. Their mismatch is the root cause of the contaminated UAT data (the 486/535-"week" streak): hourly draws batched into a longer checkpoint window advanced streaks up to 168× too fast and fired milestones that were never earned.
 
-**Required:** the indexer asserts this equality at startup and refuses to run on mismatch.
+**Superseded 2026-09-03 — the invariant was removed rather than asserted.**
+
+The first implementation added a startup assertion that the configured checkpoint interval equalled the on-chain `drawPeriod`, refusing to start on mismatch. It caught a real misconfiguration on its first deploy — UAT had moved to 6-hourly draws while the checkpoint was still hourly — but the design was wrong in three ways:
+
+1. **Blast radius.** The assertion gated the whole indexer, so a points misconfiguration also stopped event ingestion, rounds, tranches and claim proofs: the data the product actually depends on. Points are recognition-only with no monetary value and must never be able to take that down.
+2. **Startup-only.** `validateConfiguration()` latches, so a `drawPeriod` change made through the timelocked tunable *while the indexer is running* would never be seen. The guard did not cover the very scenario the tunable creates.
+3. **Multiple deployments deadlock.** `V5_DEPLOYMENTS_JSON` is an array checked against one global interval, so two deployments with different periods could never both match — an unfixable startup failure.
+
+**The checkpoint is now driven by draws, not by a clock.** `runDrawCheckpoints()` advances every wallet's streak by exactly one step per completed draw — `+1` if they participated in that draw, `0` if they did not. There is no interval setting, so `POINTS_CHECKPOINT_INTERVAL_SEC` and the assertion are both deleted. Streak state became a pure function of draw participation, independent of wall-clock spacing: the same sequence of draws yields the same streak whether those draws are an hour or a week apart.
+
+This removes the mismatch class rather than detecting it. Nothing is left to keep in sync, and no deploy can break points by changing cadence without updating a setting.
+
+Retained consequences:
+
+- The **bonus qualifying floor** (§3) still needs the draw period, to express "N MON held through the draw" in that draw's entries. It is read **from the chain** at startup, never from configuration, so there is still a single source of truth. If it cannot be read, the gate is disabled and logged loudly rather than blocking startup — points are fully derived, so a later pass with a readable period rebuilds them correctly.
+- Points faults in the runner are caught and logged; ingestion continues regardless.
+- **Curve calibration remains cadence-sensitive, and this change does not alter that.** One draw is one streak step, so at a 6-hourly cadence a "52-week" milestone arrives in 13 days. That is correct for draw-tied points, but the ladder thresholds are calibrated for the weekly mainnet cadence, so the note below still applies.
 
 **Consequence of the cadence tunable:** the timelocked `drawPeriod` setter being added to `DrawManagerV5` means cadence can change in production. Because the curves are calibrated at one draw ≈ one week, **any cadence change rescales the earning rate** and makes pre- and post-change totals incomparable under the append-only rule. A cadence change therefore requires an explicit points decision — recalibrate the ladders, or accept the new rate — recorded at that time.
 

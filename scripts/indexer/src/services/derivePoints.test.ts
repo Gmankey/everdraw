@@ -176,8 +176,8 @@ function bonuses(ctx: ReturnType<typeof context>, roundId: number, w = wallet): 
     updatedAt: 1,
   });
 
-  const partial = ctx.service.runWeeklyCheckpoint(Date.parse('2026-05-10T00:00:00.000Z') / 1000);
-  assert.equal(partial.skipped, false);
+  const partial = ctx.service.runDrawCheckpoints();
+  assert.ok(partial.processedDraws > 0, 'the checkpoint must actually process at least one draw');
   assert.equal(ctx.pointsRepo.getProfile(wallet)!.currentStreakWeeks, 4);
 
   ctx.pointsRepo.ensureWallet(otherWallet, 1);
@@ -192,9 +192,29 @@ function bonuses(ctx: ReturnType<typeof context>, roundId: number, w = wallet): 
   });
   wr(ctx, 1, 1, 0, otherWallet);
 
-  const full = ctx.service.runWeeklyCheckpoint(Date.parse('2026-05-10T00:00:00.000Z') / 1000);
-  assert.equal(full.skipped, false);
-  assert.equal(ctx.pointsRepo.getProfile(otherWallet)!.currentStreakWeeks, 0);
+  const full = ctx.service.runDrawCheckpoints();
+  assert.ok(full.processedDraws > 0, 'the checkpoint must actually process at least one draw');
+  // Draw-tied semantics: otherWallet participated in the one settled draw, so its streak
+  // advances. The previous timer-driven checkpoint returned 0 here because it asked "do you
+  // hold a position right now?" rather than "did you participate in this draw?". Conflating
+  // those is what let a wall-clock window advance a streak by more than one step per draw.
+  assert.equal(ctx.pointsRepo.getProfile(otherWallet)!.currentStreakWeeks, 4);
+
+  // The protective intent of the original assertion still holds, one draw later: a wallet that
+  // stops participating is zeroed at the next draw, not left with a stale streak.
+  round(ctx, 3, 'settled', '2026-05-04T00:00:00.000Z');
+  wr(ctx, 3, 1, 0); // only `wallet` participates in draw 3
+  ctx.service.runDrawCheckpoints();
+  assert.equal(
+    ctx.pointsRepo.getProfile(otherWallet)!.currentStreakWeeks,
+    0,
+    'missing a draw zeroes the streak',
+  );
+  assert.equal(
+    ctx.pointsRepo.getProfile(wallet)!.currentStreakWeeks,
+    5,
+    'and a wallet that keeps participating advances by exactly one per draw',
+  );
 }
 
 {
@@ -315,8 +335,8 @@ function bonuses(ctx: ReturnType<typeof context>, roundId: number, w = wallet): 
   });
   const fromUnix = Date.parse('2026-05-01T00:00:00.000Z') / 1000;
   const checkpointUnix = Date.parse('2026-05-04T00:00:00.000Z') / 1000;
-  const result = ctx.service.runWeeklyCheckpoint(checkpointUnix, fromUnix);
-  assert.equal(result.skipped, false);
+  const result = ctx.service.runDrawCheckpoints();
+  assert.ok(result.processedDraws > 0, 'the checkpoint must actually process at least one draw');
   assert.equal(ctx.pointsRepo.getProfile(wallet)!.currentStreakWeeks, 1);
 }
 
@@ -351,9 +371,9 @@ function bonuses(ctx: ReturnType<typeof context>, roundId: number, w = wallet): 
     closedTxHash: null,
   });
   const checkpointUnix = Date.parse('2026-05-04T00:00:00.000Z') / 1000;
-  ctx.service.runWeeklyCheckpoint(checkpointUnix, 1);
+  ctx.service.runDrawCheckpoints();
   const once = ctx.pointsRepo.getProfile(wallet)!;
-  ctx.service.runWeeklyCheckpoint(checkpointUnix, 1);
+  ctx.service.runDrawCheckpoints();
   const twice = ctx.pointsRepo.getProfile(wallet)!;
   assert.equal(once.currentStreakWeeks, 4);
   assert.equal(twice.currentStreakWeeks, 4);
@@ -442,7 +462,7 @@ function bonuses(ctx: ReturnType<typeof context>, roundId: number, w = wallet): 
 
   const fromUnix = Date.parse('2026-05-01T00:00:00.000Z') / 1000;
   const checkpointUnix = Date.parse('2026-05-10T00:00:00.000Z') / 1000;
-  ctx.service.runWeeklyCheckpoint(checkpointUnix, fromUnix);
+  ctx.service.runDrawCheckpoints();
 
   assert.equal(
     ctx.pointsRepo.getProfile(wallet)!.currentStreakWeeks,
@@ -492,7 +512,7 @@ function bonuses(ctx: ReturnType<typeof context>, roundId: number, w = wallet): 
     closedTxHash: null,
   });
 
-  ctx.service.runWeeklyCheckpoint(checkpointUnix, fromUnix);
+  ctx.service.runDrawCheckpoints();
 
   const profile = ctx.pointsRepo.getProfile(wallet)!;
   assert.equal(profile.currentStreakWeeks, 5, 'two catch-up draws advance two earned streak periods');

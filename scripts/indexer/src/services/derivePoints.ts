@@ -7,7 +7,19 @@ import { calculateRoundPoints, lossStreakThresholdBonus, STREAK_MILESTONE_POINTS
 
 export interface DerivePointsService {
   rebuildSettlementPoints(): void;
-  runWeeklyCheckpoint(checkpointUnix?: number, fromUnix?: number): { processed: number; skipped: boolean; reason?: string };
+  /**
+   * Advance streak/tier/milestone state one step per COMPLETED DRAW.
+   *
+   * Points are tied to draws, not wall-clock time: no draw means no checkpoint means no
+   * streak movement. This removes the previous timer-driven checkpoint, whose interval had
+   * to be kept equal to the on-chain drawPeriod by configuration -- a mismatch there is what
+   * produced the 486-"week" UAT streak and unearned milestones. There is now nothing to
+   * keep in sync.
+   *
+   * Idempotent: each wallet's `lastCheckpointUnix` cursor is the settlement time of the last
+   * draw applied to it, so re-running only processes draws it has not already seen.
+   */
+  runDrawCheckpoints(): { processedDraws: number; processedWallets: number };
 }
 
 export function createDerivePointsService(input: {
@@ -165,80 +177,99 @@ export function createDerivePointsService(input: {
       }
     },
 
-    runWeeklyCheckpoint(checkpointUnix = nowUnix(), fromUnix = checkpointUnix - 7 * 86400) {
-      if (!pointsRepo.hasAnyCompletedDrawBetween(fromUnix, checkpointUnix)) {
-        console.warn(`[points] weekly checkpoint skipped at ${checkpointUnix}: no completed draws in checkpoint interval`);
-        return { processed: 0, skipped: true, reason: 'no completed draws in checkpoint interval' };
-      }
+    runDrawCheckpoints() {
+      // Draw-driven, not time-driven. Each completed draw advances every wallet's streak by
+      // exactly one step: +1 if they participated in that draw, reset to 0 if they did not.
+      const draws = roundsRepo.listAll()
+        .filter((round) => ['settled', 'skipped'].includes(round.state))
+        .map((round) => ({ round, unix: toUnix(round.settledAt) }))
+        .filter((entry): entry is { round: typeof entry.round; unix: number } =>
+          entry.unix != null && entry.unix >= pointsStartUnix)
+        .sort((a, b) => {
+          if (a.unix !== b.unix) return a.unix - b.unix;
+          if (a.round.roundId !== b.round.roundId) return a.round.roundId - b.round.roundId;
+          return a.round.poolAddress.localeCompare(b.round.poolAddress);
+        });
 
-      let processed = 0;
+      if (draws.length === 0) return { processedDraws: 0, processedWallets: 0 };
+
+      // One participant query per draw, reused across every wallet.
+      const participantsByDraw = draws.map(({ round }) => new Set(
+        walletRoundsRepo.listByRound(round.roundId, round.poolAddress)
+          .filter((participant) => participant.tickets > 0 || (participant.v5ResolvedBase ?? 0) > 0)
+          .map((participant) => participant.wallet.toLowerCase())
+      ));
+
+      let processedWallets = 0;
+      const advancedDraws = new Set<number>();
+
       for (const wallet of pointsRepo.listWalletsWithDeposits()) {
-        pointsRepo.ensureWallet(wallet, checkpointUnix);
-        const points = pointsRepo.getWalletPoints(wallet)!;
-        const streak = pointsRepo.getWalletStreak(wallet)!;
-        if (streak.lastCheckpointUnix != null && streak.lastCheckpointUnix >= checkpointUnix) {
-          continue;
-        }
-        const hasActivePosition = pointsRepo.hasActivePositionAt(wallet, checkpointUnix);
-        const drawParticipation = pointsRepo.listCompletedDrawParticipationBetween(
-          wallet,
-          fromUnix,
-          checkpointUnix,
-        );
-        let consecutiveParticipated = 0;
-        for (let index = drawParticipation.length - 1; index >= 0 && drawParticipation[index]; index -= 1) {
-          consecutiveParticipated += 1;
-        }
-        const participatedInWindow = consecutiveParticipated > 0;
-        const hadFullExit = streak.lastCheckpointUnix != null && streak.lastCheckpointUnix > 0
-          ? pointsRepo.hadV5VaultFullExitBetween(wallet, streak.lastCheckpointUnix, checkpointUnix)
-          : false;
-        const qualifiesForStreak = hasActivePosition && participatedInWindow;
-        const nextCurrent = qualifiesForStreak
-          ? hadFullExit
-            ? Math.min(1, consecutiveParticipated)
-            : consecutiveParticipated === drawParticipation.length
-              ? streak.currentStreakWeeks + consecutiveParticipated
-              : consecutiveParticipated
-          : 0;
-        const nextLongest = Math.max(streak.longestStreakWeeks, nextCurrent);
-        let highestAwarded = points.highestStreakMilestoneAwarded;
-        let lifetimePoints = points.lifetimePoints;
+        pointsRepo.ensureWallet(wallet, draws[draws.length - 1].unix);
+        let points = pointsRepo.getWalletPoints(wallet)!;
+        let streak = pointsRepo.getWalletStreak(wallet)!;
+        let walletAdvanced = false;
 
-        // ADR-0049 §3 — streak milestones are one-time bonuses and carry the same
-        // qualifying-position requirement. They are the largest single block of the
-        // one-off stack (185,000 of 455,000), so leaving them ungated would leave the
-        // dust-farming vector largely intact.
-        const qualifiesForMilestones = minQualifyingWei <= 0n
-          || pointsRepo.hasQualifyingPositionAt(wallet, checkpointUnix, minQualifyingWei.toString());
+        for (let index = 0; index < draws.length; index += 1) {
+          const drawUnix = draws[index].unix;
+          // Already applied to this wallet.
+          if (streak.lastCheckpointUnix != null && streak.lastCheckpointUnix >= drawUnix) continue;
 
-        if (qualifiesForMilestones) {
-          for (const [milestone, bonus] of STREAK_MILESTONE_POINTS) {
-            if (nextCurrent >= milestone && highestAwarded < milestone) {
-              lifetimePoints += bonus;
-              highestAwarded = milestone;
+          const previousUnix = streak.lastCheckpointUnix != null && streak.lastCheckpointUnix > 0
+            ? streak.lastCheckpointUnix
+            : pointsStartUnix;
+          const participated = participantsByDraw[index].has(wallet);
+          const hadFullExit = pointsRepo.hadV5VaultFullExitBetween(wallet, previousUnix, drawUnix);
+
+          // A full exit wipes tenure: the streak restarts at this draw rather than continuing.
+          const nextCurrent = participated
+            ? (hadFullExit ? 1 : streak.currentStreakWeeks + 1)
+            : 0;
+          const nextLongest = Math.max(streak.longestStreakWeeks, nextCurrent);
+
+          let highestAwarded = points.highestStreakMilestoneAwarded;
+          let lifetimePoints = points.lifetimePoints;
+
+          // ADR-0049 §3 — streak milestones are one-time bonuses and carry the same
+          // qualifying-position requirement as the other one-offs.
+          const qualifiesForMilestones = minQualifyingWei <= 0n
+            || pointsRepo.hasQualifyingPositionAt(wallet, drawUnix, minQualifyingWei.toString());
+
+          if (qualifiesForMilestones) {
+            for (const [milestone, bonus] of STREAK_MILESTONE_POINTS) {
+              if (nextCurrent >= milestone && highestAwarded < milestone) {
+                lifetimePoints += bonus;
+                highestAwarded = milestone;
+              }
             }
           }
+
+          // Persist the one-time award marker BEFORE the cursor. If the process dies between
+          // these writes, retrying this draw cannot duplicate the bonus.
+          points = {
+            ...points,
+            lifetimePoints,
+            highestStreakMilestoneAwarded: highestAwarded,
+            updatedAt: drawUnix,
+          };
+          pointsRepo.upsertWalletPoints(points);
+
+          streak = {
+            ...streak,
+            currentStreakWeeks: nextCurrent,
+            longestStreakWeeks: nextLongest,
+            lastCheckpointUnix: drawUnix,
+            updatedAt: drawUnix,
+          };
+          pointsRepo.upsertWalletStreak(streak);
+
+          advancedDraws.add(index);
+          walletAdvanced = true;
         }
 
-        // Persist the one-time award marker before the checkpoint cursor. If the process dies
-        // between these writes, retrying the same checkpoint cannot duplicate the bonus.
-        pointsRepo.upsertWalletPoints({
-          ...points,
-          lifetimePoints,
-          highestStreakMilestoneAwarded: highestAwarded,
-          updatedAt: checkpointUnix,
-        });
-        pointsRepo.upsertWalletStreak({
-          ...streak,
-          currentStreakWeeks: nextCurrent,
-          longestStreakWeeks: nextLongest,
-          lastCheckpointUnix: checkpointUnix,
-          updatedAt: checkpointUnix,
-        });
-        processed += 1;
+        if (walletAdvanced) processedWallets += 1;
       }
-      return { processed, skipped: false };
+
+      return { processedDraws: advancedDraws.size, processedWallets };
     },
   };
 }

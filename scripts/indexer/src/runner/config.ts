@@ -13,7 +13,6 @@ export interface RunnerConfig {
   chunkSize: number;
   maxBlocksPerSync: number;
   pollIntervalMs: number;
-  pointsCheckpointIntervalSec: number;
   /** ADR-0049 §3 — MON a wallet must hold through a draw to earn one-time bonuses. */
   pointsMinQualifyingMon: number;
 }
@@ -74,7 +73,6 @@ export function getRunnerConfig(): RunnerConfig {
     chunkSize: Number(process.env.INDEXER_CHUNK_SIZE ?? 100),
     maxBlocksPerSync: Number(process.env.INDEXER_MAX_BLOCKS_PER_SYNC ?? 10_000),
     pollIntervalMs: Number(process.env.INDEXER_POLL_INTERVAL_MS ?? 2000),
-    pointsCheckpointIntervalSec: Number(process.env.POINTS_CHECKPOINT_INTERVAL_SEC ?? 604_800),
     pointsMinQualifyingMon,
   };
 }

@@ -115,9 +115,9 @@ const config: RunnerConfig = {
   chunkSize: 1,
   maxBlocksPerSync: 100,
   pollIntervalMs: 1,
-  pointsCheckpointIntervalSec: 604800,
   pointsMinQualifyingMon: 100,
 };
+let pointsCheckpointCalls = 0;
 const runner = createIndexerRunner({
   config,
   rawEventsRepo,
@@ -129,16 +129,19 @@ const runner = createIndexerRunner({
   deriveV5TranchesService: { rebuildFromRaw: rebuild },
   derivePointsService: {
     rebuildSettlementPoints: rebuild,
-    runWeeklyCheckpoint: () => ({ skipped: true, reason: 'test' }),
+    runDrawCheckpoints: () => { pointsCheckpointCalls += 1; return { processedDraws: 0, processedWallets: 0 }; },
   } as never,
 });
 
 await runner.syncOnce();
+// Regression for the original bug where the points checkpoint existed but was never invoked,
+// leaving every wallet's streak frozen at 0 forever. The checkpoint is now draw-driven rather
+// than timer-driven, so there is no interval cursor to assert; what must hold is that a sync
+// cycle actually drives it.
 assert.ok(
-  Number(indexerStateRepo.get('last_points_checkpoint_unix')?.value || 0) > 0,
-  'a skipped checkpoint must still advance its deterministic cursor',
+  pointsCheckpointCalls > 0,
+  'syncOnce must invoke the points checkpoint, or streaks freeze at 0 forever',
 );
-assert.equal(indexerStateRepo.get('pending_points_checkpoint_unix')?.value, '0');
 assert.deepEqual(rawEventsRepo.getRange(100, 106).map((row) => row.eventName), [
   'Deposit',
   'Transfer',

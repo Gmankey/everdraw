@@ -41,19 +41,17 @@ async function main(): Promise<void> {
   const deriveWalletRoundsService = createDeriveWalletRoundsService(rawEventsRepo, walletRoundsRepo);
   const deriveWalletStatsService = createDeriveWalletStatsService(walletRoundsRepo, walletStatsRepo);
   const deriveV5TranchesService = createDeriveV5TranchesService(rawEventsRepo, v5TranchesRepo, walletRoundsRepo, runnerConfig.v5Deployments);
-  // ADR-0049 §3 — one-time bonuses require a qualifying position held through the draw.
-  // The entries floor is derived from the checkpoint interval, which validateConfiguration()
-  // asserts equals the on-chain drawPeriod (§5), so the gate means "N MON held through the
-  // draw" at whatever cadence is deployed.
+  // ADR-0049 §3 - one-time bonuses require a qualifying position held THROUGH the draw, so
+  // the floor must be expressed in that draw's entries. The period is read from the chain
+  // rather than configuration: a second source of truth for cadence is exactly what caused
+  // the mismatch this design removes.
+  const drawPeriodSec = await readDrawPeriodSec(runnerConfig);
   const derivePointsService = createDerivePointsService({
     pointsRepo,
     roundsRepo,
     walletRoundsRepo,
     v5ClaimProofsRepo,
-    minQualifyingEntries: minQualifyingEntries(
-      runnerConfig.pointsCheckpointIntervalSec,
-      runnerConfig.pointsMinQualifyingMon,
-    ),
+    minQualifyingEntries: minQualifyingEntries(drawPeriodSec, runnerConfig.pointsMinQualifyingMon),
     // parseEther, not hand-rolled arithmetic: MON may be fractional and 1 MON = 1e18 wei,
     // which is past Number's exact-integer range.
     minQualifyingWei: parseEther(String(runnerConfig.pointsMinQualifyingMon)).toString(),
@@ -111,3 +109,40 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
+
+/**
+ * ADR-0049 §3 — read the draw period from the chain so the qualifying-bonus floor means
+ * "N MON held through the draw" at whatever cadence is deployed.
+ *
+ * On failure this returns 0, which DISABLES the gate rather than blocking startup. Rationale:
+ * the indexer also serves events, rounds, tranches and claim proofs that the product depends
+ * on, and a recognition feature must not be able to take those down. An over-strict gate would
+ * silently deny real users their bonuses; a disabled gate is visible in the leaderboard and
+ * self-heals, because points are fully derived and a later pass with a readable period rebuilds
+ * them correctly.
+ */
+async function readDrawPeriodSec(config: ReturnType<typeof getRunnerConfig>): Promise<number> {
+  const deployment = config.v5Deployments[0];
+  if (!deployment) return 0;
+  try {
+    const provider = new JsonRpcProvider(config.rpcUrl);
+    const drawManager = new Contract(
+      deployment.drawManagerAddress,
+      ['function drawPeriod() view returns (uint64)'],
+      provider,
+    );
+    const period = Number(await drawManager.drawPeriod());
+    if (!Number.isFinite(period) || period <= 0) {
+      throw new Error(`invalid on-chain drawPeriod: ${period}`);
+    }
+    return period;
+  } catch (error) {
+    console.error(
+      '[indexer][points] could not read on-chain drawPeriod; the one-time-bonus qualifying gate'
+      + ' is DISABLED for this process. Ingestion is unaffected and points rebuild once the'
+      + ' period is readable. Cause:',
+      error,
+    );
+    return 0;
+  }
+}

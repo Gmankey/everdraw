@@ -237,7 +237,7 @@ function bonuses(ctx: ReturnType<typeof context>, roundId: number): Record<strin
       closedLogIndex: null,
       closedTxHash: null,
     });
-    ctx.service.runWeeklyCheckpoint(checkpointUnix, fromUnix);
+    ctx.service.runDrawCheckpoints();
     return ctx.pointsRepo.getProfile(wallet)!;
   }
 
