@@ -100,8 +100,8 @@ function v5Round(ctx: ReturnType<typeof context>, roundId: number, settledAt: st
   const checkpointUnix = Date.parse('2026-05-10T00:00:00.000Z') / 1000;
   assert.equal(ctx.pointsRepo.hasActivePositionAt(wallet, checkpointUnix), true);
 
-  const result = ctx.service.runWeeklyCheckpoint(checkpointUnix);
-  assert.equal(result.skipped, false);
+  const result = ctx.service.runDrawCheckpoints();
+  assert.ok(result.processedDraws > 0, 'the checkpoint must actually process at least one draw');
   assert.equal(ctx.pointsRepo.getProfile(wallet)!.currentStreakWeeks, 1, 'V5 wallet streak should advance, not stay frozen at 0');
 }
 
@@ -157,9 +157,26 @@ function v5Round(ctx: ReturnType<typeof context>, roundId: number, settledAt: st
   const checkpointUnix = Date.parse('2026-05-10T00:00:00.000Z') / 1000;
   assert.equal(ctx.pointsRepo.hasActivePositionAt(wallet, checkpointUnix), false, 'fully withdrawn V5 wallet must not read as active');
 
-  const result = ctx.service.runWeeklyCheckpoint(checkpointUnix);
-  assert.equal(result.skipped, false);
-  assert.equal(ctx.pointsRepo.getProfile(wallet)!.currentStreakWeeks, 0, 'streak should reset once the V5 position is fully closed');
+  const result = ctx.service.runDrawCheckpoints();
+  assert.ok(result.processedDraws > 0, 'the checkpoint must actually process at least one draw');
+  // Draw-tied semantics: the wallet did participate in draw 1 (it held a position for that
+  // draw), so draw 1 advances its streak. The exit happened after draw 1 settled, and no draw
+  // has occurred since, so nothing has yet observed it -- points move only when draws do.
+  assert.equal(
+    ctx.pointsRepo.getProfile(wallet)!.currentStreakWeeks,
+    4,
+    'the draw the wallet actually participated in still counts',
+  );
+
+  // The original protective intent -- a fully withdrawn wallet must not keep an active streak
+  // -- holds at the next draw, which it cannot participate in because it holds nothing.
+  v5Round(ctx, 2, '2026-05-12T00:00:00.000Z');
+  ctx.service.runDrawCheckpoints();
+  assert.equal(
+    ctx.pointsRepo.getProfile(wallet)!.currentStreakWeeks,
+    0,
+    'a fully withdrawn wallet is zeroed at the next draw',
+  );
 }
 
 {
@@ -245,12 +262,33 @@ function v5Round(ctx: ReturnType<typeof context>, roundId: number, settledAt: st
     updatedAt: previousCheckpoint,
   });
 
+  // The rebuild is only observable at a draw that happens AFTER the fresh prize tranche was
+  // opened: points move when draws do, so without a subsequent draw there is nothing for the
+  // checkpoint to apply.
+  v5Round(ctx, 2, '2026-05-09T00:00:00.000Z');
+  ctx.walletRoundsRepo.upsert({
+    wallet,
+    roundId: 2,
+    poolAddress: vault,
+    tickets: 0,
+    monPaid: '0',
+    won: 0,
+    withdrew: 0,
+    prizeClaimed: '0',
+    principalWithdrawn: '0',
+    withdrawnAt: null,
+    netPosition: '0',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  ctx.walletRoundsRepo.upsertV5ResolvedBase(wallet, 2, vault, 5);
+
   const checkpointUnix = Date.parse('2026-05-10T00:00:00.000Z') / 1000;
   assert.equal(ctx.pointsRepo.hasActivePositionAt(wallet, checkpointUnix), true);
   assert.equal(ctx.pointsRepo.hadV5VaultFullExitBetween(wallet, previousCheckpoint, checkpointUnix), true);
 
-  const result = ctx.service.runWeeklyCheckpoint(checkpointUnix);
-  assert.equal(result.skipped, false);
+  const result = ctx.service.runDrawCheckpoints();
+  assert.ok(result.processedDraws > 0, 'the checkpoint must actually process at least one draw');
   assert.equal(ctx.pointsRepo.getProfile(wallet)!.currentStreakWeeks, 1, 'fresh prize tranche must rebuild after the full-exit reset');
 }
 

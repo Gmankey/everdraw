@@ -19,8 +19,6 @@ const REWIND_COUNT_KEY_PREFIX = 'rewind_count';
 const MAX_CANONICAL_CHECKPOINTS = 512;
 
 type CanonicalCheckpoint = { blockNumber: number; blockHash: string };
-const LAST_POINTS_CHECKPOINT_UNIX_KEY = 'last_points_checkpoint_unix';
-const PENDING_POINTS_CHECKPOINT_UNIX_KEY = 'pending_points_checkpoint_unix';
 export const SUPPORTED_EVENTS: SupportedEventName[] = [
   // Shared
   'RoundStarted',
@@ -93,7 +91,6 @@ export function createIndexerRunner(input: {
     managerVault: string;
     managerClaimManager: string;
     sourceAuthorized: boolean;
-    drawPeriodSec: number;
   }>;
 }): IndexerRunner {
   const { config, rawEventsRepo, indexerStateRepo, deriveRoundsService, deriveWalletRoundsService, deriveWalletStatsService, deriveV5TranchesService, derivePointsService } = input;
@@ -107,30 +104,25 @@ export function createIndexerRunner(input: {
   const rewindCountKey = REWIND_COUNT_KEY_PREFIX + ':' + stateScope;
   let configurationValidated = false;
 
-  // Streak/tier/multiplier progression only advances via this checkpoint; it must run on its
-  // own cadence (independent of block-scan frequency) or every wallet stays frozen at week 0.
-  function maybeRunPointsCheckpoint(): void {
+  // Streak/tier/milestone progression advances one step per COMPLETED DRAW, never on a
+  // wall-clock timer. Points are tied to draws: no draw means no checkpoint means no streak
+  // movement. The previous timer required its interval to be kept equal to the on-chain
+  // drawPeriod by configuration, and that mismatch is what produced the 486-"week" UAT
+  // streak and unearned milestones. There is now nothing to keep in sync.
+  //
+  // A points fault must never take the indexer down. Points are a recognition feature with no
+  // monetary value, while this same process ingests events, rounds, tranches and claim proofs
+  // the product depends on. Faults are logged and skipped; because points are fully derived,
+  // a later pass rebuilds them correctly.
+  function runPointsCheckpoints(): void {
     if (!derivePointsService) return;
-    const nowUnix = Math.floor(Date.now() / 1000);
-    const lastRunUnix = Number(indexerStateRepo.get(LAST_POINTS_CHECKPOINT_UNIX_KEY)?.value ?? 0);
-    if (!isPointsCheckpointDue(nowUnix, lastRunUnix, config.pointsCheckpointIntervalSec)) return;
-    const pendingUnix = Number(indexerStateRepo.get(PENDING_POINTS_CHECKPOINT_UNIX_KEY)?.value ?? 0);
-    const checkpointUnix = pendingUnix > lastRunUnix
-      ? pendingUnix
-      : lastRunUnix > 0
-        ? lastRunUnix + config.pointsCheckpointIntervalSec
-        : Math.floor(nowUnix / config.pointsCheckpointIntervalSec) * config.pointsCheckpointIntervalSec;
-    const fromUnix = lastRunUnix > 0
-      ? lastRunUnix
-      : checkpointUnix - config.pointsCheckpointIntervalSec;
-
-    // Persist the exact boundary before processing so a crash retries the same checkpoint.
-    indexerStateRepo.set(PENDING_POINTS_CHECKPOINT_UNIX_KEY, String(checkpointUnix), nowIso());
-    const result = derivePointsService.runWeeklyCheckpoint(checkpointUnix, fromUnix);
-    // A checkpoint with no completed draw is deliberately consumed, not retried forever.
-    indexerStateRepo.set(LAST_POINTS_CHECKPOINT_UNIX_KEY, String(checkpointUnix), nowIso());
-    indexerStateRepo.set(PENDING_POINTS_CHECKPOINT_UNIX_KEY, '0', nowIso());
-    console.log('[indexer] points checkpoint', result);
+    try {
+      const result = derivePointsService.runDrawCheckpoints();
+      if (result.processedDraws > 0) console.log('[indexer] points checkpoint', result);
+    } catch (error) {
+      console.error('[indexer][points] checkpoint failed; ingestion continues and points will'
+        + ' rebuild on a later pass:', error);
+    }
   }
 
   function rebuildDerivedState(): void {
@@ -254,21 +246,6 @@ export function createIndexerRunner(input: {
           );
         }
 
-        // ADR-0049 §5 - points curves (tier ladder, streak milestones, tranche tenure)
-        // are denominated in "weeks" but advance per DRAW. That is only correct while one
-        // checkpoint window contains exactly one draw. These two values live on separate
-        // surfaces - drawPeriod is a DrawManagerV5 constructor arg, the checkpoint interval
-        // is an env var - and their mismatch is what produced the 486-week UAT streak and
-        // fired milestones that were never earned. Refuse to run rather than silently
-        // corrupt points.
-        if (wiring.drawPeriodSec !== config.pointsCheckpointIntervalSec) {
-          throw new Error(
-            `Points cadence mismatch for ${deployment.drawManagerAddress}: on-chain drawPeriod is `
-            + `${wiring.drawPeriodSec}s but POINTS_CHECKPOINT_INTERVAL_SEC is `
-            + `${config.pointsCheckpointIntervalSec}s. Streak/tier/milestone curves advance per `
-            + `draw, so these must be equal (ADR-0049 §5). Set POINTS_CHECKPOINT_INTERVAL_SEC=${wiring.drawPeriodSec}.`
-          );
-        }
       }
       configurationValidated = true;
     },
@@ -323,7 +300,7 @@ export function createIndexerRunner(input: {
       console.log(`[indexer] batch done: scanned ${fromBlock}-${toBlock}, ${inserted} events in ${chunkCount} chunks`);
       if (toBlock >= finalizedHead - 500) {
         rebuildDerivedState();
-        maybeRunPointsCheckpoint();
+        runPointsCheckpoints();
       }
       return { fromBlock, toBlock, inserted, latestBlock, finalizedHead };
     },
@@ -412,7 +389,6 @@ function createDeploymentWiringReader(provider: AbstractProvider) {
   const managerInterface = new Interface([
     'function vault() view returns (address)',
     'function claimManager() view returns (address)',
-    'function drawPeriod() view returns (uint64)',
   ]);
   const claimInterface = new Interface(['function authorizedSource(address) view returns (bool)']);
   const read = async (to: string, iface: Interface, method: string, args: unknown[] = []) => {
@@ -421,19 +397,17 @@ function createDeploymentWiringReader(provider: AbstractProvider) {
     return iface.decodeFunctionResult(method, result);
   };
   return async (deployment: V5DeploymentScope) => {
-    const [vaultDrawManager, managerVault, managerClaimManager, sourceAuthorized, drawPeriod] = await Promise.all([
+    const [vaultDrawManager, managerVault, managerClaimManager, sourceAuthorized] = await Promise.all([
       read(deployment.vaultAddress, vaultInterface, 'drawManager'),
       read(deployment.drawManagerAddress, managerInterface, 'vault'),
       read(deployment.drawManagerAddress, managerInterface, 'claimManager'),
       read(deployment.claimManagerAddress, claimInterface, 'authorizedSource', [deployment.drawManagerAddress]),
-      read(deployment.drawManagerAddress, managerInterface, 'drawPeriod'),
     ]);
     return {
       vaultDrawManager: String(vaultDrawManager[0]),
       managerVault: String(managerVault[0]),
       managerClaimManager: String(managerClaimManager[0]),
       sourceAuthorized: Boolean(sourceAuthorized[0]),
-      drawPeriodSec: Number(drawPeriod[0]),
     };
   };
 }
@@ -744,6 +718,3 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export function isPointsCheckpointDue(nowUnix: number, lastRunUnix: number, intervalSec: number): boolean {
-  return nowUnix - lastRunUnix >= intervalSec;
-}
