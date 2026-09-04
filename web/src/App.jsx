@@ -19,7 +19,14 @@ import { v5HistoryResult } from './v5HistoryResult.js'
 import { verifyV5ClaimManyArgs } from "./v5ClaimProofs.js"
 import { formatV5MaxInput } from './v5AmountInput.js'
 import { runV5ConfirmedFollowups } from './v5TransactionLifecycle.js'
-import { awardedMilestones, effectiveTrancheMultiplierX100, tierName } from './v5PointsView.js'
+import {
+  awardedMilestones,
+  effectiveTrancheMultiplierX100,
+  tierName,
+  BONUS_POINTS,
+  LOSS_STREAK_AWARDS,
+  STREAK_MILESTONE_AWARDS,
+} from './v5PointsView.js'
 import { latestSettledDraw, participantRowsForDraw } from './v5PreviousDraw.js'
 import { assertV5RuntimeSnapshot, assertV5WalletChain, v5ReleaseConfigFromEnv, verifyV5WritePreconditions } from './v5ReleaseConfig.js'
 import { v5PeriodAccountEvents } from './v5PeriodAccountEvents.js'
@@ -457,9 +464,9 @@ function PointsHeaderWidget({ account, points, onProfileClick }) {
 
   return (
     <div className="points-header">
-      <button className="points-pill" type="button" onClick={(event) => onProfileClick ? onProfileClick(event) : setOpen((v) => !v)} aria-label={`${lifetimePoints.toLocaleString()} points, ${streakWeeks} week streak`}>
+      <button className="points-pill" type="button" onClick={(event) => onProfileClick ? onProfileClick(event) : setOpen((v) => !v)} aria-label={`${lifetimePoints.toLocaleString()} points, ${streakWeeks} draw streak`}>
         <span className="points-pill-stat points-pill-points" title="Points"><span aria-hidden="true">✦</span>{lifetimePoints.toLocaleString()}</span>
-        <span className="points-pill-stat points-pill-streak" title="Weekly streak"><span aria-hidden="true">🔥</span>{streakWeeks}</span>
+        <span className="points-pill-stat points-pill-streak" title="Draw streak"><span aria-hidden="true">🔥</span>{streakWeeks}</span>
       </button>
       {open ? (
         <div className="points-popover points-popover-simple">
@@ -522,19 +529,25 @@ function ProfilePage({ account, points, history, tranches, currentDrawId, curren
   const milestoneAwards = awardedMilestones(points)
   const noWinDraws = Number(points?.consecutive_non_wins || 0)
   const highestLossAwarded = Number(points?.highest_loss_streak_bonus_awarded || 0)
+  // Values come from v5PointsView.js, which mirrors the indexer. Do not inline numbers here:
+  // that duplication is what let the UI advertise awards the indexer never paid.
   const bonusRows = [
-    { key: 'first-deposit', label: 'First Deposit', points: 2500, unlocked: Number(points?.has_received_first_deposit_bonus || 0) === 1 },
-    { key: 'win', label: 'Win', points: 2500, unlocked: Number(points?.has_received_first_win_bonus || 0) === 1 || historyRows.some((row) => Number(row?.bonuses_breakdown?.win || 0) > 0) },
-    { key: 'prize-patron', label: 'Prize Patron', points: 2500, unlocked: Number(points?.has_received_prize_patron_bonus || 0) === 1 },
-    { key: 'comeback-king', label: 'Comeback King', points: 10000, unlocked: historyRows.some((row) => Number(row?.bonuses_breakdown?.comeback_king || 0) > 0) },
-    { key: 'loss-10', label: '10 draw no-win streak', points: 5000, unlocked: highestLossAwarded >= 10 || noWinDraws >= 10 },
-    { key: 'loss-26', label: '26 draw no-win streak', points: 50000, unlocked: highestLossAwarded >= 26 || noWinDraws >= 26 },
-    { key: 'loss-52', label: '52 draw no-win streak', points: 200000, unlocked: highestLossAwarded >= 52 || noWinDraws >= 52 },
-    { key: 'streak-2', label: '2 week streak', points: 5000, unlocked: highestMilestoneAwarded >= 2 || streakWeeks >= 2 },
-    { key: 'streak-4', label: '4 week streak', points: 10000, unlocked: highestMilestoneAwarded >= 4 || streakWeeks >= 4 },
-    { key: 'streak-13', label: '13 week streak', points: 20000, unlocked: highestMilestoneAwarded >= 13 || streakWeeks >= 13 },
-    { key: 'streak-26', label: '26 week streak', points: 50000, unlocked: highestMilestoneAwarded >= 26 || streakWeeks >= 26 },
-    { key: 'streak-52', label: '52 week streak', points: 100000, unlocked: highestMilestoneAwarded >= 52 || streakWeeks >= 52 },
+    { key: 'first-deposit', label: 'First Deposit', points: BONUS_POINTS.firstDeposit, unlocked: Number(points?.has_received_first_deposit_bonus || 0) === 1 },
+    { key: 'win', label: 'Win', points: BONUS_POINTS.win, unlocked: Number(points?.has_received_first_win_bonus || 0) === 1 || historyRows.some((row) => Number(row?.bonuses_breakdown?.win || 0) > 0) },
+    { key: 'prize-patron', label: 'Prize Patron', points: BONUS_POINTS.prizePatron, unlocked: Number(points?.has_received_prize_patron_bonus || 0) === 1 },
+    { key: 'comeback-king', label: 'Comeback King', points: BONUS_POINTS.comebackKing, unlocked: historyRows.some((row) => Number(row?.bonuses_breakdown?.comeback_king || 0) > 0) },
+    ...LOSS_STREAK_AWARDS.map(({ draws, points: award }) => ({
+      key: `loss-${draws}`,
+      label: `${draws} draw no-win streak`,
+      points: award,
+      unlocked: highestLossAwarded >= draws || noWinDraws >= draws,
+    })),
+    ...STREAK_MILESTONE_AWARDS.map(({ draws, points: award }) => ({
+      key: `streak-${draws}`,
+      label: `${draws} draw streak`,
+      points: award,
+      unlocked: highestMilestoneAwarded >= draws || streakWeeks >= draws,
+    })),
   ].sort((a, b) => Number(b.unlocked) - Number(a.unlocked))
   const recentDraws = historyRows.slice(0, 12)
   const ensName = points?.ens && !ethers.isAddress(points.ens) && points.ens.toLowerCase() !== account.toLowerCase() ? points.ens : ''
@@ -555,10 +568,10 @@ function ProfilePage({ account, points, history, tranches, currentDrawId, curren
 
           <div className="points-streak-mini rewards-streak-block">
             <div>
-              <span className="points-popover-kicker">Weekly streak</span>
+              <span className="points-popover-kicker">Draw streak</span>
               <strong>{streakWeeks} Week Streak</strong>
             </div>
-            <div className="points-streak-dots points-streak-dots-52" aria-label={`${litDots} of ${dotCount} weeks active`}>
+            <div className="points-streak-dots points-streak-dots-52" aria-label={`${litDots} of ${dotCount} draws active`}>
               {Array.from({ length: dotCount }).map((_, i) => {
                 const week = i + 1
                 const isMilestone = streakMilestoneWeeks.includes(week)
@@ -616,9 +629,9 @@ function ProfilePage({ account, points, history, tranches, currentDrawId, curren
         {milestoneAwards.length > 0 ? (
           <div className="points-milestone-awards" aria-label="Milestone awards">
             {milestoneAwards.map((award) => (
-              <div className="points-milestone-award-row" key={award.week}>
+              <div className="points-milestone-award-row" key={award.draws}>
                 <span className="round-bonus-pill">MILESTONE</span>
-                <span>{award.week} week streak</span>
+                <span>{award.draws} draw streak</span>
                 <strong>+{award.points.toLocaleString()}</strong>
               </div>
             ))}

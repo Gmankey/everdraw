@@ -4,9 +4,9 @@ import { awardedMilestones, effectiveTrancheMultiplierX100, tierName } from './v
 
 test('exposes every checkpoint milestone included in the headline total', () => {
   assert.deepEqual(awardedMilestones({ highest_streak_milestone_awarded: 13 }), [
-    { week: 2, points: 10_000 },
-    { week: 4, points: 50_000 },
-    { week: 13, points: 200_000 },
+    { draws: 2, points: 5_000 },
+    { draws: 4, points: 10_000 },
+    { draws: 13, points: 20_000 },
   ])
 })
 
