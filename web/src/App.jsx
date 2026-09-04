@@ -457,9 +457,9 @@ function PointsHeaderWidget({ account, points, onProfileClick }) {
 
   return (
     <div className="points-header">
-      <button className="points-pill" type="button" onClick={(event) => onProfileClick ? onProfileClick(event) : setOpen((v) => !v)} aria-label={`${lifetimePoints.toLocaleString()} points, ${streakWeeks} week streak`}>
+      <button className="points-pill" type="button" onClick={(event) => onProfileClick ? onProfileClick(event) : setOpen((v) => !v)} aria-label={`${lifetimePoints.toLocaleString()} points, ${streakWeeks} draw streak`}>
         <span className="points-pill-stat points-pill-points" title="Points"><span aria-hidden="true">✦</span>{lifetimePoints.toLocaleString()}</span>
-        <span className="points-pill-stat points-pill-streak" title="Weekly streak"><span aria-hidden="true">🔥</span>{streakWeeks}</span>
+        <span className="points-pill-stat points-pill-streak" title="Draw streak"><span aria-hidden="true">🔥</span>{streakWeeks}</span>
       </button>
       {open ? (
         <div className="points-popover points-popover-simple">
@@ -530,11 +530,11 @@ function ProfilePage({ account, points, history, tranches, currentDrawId, curren
     { key: 'loss-10', label: '10 draw no-win streak', points: 5000, unlocked: highestLossAwarded >= 10 || noWinDraws >= 10 },
     { key: 'loss-26', label: '26 draw no-win streak', points: 50000, unlocked: highestLossAwarded >= 26 || noWinDraws >= 26 },
     { key: 'loss-52', label: '52 draw no-win streak', points: 200000, unlocked: highestLossAwarded >= 52 || noWinDraws >= 52 },
-    { key: 'streak-2', label: '2 week streak', points: 5000, unlocked: highestMilestoneAwarded >= 2 || streakWeeks >= 2 },
-    { key: 'streak-4', label: '4 week streak', points: 10000, unlocked: highestMilestoneAwarded >= 4 || streakWeeks >= 4 },
-    { key: 'streak-13', label: '13 week streak', points: 20000, unlocked: highestMilestoneAwarded >= 13 || streakWeeks >= 13 },
-    { key: 'streak-26', label: '26 week streak', points: 50000, unlocked: highestMilestoneAwarded >= 26 || streakWeeks >= 26 },
-    { key: 'streak-52', label: '52 week streak', points: 100000, unlocked: highestMilestoneAwarded >= 52 || streakWeeks >= 52 },
+    { key: 'streak-2', label: '2 draw streak', points: 5000, unlocked: highestMilestoneAwarded >= 2 || streakWeeks >= 2 },
+    { key: 'streak-4', label: '4 draw streak', points: 10000, unlocked: highestMilestoneAwarded >= 4 || streakWeeks >= 4 },
+    { key: 'streak-13', label: '13 draw streak', points: 20000, unlocked: highestMilestoneAwarded >= 13 || streakWeeks >= 13 },
+    { key: 'streak-26', label: '26 draw streak', points: 50000, unlocked: highestMilestoneAwarded >= 26 || streakWeeks >= 26 },
+    { key: 'streak-52', label: '52 draw streak', points: 100000, unlocked: highestMilestoneAwarded >= 52 || streakWeeks >= 52 },
   ].sort((a, b) => Number(b.unlocked) - Number(a.unlocked))
   const recentDraws = historyRows.slice(0, 12)
   const ensName = points?.ens && !ethers.isAddress(points.ens) && points.ens.toLowerCase() !== account.toLowerCase() ? points.ens : ''
@@ -555,10 +555,10 @@ function ProfilePage({ account, points, history, tranches, currentDrawId, curren
 
           <div className="points-streak-mini rewards-streak-block">
             <div>
-              <span className="points-popover-kicker">Weekly streak</span>
+              <span className="points-popover-kicker">Draw streak</span>
               <strong>{streakWeeks} Week Streak</strong>
             </div>
-            <div className="points-streak-dots points-streak-dots-52" aria-label={`${litDots} of ${dotCount} weeks active`}>
+            <div className="points-streak-dots points-streak-dots-52" aria-label={`${litDots} of ${dotCount} draws active`}>
               {Array.from({ length: dotCount }).map((_, i) => {
                 const week = i + 1
                 const isMilestone = streakMilestoneWeeks.includes(week)
@@ -616,9 +616,9 @@ function ProfilePage({ account, points, history, tranches, currentDrawId, curren
         {milestoneAwards.length > 0 ? (
           <div className="points-milestone-awards" aria-label="Milestone awards">
             {milestoneAwards.map((award) => (
-              <div className="points-milestone-award-row" key={award.week}>
+              <div className="points-milestone-award-row" key={award.draws}>
                 <span className="round-bonus-pill">MILESTONE</span>
-                <span>{award.week} week streak</span>
+                <span>{award.draws} draw streak</span>
                 <strong>+{award.points.toLocaleString()}</strong>
               </div>
             ))}

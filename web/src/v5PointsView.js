@@ -1,14 +1,16 @@
+// Streak milestones count DRAWS, not calendar weeks: the streak advances one step per
+// completed draw. Values are ADR-0049 §2.
 export const STREAK_MILESTONE_AWARDS = [
-  { week: 2, points: 10_000 },
-  { week: 4, points: 50_000 },
-  { week: 13, points: 200_000 },
-  { week: 26, points: 500_000 },
-  { week: 52, points: 1_000_000 },
+  { draws: 2, points: 5_000 },
+  { draws: 4, points: 10_000 },
+  { draws: 13, points: 20_000 },
+  { draws: 26, points: 50_000 },
+  { draws: 52, points: 100_000 },
 ]
 
 export function awardedMilestones(points) {
   const highestAwarded = Number(points?.highest_streak_milestone_awarded || 0)
-  return STREAK_MILESTONE_AWARDS.filter(({ week }) => week <= highestAwarded)
+  return STREAK_MILESTONE_AWARDS.filter(({ draws }) => draws <= highestAwarded)
 }
 
 export function tierName(points) {
