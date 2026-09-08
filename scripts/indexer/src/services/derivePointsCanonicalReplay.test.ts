@@ -36,7 +36,16 @@ function context() {
     pointsRepo, roundsRepo, walletRoundsRepo, v5ClaimProofsRepo: claimProofsRepo,
     pointsStartUnix: 0, minQualifyingWei: (100n * MON).toString(),
   });
-  return { db, rawEventsRepo, roundsRepo, walletRoundsRepo, pointsRepo, deriveTranches, derivePoints };
+  return {
+    db,
+    rawEventsRepo,
+    roundsRepo,
+    walletRoundsRepo,
+    pointsRepo,
+    claimProofsRepo,
+    deriveTranches,
+    derivePoints,
+  };
 }
 
 function raw(input: {
@@ -167,6 +176,21 @@ function history(ctx: ReturnType<typeof context>, drawId: number) {
   ctx.rawEventsRepo.upsertMany([position('Deposit', 10, start, 100n * MON)]);
   rebuild(ctx);
   const total = ctx.pointsRepo.getProfile(wallet)!.lifetimePoints;
+
+  const changedThreshold = createDerivePointsService({
+    pointsRepo: ctx.pointsRepo,
+    roundsRepo: ctx.roundsRepo,
+    walletRoundsRepo: ctx.walletRoundsRepo,
+    v5ClaimProofsRepo: ctx.claimProofsRepo,
+    pointsStartUnix: 0,
+    minQualifyingWei: (101n * MON).toString(),
+  });
+  assert.throws(
+    () => changedThreshold.rebuildSettlementPoints(),
+    /changed without a versioned migration/,
+  );
+  assert.equal(ctx.pointsRepo.getProfile(wallet)!.lifetimePoints, total);
+
   ctx.db.prepare('UPDATE points_formula_registry SET fingerprint = ? WHERE formula_version = ?')
     .run('tampered', POINTS_FORMULA_VERSION);
   assert.throws(() => ctx.derivePoints.rebuildSettlementPoints(), /changed without a versioned migration/);

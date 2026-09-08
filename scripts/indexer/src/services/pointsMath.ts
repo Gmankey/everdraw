@@ -1,8 +1,30 @@
+import { createHash } from 'node:crypto';
+
 export type PointsTier = 'Bronze' | 'Silver' | 'Gold' | 'Platinum' | 'Diamond';
 
 // Historical rows carry this version so future formula changes must add a new
 // implementation instead of silently rewriting prior mainnet awards.
 export const POINTS_FORMULA_VERSION = 'adr-0049-v1';
+
+// Calculation inputs live here and are also serialized into the persisted
+// fingerprint. The earning code must consume these exports instead of copying
+// their values elsewhere.
+export const ENTRIES_RATE_PER_MON_PER_MIN = 0.005;
+
+export const VAULT_STREAK_MULTIPLIERS_X100 = new Map<number, number>([
+  [0, 100],
+  [4, 110],
+  [8, 125],
+  [13, 150],
+  [26, 200],
+]);
+
+export const PATRON_TENURE_MULTIPLIERS_X100 = new Map<number, number>([
+  [0, 200],
+  [2, 300],
+  [3, 400],
+  [4, 500],
+]);
 
 // ADR-0049 §2 — rebalanced bonus values (operator, 2026-09-02).
 // The previous ×1000 values made the one-off stack worth ~4.36M, i.e. ~99% of a
@@ -31,28 +53,42 @@ export const LOSS_STREAK_THRESHOLD_POINTS = new Map<number, number>([
 // principal continuously throughout the awarding draw. Recurring Win is exempt.
 export const MIN_QUALIFYING_MON = 100;
 
-// Persisted with the first awarded row. Formula changes require an explicit versioned migration.
-export const POINTS_FORMULA_FINGERPRINT = JSON.stringify({
-  version: POINTS_FORMULA_VERSION,
-  streakMilestones: [...STREAK_MILESTONE_POINTS],
-  lossStreaks: [...LOSS_STREAK_THRESHOLD_POINTS],
-  firstDeposit: FIRST_DEPOSIT_POINTS,
-  win: WIN_POINTS,
-  comebackKing: COMEBACK_KING_POINTS,
-  prizePatron: PRIZE_PATRON_POINTS,
-  minimumQualifyingMon: MIN_QUALIFYING_MON,
-  vaultMultiplier: [[0, 100], [4, 110], [8, 125], [13, 150], [26, 200]],
-  patronMultiplier: [[1, 200], [2, 300], [3, 400], [4, 500]],
-  baseRounding: 'Math.round',
-});
+// Persisted before awards are replayed. Runtime configuration is part of the
+// effective formula: changing the threshold under the same version must fail.
+export function pointsFormulaFingerprint(effectiveMinQualifyingWei: string): string {
+  return JSON.stringify({
+    version: POINTS_FORMULA_VERSION,
+    entriesRatePerMonPerMin: ENTRIES_RATE_PER_MON_PER_MIN,
+    streakMilestones: [...STREAK_MILESTONE_POINTS],
+    lossStreaks: [...LOSS_STREAK_THRESHOLD_POINTS],
+    firstDeposit: FIRST_DEPOSIT_POINTS,
+    win: WIN_POINTS,
+    comebackKing: COMEBACK_KING_POINTS,
+    prizePatron: PRIZE_PATRON_POINTS,
+    minimumQualifyingWei: BigInt(effectiveMinQualifyingWei).toString(),
+    vaultMultiplier: [...VAULT_STREAK_MULTIPLIERS_X100],
+    patronMultiplier: [...PATRON_TENURE_MULTIPLIERS_X100],
+    implementationHash: pointsFormulaImplementationHash(),
+  });
+}
 
+
+export function entriesForBalanceMinutes(balanceMon: number, minutes: number): number {
+  return ENTRIES_RATE_PER_MON_PER_MIN * balanceMon * minutes;
+}
+
+export function qualifiesForOneOffBonuses(input: {
+  isV5: boolean;
+  minimumQualifyingWei: bigint;
+  historicalMinimumWei: bigint;
+}): boolean {
+  return !input.isV5
+    || input.minimumQualifyingWei <= 0n
+    || input.historicalMinimumWei >= input.minimumQualifyingWei;
+}
 
 export function getMultiplierX100(streakWeeks: number): number {
-  if (streakWeeks >= 26) return 200;
-  if (streakWeeks >= 13) return 150;
-  if (streakWeeks >= 8) return 125;
-  if (streakWeeks >= 4) return 110;
-  return 100;
+  return multiplierAt(VAULT_STREAK_MULTIPLIERS_X100, streakWeeks);
 }
 
 export function getTier(streakWeeks: number): PointsTier {
@@ -76,10 +112,16 @@ export function nextMilestone(streakWeeks: number): number | null {
 }
 
 export function getDegenMultiplierX100(degenWeeks: number): number {
-  if (degenWeeks >= 4) return 500;
-  if (degenWeeks >= 3) return 400;
-  if (degenWeeks >= 2) return 300;
-  return 200;
+  return multiplierAt(PATRON_TENURE_MULTIPLIERS_X100, degenWeeks);
+}
+
+function multiplierAt(ladder: ReadonlyMap<number, number>, tenure: number): number {
+  let multiplier = 100;
+  for (const [threshold, candidate] of ladder) {
+    if (tenure < threshold) break;
+    multiplier = candidate;
+  }
+  return multiplier;
 }
 
 export function trancheTenureWeeks(firstFullWeightDrawId: number | null, drawId: number): number {
@@ -117,6 +159,21 @@ export function lossStreakThresholdBonus(nextConsecutiveNonWins: number, highest
     }
   }
   return threshold === 0 ? null : { threshold, points };
+}
+
+function pointsFormulaImplementationHash(): string {
+  const implementation = [
+    entriesForBalanceMinutes,
+    qualifiesForOneOffBonuses,
+    multiplierAt,
+    getMultiplierX100,
+    getDegenMultiplierX100,
+    trancheTenureWeeks,
+    multiplierForTranche,
+    lossStreakThresholdBonus,
+    calculateRoundPoints,
+  ].map((fn) => fn.toString()).join('\n');
+  return createHash('sha256').update(implementation).digest('hex');
 }
 
 export function calculateRoundPoints(input: {
