@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS wallet_rounds (
   withdrawn_at TEXT,
   net_position TEXT NOT NULL DEFAULT '0',
   v5_resolved_base REAL,
+  v5_min_principal_wei TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (wallet, round_id, pool_address)
@@ -141,11 +142,18 @@ CREATE TABLE IF NOT EXISTS wallet_round_points (
   bonuses_breakdown TEXT NOT NULL,
   total_points INTEGER NOT NULL,
   awarded_at_unix INTEGER NOT NULL,
+  formula_version TEXT NOT NULL,
   PRIMARY KEY (wallet, pool_address, round_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_wallet_round_points_wallet ON wallet_round_points(wallet);
 CREATE INDEX IF NOT EXISTS idx_wallet_points_lifetime ON wallet_points(lifetime_points DESC);
+
+CREATE TABLE IF NOT EXISTS points_formula_registry (
+  formula_version TEXT PRIMARY KEY,
+  fingerprint TEXT NOT NULL,
+  registered_at INTEGER NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS v5_position_events (
   tx_hash TEXT NOT NULL,

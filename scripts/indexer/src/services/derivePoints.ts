@@ -3,7 +3,7 @@ import type { RoundsRepo } from '../repositories/roundsRepo.js';
 import type { WalletRoundsRepo } from '../repositories/walletRoundsRepo.js';
 import type { V5ClaimProofsRepo } from '../repositories/v5ClaimProofsRepo.js';
 import { nowUnix } from '../utils/time.js';
-import { calculateRoundPoints, lossStreakThresholdBonus, STREAK_MILESTONE_POINTS } from './pointsMath.js';
+import { calculateRoundPoints, lossStreakThresholdBonus, POINTS_FORMULA_FINGERPRINT, POINTS_FORMULA_VERSION, STREAK_MILESTONE_POINTS } from './pointsMath.js';
 
 export interface DerivePointsService {
   rebuildSettlementPoints(): void;
@@ -16,29 +16,27 @@ export function createDerivePointsService(input: {
   walletRoundsRepo: WalletRoundsRepo;
   v5ClaimProofsRepo?: V5ClaimProofsRepo;
   pointsStartUnix?: number;
-  /**
-   * ADR-0049 §3 — entries a V5 participant must earn in a draw to qualify for
-   * one-time bonuses (first deposit, prize patron, comeback king, loss streak).
-   * 0 disables the gate. Production supplies this from runner config; it is
-   * derived from the draw period so it is cadence-independent.
-   */
-  minQualifyingEntries?: number;
-  /**
-   * ADR-0049 §3 — vault position (wei, as a decimal string) a wallet must hold at
-   * a checkpoint to qualify for streak-milestone bonuses. '0' disables the gate.
-   */
+  /** Minimum principal held continuously for an entire V5 draw, in wei. */
   minQualifyingWei?: string;
 }): DerivePointsService {
   const { pointsRepo, roundsRepo, walletRoundsRepo, v5ClaimProofsRepo } = input;
   const pointsStartUnix = input.pointsStartUnix ?? parsePointsStartUnix();
-  const minQualifyingEntries = Math.max(0, input.minQualifyingEntries ?? 0);
   const minQualifyingWei = BigInt(input.minQualifyingWei ?? '0');
 
-  return {
-    rebuildSettlementPoints() {
-      const timestamp = nowUnix();
+  const rebuildSettlementPoints = () => {
+    const timestamp = nowUnix();
+
+    pointsRepo.assertFormulaCompatible(
+      POINTS_FORMULA_VERSION,
+      POINTS_FORMULA_FINGERPRINT,
+      timestamp,
+    );
+
+    pointsRepo.withTransaction(() => {
+      // Every value below is derived from canonical rounds, wallet-rounds and position events.
+      // Clearing all markers makes rewinds deterministic: removed draws cannot retain awards.
       pointsRepo.resetRoundPointsAndTotals();
-      pointsRepo.resetCurrentStreaksAfterFullV5Exits();
+
       const rounds = roundsRepo.listAll()
         .filter((round) => ['settled', 'skipped'].includes(round.state))
         .filter((round) => {
@@ -52,6 +50,7 @@ export function createDerivePointsService(input: {
           if (a.roundId !== b.roundId) return a.roundId - b.roundId;
           return a.poolAddress.localeCompare(b.poolAddress);
         });
+
       const knownWallets = new Set<string>();
       const lastProcessedDrawUnix = new Map<string, number>();
 
@@ -64,6 +63,7 @@ export function createDerivePointsService(input: {
         }
         return {
           ...streak,
+          currentStreakWeeks: 0,
           consecutiveNonWins: 0,
           consecutiveMissedDraws: 0,
         };
@@ -75,7 +75,9 @@ export function createDerivePointsService(input: {
         );
         const participants = walletRoundsRepo.listByRound(round.roundId, round.poolAddress)
           .filter((participant) => participant.tickets > 0 || (participant.v5ResolvedBase ?? 0) > 0);
-        const participantWallets = new Set(participants.map((participant) => participant.wallet.toLowerCase()));
+        const participantWallets = new Set(
+          participants.map((participant) => participant.wallet.toLowerCase())
+        );
         const awardedAtUnix = toUnix(round.settledAt) ?? timestamp;
 
         for (const wallet of knownWallets) {
@@ -84,6 +86,8 @@ export function createDerivePointsService(input: {
           const streak = applyFullExitBoundary(wallet, awardedAtUnix);
           pointsRepo.upsertWalletStreak({
             ...streak,
+            currentStreakWeeks: 0,
+            lastCheckpointUnix: awardedAtUnix,
             consecutiveMissedDraws: streak.consecutiveMissedDraws + 1,
             updatedAt: timestamp,
           });
@@ -98,21 +102,20 @@ export function createDerivePointsService(input: {
             || (round.winner != null && round.winner.toLowerCase() === wallet)
             || proofWinners.has(wallet);
 
-          // V5 draws carry a per-tranche-blended base (§2b); the account streak multiplier is NOT re-applied.
+          // V5 base already includes each tranche's own multiplier. Eligibility is deliberately
+          // separate: the minimum unboosted principal held for the complete draw.
           const isV5 = participant.v5ResolvedBase != null;
           const entries = isV5 ? participant.v5ResolvedBase! : participant.tickets;
+          const historicalMinimum = BigInt(participant.v5MinPrincipalWei ?? '0');
+          const qualifiesForOneOffBonuses = !isV5
+            || minQualifyingWei <= 0n
+            || historicalMinimum >= minQualifyingWei;
 
-          // ADR-0049 §3 — one-time bonuses need a qualifying position held through this
-          // draw. `entries` is the draw's time-weighted balance, so it measures exactly
-          // that. Legacy V4 rows (ticket-denominated) are never gated.
-          const qualifiesForOneOffBonuses = !isV5 || minQualifyingEntries <= 0 || entries >= minQualifyingEntries;
-
-          const firstDeposit = points.hasReceivedFirstDepositBonus === 0 && qualifiesForOneOffBonuses;
+          const firstDeposit = points.hasReceivedFirstDepositBonus === 0
+            && qualifiesForOneOffBonuses;
           const prizePatron = points.hasReceivedPrizePatronBonus === 0
             && qualifiesForOneOffBonuses
             && pointsRepo.hasDegenDepositAtOrBefore(wallet, awardedAtUnix);
-          // ADR-0049 §2 — Comeback King is ONE-TIME. It was previously repeatable, which
-          // made exit -> miss 2 draws -> rejoin an unbounded farming loop.
           const comebackKing = streak.consecutiveMissedDraws >= 2
             && points.hasReceivedComebackKingBonus === 0
             && qualifiesForOneOffBonuses;
@@ -120,6 +123,19 @@ export function createDerivePointsService(input: {
           const lossStreakBonus = !won && qualifiesForOneOffBonuses
             ? lossStreakThresholdBonus(nextConsecutiveNonWins, points.highestLossStreakBonusAwarded)
             : null;
+
+          const nextCurrentStreak = streak.currentStreakWeeks + 1;
+          const nextLongestStreak = Math.max(streak.longestStreakWeeks, nextCurrentStreak);
+          let highestMilestone = points.highestStreakMilestoneAwarded;
+          let milestonePoints = 0;
+          if (qualifiesForOneOffBonuses) {
+            for (const [milestone, bonus] of STREAK_MILESTONE_POINTS) {
+              if (nextCurrentStreak >= milestone && highestMilestone < milestone) {
+                milestonePoints += bonus;
+                highestMilestone = milestone;
+              }
+            }
+          }
 
           const result = calculateRoundPoints({
             entries,
@@ -131,6 +147,10 @@ export function createDerivePointsService(input: {
             comebackKing,
             prizePatron,
           });
+          if (milestonePoints > 0) {
+            result.bonuses.streak_milestone = milestonePoints;
+            result.totalPoints += milestonePoints;
+          }
 
           pointsRepo.insertRoundPoints({
             wallet,
@@ -141,6 +161,7 @@ export function createDerivePointsService(input: {
             bonusesBreakdown: JSON.stringify(result.bonuses),
             totalPoints: result.totalPoints,
             awardedAtUnix,
+            formulaVersion: POINTS_FORMULA_VERSION,
           });
 
           pointsRepo.upsertWalletPoints({
@@ -150,12 +171,17 @@ export function createDerivePointsService(input: {
             hasReceivedFirstWinBonus: won ? 1 : points.hasReceivedFirstWinBonus,
             hasReceivedComebackKingBonus: comebackKing ? 1 : points.hasReceivedComebackKingBonus,
             hasReceivedPrizePatronBonus: prizePatron ? 1 : points.hasReceivedPrizePatronBonus,
-            highestLossStreakBonusAwarded: lossStreakBonus?.threshold ?? points.highestLossStreakBonusAwarded,
+            highestLossStreakBonusAwarded: lossStreakBonus?.threshold
+              ?? points.highestLossStreakBonusAwarded,
+            highestStreakMilestoneAwarded: highestMilestone,
             updatedAt: timestamp,
           });
 
           pointsRepo.upsertWalletStreak({
             ...streak,
+            currentStreakWeeks: nextCurrentStreak,
+            longestStreakWeeks: nextLongestStreak,
+            lastCheckpointUnix: awardedAtUnix,
             consecutiveNonWins: nextConsecutiveNonWins,
             consecutiveMissedDraws: 0,
             updatedAt: timestamp,
@@ -163,86 +189,23 @@ export function createDerivePointsService(input: {
           knownWallets.add(wallet);
         }
       }
-    },
 
-    runWeeklyCheckpoint(checkpointUnix = nowUnix(), fromUnix = checkpointUnix - 7 * 86400) {
-      if (!pointsRepo.hasAnyCompletedDrawBetween(fromUnix, checkpointUnix)) {
-        console.warn(`[points] weekly checkpoint skipped at ${checkpointUnix}: no completed draws in checkpoint interval`);
-        return { processed: 0, skipped: true, reason: 'no completed draws in checkpoint interval' };
-      }
+      // A full exit after the latest completed draw resets immediately. Re-entry only starts a
+      // new streak after the next draw in which the wallet participates.
+      pointsRepo.resetCurrentStreaksAfterFullV5Exits();
+    });
+  };
 
-      let processed = 0;
-      for (const wallet of pointsRepo.listWalletsWithDeposits()) {
-        pointsRepo.ensureWallet(wallet, checkpointUnix);
-        const points = pointsRepo.getWalletPoints(wallet)!;
-        const streak = pointsRepo.getWalletStreak(wallet)!;
-        if (streak.lastCheckpointUnix != null && streak.lastCheckpointUnix >= checkpointUnix) {
-          continue;
-        }
-        const hasActivePosition = pointsRepo.hasActivePositionAt(wallet, checkpointUnix);
-        const drawParticipation = pointsRepo.listCompletedDrawParticipationBetween(
-          wallet,
-          fromUnix,
-          checkpointUnix,
-        );
-        let consecutiveParticipated = 0;
-        for (let index = drawParticipation.length - 1; index >= 0 && drawParticipation[index]; index -= 1) {
-          consecutiveParticipated += 1;
-        }
-        const participatedInWindow = consecutiveParticipated > 0;
-        const hadFullExit = streak.lastCheckpointUnix != null && streak.lastCheckpointUnix > 0
-          ? pointsRepo.hadV5VaultFullExitBetween(wallet, streak.lastCheckpointUnix, checkpointUnix)
-          : false;
-        const qualifiesForStreak = hasActivePosition && participatedInWindow;
-        const nextCurrent = qualifiesForStreak
-          ? hadFullExit
-            ? Math.min(1, consecutiveParticipated)
-            : consecutiveParticipated === drawParticipation.length
-              ? streak.currentStreakWeeks + consecutiveParticipated
-              : consecutiveParticipated
-          : 0;
-        const nextLongest = Math.max(streak.longestStreakWeeks, nextCurrent);
-        let highestAwarded = points.highestStreakMilestoneAwarded;
-        let lifetimePoints = points.lifetimePoints;
+  return {
+    rebuildSettlementPoints,
 
-        // ADR-0049 §3 — streak milestones are one-time bonuses and carry the same
-        // qualifying-position requirement. They are the largest single block of the
-        // one-off stack (185,000 of 455,000), so leaving them ungated would leave the
-        // dust-farming vector largely intact.
-        const qualifiesForMilestones = minQualifyingWei <= 0n
-          || pointsRepo.hasQualifyingPositionAt(wallet, checkpointUnix, minQualifyingWei.toString());
-
-        if (qualifiesForMilestones) {
-          for (const [milestone, bonus] of STREAK_MILESTONE_POINTS) {
-            if (nextCurrent >= milestone && highestAwarded < milestone) {
-              lifetimePoints += bonus;
-              highestAwarded = milestone;
-            }
-          }
-        }
-
-        // Persist the one-time award marker before the checkpoint cursor. If the process dies
-        // between these writes, retrying the same checkpoint cannot duplicate the bonus.
-        pointsRepo.upsertWalletPoints({
-          ...points,
-          lifetimePoints,
-          highestStreakMilestoneAwarded: highestAwarded,
-          updatedAt: checkpointUnix,
-        });
-        pointsRepo.upsertWalletStreak({
-          ...streak,
-          currentStreakWeeks: nextCurrent,
-          longestStreakWeeks: nextLongest,
-          lastCheckpointUnix: checkpointUnix,
-          updatedAt: checkpointUnix,
-        });
-        processed += 1;
-      }
-      return { processed, skipped: false };
+    // Compatibility entry point for the runner while checkpoint scheduling is removed.
+    runWeeklyCheckpoint() {
+      rebuildSettlementPoints();
+      return { processed: pointsRepo.listWalletsWithDeposits().length, skipped: false };
     },
   };
 }
-
 function toUnix(value: string | null): number | null {
   if (!value) return null;
   const ms = Date.parse(value);

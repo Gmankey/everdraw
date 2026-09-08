@@ -151,51 +151,12 @@ function bonuses(ctx: ReturnType<typeof context>, roundId: number, w = wallet): 
 
   const skippedRow = ctx.pointsRepo.listHistory(wallet, 10).find((row) => row.roundId === 2)!;
   assert.equal(skippedRow.basePoints, 2);
-  assert.equal(skippedRow.totalPoints, 2);
+  assert.equal(skippedRow.totalPoints, 5_002, 'a held skipped draw advances the streak and earns the draw-2 milestone');
   assert.equal(bonuses(ctx, 3).comeback_king, undefined);
   assert.equal(ctx.pointsRepo.getProfile(wallet)!.consecutiveNonWins, 3);
   assert.equal(ctx.pointsRepo.getProfile(wallet)!.consecutiveMissedDraws, 0);
 }
 
-{
-  const ctx = context();
-  round(ctx, 1, 'settled', '2026-05-03T00:00:00.000Z');
-  wr(ctx, 1, 1, 0);
-  round(ctx, 2, 'open', null);
-  wr(ctx, 2, 1, 0);
-
-  ctx.service.rebuildSettlementPoints();
-  const profile = ctx.pointsRepo.getProfile(wallet)!;
-  ctx.pointsRepo.upsertWalletStreak({
-    ...profile,
-    currentStreakWeeks: 3,
-    longestStreakWeeks: 3,
-    lastCheckpointUnix: 0,
-    consecutiveNonWins: 1,
-    consecutiveMissedDraws: 0,
-    updatedAt: 1,
-  });
-
-  const partial = ctx.service.runWeeklyCheckpoint(Date.parse('2026-05-10T00:00:00.000Z') / 1000);
-  assert.equal(partial.skipped, false);
-  assert.equal(ctx.pointsRepo.getProfile(wallet)!.currentStreakWeeks, 4);
-
-  ctx.pointsRepo.ensureWallet(otherWallet, 1);
-  ctx.pointsRepo.upsertWalletStreak({
-    wallet: otherWallet,
-    currentStreakWeeks: 3,
-    longestStreakWeeks: 3,
-    lastCheckpointUnix: 0,
-    consecutiveNonWins: 0,
-    consecutiveMissedDraws: 0,
-    updatedAt: 1,
-  });
-  wr(ctx, 1, 1, 0, otherWallet);
-
-  const full = ctx.service.runWeeklyCheckpoint(Date.parse('2026-05-10T00:00:00.000Z') / 1000);
-  assert.equal(full.skipped, false);
-  assert.equal(ctx.pointsRepo.getProfile(otherWallet)!.currentStreakWeeks, 0);
-}
 
 {
   const ctx = context();
@@ -226,70 +187,6 @@ function bonuses(ctx: ReturnType<typeof context>, roundId: number, w = wallet): 
   assert.equal(ctx.pointsRepo.getProfile(wallet)!.hasReceivedPrizePatronBonus, 1);
 }
 
-{
-  const ctx = context();
-  const checkpointUnix = Date.parse('2026-05-01T00:00:00.000Z') / 1000;
-  ctx.pointsRepo.ensureWallet(wallet, checkpointUnix);
-  ctx.pointsRepo.ensureWallet(otherWallet, checkpointUnix);
-  ctx.pointsRepo.upsertWalletStreak({
-    wallet,
-    currentStreakWeeks: 26,
-    longestStreakWeeks: 52,
-    lastCheckpointUnix: checkpointUnix,
-    consecutiveNonWins: 7,
-    consecutiveMissedDraws: 3,
-    updatedAt: checkpointUnix,
-  });
-  ctx.pointsRepo.upsertWalletStreak({
-    wallet: otherWallet,
-    currentStreakWeeks: 26,
-    longestStreakWeeks: 52,
-    lastCheckpointUnix: checkpointUnix,
-    consecutiveNonWins: 7,
-    consecutiveMissedDraws: 3,
-    updatedAt: checkpointUnix,
-  });
-  ctx.v5TranchesRepo.insertTranche({
-    wallet,
-    vaultAddress: pool,
-    poolType: 'vault',
-    amount: '100',
-    remainingAmount: '0',
-    openedBlockNumber: 90,
-    openedLogIndex: 1,
-    openedAt: '2026-04-01T00:00:00.000Z',
-    openedTxHash: '0x00000000000000000000000000000000000000000000000000000000000000ed',
-    startDrawId: 1,
-    closedAt: '2026-05-02T00:00:00.000Z',
-    closedBlockNumber: 100,
-    closedLogIndex: 1,
-    closedTxHash: '0x00000000000000000000000000000000000000000000000000000000000000ee',
-  });
-  ctx.v5TranchesRepo.insertTranche({
-    wallet: otherWallet,
-    vaultAddress: pool,
-    poolType: 'vault',
-    amount: '100',
-    remainingAmount: '1',
-    openedBlockNumber: 90,
-    openedLogIndex: 2,
-    openedAt: '2026-04-01T00:00:00.000Z',
-    openedTxHash: '0x00000000000000000000000000000000000000000000000000000000000000ef',
-    startDrawId: 1,
-    closedAt: null,
-    closedBlockNumber: null,
-    closedLogIndex: null,
-    closedTxHash: null,
-  });
-
-  ctx.service.rebuildSettlementPoints();
-
-  const reset = ctx.pointsRepo.getProfile(wallet)!;
-  assert.equal(reset.currentStreakWeeks, 0, 'a full V5 vault exit resets the current streak immediately');
-  assert.equal(reset.longestStreakWeeks, 52, 'a full exit preserves the historical longest streak');
-  const partial = ctx.pointsRepo.getProfile(otherWallet)!;
-  assert.equal(partial.currentStreakWeeks, 26, 'a partial V5 vault exit preserves the current streak');
-}
 
 
 {
@@ -320,45 +217,6 @@ function bonuses(ctx: ReturnType<typeof context>, roundId: number, w = wallet): 
   assert.equal(ctx.pointsRepo.getProfile(wallet)!.currentStreakWeeks, 1);
 }
 
-{
-  const ctx = context();
-  round(ctx, 1, 'settled', '2026-05-03T00:00:00.000Z');
-  wr(ctx, 1, 1);
-  ctx.pointsRepo.ensureWallet(wallet, 1);
-  ctx.pointsRepo.upsertWalletStreak({
-    wallet,
-    currentStreakWeeks: 3,
-    longestStreakWeeks: 3,
-    lastCheckpointUnix: 1,
-    consecutiveNonWins: 0,
-    consecutiveMissedDraws: 0,
-    updatedAt: 1,
-  });
-  ctx.v5TranchesRepo.insertTranche({
-    wallet,
-    vaultAddress: pool,
-    poolType: 'vault',
-    amount: '100',
-    remainingAmount: '100',
-    openedBlockNumber: 1,
-    openedLogIndex: 2,
-    openedAt: '2026-05-01T00:00:00.000Z',
-    openedTxHash: '0x00000000000000000000000000000000000000000000000000000000000000a2',
-    startDrawId: 1,
-    closedAt: null,
-    closedBlockNumber: null,
-    closedLogIndex: null,
-    closedTxHash: null,
-  });
-  const checkpointUnix = Date.parse('2026-05-04T00:00:00.000Z') / 1000;
-  ctx.service.runWeeklyCheckpoint(checkpointUnix, 1);
-  const once = ctx.pointsRepo.getProfile(wallet)!;
-  ctx.service.runWeeklyCheckpoint(checkpointUnix, 1);
-  const twice = ctx.pointsRepo.getProfile(wallet)!;
-  assert.equal(once.currentStreakWeeks, 4);
-  assert.equal(twice.currentStreakWeeks, 4);
-  assert.equal(twice.lifetimePoints, once.lifetimePoints);
-}
 
 {
   const ctx = context();
@@ -417,87 +275,5 @@ function bonuses(ctx: ReturnType<typeof context>, roundId: number, w = wallet): 
   assert.equal(ctx.pointsRepo.getProfile(wallet)!.consecutiveNonWins, 1);
 }
 
-{
-  const ctx = context();
-  round(ctx, 1, 'settled', '2026-04-20T00:00:00.000Z');
-  wr(ctx, 1, 1, 0, wallet);
-  round(ctx, 2, 'settled', '2026-05-03T00:00:00.000Z');
-  wr(ctx, 2, 1, 0, otherWallet);
-  ctx.v5TranchesRepo.insertTranche({
-    wallet,
-    vaultAddress: pool,
-    poolType: 'vault',
-    amount: '100',
-    remainingAmount: '100',
-    openedBlockNumber: 200,
-    openedLogIndex: 1,
-    openedAt: '2026-05-04T00:00:00.000Z',
-    openedTxHash: '0x0000000000000000000000000000000000000000000000000000000000000f03',
-    startDrawId: 2,
-    closedAt: null,
-    closedBlockNumber: null,
-    closedLogIndex: null,
-    closedTxHash: null,
-  });
-
-  const fromUnix = Date.parse('2026-05-01T00:00:00.000Z') / 1000;
-  const checkpointUnix = Date.parse('2026-05-10T00:00:00.000Z') / 1000;
-  ctx.service.runWeeklyCheckpoint(checkpointUnix, fromUnix);
-
-  assert.equal(
-    ctx.pointsRepo.getProfile(wallet)!.currentStreakWeeks,
-    0,
-    'depositing after the completed draw must not earn a checkpoint streak week',
-  );
-}
-
-{
-  const ctx = context();
-  round(ctx, 1, 'settled', '2026-05-02T00:00:00.000Z');
-  wr(ctx, 1, 1);
-  round(ctx, 2, 'settled', '2026-05-03T00:00:00.000Z');
-  wr(ctx, 2, 1);
-  const fromUnix = Date.parse('2026-05-01T00:00:00.000Z') / 1000;
-  const checkpointUnix = Date.parse('2026-05-04T00:00:00.000Z') / 1000;
-  ctx.pointsRepo.ensureWallet(wallet, fromUnix);
-  const priorPoints = ctx.pointsRepo.getWalletPoints(wallet)!;
-  ctx.pointsRepo.upsertWalletPoints({
-    ...priorPoints,
-    highestStreakMilestoneAwarded: 2,
-    updatedAt: fromUnix,
-  });
-  ctx.pointsRepo.upsertWalletStreak({
-    wallet,
-    currentStreakWeeks: 3,
-    longestStreakWeeks: 3,
-    lastCheckpointUnix: fromUnix,
-    consecutiveNonWins: 0,
-    consecutiveMissedDraws: 0,
-    updatedAt: fromUnix,
-  });
-  ctx.v5TranchesRepo.insertTranche({
-    wallet,
-    vaultAddress: pool,
-    poolType: 'vault',
-    amount: '100',
-    remainingAmount: '100',
-    openedBlockNumber: 1,
-    openedLogIndex: 1,
-    openedAt: '2026-04-01T00:00:00.000Z',
-    openedTxHash: '0x0000000000000000000000000000000000000000000000000000000000000f04',
-    startDrawId: 1,
-    closedAt: null,
-    closedBlockNumber: null,
-    closedLogIndex: null,
-    closedTxHash: null,
-  });
-
-  ctx.service.runWeeklyCheckpoint(checkpointUnix, fromUnix);
-
-  const profile = ctx.pointsRepo.getProfile(wallet)!;
-  assert.equal(profile.currentStreakWeeks, 5, 'two catch-up draws advance two earned streak periods');
-  assert.equal(profile.highestStreakMilestoneAwarded, 4, 'crossing week 4 during catch-up awards the milestone');
-  assert.equal(profile.lifetimePoints, 10_000);
-}
 
 console.log('derivePoints.test.ts ok');

@@ -97,6 +97,8 @@ export interface WalletRoundRow {
   netPosition: string;
   // V5 only: per-tranche-blended resolved base points for this draw (null for legacy rounds).
   v5ResolvedBase?: number | null;
+  // Minimum combined V5 principal held continuously across this draw, in wei.
+  v5MinPrincipalWei?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -152,6 +154,7 @@ export interface WalletRoundPointsRow {
   bonusesBreakdown: string;
   totalPoints: number;
   awardedAtUnix: number;
+  formulaVersion: string;
 }
 
 export type V5PoolType = 'vault' | 'degen';

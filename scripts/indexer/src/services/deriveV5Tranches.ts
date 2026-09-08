@@ -378,13 +378,36 @@ function findDrawIdUnix(windows: DrawWindow[], unix: number): number | null {
 }
 
 type TrancheState = { remaining: bigint; startDrawId: number | null };
-type PosEvent = { unix: number; action: V5PositionAction; amount: bigint };
+type PosEvent = {
+  unix: number;
+  blockNumber: number;
+  logIndex: number;
+  txHash: string;
+  action: V5PositionAction;
+  amount: bigint;
+};
 
 // For each V5 draw, compute every wallet's resolved base points:
 //   resolvedBase = Σ over tranches [ entries_t × multiplierForTranche(t)/100 ]
 //   entries_t    = 0.005 × (tranche's time-weighted balance-minutes over [periodStart, periodEnd])
 // The tranche multiplier follows each deposit's own tenure (§2b anti-gaming), NOT the account streak.
 // Vault and Degen tranches are tracked separately; degen carries the 2→5× ramp, vault the 1→2× curve.
+function comparePositionEvents(a: PosEvent, b: PosEvent): number {
+  if (a.unix !== b.unix) return a.unix - b.unix;
+  if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber;
+  return a.logIndex - b.logIndex;
+}
+
+function applyPositionDelta(balance: bigint, event: PosEvent): bigint {
+  const next = event.action === 'deposit' || event.action === 'transfer_in'
+    ? balance + event.amount
+    : balance - event.amount;
+  if (next < 0n) {
+    throw new Error('Historical V5 principal underflow at ' + event.txHash + ':' + event.logIndex);
+  }
+  return next;
+}
+
 function writeV5ResolvedBase(input: {
   finalizedEvents: RawEventRow[];
   drawWindows: DrawWindow[];
@@ -408,7 +431,14 @@ function writeV5ResolvedBase(input: {
         groups.set(key, []);
         groupMeta.set(key, { wallet: position.wallet, poolType: position.poolType });
       }
-      groups.get(key)!.push({ unix, action: position.action, amount: position.amount });
+      groups.get(key)!.push({
+        unix,
+        blockNumber: event.blockNumber,
+        logIndex: event.logIndex,
+        txHash: event.txHash.toLowerCase(),
+        action: position.action,
+        amount: position.amount,
+      });
     }
   }
 
@@ -423,7 +453,7 @@ function writeV5ResolvedBase(input: {
 
   for (const [key, events] of groups) {
     const { wallet, poolType } = groupMeta.get(key)!;
-    events.sort((a, b) => a.unix - b.unix);
+    events.sort(comparePositionEvents);
     const stack: TrancheState[] = [];
 
     const flushSegment = (t0: number, t1: number) => {
@@ -466,11 +496,58 @@ function writeV5ResolvedBase(input: {
     if (prevTime != null) flushSegment(prevTime, maxEnd);
   }
 
+  // ADR-0049 section 3: eligibility is based on the minimum combined principal
+  // held continuously for the entire draw. This is unboosted, historical, and
+  // transaction-atomic, so Patron multipliers and later withdrawals cannot rewrite it.
+  const minimumPrincipal = new Map<string, Map<number, bigint>>();
+  const eventsByWallet = new Map<string, PosEvent[]>();
+  for (const [key, events] of groups) {
+    const wallet = groupMeta.get(key)!.wallet;
+    const combined = eventsByWallet.get(wallet) ?? [];
+    combined.push(...events);
+    eventsByWallet.set(wallet, combined);
+  }
+
+  for (const [wallet, events] of eventsByWallet) {
+    events.sort(comparePositionEvents);
+    let balance = 0n;
+    let cursor = 0;
+    const byDraw = new Map<number, bigint>();
+
+    for (const window of windows) {
+      while (cursor < events.length && events[cursor].unix <= window.periodStart) {
+        const txHash = events[cursor].txHash;
+        while (cursor < events.length && events[cursor].unix <= window.periodStart && events[cursor].txHash === txHash) {
+          balance = applyPositionDelta(balance, events[cursor]);
+          cursor += 1;
+        }
+      }
+
+      let minimum = balance;
+      while (cursor < events.length && events[cursor].unix < window.periodEnd) {
+        const txHash = events[cursor].txHash;
+        while (cursor < events.length && events[cursor].unix < window.periodEnd && events[cursor].txHash === txHash) {
+          balance = applyPositionDelta(balance, events[cursor]);
+          cursor += 1;
+        }
+        if (balance < minimum) minimum = balance;
+      }
+      byDraw.set(window.drawId, minimum);
+    }
+    minimumPrincipal.set(wallet, byDraw);
+  }
+
   for (const [wallet, byDraw] of resolved) {
     for (const [drawId, base] of byDraw) {
       const poolAddress = drawManagerByDrawId.get(drawId);
       if (!poolAddress) continue;
-      walletRoundsRepo.upsertV5ResolvedBase(wallet, drawId, poolAddress, base);
+      walletRoundsRepo.upsertV5ResolvedBase(
+        wallet,
+        drawId,
+        poolAddress,
+        base,
+        minimumPrincipal.get(wallet)?.get(drawId)?.toString() ?? '0',
+      );
     }
   }
 }

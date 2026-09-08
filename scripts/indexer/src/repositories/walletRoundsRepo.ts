@@ -5,7 +5,7 @@ import { nowIso } from '../utils/time.js';
 export interface WalletRoundsRepo {
   upsert(row: WalletRoundRow): void;
   // V5: attach the per-tranche-blended resolved base to a (wallet, draw) row without clobbering win/claim data.
-  upsertV5ResolvedBase(wallet: string, roundId: number, poolAddress: string, resolvedBase: number): void;
+  upsertV5ResolvedBase(wallet: string, roundId: number, poolAddress: string, resolvedBase: number, minPrincipalWei?: string): void;
   replaceForRound(roundId: number, rows: WalletRoundRow[], poolAddress?: string): void;
   listByRound(roundId: number, poolAddress?: string): WalletRoundRow[];
   listByWalletWithRound(wallet: string): Array<WalletRoundRow & { state: string; salesEndTime: string | null; isSkipped: number }>;
@@ -59,10 +59,11 @@ export function createWalletRoundsRepo(db: Database.Database): WalletRoundsRepo 
   `);
 
   const upsertV5ResolvedBaseStmt = db.prepare(`
-    INSERT INTO wallet_rounds (wallet, round_id, pool_address, v5_resolved_base, created_at, updated_at)
-    VALUES (LOWER(@wallet), @roundId, LOWER(@poolAddress), @resolvedBase, @now, @now)
+    INSERT INTO wallet_rounds (wallet, round_id, pool_address, v5_resolved_base, v5_min_principal_wei, created_at, updated_at)
+    VALUES (LOWER(@wallet), @roundId, LOWER(@poolAddress), @resolvedBase, @minPrincipalWei, @now, @now)
     ON CONFLICT(wallet, round_id, pool_address) DO UPDATE SET
       v5_resolved_base = excluded.v5_resolved_base,
+      v5_min_principal_wei = excluded.v5_min_principal_wei,
       updated_at = excluded.updated_at
   `);
 
@@ -85,6 +86,7 @@ export function createWalletRoundsRepo(db: Database.Database): WalletRoundsRepo 
       withdrawn_at as withdrawnAt,
       net_position as netPosition,
       v5_resolved_base as v5ResolvedBase,
+      v5_min_principal_wei as v5MinPrincipalWei,
       created_at as createdAt,
       updated_at as updatedAt
     FROM wallet_rounds
@@ -166,8 +168,8 @@ export function createWalletRoundsRepo(db: Database.Database): WalletRoundsRepo 
     upsert(row) {
       upsertStmt.run(row);
     },
-    upsertV5ResolvedBase(wallet, roundId, poolAddress, resolvedBase) {
-      upsertV5ResolvedBaseStmt.run({ wallet, roundId, poolAddress, resolvedBase, now: nowIso() });
+    upsertV5ResolvedBase(wallet, roundId, poolAddress, resolvedBase, minPrincipalWei = '0') {
+      upsertV5ResolvedBaseStmt.run({ wallet, roundId, poolAddress, resolvedBase, minPrincipalWei, now: nowIso() });
     },
     replaceForRound(roundId, rows, poolAddress) {
       replaceForRoundTx(roundId, rows, poolAddress);

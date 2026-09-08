@@ -4,7 +4,6 @@ import {
   getDegenMultiplierX100,
   getMultiplierX100,
   lossStreakThresholdBonus,
-  minQualifyingEntries,
   MIN_QUALIFYING_MON,
   multiplierForTranche,
   nextMilestone,
@@ -59,17 +58,6 @@ const oneOffStack =
   + 2_500; // prize patron
 assert.equal(oneOffStack, 455_000);
 
-// ADR-0049 §3/§5 — the qualifying entries floor scales with cadence by construction,
-// so the gate means "100 MON held through the draw" at any draw period.
-assert.equal(MIN_QUALIFYING_MON, 100);
-assert.equal(minQualifyingEntries(604_800), 5_040); // weekly
-assert.equal(minQualifyingEntries(21_600), 180); // 6-hourly
-assert.equal(minQualifyingEntries(3_600), 30); // hourly
-assert.equal(minQualifyingEntries(604_800, 10), 504); // custom threshold
-// Degenerate configuration disables the gate rather than blocking every award.
-assert.equal(minQualifyingEntries(0), 0);
-assert.equal(minQualifyingEntries(604_800, 0), 0);
-assert.equal(minQualifyingEntries(-1), 0);
 
 assert.deepEqual(calculateRoundPoints({
   entries: 10,

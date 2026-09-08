@@ -13,7 +13,6 @@ import { createDeriveRoundsService } from './services/deriveRounds.js';
 import { createDeriveWalletRoundsService } from './services/deriveWalletRounds.js';
 import { createDeriveWalletStatsService } from './services/deriveWalletStats.js';
 import { createDerivePointsService } from './services/derivePoints.js';
-import { minQualifyingEntries } from './services/pointsMath.js';
 import { createDeriveV5TranchesService } from './services/deriveV5Tranches.js';
 import { getRunnerConfig } from './runner/config.js';
 import { assertProviderChainId, createIndexerRunner } from './runner/service.js';
@@ -41,19 +40,13 @@ async function main(): Promise<void> {
   const deriveWalletRoundsService = createDeriveWalletRoundsService(rawEventsRepo, walletRoundsRepo);
   const deriveWalletStatsService = createDeriveWalletStatsService(walletRoundsRepo, walletStatsRepo);
   const deriveV5TranchesService = createDeriveV5TranchesService(rawEventsRepo, v5TranchesRepo, walletRoundsRepo, runnerConfig.v5Deployments);
-  // ADR-0049 §3 — one-time bonuses require a qualifying position held through the draw.
-  // The entries floor is derived from the checkpoint interval, which validateConfiguration()
-  // asserts equals the on-chain drawPeriod (§5), so the gate means "N MON held through the
-  // draw" at whatever cadence is deployed.
+  // ADR-0049 section 3: the gate uses the minimum historical principal held for
+  // the complete draw, not boosted entries or the wallet's current balance.
   const derivePointsService = createDerivePointsService({
     pointsRepo,
     roundsRepo,
     walletRoundsRepo,
     v5ClaimProofsRepo,
-    minQualifyingEntries: minQualifyingEntries(
-      runnerConfig.pointsCheckpointIntervalSec,
-      runnerConfig.pointsMinQualifyingMon,
-    ),
     // parseEther, not hand-rolled arithmetic: MON may be fractional and 1 MON = 1e18 wei,
     // which is past Number's exact-integer range.
     minQualifyingWei: parseEther(String(runnerConfig.pointsMinQualifyingMon)).toString(),

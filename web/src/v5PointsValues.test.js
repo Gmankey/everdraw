@@ -21,21 +21,28 @@ const source = readFileSync(pointsMathPath, 'utf8')
 
 /** `export const NAME = 12_345;` -> 12345 */
 function constant(name) {
-  const match = source.match(new RegExp(`export const ${name}\\s*=\\s*([0-9_]+)`))
-  assert.ok(match, `could not find ${name} in pointsMath.ts -- has it been renamed?`)
+  const match = source.match(new RegExp('export const ' + name + '\\s*=\\s*([0-9][0-9_]*)\\s*;'))
+  assert.ok(match, 'could not strictly parse ' + name + ' in pointsMath.ts')
   return Number(match[1].replace(/_/g, ''))
 }
 
-/** `export const NAME = new Map<number, number>([ [2, 5_000], ... ])` -> [{key, value}] */
 function mapEntries(name) {
-  const block = source.match(new RegExp(`export const ${name}[^[]*\\[([\\s\\S]*?)\\]\\s*\\)`))
-  assert.ok(block, `could not find ${name} in pointsMath.ts -- has it been renamed?`)
-  const entries = [...block[1].matchAll(/\[\s*([0-9_]+)\s*,\s*([0-9_]+)\s*\]/g)]
-  assert.ok(entries.length > 0, `parsed no entries from ${name}`)
-  return entries.map(([, key, value]) => ({
-    key: Number(key.replace(/_/g, '')),
-    value: Number(value.replace(/_/g, '')),
-  }))
+  const prefix = 'export const ' + name + ' = new Map<number, number>(['
+  const start = source.indexOf(prefix)
+  assert.ok(start >= 0, 'could not strictly parse ' + name + ' in pointsMath.ts')
+  const end = source.indexOf(']);', start + prefix.length)
+  assert.ok(end > start, 'unterminated map ' + name)
+  const body = source.slice(start + prefix.length, end)
+  const entries = body.trim().split('],').map((entry) => entry.trim()).filter(Boolean)
+  assert.ok(entries.length > 0, 'parsed no entries from ' + name)
+  return entries.map((entry) => {
+    assert.ok(entry.startsWith('['), 'unsupported expression in ' + name)
+    const parts = entry.slice(1).split(',').map((part) => part.trim())
+    assert.equal(parts.length, 2, 'invalid map entry in ' + name)
+    assert.match(parts[0], /^[0-9_]+$/, 'invalid map key in ' + name)
+    assert.match(parts[1], /^[0-9_]+$/, 'invalid map value in ' + name)
+    return { key: Number(parts[0].replace(/_/g, '')), value: Number(parts[1].replace(/_/g, '')) }
+  })
 }
 
 // --- flat bonuses ---
