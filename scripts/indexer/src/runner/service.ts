@@ -95,9 +95,13 @@ export function createIndexerRunner(input: {
     sourceAuthorized: boolean;
     drawPeriodSec: number;
   }>;
+  providersToValidate?: AbstractProvider[];
 }): IndexerRunner {
   const { config, rawEventsRepo, indexerStateRepo, deriveRoundsService, deriveWalletRoundsService, deriveWalletStatsService, deriveV5TranchesService, derivePointsService } = input;
-  const provider = input.provider ?? makeProvider(config.rpcUrl, config.rpcUrlFallback);
+  const providerBundle = input.provider
+    ? { provider: input.provider, providersToValidate: input.providersToValidate ?? [input.provider] }
+    : makeProvider(config.rpcUrl, config.rpcUrlFallback);
+  const provider = providerBundle.provider;
   const deploymentWiringReader = input.deploymentWiringReader ?? createDeploymentWiringReader(provider);
   const iface = new Interface(POOL_EVENT_ABI);
   const stateScope = config.chainId + ':' + config.poolAddresses.map((address) => address.toLowerCase()).sort().join(',');
@@ -234,6 +238,13 @@ export function createIndexerRunner(input: {
   return {
     async validateConfiguration() {
       if (configurationValidated) return;
+      for (const [index, chainProvider] of providerBundle.providersToValidate.entries()) {
+        await assertProviderChainId(
+          chainProvider,
+          config.chainId,
+          `indexer RPC provider ${index + 1}`
+        );
+      }
       for (const deployment of config.v5Deployments) {
         const wiring = await deploymentWiringReader(deployment);
         const expected = {
@@ -392,7 +403,9 @@ async function fetchChunk(input: {
  let block = blockCache.get(log.blockNumber);
  if (!block) {
  const fetched = await withRetry(() => provider.getBlock(log.blockNumber));
- if (!fetched) continue;
+ if (!fetched) {
+ throw new Error(`Missing canonical block metadata for supported log at block ${log.blockNumber}`);
+ }
  block = fetched;
  blockCache.set(log.blockNumber, block);
  }
@@ -437,14 +450,37 @@ function createDeploymentWiringReader(provider: AbstractProvider) {
     };
   };
 }
-function makeProvider(rpcUrl: string, rpcUrlFallback?: string): AbstractProvider {
+function makeProvider(rpcUrl: string, rpcUrlFallback?: string): {
+  provider: AbstractProvider;
+  providersToValidate: AbstractProvider[];
+} {
   const primary = new JsonRpcProvider(rpcUrl);
-  if (!rpcUrlFallback) return primary;
+  if (!rpcUrlFallback) {
+    return { provider: primary, providersToValidate: [primary] };
+  }
 
-  return new FallbackProvider([
+  const fallback = new JsonRpcProvider(rpcUrlFallback);
+  return {
+    provider: new FallbackProvider([
     { provider: primary, priority: 1, stallTimeout: 2000 },
-    { provider: new JsonRpcProvider(rpcUrlFallback), priority: 2, stallTimeout: 2000 },
-  ], undefined, { quorum: 1 });
+    { provider: fallback, priority: 2, stallTimeout: 2000 },
+    ], undefined, { quorum: 1 }),
+    providersToValidate: [primary, fallback],
+  };
+}
+
+export async function assertProviderChainId(
+  provider: Pick<AbstractProvider, 'getNetwork'>,
+  expectedChainId: number,
+  label: string
+): Promise<void> {
+  const network = await withRetry(() => provider.getNetwork());
+  const actualChainId = BigInt(network.chainId);
+  if (actualChainId !== BigInt(expectedChainId)) {
+    throw new Error(
+      `${label} chain mismatch: expected ${expectedChainId}, got ${actualChainId.toString()}`
+    );
+  }
 }
 
 function toRawEventRow(input: {

@@ -6,7 +6,7 @@ import { createIndexerStateRepo } from '../repositories/indexerStateRepo.js';
 import { createRawEventsRepo } from '../repositories/rawEventsRepo.js';
 import type { V5DeploymentScope } from '../types/domain.js';
 import type { RunnerConfig } from './config.js';
-import { createIndexerRunner } from './service.js';
+import { assertProviderChainId, createIndexerRunner } from './service.js';
 
 const deployment: V5DeploymentScope = {
   chainId: 143,
@@ -35,14 +35,18 @@ function runnerWith(wiring: {
   managerClaimManager: string;
   sourceAuthorized: boolean;
   drawPeriodSec?: number;
-}) {
+}, providerChainIds: number[] = [config.chainId]) {
   const db = new Database(':memory:');
   applySchema(db);
+  const providers = providerChainIds.map((chainId) => ({
+    getNetwork: async () => ({ chainId: BigInt(chainId) }),
+  })) as unknown as AbstractProvider[];
   return createIndexerRunner({
     config,
     rawEventsRepo: createRawEventsRepo(db),
     indexerStateRepo: createIndexerStateRepo(db),
-    provider: {} as AbstractProvider,
+    provider: providers[0],
+    providersToValidate: providers,
     // Default to a matching cadence so the pre-existing wiring cases keep testing
     // wiring only; the cadence cases below set it explicitly.
     deploymentWiringReader: async () => ({
@@ -61,6 +65,38 @@ await runnerWith({
   managerClaimManager: deployment.claimManagerAddress,
   sourceAuthorized: true,
 }).validateConfiguration();
+
+await assert.rejects(
+  runnerWith({
+    vaultDrawManager: deployment.drawManagerAddress,
+    managerVault: deployment.vaultAddress,
+    managerClaimManager: deployment.claimManagerAddress,
+    sourceAuthorized: true,
+  }, [10143]).validateConfiguration(),
+  /indexer RPC provider 1 chain mismatch: expected 143, got 10143/,
+  'an otherwise valid deployment must reject a wrong-chain RPC',
+);
+
+await assert.rejects(
+  runnerWith({
+    vaultDrawManager: deployment.drawManagerAddress,
+    managerVault: deployment.vaultAddress,
+    managerClaimManager: deployment.claimManagerAddress,
+    sourceAuthorized: true,
+  }, [143, 10143]).validateConfiguration(),
+  /indexer RPC provider 2 chain mismatch: expected 143, got 10143/,
+  'a wrong-chain fallback must be rejected even when the primary matches',
+);
+
+await assert.rejects(
+  assertProviderChainId(
+    { getNetwork: async () => ({ chainId: 10143n }) } as AbstractProvider,
+    143,
+    'claim-proof RPC provider',
+  ),
+  /claim-proof RPC provider chain mismatch: expected 143, got 10143/,
+  'the independent proof reader must reject a wrong-chain RPC',
+);
 
 await assert.rejects(
   runnerWith({

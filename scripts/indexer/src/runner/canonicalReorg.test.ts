@@ -68,12 +68,14 @@ class FakeProvider {
   version: ChainVersion = 'a';
   reorgDuringFetch = false;
   getLogsCalls = 0;
+  missingBlockNumber: number | null = null;
 
   async getBlockNumber(): Promise<number> {
     return 107;
   }
 
-  async getBlock(blockNumber: number): Promise<{ hash: string; timestamp: number }> {
+  async getBlock(blockNumber: number): Promise<{ hash: string; timestamp: number } | null> {
+    if (blockNumber === this.missingBlockNumber) return null;
     return { hash: hash(blockNumber, this.version), timestamp: 1782950400 + blockNumber };
   }
 
@@ -216,5 +218,36 @@ assert.equal(recoveredRows[0].wallet, walletB, 'retry must ingest only the canon
 const recoveredStatus = await raceRunner.getStatus();
 assert.equal(recoveredStatus.lastScannedBlock, 106);
 assert.equal(recoveredStatus.canonicalHash, hash(106, 'b'));
+
+const missingDb = new Database(':memory:');
+applySchema(missingDb);
+const missingRawEventsRepo = createRawEventsRepo(missingDb);
+const missingIndexerStateRepo = createIndexerStateRepo(missingDb);
+const missingProvider = new FakeProvider();
+missingProvider.missingBlockNumber = 101;
+const missingRunner = createIndexerRunner({
+  config: { ...config, chunkSize: 7 },
+  rawEventsRepo: missingRawEventsRepo,
+  indexerStateRepo: missingIndexerStateRepo,
+  provider: missingProvider as unknown as AbstractProvider,
+  deriveRoundsService: { rebuildFromRaw() {} },
+  deriveWalletRoundsService: { rebuildFromRaw() {} },
+  deriveWalletStatsService: { rebuild() {} },
+  deriveV5TranchesService: { rebuildFromRaw() {} },
+});
+
+await assert.rejects(
+  missingRunner.syncOnce(),
+  /Missing canonical block metadata for supported log at block 101/,
+  'missing metadata for an interior supported log must reject the entire chunk',
+);
+assert.equal(
+  missingRawEventsRepo.getRange(100, 106).length,
+  0,
+  'no partial rows may commit when supported-log metadata is unavailable',
+);
+const missingStatus = await missingRunner.getStatus();
+assert.equal(missingStatus.lastScannedBlock, 99, 'cursor must not advance past a missing supported log');
+assert.equal(missingStatus.canonicalHash, null);
 
 console.log('canonicalReorg.test.ts ok');

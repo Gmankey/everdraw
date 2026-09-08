@@ -16,7 +16,7 @@ import { createDerivePointsService } from './services/derivePoints.js';
 import { minQualifyingEntries } from './services/pointsMath.js';
 import { createDeriveV5TranchesService } from './services/deriveV5Tranches.js';
 import { getRunnerConfig } from './runner/config.js';
-import { createIndexerRunner } from './runner/service.js';
+import { assertProviderChainId, createIndexerRunner } from './runner/service.js';
 import { createApiServer } from './server.js';
 
 async function main(): Promise<void> {
@@ -72,6 +72,11 @@ async function main(): Promise<void> {
 
   await runner.validateConfiguration();
   const claimProofProvider = new JsonRpcProvider(runnerConfig.rpcUrl);
+  await assertProviderChainId(
+    claimProofProvider,
+    runnerConfig.chainId,
+    'claim-proof RPC provider'
+  );
   const distributionAbi = [
     'function distributions(bytes32) view returns (address source,bytes32 sourceKey,bytes32 root,uint32 leafCount,bytes32 metadata,uint64 registeredAt)',
   ];
