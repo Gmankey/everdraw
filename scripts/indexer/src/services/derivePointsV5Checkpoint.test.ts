@@ -6,15 +6,8 @@ import { createWalletRoundsRepo } from '../repositories/walletRoundsRepo.js';
 import { createPointsRepo } from '../repositories/pointsRepo.js';
 import { createV5TranchesRepo } from '../repositories/v5TranchesRepo.js';
 import { createDerivePointsService } from './derivePoints.js';
-
-// Regression: listWalletsWithDeposits() and hasActivePositionAt() both filtered on the V4-only
-// `tickets` column and V4 round states ('open'/'committed'), so the weekly checkpoint silently
-// never saw any V5 wallet -- every V5 wallet's streak/tier/multiplier was permanently frozen at
-// 0/Bronze/1.00x even though #193 correctly wired the checkpoint to fire on schedule. Confirmed
-// live: after the #193 deploy, `indexer_state.last_points_checkpoint_unix` showed the checkpoint
-// HAD run, but the test wallet's `wallet_streaks` row still showed `last_checkpoint_unix: null`
-// -- it was never even visited.
-
+// Repository-level regressions for V5 position detection, full-exit boundaries,
+// and the compatibility replay entry point.
 const wallet = '0x00000000000000000000000000000000000000cc';
 const vault = '0x00000000000000000000000000000000000000a1';
 
@@ -251,7 +244,7 @@ function v5Round(ctx: ReturnType<typeof context>, roundId: number, settledAt: st
 
   const result = ctx.service.runWeeklyCheckpoint(checkpointUnix);
   assert.equal(result.skipped, false);
-  assert.equal(ctx.pointsRepo.getProfile(wallet)!.currentStreakWeeks, 1, 'fresh prize tranche must rebuild after the full-exit reset');
+  assert.equal(ctx.pointsRepo.getProfile(wallet)!.currentStreakWeeks, 0, 'a full exit resets immediately; a fresh prize tranche rebuilds only after its next participated draw');
 }
 
 console.log('derivePointsV5Checkpoint.test.ts ok');

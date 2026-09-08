@@ -69,6 +69,10 @@ function ensureWalletRoundsColumns(db: Database.Database): void {
   if (!names.has('v5_resolved_base')) {
     db.exec('ALTER TABLE wallet_rounds ADD COLUMN v5_resolved_base REAL');
   }
+
+  if (!names.has('v5_min_principal_wei')) {
+    db.exec('ALTER TABLE wallet_rounds ADD COLUMN v5_min_principal_wei TEXT');
+  }
 }
 
 function ensureWalletPointsColumns(db: Database.Database): void {
@@ -87,6 +91,13 @@ function ensureWalletPointsColumns(db: Database.Database): void {
 
   if (!names.has('highest_loss_streak_bonus_awarded')) {
     db.exec('ALTER TABLE wallet_points ADD COLUMN highest_loss_streak_bonus_awarded INTEGER NOT NULL DEFAULT 0');
+  }
+
+  const roundPointsColumns = db.prepare('PRAGMA table_info(wallet_round_points)').all() as Array<{ name: string }>;
+  const roundPointsNames = new Set(roundPointsColumns.map((column) => column.name));
+  if (roundPointsColumns.length > 0 && !roundPointsNames.has('formula_version')) {
+    db.exec('ALTER TABLE wallet_round_points ADD COLUMN formula_version TEXT');
+    db.prepare('UPDATE wallet_round_points SET formula_version = ? WHERE formula_version IS NULL').run('adr-0049-v1');
   }
 
   const streakColumns = db.prepare("PRAGMA table_info(wallet_streaks)").all() as Array<{ name: string }>;

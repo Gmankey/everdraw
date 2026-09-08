@@ -67,6 +67,8 @@ Calibration: 455,000 is **10.4% of a 1,000 MON year**, or ~4.5 draws at full Dia
 
 **The threshold is a position held *through the awarding draw*, not a balance at deposit time.** Awards fire on settled-draw participation, never on the deposit transaction. Without this, the same 100 MON cycles through unlimited wallets — deposit, collect, withdraw, repeat.
 
+For V5.0, held through means the wallet's minimum combined, unboosted principal across the Main Vault and Patron Pool is at least 100 MON for the entire draw period. A mid-draw deposit, a post-period top-up, or any withdrawal below 100 MON during the period does not qualify that draw. Patron multipliers never count toward the threshold. Events in one transaction are applied atomically.
+
 Rationale for 100 MON: a wallet holding exactly the threshold earns `100 × 4,392 ≈ 439,000` base per year, against a 455,000 one-off stack. Bonuses therefore ≈ base per qualifying unit, capping Sybil gain at roughly **2× total points** rather than the ~1000× available today.
 
 ### 4. Accepted residual risk
@@ -77,25 +79,17 @@ Rejected alternative: **stake-proportional bonuses** (`award = value × balance 
 
 During beta the **25,000 MON deposit cap structurally bounds this to ~250 qualifying stacks**.
 
-### 5. Checkpoint cadence invariant
+### 5. Canonical draw progression
 
-Streaks, tiers, milestones and tenure are denominated in "weeks" but computed from **draw counts**: `trancheTenureWeeks = drawId − firstFullWeightDrawId + 1`, and the checkpoint advances the streak by the number of draws participated in its window.
+Streaks, tiers, milestones and tenure are computed from canonical draw identity, not a wall-clock checkpoint. Each settled or skipped draw advances an active participant exactly once, ordered by settlement time, draw ID, and deployment address. Tied settlement timestamps therefore cannot collapse two draws into one.
 
-**Draw-aligned accrual is intentional and correct** — tenure is earned by participating in draws, not by wall-clock time. But it requires an invariant that is currently unenforced across two independent surfaces:
+The indexer reconstructs the complete points state from canonical draw windows and historical position events. A reorg removes the affected draw awards, milestone markers, streak progression, and totals on replay. There is no wall-clock checkpoint cursor or startup-only draw-period fallback.
 
-```
-on-chain drawPeriod  ==  POINTS_CHECKPOINT_INTERVAL_SEC
-```
-
-`drawPeriod` is a `DrawManagerV5` constructor argument; `pointsCheckpointIntervalSec` is an env var validated against nothing. Their mismatch is the root cause of the contaminated UAT data (the 486/535-"week" streak): hourly draws batched into a longer checkpoint window advanced streaks up to 168× too fast and fired milestones that were never earned.
-
-**Required:** the indexer asserts this equality at startup and refuses to run on mismatch.
-
-**Consequence of the cadence tunable:** the timelocked `drawPeriod` setter being added to `DrawManagerV5` means cadence can change in production. Because the curves are calibrated at one draw ≈ one week, **any cadence change rescales the earning rate** and makes pre- and post-change totals incomparable under the append-only rule. A cadence change therefore requires an explicit points decision — recalibrate the ladders, or accept the new rate — recorded at that time.
+Draw-aligned accrual remains intentional: tenure is earned by participating in draws, not by elapsed wall-clock weeks. A cadence change still rescales the earning rate and requires an explicit points decision to recalibrate the ladders or accept the new rate.
 
 ### 6. Formula versioning
 
-Points formulas are **versioned and frozen at mainnet launch**. A rebuild after a formula change must not silently rewrite historical totals; ADR-0008's append-only guarantee is retained and applies to production balances.
+Points formulas are versioned and frozen at mainnet launch. Every history row records its formula version, and the indexer persists a fingerprint of the formula constants and rules before awarding points. A version or fingerprint mismatch fails before historical rows are erased; changing the formula requires an explicit versioned migration. Canonical replay under the same formula remains deterministic.
 
 ## Consequences
 
@@ -109,4 +103,4 @@ Points formulas are **versioned and frozen at mainnet launch**. A rebuild after 
 - **Keep the ×1000 bonuses.** Rejected: they make points a measure of wallet count, not participation.
 - **Stake-proportional bonuses.** Correct in principle and exactly Sybil-neutral; rejected for V5.0 on complexity. Named here as the upgrade path.
 - **Threshold alone with no rebalance.** Rejected: a 100 MON gate on a 4.36M stack still yields ~10× per wallet.
-- **Wall-clock tenure instead of draw-indexed.** Rejected: draw-aligned accrual is the intended model. The exposure is handled by the §5 invariant instead.
+- **Wall-clock tenure instead of draw-indexed.** Rejected: draw-aligned accrual is the intended model. Canonical per-draw replay handles progression without a wall-clock checkpoint.

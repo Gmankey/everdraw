@@ -1,10 +1,12 @@
 import type Database from 'better-sqlite3';
 import type { WalletPointsRow, WalletRoundPointsRow, WalletStreakRow } from '../types/domain.js';
-import { STREAK_MILESTONE_POINTS } from '../services/pointsMath.js';
+import { POINTS_FORMULA_VERSION } from '../services/pointsMath.js';
 
 export interface PointsProfile extends WalletPointsRow, WalletStreakRow {}
 
 export interface PointsRepo {
+  assertFormulaCompatible(version: string, fingerprint: string, atUnix: number): void;
+  withTransaction<T>(work: () => T): T;
   resetRoundPointsAndTotals(): void;
   resetCurrentStreaksAfterFullV5Exits(): number;
   ensureWallet(wallet: string, nowUnix: number): void;
@@ -29,24 +31,30 @@ export interface PointsRepo {
 }
 
 export function createPointsRepo(db: Database.Database): PointsRepo {
+  const assertFormulaCompatibleTx = db.transaction((version: string, fingerprint: string, atUnix: number) => {
+    const historicalVersions = db.prepare(
+      "SELECT DISTINCT formula_version AS version FROM wallet_round_points WHERE formula_version IS NOT NULL"
+    ).all() as Array<{ version: string }>;
+    if (historicalVersions.some((row) => row.version !== version)) {
+      throw new Error("Points formula migration required before rewriting historical awards");
+    }
+    const registered = db.prepare(
+      "SELECT fingerprint FROM points_formula_registry WHERE formula_version = ?"
+    ).get(version) as { fingerprint: string } | undefined;
+    if (registered && registered.fingerprint !== fingerprint) {
+      throw new Error("Points formula changed without a versioned migration");
+    }
+    if (!registered) {
+      db.prepare(
+        "INSERT INTO points_formula_registry (formula_version, fingerprint, registered_at) VALUES (?, ?, ?)"
+      ).run(version, fingerprint, atUnix);
+    }
+  });
+
   const resetTx = db.transaction(() => {
     db.prepare('DELETE FROM wallet_round_points').run();
-    db.prepare(`
-      UPDATE wallet_points SET
-        lifetime_points =
-          CASE WHEN highest_streak_milestone_awarded >= 2 THEN ${STREAK_MILESTONE_POINTS.get(2) ?? 0} ELSE 0 END +
-          CASE WHEN highest_streak_milestone_awarded >= 4 THEN ${STREAK_MILESTONE_POINTS.get(4) ?? 0} ELSE 0 END +
-          CASE WHEN highest_streak_milestone_awarded >= 13 THEN ${STREAK_MILESTONE_POINTS.get(13) ?? 0} ELSE 0 END +
-          CASE WHEN highest_streak_milestone_awarded >= 26 THEN ${STREAK_MILESTONE_POINTS.get(26) ?? 0} ELSE 0 END +
-          CASE WHEN highest_streak_milestone_awarded >= 52 THEN ${STREAK_MILESTONE_POINTS.get(52) ?? 0} ELSE 0 END,
-        has_received_first_deposit_bonus = 0,
-        has_received_first_win_bonus = 0,
-        has_received_comeback_king_bonus = 0,
-        has_received_prize_patron_bonus = 0,
-        highest_loss_streak_bonus_awarded = 0,
-        updated_at = CAST(strftime('%s','now') AS INTEGER)
-    `).run();
-    db.prepare("UPDATE wallet_streaks SET consecutive_non_wins = 0, consecutive_missed_draws = 0, updated_at = CAST(strftime('%s','now') AS INTEGER)").run();
+    db.prepare('DELETE FROM wallet_points').run();
+    db.prepare('DELETE FROM wallet_streaks').run();
   });
 
   const resetCurrentStreaksAfterFullV5ExitsStmt = db.prepare(`
@@ -139,24 +147,27 @@ export function createPointsRepo(db: Database.Database): PointsRepo {
       updated_at = excluded.updated_at
   `);
   const insertRoundPointsStmt = db.prepare(`
-    INSERT INTO wallet_round_points (wallet, pool_address, round_id, base_points, multiplier_x100, bonuses_breakdown, total_points, awarded_at_unix)
-    VALUES (LOWER(@wallet), LOWER(@poolAddress), @roundId, @basePoints, @multiplierX100, @bonusesBreakdown, @totalPoints, @awardedAtUnix)
+    INSERT INTO wallet_round_points (wallet, pool_address, round_id, base_points, multiplier_x100, bonuses_breakdown, total_points, awarded_at_unix, formula_version)
+    VALUES (LOWER(@wallet), LOWER(@poolAddress), @roundId, @basePoints, @multiplierX100, @bonusesBreakdown, @totalPoints, @awardedAtUnix, @formulaVersion)
     ON CONFLICT(wallet, pool_address, round_id) DO UPDATE SET base_points = excluded.base_points,
       multiplier_x100 = excluded.multiplier_x100,
       bonuses_breakdown = excluded.bonuses_breakdown,
       total_points = excluded.total_points,
-      awarded_at_unix = excluded.awarded_at_unix
+      awarded_at_unix = excluded.awarded_at_unix,
+      formula_version = excluded.formula_version
   `);
   const awardBonusStmt = db.prepare('UPDATE wallet_points SET lifetime_points = lifetime_points + ?, updated_at = ? WHERE LOWER(wallet) = LOWER(?)');
   const historyStmt = db.prepare(`
     SELECT wallet, pool_address AS poolAddress, round_id AS roundId, base_points AS basePoints,
       multiplier_x100 AS multiplierX100, bonuses_breakdown AS bonusesBreakdown, total_points AS totalPoints,
-      awarded_at_unix AS awardedAtUnix
+      awarded_at_unix AS awardedAtUnix, formula_version AS formulaVersion
     FROM wallet_round_points WHERE LOWER(wallet) = LOWER(?)
     ORDER BY awarded_at_unix DESC, round_id DESC LIMIT ?
   `);
 
   return {
+    assertFormulaCompatible(version, fingerprint, atUnix) { assertFormulaCompatibleTx(version, fingerprint, atUnix); },
+    withTransaction(work) { return db.transaction(work)(); },
     resetRoundPointsAndTotals() { resetTx(); },
     resetCurrentStreaksAfterFullV5Exits() {
       return resetCurrentStreaksAfterFullV5ExitsStmt.run().changes;
@@ -171,7 +182,7 @@ export function createPointsRepo(db: Database.Database): PointsRepo {
     },
     upsertWalletPoints(row) { upsertPointsStmt.run(row); },
     upsertWalletStreak(row) { upsertStreakStmt.run(row); },
-    insertRoundPoints(row) { insertRoundPointsStmt.run(row); },
+    insertRoundPoints(row) { insertRoundPointsStmt.run({ ...row, formulaVersion: row.formulaVersion || POINTS_FORMULA_VERSION }); },
     awardBonus(wallet, points, nowUnix) { awardBonusStmt.run(points, nowUnix, wallet); },
     listHistory(wallet, limit) { return historyStmt.all(wallet, Math.max(1, Math.min(100, limit))) as WalletRoundPointsRow[]; },
     listLeaderboard(limit, period) {

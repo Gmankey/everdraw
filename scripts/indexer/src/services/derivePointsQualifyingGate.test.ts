@@ -2,9 +2,8 @@
 // draw. This is the Sybil control: without it, a dust wallet earns the same flat bonuses as
 // a whale, so splitting capital across N wallets multiplies the one-off stack by N.
 //
-// Reference numbers this file encodes:
-//   weekly draw, 100 MON floor -> minQualifyingEntries = 0.005 * 100 * 10080 = 5,040 entries
-//   full one-off stack = 455,000; a 1,000 MON year of base = 4,392,360
+// One-time bonuses use historical minimum principal, never boosted entries or a
+// settlement-time balance. The raw-event cases live in derivePointsCanonicalReplay.test.ts.
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 import { applySchema } from '../db/database.js';
@@ -14,16 +13,15 @@ import { createPointsRepo } from '../repositories/pointsRepo.js';
 import { createV5ClaimProofsRepo } from '../repositories/v5ClaimProofsRepo.js';
 import { createV5TranchesRepo } from '../repositories/v5TranchesRepo.js';
 import { createDerivePointsService } from './derivePoints.js';
-import { minQualifyingEntries } from './pointsMath.js';
 
 const wallet = '0x00000000000000000000000000000000000000aa';
 const pool = '0x00000000000000000000000000000000000000a1';
 
-const WEEKLY_SEC = 604_800;
-const GATE_ENTRIES = minQualifyingEntries(WEEKLY_SEC); // 5,040
-assert.equal(GATE_ENTRIES, 5_040);
+const GATE_ENTRIES = 5_040;
+const MIN_WEI = (100n * 10n ** 18n).toString();
+const ONE_MON_WEI = (1n * 10n ** 18n).toString();
 
-function context(minQualifyingEntriesValue = GATE_ENTRIES, minQualifyingWei = '0') {
+function context(minQualifyingWei = MIN_WEI) {
   const db = new Database(':memory:');
   applySchema(db);
   const roundsRepo = createRoundsRepo(db);
@@ -36,7 +34,6 @@ function context(minQualifyingEntriesValue = GATE_ENTRIES, minQualifyingWei = '0
     roundsRepo,
     walletRoundsRepo,
     v5ClaimProofsRepo,
-    minQualifyingEntries: minQualifyingEntriesValue,
     minQualifyingWei,
   });
   return { db, roundsRepo, walletRoundsRepo, pointsRepo, v5ClaimProofsRepo, v5TranchesRepo, service };
@@ -68,7 +65,7 @@ function round(ctx: ReturnType<typeof context>, roundId: number, settledAt: stri
 }
 
 /** A V5 participant: base comes from v5ResolvedBase, not tickets. */
-function v5Participant(ctx: ReturnType<typeof context>, roundId: number, entries: number, won: 0 | 1 = 0) {
+function v5Participant(ctx: ReturnType<typeof context>, roundId: number, entries: number, minPrincipalWei: string, won: 0 | 1 = 0) {
   ctx.walletRoundsRepo.upsert({
     wallet,
     roundId,
@@ -84,7 +81,7 @@ function v5Participant(ctx: ReturnType<typeof context>, roundId: number, entries
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   });
-  ctx.walletRoundsRepo.upsertV5ResolvedBase(wallet, roundId, pool, entries);
+  ctx.walletRoundsRepo.upsertV5ResolvedBase(wallet, roundId, pool, entries, minPrincipalWei);
 }
 
 function bonuses(ctx: ReturnType<typeof context>, roundId: number): Record<string, number> {
@@ -97,7 +94,7 @@ function bonuses(ctx: ReturnType<typeof context>, roundId: number): Record<strin
 {
   const ctx = context();
   round(ctx, 1, '2026-05-01T00:00:00.000Z');
-  v5Participant(ctx, 1, 100); // ~2 MON for a week: far below the 5,040 floor
+  v5Participant(ctx, 1, 100, ONE_MON_WEI); // ~2 MON for a week: far below the 5,040 floor
   ctx.service.rebuildSettlementPoints();
 
   assert.equal(bonuses(ctx, 1).first_deposit, undefined, 'dust must not earn First Deposit');
@@ -110,7 +107,7 @@ function bonuses(ctx: ReturnType<typeof context>, roundId: number): Record<strin
 {
   const ctx = context();
   round(ctx, 1, '2026-05-01T00:00:00.000Z');
-  v5Participant(ctx, 1, GATE_ENTRIES); // exactly 100 MON held for the whole draw
+  v5Participant(ctx, 1, GATE_ENTRIES, MIN_WEI); // exactly 100 MON held for the whole draw
   ctx.service.rebuildSettlementPoints();
 
   assert.equal(bonuses(ctx, 1).first_deposit, 2_500, 'a qualifying position earns First Deposit');
@@ -120,7 +117,7 @@ function bonuses(ctx: ReturnType<typeof context>, roundId: number): Record<strin
 {
   const ctx = context();
   round(ctx, 1, '2026-05-01T00:00:00.000Z');
-  v5Participant(ctx, 1, GATE_ENTRIES - 1);
+  v5Participant(ctx, 1, GATE_ENTRIES, (99n * 10n ** 18n).toString());
   ctx.service.rebuildSettlementPoints();
   assert.equal(bonuses(ctx, 1).first_deposit, undefined, 'just below the floor does not qualify');
 }
@@ -131,7 +128,7 @@ function bonuses(ctx: ReturnType<typeof context>, roundId: number): Record<strin
 {
   const ctx = context();
   round(ctx, 1, '2026-05-01T00:00:00.000Z', wallet);
-  v5Participant(ctx, 1, 100, 1); // dust, but won
+  v5Participant(ctx, 1, 100, ONE_MON_WEI, 1); // dust, but won
   ctx.service.rebuildSettlementPoints();
 
   const b = bonuses(ctx, 1);
@@ -172,7 +169,7 @@ function bonuses(ctx: ReturnType<typeof context>, roundId: number): Record<strin
   const dust = context();
   for (let id = 1; id <= 10; id += 1) {
     round(dust, id, `2026-05-${String(id).padStart(2, '0')}T00:00:00.000Z`);
-    v5Participant(dust, id, 100);
+    v5Participant(dust, id, 100, ONE_MON_WEI);
   }
   dust.service.rebuildSettlementPoints();
   assert.equal(bonuses(dust, 10).loss_streak, undefined, 'dust must not earn the 10-draw loss streak');
@@ -180,7 +177,7 @@ function bonuses(ctx: ReturnType<typeof context>, roundId: number): Record<strin
   const real = context();
   for (let id = 1; id <= 10; id += 1) {
     round(real, id, `2026-05-${String(id).padStart(2, '0')}T00:00:00.000Z`);
-    v5Participant(real, id, GATE_ENTRIES);
+    v5Participant(real, id, GATE_ENTRIES, MIN_WEI);
   }
   real.service.rebuildSettlementPoints();
   assert.equal(bonuses(real, 10).loss_streak, 5_000, 'a qualifying position earns it');
@@ -188,70 +185,13 @@ function bonuses(ctx: ReturnType<typeof context>, roundId: number): Record<strin
 
 // --- gate disabled (0) preserves previous behaviour ------------------------------------
 {
-  const ctx = context(0);
+  const ctx = context('0');
   round(ctx, 1, '2026-05-01T00:00:00.000Z');
-  v5Participant(ctx, 1, 1);
+  v5Participant(ctx, 1, 1, ONE_MON_WEI);
   ctx.service.rebuildSettlementPoints();
   assert.equal(bonuses(ctx, 1).first_deposit, 2_500, 'a zero floor disables the gate entirely');
 }
 
-// --- streak milestones are gated on held position at the checkpoint ---------------------
-// Milestones are 185,000 of the 455,000 stack, so leaving them ungated would leave most of
-// the dust-farming vector intact.
-{
-  const minWei = (100n * 10n ** 18n).toString();
-  const fromUnix = Date.parse('2026-05-01T00:00:00.000Z') / 1000;
-  const checkpointUnix = Date.parse('2026-05-04T00:00:00.000Z') / 1000;
-
-  function milestoneCtx(remainingAmount: string) {
-    const ctx = context(GATE_ENTRIES, minWei);
-    round(ctx, 1, '2026-05-02T00:00:00.000Z');
-    v5Participant(ctx, 1, GATE_ENTRIES);
-    round(ctx, 2, '2026-05-03T00:00:00.000Z');
-    v5Participant(ctx, 2, GATE_ENTRIES);
-    ctx.pointsRepo.ensureWallet(wallet, fromUnix);
-    const prior = ctx.pointsRepo.getWalletPoints(wallet)!;
-    ctx.pointsRepo.upsertWalletPoints({ ...prior, highestStreakMilestoneAwarded: 2, updatedAt: fromUnix });
-    ctx.pointsRepo.upsertWalletStreak({
-      wallet,
-      currentStreakWeeks: 3,
-      longestStreakWeeks: 3,
-      lastCheckpointUnix: fromUnix,
-      consecutiveNonWins: 0,
-      consecutiveMissedDraws: 0,
-      updatedAt: fromUnix,
-    });
-    ctx.v5TranchesRepo.insertTranche({
-      wallet,
-      vaultAddress: pool,
-      poolType: 'vault',
-      amount: remainingAmount,
-      remainingAmount,
-      openedBlockNumber: 90,
-      openedLogIndex: 1,
-      openedAt: '2026-04-01T00:00:00.000Z',
-      openedTxHash: '0x0000000000000000000000000000000000000000000000000000000000000f04',
-      startDrawId: 1,
-      closedAt: null,
-      closedBlockNumber: null,
-      closedLogIndex: null,
-      closedTxHash: null,
-    });
-    ctx.service.runWeeklyCheckpoint(checkpointUnix, fromUnix);
-    return ctx.pointsRepo.getProfile(wallet)!;
-  }
-
-  // 1 MON held: streak still advances (participation is real) but no milestone payout.
-  const dustProfile = milestoneCtx((1n * 10n ** 18n).toString());
-  assert.equal(dustProfile.currentStreakWeeks, 5, 'the streak itself is not gated — only the bonus is');
-  assert.equal(dustProfile.highestStreakMilestoneAwarded, 2, 'dust must not unlock the week-4 milestone');
-  assert.equal(dustProfile.lifetimePoints, 0, 'no milestone points for a dust position');
-
-  // 100 MON held: milestone awarded.
-  const realProfile = milestoneCtx((100n * 10n ** 18n).toString());
-  assert.equal(realProfile.highestStreakMilestoneAwarded, 4, 'a qualifying position unlocks it');
-  assert.equal(realProfile.lifetimePoints, 10_000, 'week-4 milestone is 10,000 under ADR-0049');
-}
 
 // --- the BigInt sum must not overflow SQLite's 64-bit INTEGER ---------------------------
 // 1 MON = 1e18 wei and int64 maxes near 9.22e18, so summing wei in SQL breaks above ~9 MON.
