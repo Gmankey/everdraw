@@ -382,6 +382,7 @@ async function maybeClaim({ manager, signer, provider, drawManagerAddress, claim
       account: leaf.account,
       token: leaf.token,
       amount: leaf.amount,
+      kind: leaf.kind,
     });
     proofs.push(leaf.proof);
   }
