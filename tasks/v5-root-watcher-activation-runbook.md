@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Run the V5 root watcher outside Fly on GitHub Actions. Each job is a managed 50-minute worker that polls once per minute; the five-minute schedule keeps a successor queued under the workflow's concurrency lock. The watcher is read-only: it reconstructs each proposed root from chain events, compares the Python reference result with the on-chain root, sends an alarm on a mismatch, and pings an independent Healthchecks check only after its cursor reaches chain head with adequate veto time remaining.
+Run the V5 root watcher outside Fly on GitHub Actions. Each job is a managed 50-minute worker that polls once per minute and explicitly dispatches its successor before exiting. The five-minute schedule remains a recovery fallback if a job dies before handoff. The watcher is read-only: it reconstructs each proposed root from chain events, compares the Python reference result with the on-chain root, sends an alarm on a mismatch, and pings an independent Healthchecks check only after its cursor reaches chain head with adequate veto time remaining.
 
 The keeper's files, Fly volume, RPC, and credentials are not used by this worker.
 
@@ -65,7 +65,7 @@ unset V5_WATCHER_UAT_RPC_URL V5_WATCHER_UAT_LOGS_RPC_URL V5_WATCHER_UAT_HEALTHCH
    cycle budget before the historical scan begins.
 5. During the veto drill, confirm a deliberately bad root creates a Telegram + Healthchecks failure alarm before the challenge window expires.
 6. Confirm the worker exits normally rather than hitting the 60-minute job timeout, its cache-save
-   step succeeds, and a scheduled successor is queued or starts after it exits. A handoff gap that
+   step succeeds, and its workflow-dispatched successor is queued or starts after it exits. A handoff gap that
    trips Healthchecks invalidates the soak window.
 
 ## Mainnet

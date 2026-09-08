@@ -235,6 +235,9 @@ test("workflow uses configured logs RPC and a five-minute cadence", () => {
   assert.match(workflow, /WATCHER_SHUTDOWN_RESERVE_SEC: "180"/);
   assert.match(workflow, /timeout --signal=TERM --kill-after=15s/);
   assert.match(workflow, /SECONDS - last_success > WATCHER_MAX_STALE_SUCCESS_SEC/);
+  assert.match(workflow, /actions: write/);
+  assert.match(workflow, /Queue successor watcher/);
+  assert.match(workflow, /gh workflow run v5-watcher\.yml/);
 });
 
 
