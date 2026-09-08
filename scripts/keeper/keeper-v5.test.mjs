@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -144,3 +144,5 @@ test("managed keeper refuses to start without its required success heartbeat", (
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /KEEPER_HEALTHCHECK_URL is required/);
 });
+
+test("keeper includes ClaimLeaf.kind in claimMany payloads", () => { const source = readFileSync(new URL("../keeper-v5.js", import.meta.url), "utf8"); assert.equal(source.includes("kind: leaf.kind"), true); });
