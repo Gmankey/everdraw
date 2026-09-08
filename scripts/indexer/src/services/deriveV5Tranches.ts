@@ -2,10 +2,7 @@ import type { RawEventsRepo } from '../repositories/rawEventsRepo.js';
 import type { V5TranchesRepo } from '../repositories/v5TranchesRepo.js';
 import type { WalletRoundsRepo } from '../repositories/walletRoundsRepo.js';
 import type { RawEventRow, V5DeploymentScope, V5PoolType, V5PositionAction, V5PositionEventSource } from '../types/domain.js';
-import { multiplierForTranche } from './pointsMath.js';
-
-// Locked ticket rate: 0.005 entries/MON/minute (see v5-odds-display-ux ticket).
-const ENTRIES_RATE_PER_MON_PER_MIN = 0.005;
+import { entriesForBalanceMinutes, multiplierForTranche } from './pointsMath.js';
 const WEI_PER_MON = 1e18;
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
@@ -466,7 +463,7 @@ function writeV5ResolvedBase(input: {
         for (const tranche of stack) {
           if (tranche.remaining <= 0n) continue;
           const balanceMon = Number(tranche.remaining) / WEI_PER_MON;
-          const entries = ENTRIES_RATE_PER_MON_PER_MIN * balanceMon * minutes;
+          const entries = entriesForBalanceMinutes(balanceMon, minutes);
           const mult = multiplierForTranche({
             poolType,
             firstFullWeightDrawId: firstFullWeightDrawId(tranche.startDrawId),

@@ -3,7 +3,7 @@ import type { RoundsRepo } from '../repositories/roundsRepo.js';
 import type { WalletRoundsRepo } from '../repositories/walletRoundsRepo.js';
 import type { V5ClaimProofsRepo } from '../repositories/v5ClaimProofsRepo.js';
 import { nowUnix } from '../utils/time.js';
-import { calculateRoundPoints, lossStreakThresholdBonus, POINTS_FORMULA_FINGERPRINT, POINTS_FORMULA_VERSION, STREAK_MILESTONE_POINTS } from './pointsMath.js';
+import { calculateRoundPoints, lossStreakThresholdBonus, pointsFormulaFingerprint, POINTS_FORMULA_VERSION, qualifiesForOneOffBonuses, STREAK_MILESTONE_POINTS } from './pointsMath.js';
 
 export interface DerivePointsService {
   rebuildSettlementPoints(): void;
@@ -28,7 +28,7 @@ export function createDerivePointsService(input: {
 
     pointsRepo.assertFormulaCompatible(
       POINTS_FORMULA_VERSION,
-      POINTS_FORMULA_FINGERPRINT,
+      pointsFormulaFingerprint(minQualifyingWei.toString()),
       timestamp,
     );
 
@@ -107,20 +107,22 @@ export function createDerivePointsService(input: {
           const isV5 = participant.v5ResolvedBase != null;
           const entries = isV5 ? participant.v5ResolvedBase! : participant.tickets;
           const historicalMinimum = BigInt(participant.v5MinPrincipalWei ?? '0');
-          const qualifiesForOneOffBonuses = !isV5
-            || minQualifyingWei <= 0n
-            || historicalMinimum >= minQualifyingWei;
+          const qualifiesForBonuses = qualifiesForOneOffBonuses({
+            isV5,
+            minimumQualifyingWei: minQualifyingWei,
+            historicalMinimumWei: historicalMinimum,
+          });
 
           const firstDeposit = points.hasReceivedFirstDepositBonus === 0
-            && qualifiesForOneOffBonuses;
+            && qualifiesForBonuses;
           const prizePatron = points.hasReceivedPrizePatronBonus === 0
-            && qualifiesForOneOffBonuses
+            && qualifiesForBonuses
             && pointsRepo.hasDegenDepositAtOrBefore(wallet, awardedAtUnix);
           const comebackKing = streak.consecutiveMissedDraws >= 2
             && points.hasReceivedComebackKingBonus === 0
-            && qualifiesForOneOffBonuses;
+            && qualifiesForBonuses;
           const nextConsecutiveNonWins = won ? 0 : streak.consecutiveNonWins + 1;
-          const lossStreakBonus = !won && qualifiesForOneOffBonuses
+          const lossStreakBonus = !won && qualifiesForBonuses
             ? lossStreakThresholdBonus(nextConsecutiveNonWins, points.highestLossStreakBonusAwarded)
             : null;
 
@@ -128,7 +130,7 @@ export function createDerivePointsService(input: {
           const nextLongestStreak = Math.max(streak.longestStreakWeeks, nextCurrentStreak);
           let highestMilestone = points.highestStreakMilestoneAwarded;
           let milestonePoints = 0;
-          if (qualifiesForOneOffBonuses) {
+          if (qualifiesForBonuses) {
             for (const [milestone, bonus] of STREAK_MILESTONE_POINTS) {
               if (nextCurrentStreak >= milestone && highestMilestone < milestone) {
                 milestonePoints += bonus;

@@ -6,7 +6,7 @@ import { openDatabase, applySchema } from '../src/db/database.js';
  *
  * Run this on the live indexer after deploying the POINTS_START_UNIX gate and
  * before opening the points system publicly. It truncates only points-derived
- * state: wallet_round_points, wallet_streaks, and wallet_points.
+ * state: wallet_round_points, wallet_streaks, wallet_points, and the formula registry.
  *
  * It does NOT reset raw events, rounds, wallet_rounds, participation history,
  * auth data, or any protocol-derived historical data. After this reset, future
@@ -22,13 +22,15 @@ const before = db.prepare(`
   SELECT
     (SELECT COUNT(*) FROM wallet_round_points) AS walletRoundPoints,
     (SELECT COUNT(*) FROM wallet_streaks) AS walletStreaks,
-    (SELECT COUNT(*) FROM wallet_points) AS walletPoints
-`).get() as { walletRoundPoints: number; walletStreaks: number; walletPoints: number };
+    (SELECT COUNT(*) FROM wallet_points) AS walletPoints,
+    (SELECT COUNT(*) FROM points_formula_registry) AS formulaRegistry
+`).get() as { walletRoundPoints: number; walletStreaks: number; walletPoints: number; formulaRegistry: number };
 
 const reset = db.transaction(() => {
   db.prepare('DELETE FROM wallet_round_points').run();
   db.prepare('DELETE FROM wallet_streaks').run();
   db.prepare('DELETE FROM wallet_points').run();
+  db.prepare("DELETE FROM points_formula_registry").run();
 });
 
 reset();
@@ -37,8 +39,9 @@ const after = db.prepare(`
   SELECT
     (SELECT COUNT(*) FROM wallet_round_points) AS walletRoundPoints,
     (SELECT COUNT(*) FROM wallet_streaks) AS walletStreaks,
-    (SELECT COUNT(*) FROM wallet_points) AS walletPoints
-`).get() as { walletRoundPoints: number; walletStreaks: number; walletPoints: number };
+    (SELECT COUNT(*) FROM wallet_points) AS walletPoints,
+    (SELECT COUNT(*) FROM points_formula_registry) AS formulaRegistry
+`).get() as { walletRoundPoints: number; walletStreaks: number; walletPoints: number; formulaRegistry: number };
 
 db.close();
 

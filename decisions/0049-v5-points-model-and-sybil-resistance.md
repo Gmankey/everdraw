@@ -89,7 +89,7 @@ Draw-aligned accrual remains intentional: tenure is earned by participating in d
 
 ### 6. Formula versioning
 
-Points formulas are versioned and frozen at mainnet launch. Every history row records its formula version, and the indexer persists a fingerprint of the formula constants and rules before awarding points. A version or fingerprint mismatch fails before historical rows are erased; changing the formula requires an explicit versioned migration. Canonical replay under the same formula remains deterministic.
+Points formulas are versioned and frozen at mainnet launch. Every history row records its formula version, and the indexer persists a fingerprint of the calculation inputs and effective configuration before awarding points. This includes the base earning rate, multiplier ladders, bonus values, rounding rule, and the effective qualifying threshold in wei. The calculation consumes the same definitions that are fingerprinted. A version or fingerprint mismatch fails before historical rows are erased; changing the formula requires an explicit versioned migration. Canonical replay under the same formula remains deterministic.
 
 ## Consequences
 

@@ -1,14 +1,19 @@
 import assert from 'node:assert/strict';
 import {
   calculateRoundPoints,
+  ENTRIES_RATE_PER_MON_PER_MIN,
+  entriesForBalanceMinutes,
   getDegenMultiplierX100,
   getMultiplierX100,
   lossStreakThresholdBonus,
   MIN_QUALIFYING_MON,
   multiplierForTranche,
   nextMilestone,
+  PATRON_TENURE_MULTIPLIERS_X100,
+  pointsFormulaFingerprint,
   STREAK_MILESTONE_POINTS,
   trancheTenureWeeks,
+  VAULT_STREAK_MULTIPLIERS_X100,
 } from './pointsMath.js';
 
 assert.equal(getMultiplierX100(0), 100);
@@ -23,6 +28,20 @@ assert.equal(getDegenMultiplierX100(2), 300);
 assert.equal(getDegenMultiplierX100(3), 400);
 assert.equal(getDegenMultiplierX100(4), 500);
 assert.equal(getDegenMultiplierX100(52), 500);
+
+const effectiveThresholdWei = (100n * 10n ** 18n).toString();
+const fingerprint = JSON.parse(pointsFormulaFingerprint(effectiveThresholdWei));
+assert.equal(fingerprint.entriesRatePerMonPerMin, ENTRIES_RATE_PER_MON_PER_MIN);
+assert.equal(entriesForBalanceMinutes(100, 360), 180);
+assert.equal(fingerprint.minimumQualifyingWei, effectiveThresholdWei);
+assert.match(fingerprint.implementationHash, /^[0-9a-f]{64}$/);
+assert.deepEqual(fingerprint.vaultMultiplier, [...VAULT_STREAK_MULTIPLIERS_X100]);
+assert.deepEqual(fingerprint.patronMultiplier, [...PATRON_TENURE_MULTIPLIERS_X100]);
+assert.notEqual(
+  pointsFormulaFingerprint(effectiveThresholdWei),
+  pointsFormulaFingerprint((101n * 10n ** 18n).toString()),
+  'the effective qualifying threshold must be part of the frozen formula',
+);
 
 // ADR-0049 §2 — rebalanced loss-streak values.
 assert.deepEqual(lossStreakThresholdBonus(9, 0), null);
