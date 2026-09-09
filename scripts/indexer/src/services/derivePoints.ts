@@ -7,6 +7,8 @@ import { calculateRoundPoints, lossStreakThresholdBonus, pointsFormulaFingerprin
 
 export interface DerivePointsService {
   rebuildSettlementPoints(): void;
+  /** Identifies the formula and configuration this service would apply right now. */
+  inputFingerprint(): string;
   runWeeklyCheckpoint(checkpointUnix?: number, fromUnix?: number): { processed: number; skipped: boolean; reason?: string };
 }
 
@@ -200,6 +202,14 @@ export function createDerivePointsService(input: {
 
   return {
     rebuildSettlementPoints,
+
+    inputFingerprint() {
+      return [
+        POINTS_FORMULA_VERSION,
+        pointsFormulaFingerprint(minQualifyingWei.toString()),
+        `start=${pointsStartUnix}`,
+      ].join(':');
+    },
 
     // Compatibility entry point for the runner while checkpoint scheduling is removed.
     runWeeklyCheckpoint() {

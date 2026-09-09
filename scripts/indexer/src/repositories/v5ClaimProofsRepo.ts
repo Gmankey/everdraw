@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { CLAIM_PROOFS_GENERATION_KEY, createDataGenerationRepo } from './dataGenerationRepo.js';
 
 export interface V5ClaimProofRow {
   chainId: number;
@@ -25,6 +26,7 @@ export interface V5ClaimProofsRepo {
 }
 
 export function createV5ClaimProofsRepo(db: Database.Database): V5ClaimProofsRepo {
+  const generations = createDataGenerationRepo(db);
   const insert = db.prepare([
     'INSERT INTO v5_claim_proofs (',
     'chain_id, vault_address, draw_manager_address, claim_manager_address, draw_id,',
@@ -64,7 +66,11 @@ export function createV5ClaimProofsRepo(db: Database.Database): V5ClaimProofsRep
       }
       return;
     }
-    for (const row of rows) insert.run(row);
+    let changed = 0;
+    for (const row of rows) changed += insert.run(row).changes;
+    // Proofs arrive through the ingest route, not the block scanner. Without this bump a
+    // newly published draw changes who counts as a winner with no signal anywhere else.
+    generations.bump(CLAIM_PROOFS_GENERATION_KEY, changed);
   });
   const list = db.prepare([
     'SELECT chain_id AS chainId, vault_address AS vaultAddress,',

@@ -8,6 +8,7 @@ import { createWalletStatsRepo } from './repositories/walletStatsRepo.js';
 import { createIndexerStateRepo } from './repositories/indexerStateRepo.js';
 import { createV5ClaimProofsRepo } from "./repositories/v5ClaimProofsRepo.js";
 import { createPointsRepo } from './repositories/pointsRepo.js';
+import { createPointsReplayStateRepo } from './repositories/pointsReplayStateRepo.js';
 import { createV5TranchesRepo } from './repositories/v5TranchesRepo.js';
 import { createDeriveRoundsService } from './services/deriveRounds.js';
 import { createDeriveWalletRoundsService } from './services/deriveWalletRounds.js';
@@ -32,6 +33,7 @@ async function main(): Promise<void> {
   const walletStatsRepo = createWalletStatsRepo(db);
   const indexerStateRepo = createIndexerStateRepo(db);
   const pointsRepo = createPointsRepo(db);
+  const pointsReplayStateRepo = createPointsReplayStateRepo(db);
   const v5TranchesRepo = createV5TranchesRepo(db);
   const v5ClaimProofsRepo = createV5ClaimProofsRepo(db);
   const runnerConfig = getRunnerConfig();
@@ -61,6 +63,7 @@ async function main(): Promise<void> {
     deriveWalletStatsService,
     deriveV5TranchesService,
     derivePointsService,
+    pointsReplayStateRepo,
   });
 
   await runner.validateConfiguration();

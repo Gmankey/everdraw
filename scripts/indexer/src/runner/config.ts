@@ -15,6 +15,11 @@ export interface RunnerConfig {
   pollIntervalMs: number;
   /** ADR-0049 §3 — MON a wallet must hold through a draw to earn one-time bonuses. */
   pointsMinQualifyingMon: number;
+  /**
+   * Longest the canonical points replay may be skipped while its inputs look unchanged.
+   * A backstop against a missed invalidation, not the primary trigger.
+   */
+  pointsReplayMaxIdleMs: number;
 }
 
 export function getRunnerConfig(): RunnerConfig {
@@ -50,6 +55,11 @@ export function getRunnerConfig(): RunnerConfig {
     throw new Error('POINTS_MIN_QUALIFYING_MON must be a non-negative number');
   }
 
+  const pointsReplayMaxIdleMs = Number(process.env.POINTS_REPLAY_MAX_IDLE_MS ?? 600_000);
+  if (!Number.isInteger(pointsReplayMaxIdleMs) || pointsReplayMaxIdleMs < 0) {
+    throw new Error('POINTS_REPLAY_MAX_IDLE_MS must be a non-negative integer number of milliseconds');
+  }
+
   for (const deployment of v5Deployments) {
     if (deployment.chainId !== chainId) {
       throw new Error(`V5 deployment chain mismatch: expected ${chainId}, got ${deployment.chainId}`);
@@ -74,6 +84,7 @@ export function getRunnerConfig(): RunnerConfig {
     maxBlocksPerSync: Number(process.env.INDEXER_MAX_BLOCKS_PER_SYNC ?? 10_000),
     pollIntervalMs: Number(process.env.INDEXER_POLL_INTERVAL_MS ?? 2000),
     pointsMinQualifyingMon,
+    pointsReplayMaxIdleMs,
   };
 }
 

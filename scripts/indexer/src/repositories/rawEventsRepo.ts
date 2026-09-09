@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { RawEventRow } from '../types/domain.js';
+import { RAW_EVENTS_GENERATION_KEY, createDataGenerationRepo } from './dataGenerationRepo.js';
 
 export interface RawEventsRepo {
   getRange(fromBlock: number, toBlock: number): RawEventRow[];
@@ -17,6 +18,13 @@ export interface RawEventsRepo {
 }
 
 export function createRawEventsRepo(db: Database.Database): RawEventsRepo {
+  // Every write bumps a counter in the same transaction so downstream consumers can tell
+  // "nothing changed" from "a rewind deleted this range and wrote it again".
+  const generations = createDataGenerationRepo(db);
+  const bumpGeneration = (rowsChanged: number) => {
+    generations.bump(RAW_EVENTS_GENERATION_KEY, rowsChanged);
+  };
+
   const getRangeStmt = db.prepare(`
     SELECT
       tx_hash as txHash,
@@ -125,9 +133,11 @@ export function createRawEventsRepo(db: Database.Database): RawEventsRepo {
 
 
   const upsertManyTx = db.transaction((rows: RawEventRow[]) => {
+    let changed = 0;
     for (const row of rows) {
-      upsertStmt.run(row);
+      changed += upsertStmt.run(row).changes;
     }
+    bumpGeneration(changed);
   });
   const commitCanonicalRangeTx = db.transaction((input: {
     fromBlock: number;
@@ -135,9 +145,10 @@ export function createRawEventsRepo(db: Database.Database): RawEventsRepo {
     rows: RawEventRow[];
     stateUpdates: Array<{ key: string; value: string; updatedAt: string }>;
   }) => {
-    deleteForBlockRangeStmt.run(input.fromBlock, input.toBlock);
-    for (const row of input.rows) upsertStmt.run(row);
+    let changed = deleteForBlockRangeStmt.run(input.fromBlock, input.toBlock).changes;
+    for (const row of input.rows) changed += upsertStmt.run(row).changes;
     for (const update of input.stateUpdates) setStateStmt.run(update);
+    bumpGeneration(changed);
   });
 
   return {
@@ -155,10 +166,10 @@ export function createRawEventsRepo(db: Database.Database): RawEventsRepo {
       upsertManyTx(rows);
     },
     deleteFromBlock(fromBlock) {
-      deleteFromBlockStmt.run(fromBlock);
+      bumpGeneration(deleteFromBlockStmt.run(fromBlock).changes);
     },
     deleteForBlockRange(fromBlock, toBlock) {
-      deleteForBlockRangeStmt.run(fromBlock, toBlock);
+      bumpGeneration(deleteForBlockRangeStmt.run(fromBlock, toBlock).changes);
     },
     commitCanonicalRange(input) {
       commitCanonicalRangeTx(input);
