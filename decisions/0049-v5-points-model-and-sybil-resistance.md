@@ -91,11 +91,28 @@ Draw-aligned accrual remains intentional: tenure is earned by participating in d
 
 Points formulas are versioned and frozen at mainnet launch. Every history row records its formula version, and the indexer persists a fingerprint of the calculation inputs and effective configuration before awarding points. This includes the base earning rate, multiplier ladders, bonus values, rounding rule, and the effective qualifying threshold in wei. The calculation consumes the same definitions that are fingerprinted. A version or fingerprint mismatch fails before historical rows are erased; changing the formula requires an explicit versioned migration. Canonical replay under the same formula remains deterministic.
 
+### 7. A points failure is contained, and points health is reported on its own
+
+A points failure must not stop event ingestion or make it look broken. The formula check in section 6 throws by design; when it does, the indexer records the failure, keeps ingesting events, keeps rebuilding every other derived table, and leaves the existing awards and the stored fingerprint untouched. It does not delete the fingerprint or reset awards to get moving again -- recovery is an explicit decision, and the retry stays available once the cause is fixed.
+
+Because the failure is contained, it has to be visible on its own. `/api/health` reports a `points` block: a status, the last error and when it happened, and when points last rebuilt successfully. Alerting keys on that block. An advancing block cursor does not mean points are current, and frozen points do not mean the indexer is down.
+
+Retries are spaced rather than continuous, so a persistent fault does not re-run the whole replay on every poll cycle and log on every one of them.
+
+### 8. When the canonical replay runs
+
+Section 5's full replay stays the only thing that computes points. Nothing incremental is layered on top of it. It is skipped only when it would rewrite exactly what is already stored.
+
+The indexer decides that from what the replay actually reads: a write counter on `raw_events`, a write counter on `v5_claim_proofs` (proofs arrive through the ingest route, not the block scanner, and publishing a draw changes who counts as a winner), the row counts and totals of the points tables themselves (so an operator reset forces a rebuild), and the formula version, fingerprint and qualifying threshold from section 6. Counting writes rather than comparing rows is deliberate: a rewind deletes a block range and writes it back, and row counts can come back identical.
+
+The replay also runs unconditionally on the first cycle of every process -- so a code or configuration change always rebuilds -- after any recorded failure, and at least once every `POINTS_REPLAY_MAX_IDLE_MS` (default 10 minutes) regardless of the signals above. That last one bounds the cost of a change nobody thought to track: points go stale for one interval, not permanently. Setting `POINTS_REPLAY_MAX_IDLE_MS=0` turns the guard off entirely and restores a replay on every cycle.
+
 ## Consequences
 
 - `pointsMath.ts` constants change; a qualifying-balance gate is added to the one-time award paths in `derivePoints.ts`; Comeback King is gated on its existing marker.
 - UAT points data is contaminated and must be reset and rederived under `tasks/points-data-correction-runbook.md` before these values mean anything.
 - ADR-0008's Sybil claim is corrected here rather than left standing.
+- Monitoring must watch `points.status` in `/api/health`; a healthy `lag` and `dbStatus` no longer imply points are current.
 - Same-draw tranche merge (ticket §2b.3) remains unimplemented; the cross-tenure "oldest merge" cap is **correctly deferred** as not points-safe and must not be guessed. Same-draw merge is points-equivalent and may ship independently.
 
 ## Rejected alternatives

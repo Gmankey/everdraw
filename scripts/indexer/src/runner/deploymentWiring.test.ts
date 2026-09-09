@@ -26,6 +26,7 @@ const config: RunnerConfig = {
   maxBlocksPerSync: 1000,
   pollIntervalMs: 1000,
   pointsMinQualifyingMon: 100,
+  pointsReplayMaxIdleMs: 600_000,
 };
 
 function runnerWith(wiring: {

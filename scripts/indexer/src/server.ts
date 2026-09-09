@@ -67,6 +67,9 @@ export function createApiServer(params: {
         v5Deployments: status.v5Deployments,
         lag: status.lag,
         dbStatus: 'ok',
+        // Reported separately from dbStatus/lag on purpose: a failing points replay does
+        // not stop ingestion, and a healthy cursor must not imply points are current.
+        points: status.points,
         uptime: Math.floor((Date.now() - startedAt) / 1000),
       });
     } catch (error) {

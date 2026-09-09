@@ -1,6 +1,6 @@
 import { FallbackProvider, JsonRpcProvider, Interface, ethers } from 'ethers';
 import type { Block, AbstractProvider } from 'ethers';
-import { nowIso } from '../utils/time.js';
+import { nowIso, nowUnix } from '../utils/time.js';
 import type { SupportedEventName, RawEventRow, V5DeploymentScope } from '../types/domain.js';
 import type { RawEventsRepo } from '../repositories/rawEventsRepo.js';
 import type { IndexerStateRepo } from '../repositories/indexerStateRepo.js';
@@ -9,6 +9,7 @@ import type { DeriveWalletRoundsService } from '../services/deriveWalletRounds.j
 import type { DeriveWalletStatsService } from '../services/deriveWalletStats.js';
 import type { DerivePointsService } from '../services/derivePoints.js';
 import type { DeriveV5TranchesService } from '../services/deriveV5Tranches.js';
+import type { PointsReplayStateRepo } from '../repositories/pointsReplayStateRepo.js';
 import type { RunnerConfig } from './config.js';
 import { POOL_EVENT_ABI } from './abi.js';
 
@@ -17,6 +18,10 @@ const LAST_FINALIZED_BLOCK_HASH_KEY_PREFIX = 'last_finalized_block_hash';
 const CANONICAL_HISTORY_KEY_PREFIX = 'canonical_history';
 const REWIND_COUNT_KEY_PREFIX = 'rewind_count';
 const MAX_CANONICAL_CHECKPOINTS = 512;
+// After a failed points replay, wait this long before retrying. A formula mismatch throws
+// cheaply, but a fault deeper in the replay would otherwise re-run the whole rebuild every
+// poll cycle and log on every one of them.
+const POINTS_REPLAY_RETRY_DELAY_MS = 60_000;
 
 type CanonicalCheckpoint = { blockNumber: number; blockHash: string };
 export const SUPPORTED_EVENTS: SupportedEventName[] = [
@@ -61,6 +66,22 @@ export const SUPPORTED_EVENTS: SupportedEventName[] = [
   'PrizeCompounded',
 ];
 
+/**
+ * Points health, reported separately from ingestion health.
+ *
+ * `degraded` means the canonical replay is failing and points are frozen at the last
+ * successful rebuild. Event ingestion and every other derived table are unaffected, so the
+ * indexer as a whole is not down -- alerting should key on this field, not on sync failures.
+ */
+export interface PointsReplayStatus {
+  status: 'ok' | 'degraded' | 'pending' | 'disabled' | 'unknown';
+  lastSuccessUnix: number | null;
+  lastErrorUnix: number | null;
+  lastError: string | null;
+  /** Seconds since the last successful replay, or null if there has never been one. */
+  staleSeconds: number | null;
+}
+
 export interface IndexerRunner {
   validateConfiguration(): Promise<void>;
   syncOnce(): Promise<{ fromBlock: number; toBlock: number; inserted: number; latestBlock: number; finalizedHead: number }>;
@@ -72,6 +93,7 @@ export interface IndexerRunner {
     canonicalHash: string | null;
     rewindCount: number;
     v5Deployments: V5DeploymentScope[];
+    points: PointsReplayStatus;
   }>;
   start(): Promise<never>;
 }
@@ -85,6 +107,7 @@ export function createIndexerRunner(input: {
   deriveWalletStatsService: DeriveWalletStatsService;
   deriveV5TranchesService?: DeriveV5TranchesService;
   derivePointsService?: DerivePointsService;
+  pointsReplayStateRepo?: PointsReplayStateRepo;
   provider?: AbstractProvider;
   deploymentWiringReader?: (deployment: V5DeploymentScope) => Promise<{
     vaultDrawManager: string;
@@ -94,7 +117,7 @@ export function createIndexerRunner(input: {
   }>;
   providersToValidate?: AbstractProvider[];
 }): IndexerRunner {
-  const { config, rawEventsRepo, indexerStateRepo, deriveRoundsService, deriveWalletRoundsService, deriveWalletStatsService, deriveV5TranchesService, derivePointsService } = input;
+  const { config, rawEventsRepo, indexerStateRepo, deriveRoundsService, deriveWalletRoundsService, deriveWalletStatsService, deriveV5TranchesService, derivePointsService, pointsReplayStateRepo } = input;
   const providerBundle = input.provider
     ? { provider: input.provider, providersToValidate: input.providersToValidate ?? [input.provider] }
     : makeProvider(config.rpcUrl, config.rpcUrlFallback);
@@ -107,13 +130,99 @@ export function createIndexerRunner(input: {
   const canonicalHistoryKey = CANONICAL_HISTORY_KEY_PREFIX + ':' + stateScope;
   const rewindCountKey = REWIND_COUNT_KEY_PREFIX + ':' + stateScope;
   let configurationValidated = false;
+  let lastPointsReplayAtMs = 0;
 
   function rebuildDerivedState(): void {
     deriveRoundsService.rebuildFromRaw();
     deriveWalletRoundsService.rebuildFromRaw();
     deriveV5TranchesService?.rebuildFromRaw();
     deriveWalletStatsService.rebuild();
-    derivePointsService?.rebuildSettlementPoints();
+    rebuildPoints();
+  }
+
+  /**
+   * The canonical points replay, isolated from the rest of the sync.
+   *
+   * Two separate things happen here. First, the replay runs inside its own try/catch:
+   * assertFormulaCompatible() throws by design when the formula changed without a migration,
+   * and an unhandled throw here made every sync cycle report failure forever while
+   * /api/health still showed an advancing cursor. Points are derived and carry no monetary
+   * value, so freezing them is survivable; making ingestion look broken is not. The failure
+   * is recorded so monitoring sees it as a points problem specifically.
+   *
+   * Second, the replay is skipped when nothing it reads has changed. It is O(draws x wallets)
+   * and, once the indexer is caught up, rebuildDerivedState() runs on essentially every poll.
+   *
+   * The guard errs towards replaying: it runs on the first cycle of every process (so a code
+   * or config change always rebuilds), after any recorded failure, whenever the input
+   * signature moves, and at least once every config.pointsReplayMaxIdleMs regardless. A
+   * signature that somehow missed a change therefore costs bounded staleness, not permanent
+   * staleness. The full replay remains the only mechanism that computes points.
+   */
+  function rebuildPoints(): void {
+    if (!derivePointsService) return;
+    if (!pointsReplayStateRepo) {
+      // No state store wired (tests, one-shot rebuild scripts): replay unconditionally.
+      derivePointsService.rebuildSettlementPoints();
+      return;
+    }
+
+    const fingerprint = derivePointsService.inputFingerprint();
+    const previous = pointsReplayStateRepo.read();
+    const idleMs = Date.now() - lastPointsReplayAtMs;
+    // Never back off for longer than the backstop interval, so POINTS_REPLAY_MAX_IDLE_MS=0
+    // disables the guard completely -- retry backoff included -- and restores the previous
+    // replay-every-cycle behaviour.
+    const retryDelayMs = Math.min(POINTS_REPLAY_RETRY_DELAY_MS, config.pointsReplayMaxIdleMs);
+    if (previous.lastError != null) {
+      if (idleMs < retryDelayMs) return;
+    } else if (
+      previous.signature != null
+      && previous.signature === pointsReplayStateRepo.computeInputSignature(fingerprint)
+      && idleMs < config.pointsReplayMaxIdleMs
+    ) {
+      return;
+    }
+
+    try {
+      derivePointsService.rebuildSettlementPoints();
+      // Recomputed after the replay: the signature covers the replay's own output tables, so
+      // an operator truncating them forces the next cycle to rebuild rather than skip.
+      pointsReplayStateRepo.recordSuccess(
+        pointsReplayStateRepo.computeInputSignature(fingerprint),
+        nowUnix(),
+      );
+    } catch (error) {
+      pointsReplayStateRepo.recordFailure(
+        error instanceof Error ? error.message : String(error),
+        nowUnix(),
+      );
+      console.error(
+        '[indexer][points] replay failed; event ingestion and all other derived state are'
+        + ' unaffected. Points are frozen at the last successful replay and rebuild once this'
+        + ' is resolved. See points.status in /api/health:',
+        error,
+      );
+    } finally {
+      lastPointsReplayAtMs = Date.now();
+    }
+  }
+
+  function pointsStatus(): PointsReplayStatus {
+    const empty = { lastSuccessUnix: null, lastErrorUnix: null, lastError: null, staleSeconds: null };
+    if (!derivePointsService) return { status: 'disabled', ...empty };
+    if (!pointsReplayStateRepo) return { status: 'unknown', ...empty };
+    const state = pointsReplayStateRepo.read();
+    const status = state.lastError != null
+      ? 'degraded'
+      : state.lastSuccessUnix != null ? 'ok' : 'pending';
+    return {
+      status,
+      lastSuccessUnix: state.lastSuccessUnix,
+      lastErrorUnix: state.lastErrorUnix,
+      lastError: state.lastError,
+      staleSeconds: state.lastSuccessUnix != null ? nowUnix() - state.lastSuccessUnix : null,
+    };
   }
 
   function canonicalHistory(): CanonicalCheckpoint[] {
@@ -306,6 +415,7 @@ export function createIndexerRunner(input: {
         canonicalHash: indexerStateRepo.get(lastFinalizedBlockHashKey)?.value || null,
         rewindCount: Number(indexerStateRepo.get(rewindCountKey)?.value ?? 0),
         v5Deployments: config.v5Deployments,
+        points: pointsStatus(),
       };
     },
 
