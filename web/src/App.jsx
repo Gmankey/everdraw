@@ -1514,14 +1514,22 @@ async function v5BuildHistoryData({ account, vault, manager, claimManager, index
   const scopedEvents = scopeV5RowsToVault(positionEvents, vaultAddress)
   const scopedTranches = scopeV5RowsToVault(tranches, vaultAddress)
   const eventPrizeWins = buildV5PrizeWins(scopedEvents, scopedTranches)
-  const proofStates = await Promise.all((Array.isArray(publishedProofs) ? publishedProofs : []).map(async (proof) => {
-    const [claimed, distribution] = await withRpcReadRetry(() => Promise.all([
-      claimManager.isClaimed(proof.distribution_id, proof.leaf_index),
-      claimManager.distributions(proof.distribution_id),
-    ]), { attempts: 4, baseDelayMs: 500 })
+  const proofs = Array.isArray(publishedProofs) ? publishedProofs : []
+  const proofReads = proofs.flatMap((proof) => [
+    () => claimManager.isClaimed(proof.distribution_id, proof.leaf_index),
+    () => claimManager.distributions(proof.distribution_id),
+  ])
+  const proofResults = await runRpcReads(proofReads, {
+    concurrency: 3,
+    attempts: 4,
+    baseDelayMs: 500,
+  })
+  const proofStates = proofs.map((proof, index) => {
+    const claimed = proofResults[index * 2]
+    const distribution = proofResults[(index * 2) + 1]
     const rootMatches = String(distribution.root || distribution[2] || '').toLowerCase() === String(proof.root || '').toLowerCase()
     return { ...proof, claimable: !claimed && rootMatches }
-  }))
+  })
   const prizeByDraw = new Map(eventPrizeWins.filter((win) => win.drawId != null).map((win) => [win.drawId, win]))
   for (const proof of proofStates) {
     const drawId = Number(proof.draw_id)
@@ -2097,10 +2105,17 @@ export function V5UatExperience() {
     const shmonBalance = shmonShares > 0n
       ? await withRpcReadRetry(() => shmon.convertToAssets(shmonShares), { attempts: 4, baseDelayMs: 500 })
       : 0n
-    const [historyData, previousDraw] = await Promise.all([
+    const [historyResult, previousDrawResult] = await Promise.allSettled([
       v5BuildHistoryData({ account: user, vault, manager, claimManager, indexerUrl: cfg.indexerUrl, claimProofUrl: cfg.claimProofUrl }),
       v5LoadPreviousDraw(manager.target, cfg.indexerUrl),
     ])
+    const historyData = historyResult.status === 'fulfilled'
+      ? historyResult.value
+      : { rows: [], positionEvents: [], claimProofs: [] }
+    const previousDraw = previousDrawResult.status === 'fulfilled'
+      ? previousDrawResult.value
+      : { draw: null, participants: [], lastAdvancedAt: null }
+    if (historyResult.status === 'rejected' || previousDrawResult.status === 'rejected') setError(V5_NETWORK_RETRY_MESSAGE)
     const historyRows = historyData.rows
     if (currentDrawId > observedDrawIdRef.current) {
       if (observedDrawIdRef.current > 0n) observedDrawAdvanceAtRef.current = Date.now()
