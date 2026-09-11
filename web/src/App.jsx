@@ -14,7 +14,7 @@ import { scopeV5RowsToVault } from './v5VaultScope.js'
 import { buildV5PrizeWins } from './v5PrizeWins.js'
 import { walletParticipatedInDraw } from './v5DrawParticipation.js'
 import { v5PageFromHash } from './v5Navigation.js'
-import { V5_NETWORK_RETRY_MESSAGE, v5UserError, withRpcReadRetry } from './v5RpcRead.js'
+import { runRpcReads, V5_NETWORK_RETRY_MESSAGE, v5UserError, withRpcReadRetry } from './v5RpcRead.js'
 import { v5HistoryResult } from './v5HistoryResult.js'
 import { verifyV5ClaimManyArgs } from "./v5ClaimProofs.js"
 import { formatV5MaxInput } from './v5AmountInput.js'
@@ -1957,30 +1957,30 @@ export function V5UatExperience() {
           claimAuthorizedSource,
           oracleConsumer,
           twabRegisteredVault,
-        ] = await Promise.all([
-          readProvider.getNetwork(),
-          readProvider.getCode(cfg.drawManager),
-          readProvider.getCode(cfg.prizeVault),
-          readProvider.getCode(cfg.twabController),
-          readProvider.getCode(cfg.claimManager),
-          readProvider.getCode(cfg.shmonStrategy),
-          readProvider.getCode(cfg.pythRandomnessOracle),
-          readProvider.getCode(cfg.shmon),
-          manager.vault(),
-          manager.twabController(),
-          manager.claimManager(),
-          manager.randomnessOracle(),
-          manager.payoutToken(),
-          vault.drawManager(),
-          vault.strategy(),
-          vault.twabController(),
-          vault.payoutToken(),
-          strategy.vault(),
-          strategy.shareToken(),
-          claimManager.compoundVaultFor(cfg.drawManager),
-          claimManager.authorizedSource(cfg.drawManager),
-          randomnessOracle.consumer(),
-          twabController.registeredVaults(cfg.prizeVault),
+        ] = await runRpcReads([
+          () => readProvider.getNetwork(),
+          () => readProvider.getCode(cfg.drawManager),
+          () => readProvider.getCode(cfg.prizeVault),
+          () => readProvider.getCode(cfg.twabController),
+          () => readProvider.getCode(cfg.claimManager),
+          () => readProvider.getCode(cfg.shmonStrategy),
+          () => readProvider.getCode(cfg.pythRandomnessOracle),
+          () => readProvider.getCode(cfg.shmon),
+          () => manager.vault(),
+          () => manager.twabController(),
+          () => manager.claimManager(),
+          () => manager.randomnessOracle(),
+          () => manager.payoutToken(),
+          () => vault.drawManager(),
+          () => vault.strategy(),
+          () => vault.twabController(),
+          () => vault.payoutToken(),
+          () => strategy.vault(),
+          () => strategy.shareToken(),
+          () => claimManager.compoundVaultFor(cfg.drawManager),
+          () => claimManager.authorizedSource(cfg.drawManager),
+          () => randomnessOracle.consumer(),
+          () => twabController.registeredVaults(cfg.prizeVault),
         ])
         return {
           chainId: network.chainId,
@@ -2028,18 +2028,18 @@ export function V5UatExperience() {
 
   const refresh = useCallback(async (targetAccount = account) => {
     await verifyRuntime()
-    const attemptCoreReads = () => Promise.all([
-      readProvider.getBlock('latest'),
-      manager.currentDrawId(),
-      manager.nextPeriodStart(),
-      manager.drawPeriod(),
-      manager.previewStartDraw(),
-      vault.totalPrincipal(),
-      vault.totalParticipantPrincipal(),
-      vault.totalBoosterPrincipal(),
-      vault.availableYield(),
-      vault.paused(),
-      vault.stoppedAt(),
+    const attemptCoreReads = () => runRpcReads([
+      () => readProvider.getBlock('latest'),
+      () => manager.currentDrawId(),
+      () => manager.nextPeriodStart(),
+      () => manager.drawPeriod(),
+      () => manager.previewStartDraw(),
+      () => vault.totalPrincipal(),
+      () => vault.totalParticipantPrincipal(),
+      () => vault.totalBoosterPrincipal(),
+      () => vault.availableYield(),
+      () => vault.paused(),
+      () => vault.stoppedAt(),
     ])
     const attemptCoreReadsWithRetry = () => withRpcReadRetry(attemptCoreReads, {
       attempts: 4,
@@ -2088,12 +2088,12 @@ export function V5UatExperience() {
       ? await withRpcReadRetry(() => manager.draws(currentDrawId), { attempts: 4, baseDelayMs: 500 })
       : null
     const user = ethers.isAddress(targetAccount || '') ? targetAccount : ''
-    const [principal, boosterPrincipal, balance, shmonShares] = user ? await withRpcReadRetry(() => Promise.all([
-      vault.principalOf(user),
-      vault.boosterPrincipalOf(user),
-      readProvider.getBalance(user),
-      shmon.balanceOf(user),
-    ]), { attempts: 4, baseDelayMs: 500 }) : [0n, 0n, 0n, 0n]
+    const [principal, boosterPrincipal, balance, shmonShares] = user ? await runRpcReads([
+      () => vault.principalOf(user),
+      () => vault.boosterPrincipalOf(user),
+      () => readProvider.getBalance(user),
+      () => shmon.balanceOf(user),
+    ], { concurrency: 2, attempts: 4, baseDelayMs: 500 }) : [0n, 0n, 0n, 0n]
     const shmonBalance = shmonShares > 0n
       ? await withRpcReadRetry(() => shmon.convertToAssets(shmonShares), { attempts: 4, baseDelayMs: 500 })
       : 0n

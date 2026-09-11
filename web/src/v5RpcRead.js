@@ -41,6 +41,26 @@ export async function withRpcReadRetry(read, options = {}) {
   throw lastError
 }
 
+export async function runRpcReads(reads, options = {}) {
+  const concurrency = Math.max(1, Math.min(reads.length || 1, Number(options.concurrency || 3)))
+  const results = new Array(reads.length)
+  let cursor = 0
+
+  async function worker() {
+    while (cursor < reads.length) {
+      const index = cursor
+      cursor += 1
+      results[index] = await withRpcReadRetry(reads[index], {
+        ...options,
+        onRetry: (details) => options.onRetry?.({ ...details, index }),
+      })
+    }
+  }
+
+  await Promise.all(Array.from({ length: concurrency }, worker))
+  return results
+}
+
 export function v5UserError(error, fallback = 'Something went wrong. Please try again.') {
   const code = Number(error?.code)
   const message = String(error?.shortMessage || error?.message || '')
