@@ -15,6 +15,7 @@ import { buildV5PrizeWins } from './v5PrizeWins.js'
 import { walletParticipatedInDraw } from './v5DrawParticipation.js'
 import { v5PageFromHash } from './v5Navigation.js'
 import { runRpcReads, V5_NETWORK_RETRY_MESSAGE, v5UserError, withRpcReadRetry } from './v5RpcRead.js'
+import { sameWalletAccount, v5WalletModalView, v5WalletSessionAccount } from './v5WalletSession.js'
 import { v5HistoryResult } from './v5HistoryResult.js'
 import { verifyV5ClaimManyArgs } from "./v5ClaimProofs.js"
 import { formatV5MaxInput } from './v5AmountInput.js'
@@ -38,8 +39,8 @@ function getWalletProvider() {
   return modal.getWalletProvider() || window.ethereum || null
 }
 
-function openUnifiedWalletModal() {
-  return modal.open({ view: 'Connect' })
+function openUnifiedWalletModal(view = 'Connect') {
+  return modal.open({ view })
 }
 
 function getInjectedWalletProviders() {
@@ -1937,6 +1938,7 @@ export function V5UatExperience() {
   const refreshFailureStreak = useRef(0)
   const observedDrawIdRef = useRef(0n)
   const observedDrawAdvanceAtRef = useRef(0)
+  const restoredAccountRef = useRef('')
   const verifyRuntime = useCallback(async ({ force = false } = {}) => {
     if (!force && Date.now() - runtimeVerifiedAtRef.current < 30_000) return true
     try {
@@ -2210,21 +2212,55 @@ export function V5UatExperience() {
     return () => ac.abort()
   }, [account, cfg.indexerUrl, cfg.prizeVault])
 
+  useEffect(() => {
+    let active = true
+    const syncAccount = async (session) => {
+      const walletProvider = modal.getWalletProvider()
+      const providerAccounts = walletProvider ? await getProviderAccounts(walletProvider) : []
+      const next = v5WalletSessionAccount(session, providerAccounts)
+      if (!active) return
+      if (!next) {
+        restoredAccountRef.current = ''
+        setAccount('')
+        return
+      }
+      if (sameWalletAccount(restoredAccountRef.current, next)) return
+      restoredAccountRef.current = next
+      setAccount(next)
+      await checkedRefresh(next)
+    }
+    const unsubscribe = modal.subscribeAccount((session) => {
+      syncAccount(session).catch((err) => {
+        if (active) setError(v5UserError(err, 'Wallet connection failed. Please try again.'))
+      })
+    })
+    return () => {
+      active = false
+      unsubscribe?.()
+    }
+  }, [checkedRefresh])
+
   const connect = useCallback(async () => {
     setError('')
     try {
-      await openUnifiedWalletModal()
+      if (account) {
+        await openUnifiedWalletModal(v5WalletModalView(account))
+        return
+      }
+      await openUnifiedWalletModal('Connect')
       const provider = getWalletProvider()
       if (!provider) return
-      const accounts = await provider.request({ method: 'eth_requestAccounts' })
+      const accounts = await provider.request({ method: 'eth_accounts' })
+      if (!accounts?.[0]) return
       await switchToV5Chain(provider, cfg)
-      const next = accounts?.[0] || ''
+      const next = accounts[0]
+      restoredAccountRef.current = next
       setAccount(next)
       await checkedRefresh(next)
     } catch (err) {
       setError(v5UserError(err, 'Wallet connection failed. Please try again.'))
     }
-  }, [cfg, checkedRefresh])
+  }, [account, cfg, checkedRefresh])
 
   const transact = useCallback(async (label, fn, options = {}) => {
     setBusy(label)
