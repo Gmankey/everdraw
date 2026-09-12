@@ -16,7 +16,6 @@ export function buildV5PrizeWins(positionEvents, tranches) {
         blockTimestamp: event.block_timestamp,
         drawId: startDrawId > 0 ? startDrawId - 1 : null,
         compoundedAmount: String(event.amount || '0'),
-        remainingAmount: String(tranche?.remaining_amount || '0'),
       }
     })
     .sort((a, b) => Date.parse(b.blockTimestamp || '') - Date.parse(a.blockTimestamp || ''))
