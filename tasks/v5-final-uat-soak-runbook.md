@@ -46,7 +46,7 @@ unresolved alert, manual lifecycle transaction, or funding halt resets the clock
 - An exact full withdrawal leaves zero participant principal and resets the participant streak.
 - A Patron deposit contributes yield, receives zero entries, and can be withdrawn in shMON.
 - At least one winning prize auto-compounds into a fresh tenure-zero tranche.
-- Withdrawing that prize tranche works without withdrawing the user's pre-existing principal.
+- Already-compounded prizes remain part of the normal vault position. Prize-only tranche withdrawal is not a requirement (ADR-0050).
 - The frontend remains usable throughout and never incorrectly reports a healthy advancing
   backlog as paused.
 

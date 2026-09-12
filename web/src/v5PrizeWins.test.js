@@ -26,10 +26,10 @@ test('joins a prize compound to its credited tranche and winning draw', () => {
   assert.equal(wins.length, 1)
   assert.equal(wins[0].drawId, 28)
   assert.equal(wins[0].compoundedAmount, '79487845611576211')
-  assert.equal(wins[0].remainingAmount, '70000000000000000')
+  assert.equal('remainingAmount' in wins[0], false)
 })
 
-test('keeps a withdrawn win discoverable but does not select it for withdrawal', () => {
+test('keeps withdrawn wins discoverable without tranche-withdrawal candidate data', () => {
   const wins = buildV5PrizeWins([
     { tx_hash: '0xclosed', log_index: 1, action: 'deposit', amount: '50', source: 'prize_compound' },
   ], [
@@ -37,5 +37,5 @@ test('keeps a withdrawn win discoverable but does not select it for withdrawal',
   ])
 
   assert.equal(wins[0].drawId, 3)
-  assert.equal(wins[0].remainingAmount, '0')
+  assert.equal('remainingAmount' in wins[0], false)
 })

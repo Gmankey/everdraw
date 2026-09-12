@@ -15,7 +15,7 @@ import { buildV5PrizeWins } from './v5PrizeWins.js'
 import { walletParticipatedInDraw } from './v5DrawParticipation.js'
 import { v5PageFromHash } from './v5Navigation.js'
 import { runRpcReads, V5_NETWORK_RETRY_MESSAGE, v5UserError, withRpcReadRetry } from './v5RpcRead.js'
-import { sameWalletAccount, v5WalletModalView, v5WalletSessionAccount } from './v5WalletSession.js'
+import { sameWalletAccount, subscribeV5WalletSession, v5WalletModalView, v5WalletSessionAccount } from './v5WalletSession.js'
 import { v5HistoryResult } from './v5HistoryResult.js'
 import { verifyV5ClaimManyArgs } from "./v5ClaimProofs.js"
 import { formatV5MaxInput } from './v5AmountInput.js'
@@ -1545,7 +1545,6 @@ async function v5BuildHistoryData({ account, vault, manager, claimManager, index
         blockTimestamp: null,
         drawId,
         compoundedAmount: String(proof.amount || '0'),
-        remainingAmount: '0',
         claimProof: proof,
         claimable: proof.claimable,
       })
@@ -2229,7 +2228,7 @@ export function V5UatExperience() {
       setAccount(next)
       await checkedRefresh(next)
     }
-    const unsubscribe = modal.subscribeAccount((session) => {
+    const unsubscribe = subscribeV5WalletSession(modal, (session) => {
       syncAccount(session).catch((err) => {
         if (active) setError(v5UserError(err, 'Wallet connection failed. Please try again.'))
       })
