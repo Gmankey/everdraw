@@ -24,7 +24,9 @@ export interface PointsRepo {
   hasAnyCompletedDrawBetween(fromUnix: number, toUnix: number): boolean;
   listCompletedDrawParticipationBetween(wallet: string, fromUnix: number, toUnix: number): boolean[];
   hasActivePositionAt(wallet: string, checkpointUnix: number, poolAddress?: string): boolean;
-  hadV5VaultFullExitBetween(wallet: string, fromUnix: number, toUnix: number): boolean;
+  hasV5VaultPositionAt(wallet: string, atUnix: number): boolean;
+  getV5DrawWindow(poolAddress: string, roundId: number): { periodStart: number; periodEnd: number } | null;
+  hadV5VaultFullExitBetween(wallet: string, fromUnix: number, toUnix: number, earningPeriod?: boolean): boolean;
   hadFirstDepositBefore(wallet: string, roundId: number): boolean;
   hasDegenDepositAtOrBefore(wallet: string, atUnix: number): boolean;
 }
@@ -69,7 +71,7 @@ export function createPointsRepo(db: Database.Database): PointsRepo {
         AND closed.pool_type = 'vault'
         AND closed.closed_at IS NOT NULL
         AND CAST(strftime('%s', closed.closed_at) AS INTEGER)
-          > COALESCE(wallet_streaks.last_checkpoint_unix, 0)
+          >= COALESCE(wallet_streaks.last_checkpoint_unix, 0)
         AND NOT EXISTS (
           SELECT 1
           FROM v5_tranches active
@@ -299,15 +301,40 @@ export function createPointsRepo(db: Database.Database): PointsRepo {
       `).get(...v5Params) as { c: number };
       return v5Row.c > 0;
     },
-    hadV5VaultFullExitBetween(wallet, fromUnix, toUnix) {
+    hasV5VaultPositionAt(wallet, atUnix) {
+      return db.prepare(`
+        SELECT 1 FROM v5_tranches
+        WHERE LOWER(wallet) = LOWER(?) AND pool_type = 'vault'
+          AND CAST(strftime('%s', opened_at) AS INTEGER) <= ?
+          AND (closed_at IS NULL OR CAST(strftime('%s', closed_at) AS INTEGER) > ?)
+        LIMIT 1
+      `).get(wallet, atUnix, atUnix) != null;
+    },
+    getV5DrawWindow(poolAddress, roundId) {
+      const row = db.prepare(`
+        SELECT payload FROM raw_events
+        WHERE LOWER(contract_address) = LOWER(?) AND round_id = ? AND finalized = 1
+          AND event_name IN ('DrawStarted', 'DrawSkipped')
+        ORDER BY block_number, log_index LIMIT 1
+      `).get(poolAddress, roundId) as { payload: string } | undefined;
+      if (!row) return null;
+      const payload = JSON.parse(row.payload) as { periodStart: unknown; periodEnd: unknown };
+      const periodStart = Number(payload.periodStart);
+      const periodEnd = Number(payload.periodEnd);
+      if (!Number.isSafeInteger(periodStart) || !Number.isSafeInteger(periodEnd) || periodEnd <= periodStart) {
+        throw new Error('Invalid canonical V5 earning window');
+      }
+      return { periodStart, periodEnd };
+    },
+    hadV5VaultFullExitBetween(wallet, fromUnix, toUnix, earningPeriod = false) {
       const row = db.prepare(`
         SELECT 1
         FROM v5_tranches closed
         WHERE LOWER(closed.wallet) = LOWER(?)
           AND closed.pool_type = ?
           AND closed.closed_at IS NOT NULL
-          AND CAST(strftime(?, closed.closed_at) AS INTEGER) > ?
-          AND CAST(strftime(?, closed.closed_at) AS INTEGER) <= ?
+          AND CAST(strftime(?, closed.closed_at) AS INTEGER) ${earningPeriod ? '>=' : '>'} ?
+          AND CAST(strftime(?, closed.closed_at) AS INTEGER) ${earningPeriod ? '<' : '<='} ?
           AND NOT EXISTS (
             SELECT 1
             FROM v5_tranches active
