@@ -11,3 +11,10 @@ export function v5WalletSessionAccount(session, providerAccounts = []) {
 export function sameWalletAccount(left, right) {
   return String(left || '').toLowerCase() === String(right || '').toLowerCase()
 }
+
+export function subscribeV5WalletSession(walletModal, onAccount) {
+  const unsubscribe = walletModal.subscribeAccount(onAccount)
+  // Reown subscriptions only emit changes, not an already-restored session.
+  onAccount(walletModal.getAccount())
+  return unsubscribe
+}
