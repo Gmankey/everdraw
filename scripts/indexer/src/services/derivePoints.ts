@@ -40,14 +40,15 @@ export function createDerivePointsService(input: {
       pointsRepo.resetRoundPointsAndTotals();
 
       const rounds = roundsRepo.listAll()
+        .map((round) => ({ ...round, earningWindow: pointsRepo.getV5DrawWindow(round.poolAddress, round.roundId) }))
         .filter((round) => ['settled', 'skipped'].includes(round.state))
         .filter((round) => {
           const settledUnix = toUnix(round.settledAt);
           return settledUnix != null && settledUnix >= pointsStartUnix;
         })
         .sort((a, b) => {
-          const ta = toUnix(a.settledAt) ?? 0;
-          const tb = toUnix(b.settledAt) ?? 0;
+          const ta = a.earningWindow?.periodEnd ?? toUnix(a.settledAt) ?? 0;
+          const tb = b.earningWindow?.periodEnd ?? toUnix(b.settledAt) ?? 0;
           if (ta !== tb) return ta - tb;
           if (a.roundId !== b.roundId) return a.roundId - b.roundId;
           return a.poolAddress.localeCompare(b.poolAddress);
@@ -56,11 +57,11 @@ export function createDerivePointsService(input: {
       const knownWallets = new Set<string>();
       const lastProcessedDrawUnix = new Map<string, number>();
 
-      const applyFullExitBoundary = (wallet: string, awardedAtUnix: number) => {
+      const applyFullExitBoundary = (wallet: string, checkpointUnix: number, earningPeriod: boolean) => {
         const streak = pointsRepo.getWalletStreak(wallet)!;
         const fromUnix = lastProcessedDrawUnix.get(wallet) ?? pointsStartUnix;
-        lastProcessedDrawUnix.set(wallet, awardedAtUnix);
-        if (!pointsRepo.hadV5VaultFullExitBetween(wallet, fromUnix, awardedAtUnix)) {
+        lastProcessedDrawUnix.set(wallet, checkpointUnix);
+        if (!pointsRepo.hadV5VaultFullExitBetween(wallet, fromUnix, checkpointUnix, earningPeriod)) {
           return streak;
         }
         return {
@@ -81,15 +82,16 @@ export function createDerivePointsService(input: {
           participants.map((participant) => participant.wallet.toLowerCase())
         );
         const awardedAtUnix = toUnix(round.settledAt) ?? timestamp;
+        const earningAtUnix = round.earningWindow?.periodEnd ?? awardedAtUnix;
 
         for (const wallet of knownWallets) {
           if (participantWallets.has(wallet)) continue;
           pointsRepo.ensureWallet(wallet, timestamp);
-          const streak = applyFullExitBoundary(wallet, awardedAtUnix);
+          const streak = applyFullExitBoundary(wallet, earningAtUnix, round.earningWindow != null);
           pointsRepo.upsertWalletStreak({
             ...streak,
             currentStreakWeeks: 0,
-            lastCheckpointUnix: awardedAtUnix,
+            lastCheckpointUnix: earningAtUnix,
             consecutiveMissedDraws: streak.consecutiveMissedDraws + 1,
             updatedAt: timestamp,
           });
@@ -99,7 +101,7 @@ export function createDerivePointsService(input: {
           const wallet = participant.wallet.toLowerCase();
           pointsRepo.ensureWallet(wallet, timestamp);
           const points = pointsRepo.getWalletPoints(wallet)!;
-          const streak = applyFullExitBoundary(wallet, awardedAtUnix);
+          const streak = applyFullExitBoundary(wallet, earningAtUnix, round.earningWindow != null);
           const won = participant.won === 1
             || (round.winner != null && round.winner.toLowerCase() === wallet)
             || proofWinners.has(wallet);
@@ -119,7 +121,7 @@ export function createDerivePointsService(input: {
             && qualifiesForBonuses;
           const prizePatron = points.hasReceivedPrizePatronBonus === 0
             && qualifiesForBonuses
-            && pointsRepo.hasDegenDepositAtOrBefore(wallet, awardedAtUnix);
+            && pointsRepo.hasDegenDepositAtOrBefore(wallet, earningAtUnix);
           const comebackKing = streak.consecutiveMissedDraws >= 2
             && points.hasReceivedComebackKingBonus === 0
             && qualifiesForBonuses;
@@ -181,12 +183,16 @@ export function createDerivePointsService(input: {
             updatedAt: timestamp,
           });
 
+          // Old participation can earn points without being active tenure of a later re-entry.
+          const exitedDuringEarningPeriod = round.earningWindow != null
+            && pointsRepo.hadV5VaultFullExitBetween(wallet, round.earningWindow.periodStart, earningAtUnix, true)
+            && !pointsRepo.hasV5VaultPositionAt(wallet, earningAtUnix);
           pointsRepo.upsertWalletStreak({
             ...streak,
-            currentStreakWeeks: nextCurrentStreak,
+            currentStreakWeeks: exitedDuringEarningPeriod ? 0 : nextCurrentStreak,
             longestStreakWeeks: nextLongestStreak,
-            lastCheckpointUnix: awardedAtUnix,
-            consecutiveNonWins: nextConsecutiveNonWins,
+            lastCheckpointUnix: earningAtUnix,
+            consecutiveNonWins: exitedDuringEarningPeriod ? 0 : nextConsecutiveNonWins,
             consecutiveMissedDraws: 0,
             updatedAt: timestamp,
           });
@@ -194,7 +200,7 @@ export function createDerivePointsService(input: {
         }
       }
 
-      // A full exit after the latest completed draw resets immediately. Re-entry only starts a
+      // A full exit after the latest earning period resets even if old draws settled after re-entry. Re-entry only starts a
       // new streak after the next draw in which the wallet participates.
       pointsRepo.resetCurrentStreaksAfterFullV5Exits();
     });

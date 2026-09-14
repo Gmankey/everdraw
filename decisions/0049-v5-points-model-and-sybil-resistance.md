@@ -81,7 +81,7 @@ During beta the **25,000 MON deposit cap structurally bounds this to ~250 qualif
 
 ### 5. Canonical draw progression
 
-Streaks, tiers, milestones and tenure are computed from canonical draw identity, not a wall-clock checkpoint. Each settled or skipped draw advances an active participant exactly once, ordered by settlement time, draw ID, and deployment address. Tied settlement timestamps therefore cannot collapse two draws into one.
+Streaks, tiers, milestones and tenure are computed from canonical draw identity, not a wall-clock checkpoint. Each settled or skipped V5 draw advances participation exactly once, ordered by its canonical earning-period end, draw ID, and deployment address. Settlement time is award metadata, not the tenure clock. Full exits separate earning epochs even when old draws settle after re-entry: historical points and longest streak remain, but old participation cannot restore the new position's active streak or accelerate its milestones. Legacy draws without V5 earning windows retain settlement ordering.
 
 The indexer reconstructs the complete points state from canonical draw windows and historical position events. A reorg removes the affected draw awards, milestone markers, streak progression, and totals on replay. There is no wall-clock checkpoint cursor or startup-only draw-period fallback.
 
