@@ -82,3 +82,8 @@ export function effectiveTrancheMultiplierX100(tranches, poolType, currentDrawId
   if (total === 0n) return null
   return Number((weighted + total / 2n) / total)
 }
+
+export function longestStreakDraws(points) {
+  const draws = Number(points?.longest_streak_weeks || 0)
+  return Number.isFinite(draws) ? Math.max(0, Math.floor(draws)) : 0
+}

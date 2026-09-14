@@ -121,3 +121,11 @@ The replay also runs unconditionally on the first cycle of every process -- so a
 - **Stake-proportional bonuses.** Correct in principle and exactly Sybil-neutral; rejected for V5.0 on complexity. Named here as the upgrade path.
 - **Threshold alone with no rebalance.** Rejected: a 100 MON gate on a 4.36M stack still yields ~10× per wallet.
 - **Wall-clock tenure instead of draw-indexed.** Rejected: draw-aligned accrual is the intended model. Canonical per-draw replay handles progression without a wall-clock checkpoint.
+
+### Historical streak display (operator, 2026-09-14)
+
+The points page shows a read-only "Longest streak" stat beside the current streak, using the
+existing `longest_streak_weeks` API field but labeling the unit as draws. It survives a full exit
+and is for recognition only: it never changes points, bonuses, tiers, or effective multipliers.
+Reuse existing stat styling; no separate card. No new dependency or on-chain read is introduced.
+Missing points data uses the existing profile-loading behavior and the stat defaults to zero.

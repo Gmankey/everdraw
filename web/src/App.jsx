@@ -23,6 +23,7 @@ import { runV5ConfirmedFollowups } from './v5TransactionLifecycle.js'
 import {
   awardedMilestones,
   effectiveTrancheMultiplierX100,
+  longestStreakDraws,
   tierName,
   BONUS_POINTS,
   LOSS_STREAK_AWARDS,
@@ -568,9 +569,15 @@ function ProfilePage({ account, points, history, tranches, currentDrawId, curren
           </div>
 
           <div className="points-streak-mini rewards-streak-block">
-            <div>
-              <span className="points-popover-kicker">Draw streak</span>
-              <strong>{streakWeeks} Week Streak</strong>
+            <div className="points-streak-stats">
+              <div>
+                <span className="points-popover-kicker">Draw streak</span>
+                <strong>{streakWeeks} Week Streak</strong>
+              </div>
+              <div>
+                <span className="points-popover-kicker">Longest streak</span>
+                <strong>{longestStreakDraws(points).toLocaleString()} draws</strong>
+              </div>
             </div>
             <div className="points-streak-dots points-streak-dots-52" aria-label={`${litDots} of ${dotCount} draws active`}>
               {Array.from({ length: dotCount }).map((_, i) => {
