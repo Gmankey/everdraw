@@ -247,4 +247,53 @@ function v5Round(ctx: ReturnType<typeof context>, roundId: number, settledAt: st
   assert.equal(ctx.pointsRepo.getProfile(wallet)!.currentStreakWeeks, 0, 'a full exit resets immediately; a fresh prize tranche rebuilds only after its next participated draw');
 }
 
+
+for (const [name, closedAt, survives] of [
+  ['full exit before delayed settlement', '2026-05-02T00:00:00.000Z', false],
+  ['full exit at settlement timestamp', '2026-05-03T00:00:00.000Z', false],
+  ['full exit after settlement', '2026-05-04T00:00:00.000Z', false],
+  ['partial exit before delayed settlement', '2026-05-02T00:00:00.000Z', true],
+] as const) {
+  const ctx = context();
+  v5Round(ctx, 1, '2026-05-03T00:00:00.000Z');
+  ctx.walletRoundsRepo.upsert({
+    wallet, roundId: 1, poolAddress: vault, tickets: 0, monPaid: '0', won: 0,
+    withdrew: 0, prizeClaimed: '0', principalWithdrawn: '0', withdrawnAt: null,
+    netPosition: '0', createdAt: closedAt, updatedAt: closedAt,
+  });
+  ctx.walletRoundsRepo.upsertV5ResolvedBase(wallet, 1, vault, 12.5);
+  ctx.v5TranchesRepo.insertTranche({
+    wallet, vaultAddress: vault, poolType: 'vault', amount: '1000000000000000000',
+    remainingAmount: '0', openedBlockNumber: 100, openedLogIndex: 1,
+    openedAt: '2026-05-01T00:00:00.000Z', openedTxHash: '0xdeposit', startDrawId: 1,
+    closedAt, closedBlockNumber: 200, closedLogIndex: 1, closedTxHash: '0xexit',
+  });
+  if (survives) {
+    ctx.v5TranchesRepo.insertTranche({
+      wallet, vaultAddress: vault, poolType: 'vault', amount: '1000000000000000000',
+      remainingAmount: '1000000000000000000', openedBlockNumber: 99, openedLogIndex: 0,
+      openedAt: '2026-04-30T00:00:00.000Z', openedTxHash: '0xolder', startDrawId: 1,
+      closedAt: null, closedBlockNumber: null, closedLogIndex: null, closedTxHash: null,
+    });
+  }
+  const checkpointUnix = Date.parse('2026-05-10T00:00:00.000Z') / 1000;
+  ctx.service.runWeeklyCheckpoint(checkpointUnix);
+  const profile = ctx.pointsRepo.getProfile(wallet)!;
+  assert.equal(profile.currentStreakWeeks, survives ? 1 : 0, name);
+  assert.equal(profile.consecutiveNonWins, survives ? 1 : 0, name);
+  assert.ok(profile.lifetimePoints > 0, `${name}: historical earned points survive`);
+  const earned = profile.lifetimePoints;
+  ctx.service.runWeeklyCheckpoint(checkpointUnix);
+  assert.equal(ctx.pointsRepo.getProfile(wallet)!.currentStreakWeeks, survives ? 1 : 0, `${name}: replay`);
+  assert.equal(ctx.pointsRepo.getProfile(wallet)!.lifetimePoints, earned, `${name}: replay preserves points`);
+  if (!survives) {
+    v5Round(ctx, 2, '2026-05-05T00:00:00.000Z');
+    v5Round(ctx, 3, '2026-05-06T00:00:00.000Z');
+    ctx.service.runWeeklyCheckpoint(checkpointUnix);
+    assert.equal(ctx.pointsRepo.getProfile(wallet)!.currentStreakWeeks, 0, `${name}: stays reset across absent draws`);
+    assert.equal(ctx.pointsRepo.getProfile(wallet)!.consecutiveMissedDraws, 2, `${name}: absence counts toward genuine comeback`);
+    assert.equal(ctx.pointsRepo.getProfile(wallet)!.lifetimePoints, earned, `${name}: no historical points lost`);
+  }
+  ctx.db.close();
+}
 console.log('derivePointsV5Checkpoint.test.ts ok');

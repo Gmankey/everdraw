@@ -95,6 +95,25 @@ export function createPointsRepo(db: Database.Database): PointsRepo {
     )
   `);
 
+  // Settlement can award historical participation after a wallet has already fully exited.
+  // Preserve missed-draw counts: absence still matters for a future genuine comeback.
+  const resetCurrentStreaksForEmptyV5PositionsStmt = db.prepare(`
+    UPDATE wallet_streaks
+    SET current_streak_weeks = 0,
+      consecutive_non_wins = 0,
+      updated_at = CAST(strftime('%s','now') AS INTEGER)
+    WHERE EXISTS (
+      SELECT 1 FROM v5_tranches position
+      WHERE LOWER(position.wallet) = LOWER(wallet_streaks.wallet)
+        AND position.pool_type = 'vault'
+    ) AND NOT EXISTS (
+      SELECT 1 FROM v5_tranches position
+      WHERE LOWER(position.wallet) = LOWER(wallet_streaks.wallet)
+        AND position.pool_type = 'vault'
+        AND position.remaining_amount != '0'
+    )
+  `);
+
   const ensureWalletStmt = db.prepare(`
     INSERT INTO wallet_points (wallet, updated_at) VALUES (LOWER(?), ?)
     ON CONFLICT(wallet) DO NOTHING
@@ -169,7 +188,8 @@ export function createPointsRepo(db: Database.Database): PointsRepo {
     withTransaction(work) { return db.transaction(work)(); },
     resetRoundPointsAndTotals() { resetTx(); },
     resetCurrentStreaksAfterFullV5Exits() {
-      return resetCurrentStreaksAfterFullV5ExitsStmt.run().changes;
+      const boundaryResets = resetCurrentStreaksAfterFullV5ExitsStmt.run().changes;
+      return boundaryResets + resetCurrentStreaksForEmptyV5PositionsStmt.run().changes;
     },
     ensureWallet(wallet, nowUnix) { ensureWalletStmt.run(wallet, nowUnix); ensureStreakStmt.run(wallet, nowUnix); },
     getWalletPoints(wallet) { return (getPointsStmt.get(wallet) as WalletPointsRow | undefined) ?? null; },
