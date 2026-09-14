@@ -268,6 +268,13 @@ function bonuses(ctx: ReturnType<typeof context>, roundId: number, w = wallet): 
     closedTxHash: '0x0000000000000000000000000000000000000000000000000000000000000f02',
   });
 
+  // The participant rejoins after the two absent draws; current tranche state must reflect it.
+  ctx.v5TranchesRepo.insertTranche({
+    wallet, vaultAddress: pool, poolType: 'vault', amount: '100', remainingAmount: '100',
+    openedBlockNumber: 200, openedLogIndex: 1,
+    openedAt: '2026-05-13T12:00:00.000Z', openedTxHash: '0xrejoin', startDrawId: 12,
+    closedAt: null, closedBlockNumber: null, closedLogIndex: null, closedTxHash: null,
+  });
   ctx.service.rebuildSettlementPoints();
 
   assert.equal(bonuses(ctx, 12).loss_streak, undefined, 'a full exit resets the pre-exit loss streak');
