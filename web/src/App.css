@@ -815,6 +815,7 @@ input[type='number']::-webkit-outer-spin-button,input[type='number']::-webkit-in
 .points-multiplier-pill span { font-size: .70rem; text-transform: uppercase; letter-spacing: .08em; }
 .points-multiplier-pill strong { color: #bbf7d0; font-size: 1.05rem; }
 .points-streak-mini { display: grid; gap: 10px; padding-top: 4px; }
+.points-streak-stats { display: flex; flex-wrap: wrap; gap: 12px 28px; }
 .points-streak-mini strong { display: block; margin-top: 3px; color: #fff; font-size: 1.18rem; }
 .points-streak-dots { display: flex; gap: 8px; align-items: center; }
 .points-streak-dots span { width: 13px; height: 13px; border-radius: 50%; border: 1px solid rgba(155,109,255,.26); background: rgba(255,255,255,.035); }

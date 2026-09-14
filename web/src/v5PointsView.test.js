@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { awardedMilestones, effectiveTrancheMultiplierX100, tierName } from './v5PointsView.js'
+import { awardedMilestones, effectiveTrancheMultiplierX100, longestStreakDraws, tierName } from './v5PointsView.js'
 
 test('exposes every checkpoint milestone included in the headline total', () => {
   assert.deepEqual(awardedMilestones({ highest_streak_milestone_awarded: 13 }), [
@@ -27,4 +27,11 @@ test('shows the amount-weighted effective multiplier across open tranches', () =
   assert.equal(effectiveTrancheMultiplierX100(tranches, 'vault', 26), 190)
   assert.equal(effectiveTrancheMultiplierX100(tranches, 'degen', 26), 350)
   assert.equal(effectiveTrancheMultiplierX100([], 'vault', 26), null)
+})
+
+test('shows historical longest streak independently of an exited position', () => {
+  assert.equal(longestStreakDraws({ current_streak_weeks: 0, longest_streak_weeks: 13 }), 13)
+  assert.equal(longestStreakDraws({ longest_streak_weeks: '26' }), 26)
+  assert.equal(longestStreakDraws(null), 0)
+  assert.equal(longestStreakDraws({ longest_streak_weeks: 'invalid' }), 0)
 })
