@@ -1,6 +1,6 @@
 # ADR-0043: V5 prize auto-compound
 
-**Status:** Accepted 2026-07-06 (PM call, operator-delegated). **Auto-compound by default, opt-out to MON. In V5 launch scope, sequenced LAST** — after the streak-checkpoint fix and the points-page reconciliation — folded into the ADR-0042 scoped review, followed by a full UAT re-soak. **Gas: keeper pays (socialized)** — deducting from prizes would corrupt merkle-leaf amounts for dust-level savings. Rationale for accepting despite the cost: the `immutable` wiring makes this a full migration if done post-mainnet; pre-mainnet is the cheapest moment this change will ever have.
+**Status:** Accepted 2026-07-06 (PM call, operator-delegated). Frontend and fallback wording amended by ADR-0050: keeper-compounded with no user claim action. **Auto-compound by default, opt-out to MON. In V5 launch scope, sequenced LAST** — after the streak-checkpoint fix and the points-page reconciliation — folded into the ADR-0042 scoped review, followed by a full UAT re-soak. **Gas: keeper pays (socialized)** — deducting from prizes would corrupt merkle-leaf amounts for dust-level savings. Rationale for accepting despite the cost: the `immutable` wiring makes this a full migration if done post-mainnet; pre-mainnet is the cheapest moment this change will ever have.
 
 ## Context
 When a V5 draw finalizes, the prize is escrowed in ClaimManagerV5 and the winner must actively claim (to wallet, or manually restake). Unclaimed prizes sit idle in escrow: no entries, no yield to the pot, no points, dead capital, and a per-draw chore for winners.
