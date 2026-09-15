@@ -297,7 +297,7 @@ flyctl secrets set -a everdraw-indexer \
   V5_DEPLOYMENTS_JSON='[{"chainId":143,"vaultAddress":"<V5_PRIZE_VAULT>","drawManagerAddress":"<V5_DRAW_MANAGER>","claimManagerAddress":"<V5_CLAIM_MANAGER>"}]'
 ```
 
-Claim-proof recovery is mandatory for V5. Before starting the indexer, the operator creates one
+Independent claim-proof publication is mandatory for V5 watcher verification and keeper recovery. Before starting the indexer, the operator creates one
 high-entropy service credential and sets the same value on the indexer and GitHub Actions without
 printing or committing it:
 
@@ -313,7 +313,7 @@ gh secret set V5_CLAIM_PROOF_MAINNET_URL --repo Gmankey/everdraw \
 The mainnet watcher runs with `WATCHER_REQUIRE_CLAIM_PROOF_PUBLISH=true`. It independently matches
 each proposed root during the veto window, then reconstructs and publishes proofs only after that
 root is finalized. A missing secret or unavailable proof API pins the finalized event for retry and
-fails visibly instead of silently removing self-claim recovery. Never place the ingest credential
+fails visibly instead of silently removing independent proof recovery. Never place the ingest credential
 in the frontend manifest.
 
 Verification:

@@ -1,6 +1,6 @@
 # ADR-0036 — V5 Architecture: TWAB Core, Generalized Payouts, Flexible Yield & Sponsorship
 
-**Status:** Proposed — amended after builder M0 review (Mendel, 2026-06-10; findings accepted: distribution/leaf model generalized, time-weighted sponsor fee attribution, shortfall withdrawal mode, yield-leg settlement at proposal, reward-token acceptance rules, verifiability wording, dependency table extensions, Merkl event semantics, keeper economics). Awaiting builder re-review of the amendments.
+**Status:** Proposed — amended after builder M0 review and by ADR-0050. ADR-0050 supersedes the browser self-claim product workflow: keeper claimMany remains the normal automatic settlement path, while permissionless claim functions remain protocol-level liveness mechanisms rather than a promoted user action.
 **Date:** 2026-06-10
 **Parent:** ADR-0034 (V5 requirements R0–R6), `tasks/v5-design-handoff-to-builder.md` (scope + failure record), `docs-site/pages/vision/phase-2.md` (public promise).
 **Supersedes on V5:** the round/ticket model of ADR-0024/0025, the two-vault stagger of ADR-0010, the sponsor model of ADR-0026, and the implementation (not the guarantee) of ADR-0028. ADR-0027 (fee router recipients/splits) and ADR-0029 (randomness abstraction) carry forward. ADR-0006's Merkl event surface carries forward unchanged.

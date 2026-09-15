@@ -1,4 +1,4 @@
-# Claiming and Withdrawing
+# Prizes and Withdrawing
 
 V5 keeps principal and prizes separate. Your principal remains withdrawable, while prizes are paid from yield.
 
@@ -6,9 +6,9 @@ V5 keeps principal and prizes separate. Your principal remains withdrawable, whi
 
 ## If you won
 
-The app shows available prize actions for your wallet. Depending on the draw and your settings, a prize may be claimable to your wallet or restaked into your vault principal.
+The managed keeper submits the finalized prize proof and automatically adds the winnings to your main-vault position. You do not need to claim or choose a destination.
 
-If a prize is restaked, it becomes a new deposit tranche at tenure zero. It starts earning entries and points like any other fresh deposit.
+The winnings become a new deposit tranche at tenure zero. They start earning entries and points like any other fresh deposit. My History shows the winning draw and prize amount as information; WINNER is not a claim button.
 
 ---
 
@@ -35,4 +35,4 @@ Keeping shMON means you can redeposit or continue earning normal shMON yield wit
 
 ## Timing
 
-Claimable prizes and withdrawable principal do not expire. If the keeper is delayed, final draw results may arrive later, but principal accounting remains separate from prize finalization.
+If the keeper is delayed, prize compounding and final draw results may arrive later. The fixed prize remains escrowed for retry, and principal accounting remains separate from prize finalization. Withdrawable principal does not expire.

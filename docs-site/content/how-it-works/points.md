@@ -33,11 +33,11 @@ Vault and Patron pool tranches are independent.
 
 ---
 
-## Vault streak tiers
+## Vault draw-streak tiers
 
-Vault deposits follow the weekly streak curve:
+Vault deposits follow the consecutive-draw streak curve. On mainnet, draws are weekly:
 
-| Weekly streak | Tier | Multiplier |
+| Draw streak | Tier | Multiplier |
 |---|---|---|
 | 0-3 | Bronze | 1.00x |
 | 4-7 | Silver | 1.10x |
@@ -51,9 +51,9 @@ The app may show an effective blended multiplier when you have several tranches 
 
 ## Patron pool points
 
-Patron pool deposits earn boosted EverDraw points but receive zero draw entries and no chance to win. The Patron multiplier ramps by consecutive weekly participation in that pool:
+Patron pool deposits earn boosted EverDraw points but receive zero draw entries and no chance to win. The Patron multiplier ramps by consecutive draw participation in that pool:
 
-| Patron weeks | Patron multiplier |
+| Patron draws | Patron multiplier |
 |---|---|
 | 1 | 2x |
 | 2 | 3x |
@@ -68,12 +68,12 @@ Patron points use the Patron ramp, not the vault streak multiplier.
 
 Bonuses are added on top of base points and multipliers.
 
-- **First Deposit:** +25,000 once per wallet.
-- **Win:** +25,000 when you win a draw.
-- **Comeback King:** +100,000 when you rejoin after missing two or more consecutive draws.
-- **Prize Patron:** +25,000 on your first Patron pool deposit.
-- **Loss Streak:** bonuses at 10, 26, and 52 consecutive non-winning draws.
-- **Streak Milestones:** bonuses at selected weekly streak milestones.
+- **First Deposit:** +2,500 once per wallet.
+- **Win:** +2,500 when you win a draw.
+- **Comeback King:** +10,000 when you rejoin after missing two or more consecutive draws.
+- **Prize Patron:** +2,500 on your first Patron pool deposit.
+- **Loss Streak:** +5,000 / +50,000 / +200,000 at 10 / 26 / 52 consecutive non-winning draws.
+- **Streak Milestones:** +5,000 / +10,000 / +20,000 / +50,000 / +100,000 at 2 / 4 / 13 / 26 / 52 consecutive draws.
 
 There is no On The Double bonus in V5.
 

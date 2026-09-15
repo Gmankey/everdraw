@@ -26,7 +26,7 @@ This changes the experience materially:
 
 ### Automatic prize distribution
 
-Winners no longer claim manually. An incentivised keeper network distributes prizes directly to winner wallets. You wake up with MON you didn't expect.
+Winners do not claim manually. The managed keeper submits finalized prize proofs and winnings are automatically compounded into fresh tenure-zero main-vault tranches. The protocol claim path remains permissionless for liveness, but it is not a promoted user workflow.
 
 ---
 

@@ -179,9 +179,9 @@ gh secret set V5_CLAIM_PROOF_UAT_URL --repo Gmankey/everdraw \
 ~~~
 
 A watcher run must match the proposed root during the veto window, then publish the independently
-recomputed proofs after that root is finalized. Verify the wallet endpoint returns its winner leaf,
-and verify one History WINNER click submits all unclaimed leaves
-in one claimMany transaction.
+recomputed proofs after that root is finalized. Verify a paying draw is followed by the managed
+keeper submitting claimMany, a successful PrizeCompounded, the same-transaction vault Deposit
+credit, and the informational History WINNER row. The winner must not submit a browser transaction.
 
 Setting a Fly secret restarts the machine. Confirm backfill before assuming the API is fresh:
 

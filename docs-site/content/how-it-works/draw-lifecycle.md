@@ -34,9 +34,9 @@ If there is no prize yield or no eligible entries, the draw can be skipped. Hold
 
 ---
 
-## 4. Claim or auto-compound prize
+## 4. Winnings auto-compound
 
-If you win, the prize is surfaced in the app. V5 supports prize restaking, so a prize may be compounded back into your vault principal unless you opt out where the app provides that choice. Claimable prizes do not expire.
+If you win, the managed keeper submits the finalized prize proof and the winnings are automatically added to your main-vault position as a fresh tenure-zero tranche. My History shows the winning draw and amount, but no user claim transaction is required.
 
 ---
 
@@ -55,7 +55,7 @@ Withdrawals can affect points streaks and tranche tenure. A full withdrawal rese
 | Deposit | MON or shMON enters the vault and starts earning entries |
 | Accrue | Entries build from time-weighted balance during the weekly draw period |
 | Draw | Randomness selects winner(s) from that draw's entries |
-| Prize | Yield is paid or restaked; principal remains withdrawable |
+| Prize | Winnings are compounded into a fresh vault tranche; principal remains withdrawable |
 | Withdraw | Principal can leave anytime, subject to points-streak effects |
 
 ---
@@ -66,6 +66,6 @@ Withdrawals can affect points streaks and tranche tenure. A full withdrawal rese
 
 **Randomness delay.** If randomness is delayed, the draw waits for the configured recovery path. Principal withdrawals remain separate from prize finalization.
 
-**Temporary pause.** A pause can stop new deposits while preserving withdrawals and claims.
+**Temporary pause.** A pause can stop new deposits while preserving withdrawals and prize settlement.
 
 **Deferred payouts.** If a payout transfer cannot complete immediately, it is recorded for retry. Funds are not lost.
