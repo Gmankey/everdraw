@@ -21,7 +21,6 @@ import { v5HistoryResult } from './v5HistoryResult.js'
 import { formatV5MaxInput } from './v5AmountInput.js'
 import { runV5ConfirmedFollowups } from './v5TransactionLifecycle.js'
 import {
-  awardedMilestones,
   effectiveTrancheMultiplierX100,
   longestStreakDraws,
   tierName,
@@ -528,7 +527,6 @@ function ProfilePage({ account, points, history, tranches, currentDrawId, curren
 
   const streakMilestoneWeeks = [2, 4, 13, 26, 52]
   const highestMilestoneAwarded = Number(points?.highest_streak_milestone_awarded || 0)
-  const milestoneAwards = awardedMilestones(points)
   const noWinDraws = Number(points?.consecutive_non_wins || 0)
   const highestLossAwarded = Number(points?.highest_loss_streak_bonus_awarded || 0)
   // Values come from v5PointsView.js, which mirrors the indexer. Do not inline numbers here:
@@ -634,17 +632,6 @@ function ProfilePage({ account, points, history, tranches, currentDrawId, curren
             )
           })}
         </div>
-        {milestoneAwards.length > 0 ? (
-          <div className="points-milestone-awards" aria-label="Milestone awards">
-            {milestoneAwards.map((award) => (
-              <div className="points-milestone-award-row" key={award.draws}>
-                <span className="round-bonus-pill">MILESTONE</span>
-                <span>{award.draws} draw streak</span>
-                <strong>+{award.points.toLocaleString()}</strong>
-              </div>
-            ))}
-          </div>
-        ) : null}
       </div>
     </section>
   )
@@ -1413,6 +1400,8 @@ function v5ExplorerTx(hash, explorerUrl) {
 }
 
 const V5_TICKETS_PER_MON_PER_MINUTE = 0.005
+const V5_ESTIMATED_SHMON_APY = 0.15
+const V5_SECONDS_PER_YEAR = 365 * 24 * 60 * 60
 
 function formatV5Tickets(value) {
   const n = Number(value || 0)
@@ -2275,6 +2264,12 @@ export function V5UatExperience() {
       ? 'Settling the current draw'
       : 'Next draw building'
   const ticketModel = buildV5TicketModel({ state, account, nowMs: liveNowMs })
+  const prizeAccruedMon = v5MonNumber(state?.availableYield)
+  const projectedPrizeMon = prizeAccruedMon + (
+    v5MonNumber(state?.totalPrincipal)
+    * V5_ESTIMATED_SHMON_APY
+    * (Math.max(0, Number(drawHealth.secondsRemaining || 0)) / V5_SECONDS_PER_YEAR)
+  )
   const openVaultPage = (event) => {
     event?.preventDefault?.()
     setStatus('')
@@ -2575,7 +2570,7 @@ export function V5UatExperience() {
           <StatCard label="Total Entered" value={`${formatV5Mon(state?.totalParticipantPrincipal)} MON`} sub={`Draw #${state?.currentDrawId?.toString() || '0'}`} icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 7a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v2a2 2 0 0 0 0 4v2a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3v-2a2 2 0 0 0 0-4V7z"/></svg>} />
           <StatCard label="Total TVL" value={`${formatV5Mon(state?.totalPrincipal)} MON`} sub="SHMON Deposited" icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>} />
           <StatCard label="Winner" value="—" sub="Revealed after draw" icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M6 4h12v3a4 4 0 0 1-4 4h-1v2.08A4 4 0 0 1 16 17v2H8v-2a4 4 0 0 1 3-3.87V11h-1a4 4 0 0 1-4-4V4z"/></svg>} />
-          <StatCard label="Total Prize Pool" value={`${formatV5Mon(state?.availableYield)} MON`} sub="Estimated current yield" icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 17h2.59l3.7-3.71 3 3L17.59 11H20v2h-1.59l-6.12 6.12-3-3L7 18.41V21H3v-4zM14 3h7v7h-2V6.41l-5.29 5.3-1.42-1.42 5.3-5.29H14V3z"/></svg>} />
+          <StatCard label="Prize accrued now" value={`${formatV5Mon(state?.availableYield)} MON`} sub={`On track for ~${projectedPrizeMon.toFixed(4)} MON at the draw (estimate)`} icon={<svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 17h2.59l3.7-3.71 3 3L17.59 11H20v2h-1.59l-6.12 6.12-3-3L7 18.41V21H3v-4zM14 3h7v7h-2V6.41l-5.29 5.3-1.42-1.42 5.3-5.29H14V3z"/></svg>} />
         </section>
 
         </>
@@ -2609,7 +2604,7 @@ export function V5UatExperience() {
             ) : (
               <>
                 <div className="disclaimer-title">Disclaimer</div>
-                <p>EverDraw is currently in beta and is awaiting a formal third-party audit. By accessing or using EverDraw, you acknowledge that the protocol, yield integrations, indexer data, wallet connections, and related infrastructure are experimental software. You buy tickets, approve tokens, deposit assets, interact with third-party protocols, and secure your wallet entirely at your own risk. You are solely responsible for reviewing all risks, permissions, transaction details, applicable laws, and tax treatment before participating. EverDraw is not investment, tax, accounting, or legal advice, and all liability is disclaimed to the maximum extent permitted by law.</p>
+                <p>EverDraw is currently in beta and is awaiting a formal third-party audit. By accessing or using EverDraw, you acknowledge that the protocol, yield integrations, indexer data, wallet connections, and related infrastructure are experimental software. You approve tokens, deposit assets, interact with third-party protocols, and secure your wallet entirely at your own risk. You are solely responsible for reviewing all risks, permissions, transaction details, applicable laws, and tax treatment before participating. EverDraw is not investment, tax, accounting, or legal advice, and all liability is disclaimed to the maximum extent permitted by law.</p>
               </>
             )}
           </div>

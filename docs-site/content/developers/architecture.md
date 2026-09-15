@@ -1,83 +1,39 @@
-# Architecture
+# V5 Architecture
 
-EverDraw has four components. The smart contract is the source of truth; everything else reads from it.
+EverDraw V5 is a continuous prize-savings system built from six deployment-bound contracts plus managed off-chain services.
 
----
+## Contracts
 
-## Prize vault contract
+| Component | Responsibility |
+|---|---|
+| PrizeVaultV5 | Participant and Patron principal, shMON strategy accounting, withdrawals, prize-yield escrow |
+| ShmonStrategy | Converts MON deposits to shMON shares and transfers shares for withdrawals and prizes |
+| EverdrawTwabController | Records balances over time for each draw period |
+| DrawManagerV5 | Draw schedule, randomness requests, prize snapshot, root proposal, veto, and finalization |
+| PythRandomnessOracle | DrawManager-bound adapter for Pyth Entropy |
+| ClaimManagerV5 | Escrowed Merkle distributions, replay protection, prize compounding, and deferred payout handling |
 
-Solidity contract `TicketPrizePoolV4`. One instance per vault; the protocol runs more than one vault on staggered schedules.
+A deployment tuple is identified by its vault, DrawManager, and ClaimManager. Indexer state and frontend configuration must never mix addresses from different tuples.
 
-Responsibilities:
+## Draw lifecycle
 
-- Accepts deposits (native MON or an ERC-20, per the vault's `depositMode`), issues tickets
-- Holds deposits as ERC-4626 shares in a yield vault (shMON in production) — no internal unstaking
-- Manages round state (Open, AwaitingVRF, Drawn, Settled)
-- Runs a verifiable draw via a pluggable randomness oracle (Pyth Entropy adapter in production), supporting one or multiple winners
-- Accepts sponsor contributions that earn yield alongside the round
-- Routes an optional, capped protocol fee on yield to up to 8 recipients (snapshotted per round)
-- Tracks per-user, per-round principal; returns shares on withdraw and pays prizes on claim
-- Wraps every payout so that if the yield-vault share transfer fails (e.g. shMON transiently unavailable), the amount defers to a retriable pending claim rather than freezing settlement. (Payouts are plain ERC-20 share transfers with no recipient hook, so the failure this guards against is a yield-vault dependency outage, not a griefing recipient.)
-- Exposes a Merkl-readable, non-transferable position surface for shMonad's points indexer
+1. Deposits and withdrawals continuously update principal and TWAB.
+2. After the period ends, the keeper calls startDraw.
+3. The vault escrows a fixed shMON share prize into ClaimManager.
+4. Pyth Entropy returns a seed.
+5. The keeper computes and proposes the deterministic winner root.
+6. The independent watcher recomputes the root during the challenge window.
+7. The root finalizes if it is not vetoed.
+8. The keeper submits valid winner proofs to ClaimManager.
+9. Winner shares normally compound into fresh tenure-zero vault tranches.
 
-Design choices:
+A draw with no eligible TWAB or no prize can be skipped without manufacturing a payout.
 
-- Single contract, no proxy — smaller attack surface, no upgrade keys. New generations are fresh deploys.
-- All round state on-chain; no off-chain indexer needed for correctness.
-- Per-round, per-address principal accounting — no cross-round entanglement.
-- Randomness via an external verifiable oracle, swappable behind a 24h timelock.
-- `commitDraw` / `finalizeDraw` / `skipRound` / `executeNext` are public — anyone can advance the lifecycle. The keeper is convenience.
-- Pauser is a role distinct from owner; pausing halts new deposits **and** round progression (buys, `executeNext`, `commitDraw`, `skipRound`), but never claims or withdrawals — depositors can always exit while paused.
+## Off-chain services
 
-[Contract reference →](smart-contract.md)
+- **Keeper:** managed, restartable lifecycle automation with balance and dead-man alerting.
+- **Root watcher:** independent recomputation and mismatch alerting; it does not share the keeper's trust role.
+- **Indexer:** finalized event ingestion, reorg-safe deployment isolation, tranche reconstruction, points, history, and health APIs.
+- **Frontend:** release-manifest-bound reads and writes with runtime wiring checks before transactions.
 
----
-
-## Keeper
-
-Off-chain service that polls `nextExecutable()` and submits the corresponding transaction (commit, finalize, or skip). It services every configured vault. The keeper is **not privileged** — it can only call public functions, and if it goes offline, anyone can advance rounds; funds are never at risk. Randomness has a built-in timeout so no round can stick.
-
-[More on the keeper →](keeper-bot.md)
-
----
-
-## Indexer
-
-A service backed by SQLite. It follows on-chain events and exposes HTTP APIs the frontend consumes for participation history, aggregate metrics, and the EverDraw points system. Vault-aware, with multi-RPC failover.
-
-The frontend can run without it for live round state (it reads contracts directly via RPC), but historical views, aggregates, and the points page depend on it.
-
-API documented in [Integration](integration.md#indexer-api). Points formula and tiers are in [Points](../how-it-works/points.md).
-
----
-
-## Frontend
-
-React app at [everdraw.xyz](https://everdraw.xyz).
-
-- Real-time round state per vault (price, TVL, your position, countdown)
-- Deposit, sponsor, claim, and withdraw flows
-- Previous-draw view per vault, including multi-winner results
-- Pending-claims retry banner (driven by `hasPendingClaims`)
-- Buy cutoff before deposit windows close; closed-state rendering for paused/stopped vaults
-
----
-
-## Data flow
-
-```
-User wallet ──► Frontend ──► Vault contract ──► yield vault (shMON)
-                                ▲   │
-                                │   └──► randomness oracle (Pyth)
-                            Keeper bot
-                                │
-Indexer ────────────────────────┘ (read events)
-```
-
-The frontend reads contract state directly via RPC. The indexer follows events independently and is never on the write path.
-
----
-
-## Campaigns and partner prizes (roadmap)
-
-Sponsored prizes are live today via `sponsor()`. Richer partner-campaign tooling (a CampaignManager that lets any protocol fund branded prize campaigns) is on the roadmap — see [Vision](../vision/index.md).
+See ADR-0036, ADR-0045, ADR-0048, ADR-0049, and ADR-0050 for the current decisions.

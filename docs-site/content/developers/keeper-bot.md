@@ -1,54 +1,38 @@
-# Keeper Bot
+# V5 Keeper
 
-The keeper is the off-chain service that drives round transitions. Without it, rounds don't advance automatically — but anyone with gas can call the same public functions, so funds are never at risk if it goes offline.
+The V5 keeper is a managed Fly service, not a terminal process. It is restartable, state-aware, and independently monitored.
 
----
+## Lifecycle order
 
-## What the keeper does
+Each loop reconciles on-chain state and prioritizes cheap finalization work before proposing another draw:
 
-It polls `nextExecutable()` on each configured vault on a short interval. The function returns the round id and the next pending action; when one is due, the keeper:
+1. finalize eligible proposed draws
+2. start a due draw
+3. wait for the Pyth Entropy seed
+4. reconstruct TWAB inputs and compute the root
+5. verify JavaScript and Python root parity
+6. propose at most one root
+7. submit finalized winner proofs to ClaimManager
+8. emit success heartbeat and health data
 
-1. Runs preflight (simulates the call, checks gas and preconditions).
-2. Submits the transaction.
-3. Waits for confirmation and reports to its alert channel.
-4. Retries on the next poll if it failed.
+The persistent event cache makes normal work proportional to new blocks rather than vault history.
 
-Action types (`nextAction` / `nextExecutable`):
+## Prize settlement
 
-- **Commit (2).** Fired when the deposit window and lock have both ended on a round with tickets. Requests randomness and opens the next round.
-- **Finalize (3).** Fired once randomness has been delivered (round in `Drawn`). Computes the winner(s) and settles.
-- **Skip (1).** Fired on a round that closed with zero tickets. Settles it with no draw.
-- **None (0).** Nothing to do this tick.
+The keeper calls ClaimManager claimMany for finalized leaves. Winner prizes normally compound into fresh tenure-zero main-vault tranches. Terminal proof errors are quarantined once; transient RPC, timeout, nonce, and balance failures remain retryable.
 
-Because randomness arrives via an async oracle callback, commit and finalize are two separate steps a few seconds to minutes apart.
+## Monitoring
 
----
+Launch configuration requires:
 
-## Cadence
+- a low-balance floor and warning derived with enough entropy-fee and gas headroom
+- Telegram alert delivery
+- an external dead-man success URL
+- repeated-error thresholds without per-loop alert storms
+- persistent cache storage across machine restarts
 
-Each vault opens its next round automatically the moment the current one settles, so a vault's weekly anchor is set by its deploy time and preserved as long as rounds progress on schedule. The protocol runs vaults on staggered anchors so draws are spread across the week (the stagger invariant is pinned in ADR-0010). There is no special weekday/time gating in the keeper for V4 — it simply executes whatever `nextExecutable` reports as due.
+The independent root watcher is separate from the keeper. A healthy keeper does not prove a proposed root is correct.
 
-If a round's randomness callback never arrives, the keeper should **alert** rather than act: force-settling is an owner-only action (`emergencyForceSettle`) and a human decision.
+## Permissionless liveness
 
----
-
-## Reliability
-
-- Auto-restart on crash (no state is held off-chain; everything is on the contract)
-- Multi-RPC failover (primary + fallback RPC)
-- Low-balance alert (keeper wallet must hold gas)
-- VRF-reserve alert: each vault pays a randomness fee per commit from its own native balance; alert when that reserve runs low so the owner can top it up
-- Consecutive-error and uncaught-exception alerts
-- Governance-event alerts (ownership/pauser/oracle/stop changes) so any unexpected admin action is visible immediately
-
----
-
-## Configuration
-
-The keeper takes a set of vault addresses to service plus RPC, signer, and alert configuration. Canonical production config lives in the hosting platform's secrets (not in the repo); the current vault addresses are in [`deployments/monad-mainnet.json`](https://github.com/Gmankey/everdraw/blob/staging/deployments/monad-mainnet.json). Secrets are never committed.
-
----
-
-## Non-privileged
-
-The keeper cannot access user funds, modify contract parameters, or override draws. It only calls the public lifecycle functions (`commitDraw`, `finalizeDraw`, `skipRound`, `executeNext`). The contract is the source of truth.
+Draw and claim calls remain permissionless under their contract rules. This provides protocol-level recovery if the managed service fails, but the V5 product does not expose a browser winner-claim workflow.

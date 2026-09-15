@@ -1,14 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { awardedMilestones, effectiveTrancheMultiplierX100, longestStreakDraws, tierName } from './v5PointsView.js'
+import { effectiveTrancheMultiplierX100, longestStreakDraws, tierName } from './v5PointsView.js'
 
-test('exposes every checkpoint milestone included in the headline total', () => {
-  assert.deepEqual(awardedMilestones({ highest_streak_milestone_awarded: 13 }), [
-    { draws: 2, points: 5_000 },
-    { draws: 4, points: 10_000 },
-    { draws: 13, points: 20_000 },
-  ])
-})
 
 test('normalizes the headline tier colour name', () => {
   assert.equal(tierName({ current_tier: 'Platinum' }), 'platinum')

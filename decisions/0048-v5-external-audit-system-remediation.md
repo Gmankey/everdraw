@@ -1,6 +1,6 @@
 # ADR-0048 - V5 External Audit System Remediation
 
-**Status:** Accepted for pre-mainnet remediation
+**Status:** Accepted for pre-mainnet remediation; browser self-claim acceptance amended by ADR-0050
 **Date:** 2026-08-28
 **Amends:** ADR-0036, ADR-0047
 **Responds to:** M-01, M-02, M-03, M-04, M-06, and M-07 in `tasks/v5-external-audit-remediation-retest-report-2026-08-27.md`
@@ -114,6 +114,6 @@ independent root-verification boundary.
   `V5_DEPLOYMENTS_JSON`; ambiguous legacy configuration fails closed.
 - Mainnet keeper deployment requires the external success URL before the process can start.
 - V5 watcher and indexer deployments require a shared high-entropy claim-proof ingest credential;
-  fresh UAT must prove publication, retrieval, and a one-transaction self-claim before mainnet.
+  fresh UAT must prove publication and retrieval plus keeper claimMany to PrizeCompounded and vault credit before mainnet. Browser self-claim is not a product acceptance path (ADR-0050).
 - Release CI may block on a fixed High or Critical dependency advisory and emits reviewable SBOM and
   scan artifacts for every staging commit.

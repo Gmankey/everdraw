@@ -33,10 +33,6 @@ export const STREAK_MILESTONE_AWARDS = [
   { draws: 52, points: 100_000 },
 ]
 
-export function awardedMilestones(points) {
-  const highestAwarded = Number(points?.highest_streak_milestone_awarded || 0)
-  return STREAK_MILESTONE_AWARDS.filter(({ draws }) => draws <= highestAwarded)
-}
 
 export function tierName(points) {
   return String(points?.current_tier || 'Bronze').toLowerCase()

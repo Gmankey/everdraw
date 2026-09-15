@@ -8,8 +8,8 @@ You will see:
 - prize amount
 - draw status
 - your history for deposits, withdrawals, draws, and prizes
-- claim or restake actions when available
+- automatically compounded winnings in your history
 
 Some catch-up draws can be skipped or carry only dust if the keeper is recovering a backlog. That is expected when the available prize was already captured by an earlier draw.
 
-Claimable prizes do not expire. The app should surface all unclaimed finalized prizes for your wallet, not only the most recent draw.
+The managed keeper submits finalized prize proofs and automatically compounds winnings into fresh main-vault tranches. WINNER rows are informational and do not require a user transaction.
