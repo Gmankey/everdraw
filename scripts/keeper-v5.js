@@ -6,7 +6,6 @@ import { spawnSync } from "node:child_process";
 import { AbiCoder, Contract, JsonRpcProvider, Wallet, ZeroAddress, getAddress, keccak256 } from "ethers";
 import { DrawInputEventCache, buildDrawInput } from "./draw/write-watch-inputs.mjs";
 import { compute } from "./draw/compute-winners.js";
-import { UatBrowserClaimHold } from "./keeper/uat-browser-claim-hold.mjs";
 import { deriveKeeperBalanceThresholds } from "./keeper/balance-thresholds.mjs";
 import {
   ClaimRetryState,
@@ -356,7 +355,7 @@ async function maybeFinalize({ manager, signer, provider, drawId }) {
   return true;
 }
 
-async function maybeClaim({ manager, signer, provider, drawManagerAddress, claimManagerAddress, drawId, fromBlock, eventCache, browserClaimHold }) {
+async function maybeClaim({ manager, signer, provider, drawManagerAddress, claimManagerAddress, drawId, fromBlock, eventCache }) {
   const draw = await rpcRead(`manager.draws(${drawId})`, () => manager.draws(drawId));
   if (Number(draw.status) !== 4) return false;
   const claimManager = new Contract(claimManagerAddress, CLAIM_MANAGER_ABI, provider);
@@ -389,10 +388,6 @@ async function maybeClaim({ manager, signer, provider, drawManagerAddress, claim
   }
   if (pending.length === 0) {
     console.log(`draw ${drawId} all leaves already claimed (${inputFile})`);
-    return false;
-  }
-  if (browserClaimHold.hold(drawId)) {
-    console.log(`[keeper-v5] UAT_BROWSER_CLAIM_HELD draw=${drawId} unpaidLeaves=${pending.length} accounts=${pending.map((leaf) => leaf.account).join(",")}`);
     return false;
   }
   for (let i = 0; i < pending.length; i += CLAIM_BATCH_SIZE) {
@@ -440,14 +435,6 @@ async function runOnce() {
   if (network.chainId !== EXPECTED_CHAIN_ID) throw new Error(`wrong chain id ${network.chainId}; expected ${EXPECTED_CHAIN_ID}`);
   const writeNetwork = await rpcRead("writeProvider.getNetwork", () => writeProvider.getNetwork());
   if (writeNetwork.chainId !== EXPECTED_CHAIN_ID) throw new Error(`wrong write chain id ${writeNetwork.chainId}; expected ${EXPECTED_CHAIN_ID}`);
-
-  const browserClaimHold = new UatBrowserClaimHold({
-    armedManager: process.env.V5_UAT_BROWSER_CLAIM_HOLD_MANAGER,
-    chainId: network.chainId,
-    drawManagerAddress,
-    claimManagerAddress,
-    file: path.join(path.dirname(KEEPER_CLAIM_STATE_FILE || path.join(DRAW_INPUT_DIR, "keeper-v5-claim-state.json")), "keeper-v5-browser-claim-hold.json"),
-  });
 
   for (const [name, address] of Object.entries(deployment.addresses)) {
     const code = await rpcRead(`getCode(${name})`, () => readProvider.getCode(address));
@@ -580,7 +567,6 @@ async function runOnce() {
           provider: readProvider,
           drawManagerAddress,
           claimManagerAddress,
-          browserClaimHold,
           drawId,
           fromBlock,
           eventCache,
