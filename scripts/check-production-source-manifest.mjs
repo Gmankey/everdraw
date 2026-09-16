@@ -12,8 +12,40 @@ function requireFile(label, file) {
   }
 }
 
+function validateComponent(component, parent) {
+  const prefix = `${parent} ${component.contractName || "component"}`
+  if (!/^0x[a-fA-F0-9]{40}$/.test(component.address || "")) {
+    console.error(`[manifest] Bad address for ${prefix}`)
+    failed = true
+  }
+  requireFile(`${prefix} source`, component.source)
+  if (!/^0x[a-fA-F0-9]{64}$/.test(component.deployTx || "")) {
+    console.error(`[manifest] Bad deploy transaction for ${prefix}`)
+    failed = true
+  }
+  if (!/^[a-fA-F0-9]{64}$/.test(component.runtimeBytecodeSha256 || "")) {
+    console.error(`[manifest] Missing or invalid runtimeBytecodeSha256 for ${prefix}`)
+    failed = true
+  }
+  if (!Array.isArray(component.constructorArgs)) {
+    console.error(`[manifest] Missing constructorArgs for ${prefix}`)
+    failed = true
+  }
+  if (!["verified", "local-runtime-match"].includes(component.verification?.status)) {
+    console.error(`[manifest] Component is not bytecode-verified: ${prefix}`)
+    failed = true
+  }
+}
 for (const c of manifest.contracts || []) {
   const prefix = `${c.role || c.contractName} ${c.address || ''}`.trim()
+  if (Array.isArray(c.components)) {
+    if (c.components.length === 0) {
+      console.error(`[manifest] Empty component list for ${prefix}`)
+      failed = true
+    }
+    for (const component of c.components) validateComponent(component, prefix)
+    continue
+  }
   if (!/^0x[a-fA-F0-9]{40}$/.test(c.address || '')) {
     console.error(`[manifest] Bad address for ${prefix}`)
     failed = true

@@ -79,13 +79,6 @@ function runSourcePreflight() {
   });
 }
 
-function runManifestBytecodeCheck() {
-  execFileSync("node", ["scripts/verify-deployed-bytecode.mjs", DEPLOYMENT_FILE], {
-    stdio: "inherit",
-    env: process.env,
-  });
-}
-
 async function assertCodeAt(label, address) {
   const code = await ethers.provider.getCode(address);
   if (code === "0x") throw new Error(`${label} has no code at ${address}`);
@@ -265,10 +258,11 @@ async function ownershipContracts(addresses) {
 }
 
 function recordDeployment(deploymentData, record) {
+  // Fresh V5 runtime/artifact checks run before record creation. Historical
+  // manifest audits must not block recording an already-mined state change.
   deploymentData.contracts = deploymentData.contracts || [];
   deploymentData.contracts.push(record);
   writeDeploymentFile(deploymentData);
-  runManifestBytecodeCheck();
 }
 
 function zeroImmutableReferences(bytecode, immutableReferences = {}) {
@@ -702,8 +696,10 @@ async function deployAndQueue() {
       pendingDrawManager: manager.address,
       effectiveAt,
       effectiveAtIso: new Date(effectiveAt * 1000).toISOString(),
-      commitCommand:
-        "HARDHAT_NETWORK=monadMainnet node scripts/deploy-v5-mainnet.js --commit",
+      commitInstruction:
+        "Final owner executes PrizeVaultV5.commitDrawManagerChange() from its Ledger after effectiveAt",
+      recordCommand:
+        "HARDHAT_NETWORK=monadMainnet DRAW_MANAGER_COMMIT_TX=<tx_hash> node scripts/deploy-v5-mainnet.js --record-commit",
     },
     keeperSecrets: {
       drawManagerAddressSecret: "DRAW_MANAGER_ADDRESS",
