@@ -825,7 +825,7 @@ async function recordOwnershipAcceptance() {
     acceptanceTxs,
     drawManagerTimelockEffectiveAt: current.drawManagerTimelock.effectiveAtIso,
   });
-  console.log("After the timelock elapses, the final owner may run --commit or execute through its multisig.");
+  console.log("After the timelock elapses, execute commitDrawManagerChange() from the final-owner Ledger, then record it with --record-commit.");
 }
 
 async function commitQueuedDrawManager() {
