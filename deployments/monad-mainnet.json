@@ -509,6 +509,218 @@
         "liveRuntimeBytecodeSha256": "220cafb32f6c2d8ca7587b6fa6cd388434a007875e643a230b6f39db82a7a8c3",
         "note": "Retiring contract kept only for in-flight settlement/claims. Do not use as source for new deployments. Current committed source/artifacts and available local backups did not match live runtime bytecode. This is intentionally quarantined, not a production source of truth."
       }
+    },
+    {
+      "role": "EverDraw V5 mainnet beta - ADR-0045",
+      "protocolVersion": 5,
+      "network": "monad-mainnet",
+      "chainId": 143,
+      "status": "deployed-ownership-pending",
+      "deployedAt": "2026-09-16T02:10:11.977Z",
+      "deployedBy": "0xd5cc1f1D7b78943bDF09541A2ace41B5c6D83431",
+      "source": "src/v5",
+      "deployCommit": "27f740366f47d96bfa3b7bde218d1159ee9319c2",
+      "adrs": [
+        "ADR-0042",
+        "ADR-0043",
+        "ADR-0045"
+      ],
+      "addresses": {
+        "twabController": "0xa8C05BAC957C5413ea4A0c0D101Aff84BA553afd",
+        "shmonStrategy": "0xA3e037641825B17586cC9B5D4d9473A76f25c44b",
+        "prizeVault": "0x97D9CA6DDD80869A32C951cc75b75D20e1300eDa",
+        "claimManager": "0xEC41F68FF6079603ea94b7e2b85B9AC12F490671",
+        "pythRandomnessOracle": "0xDf4c50B8C2C1a9922c067472311824153FFb01c0",
+        "drawManager": "0x266ab124480baDDB4af8Dfe578dDAb9F1Ed7610c"
+      },
+      "ownership": {
+        "status": "pending-acceptance",
+        "deployer": "0xd5cc1f1D7b78943bDF09541A2ace41B5c6D83431",
+        "finalOwner": "0xd399d4e24021eA08f2Cd11Fbb78a633e8D9B84A2",
+        "roles": {
+          "guardian": "0x629Bd7f323fD29E3dF75855C9BC542889c6c1268",
+          "pauser": "0x4fD78E6eb3B66E8624Ee6aE579866947415adedC",
+          "keeper": "0x80dE4674dEFC68F06F4772B8Ec2F89aBda43DBE9"
+        },
+        "transferTxs": {
+          "twabController": "0x8fa698bee5582f7ffc5b4ed2f67bd5b2552169949093c560dd6fc6afdb81a180",
+          "prizeVault": "0xb5718982147070c1df8236910817d2acc8d85051b6f5f4bbc2b734f0d17b02b6",
+          "claimManager": "0x6e53fcf08602bd34b21fa8fe6f904c691ecc111e77b6cfe639b5e9e9411b4e0a",
+          "drawManager": "0x079d8c76ae601e951b611dd4f62de13ed6969bc7e07f19848240241c152c4d6c"
+        },
+        "acceptanceTxEnv": {
+          "twabController": "TWAB_OWNERSHIP_ACCEPT_TX",
+          "prizeVault": "VAULT_OWNERSHIP_ACCEPT_TX",
+          "claimManager": "CLAIM_OWNERSHIP_ACCEPT_TX",
+          "drawManager": "DRAW_MANAGER_OWNERSHIP_ACCEPT_TX"
+        },
+        "strategyInitializer": {
+          "address": "0xd5cc1f1D7b78943bDF09541A2ace41B5c6D83431",
+          "capability": "setVault-only",
+          "disabledBy": "vault pinned to 0x97D9CA6DDD80869A32C951cc75b75D20e1300eDa; subsequent setVault calls revert VaultAlreadySet"
+        }
+      },
+      "deployTxs": {
+        "twabController": "0xf2e9e72d9397f88e948d0b458d8088a0bf113b131fd8bd624347675ceb6a3e16",
+        "shmonStrategy": "0x716435a95293e886282c4db9071dda5a6be1dd495bce70b2de0ba933d1f9675d",
+        "prizeVault": "0x174f9b178be45f3b2f280790b0d23a9e8ae8764d8b0967aed3d29ec9d805a055",
+        "claimManager": "0x7ef5ad7160c063ec6d7016ac75a7e74709f80f76ff5871682d9f712626a9399d",
+        "pythRandomnessOracle": "0x3b47aaeacc9ec73af33d48f9886257dc03f0a3394c350fdfcccc30ea449a0e95",
+        "drawManager": "0xab87962e6114e83f08c7c4cd8dab659f7cac892b13e963356ebee425ae02dfc4",
+        "strategySetVault": "0xb1d7c0d8dc62a06aef33fea866b4a8364d7471e4710aa65d6b875ef69ed1fd89",
+        "twabRegisterVault": "0x441ede55ccd5fe518c29c974c809ef4b0ae227dcdb6d37f9d39bb52d8b8263fd",
+        "claimAuthorizeManager": "0x1d73ab5f1fbe8c100a63bcbd1325fe5de6e1945d7427eb38fa8bd5d8b72f203b",
+        "claimSetCompoundVault": "0x0ebd27d9fefd1a0e47cbb3c6bd535ccab1eab7e49985e0c5af3777e285ef9359",
+        "vaultSetPauser": "0x8af95edad3a2abf8c5898fbcd4dede87e168585ccca9957b5889c75f9f788e58",
+        "managerSetMinPrizeThreshold": "0xa3df9e17975efb0a971ccacd95fb3c660593d2c208ef427d54cf0e3b157cd849",
+        "vaultQueueDrawManagerChange": "0xa0287fec47a8a40985fcffcbe856e6ab6dcaedbd4c0b1517da47d00f630b16e5"
+      },
+      "startBlock": 105196182,
+      "constructorArgs": {
+        "shmon": "0x1B68626dCa36c7fE922fD2d55E4f631d962dE19c",
+        "entropy": "0xD458261E832415CFd3BAE5E416FdF3230ce6F134",
+        "entropyProvider": "0x52DeaA1c84233F7bb8C8A45baeDE41091c616506",
+        "guardian": "0x629Bd7f323fD29E3dF75855C9BC542889c6c1268",
+        "keeper": "0x80dE4674dEFC68F06F4772B8Ec2F89aBda43DBE9",
+        "pauser": "0x4fD78E6eb3B66E8624Ee6aE579866947415adedC",
+        "twabPeriodLength": 604800,
+        "twabPeriodOffset": 1789524529,
+        "drawPeriod": 604800,
+        "firstPeriodStart": 1789524529,
+        "proposerGrace": 300,
+        "challengeWindow": 28800,
+        "minPrizeThreshold": "1000000000000000",
+        "depositCap": "25000000000000000000000",
+        "minDeposit": "0",
+        "symbol": "EVRDRAW-V5-MON"
+      },
+      "externalDependencyEvidence": {
+        "shmonName": "ShMonad",
+        "shmonSymbol": "shMON",
+        "shmonDecimals": 18,
+        "shmonPreviewDepositOneMon": "616938716364344508",
+        "shmonPreviewWithdrawOneMon": "621803505726021914",
+        "shmonConvertOneShareToAssets": "1620804163000010274",
+        "entropyFee": "1400000000000000000"
+      },
+      "drawManagerTimelock": {
+        "pendingDrawManager": "0x266ab124480baDDB4af8Dfe578dDAb9F1Ed7610c",
+        "effectiveAt": 1789610987,
+        "effectiveAtIso": "2026-09-17T02:09:47.000Z",
+        "commitInstruction": "Final owner executes PrizeVaultV5.commitDrawManagerChange() from its Ledger after effectiveAt",
+        "recordCommand": "HARDHAT_NETWORK=monadMainnet DRAW_MANAGER_COMMIT_TX=<tx_hash> node scripts/deploy-v5-mainnet.js --record-commit"
+      },
+      "keeperSecrets": {
+        "drawManagerAddressSecret": "DRAW_MANAGER_ADDRESS",
+        "claimManagerAddressSecret": "CLAIM_MANAGER_ADDRESS",
+        "fromBlockSecret": "V5_KEEPER_FROM_BLOCK",
+        "rpcUrlSecret": "RPC_URL"
+      },
+      "components": [
+        {
+          "contractName": "EverdrawTwabController",
+          "source": "src/v5/twab/EverdrawTwabController.sol",
+          "address": "0xa8C05BAC957C5413ea4A0c0D101Aff84BA553afd",
+          "constructorArgs": [
+            604800,
+            1789524529
+          ],
+          "deployTx": "0xf2e9e72d9397f88e948d0b458d8088a0bf113b131fd8bd624347675ceb6a3e16",
+          "deployBlock": 105196182,
+          "runtimeBytecodeSha256": "6c7367ae7b4c6a2266f1b1fe0d60afa8b152f93b7370aa9ecf4eef9fed4ea870",
+          "verification": {
+            "status": "local-runtime-match",
+            "method": "Live runtime normalized for Solidity immutable references and matched to Hardhat build output"
+          }
+        },
+        {
+          "contractName": "ShmonStrategy",
+          "source": "src/v5/strategies/ShmonStrategy.sol",
+          "address": "0xA3e037641825B17586cC9B5D4d9473A76f25c44b",
+          "constructorArgs": [
+            "0x1B68626dCa36c7fE922fD2d55E4f631d962dE19c"
+          ],
+          "deployTx": "0x716435a95293e886282c4db9071dda5a6be1dd495bce70b2de0ba933d1f9675d",
+          "deployBlock": 105196198,
+          "runtimeBytecodeSha256": "877032b42910ef4fb4ff2ae2c1b9776797c6f9f36e05e792b38a9216a36612b9",
+          "verification": {
+            "status": "local-runtime-match",
+            "method": "Live runtime normalized for Solidity immutable references and matched to Hardhat build output"
+          }
+        },
+        {
+          "contractName": "PrizeVaultV5",
+          "source": "src/v5/PrizeVaultV5.sol",
+          "address": "0x97D9CA6DDD80869A32C951cc75b75D20e1300eDa",
+          "constructorArgs": [
+            "0xa8C05BAC957C5413ea4A0c0D101Aff84BA553afd",
+            "0xA3e037641825B17586cC9B5D4d9473A76f25c44b",
+            "25000000000000000000000",
+            "EVRDRAW-V5-MON"
+          ],
+          "deployTx": "0x174f9b178be45f3b2f280790b0d23a9e8ae8764d8b0967aed3d29ec9d805a055",
+          "deployBlock": 105196222,
+          "runtimeBytecodeSha256": "f9338b77e0c17656d22119ddd102c670dfc8a8355ae37f764d37feb9d3ef878d",
+          "verification": {
+            "status": "local-runtime-match",
+            "method": "Live runtime normalized for Solidity immutable references and matched to Hardhat build output"
+          }
+        },
+        {
+          "contractName": "ClaimManagerV5",
+          "source": "src/v5/ClaimManagerV5.sol",
+          "address": "0xEC41F68FF6079603ea94b7e2b85B9AC12F490671",
+          "constructorArgs": [],
+          "deployTx": "0x7ef5ad7160c063ec6d7016ac75a7e74709f80f76ff5871682d9f712626a9399d",
+          "deployBlock": 105196244,
+          "runtimeBytecodeSha256": "7ad7897e761b0634d56d05c033292b40c8e431ea7055d2005c1ef3247005cb81",
+          "verification": {
+            "status": "local-runtime-match",
+            "method": "Live runtime normalized for Solidity immutable references and matched to Hardhat build output"
+          }
+        },
+        {
+          "contractName": "PythRandomnessOracle",
+          "source": "src/PythRandomnessOracle.sol",
+          "address": "0xDf4c50B8C2C1a9922c067472311824153FFb01c0",
+          "constructorArgs": [
+            "0xD458261E832415CFd3BAE5E416FdF3230ce6F134",
+            "0x52DeaA1c84233F7bb8C8A45baeDE41091c616506",
+            "0x266ab124480baDDB4af8Dfe578dDAb9F1Ed7610c"
+          ],
+          "deployTx": "0x3b47aaeacc9ec73af33d48f9886257dc03f0a3394c350fdfcccc30ea449a0e95",
+          "deployBlock": 105196258,
+          "runtimeBytecodeSha256": "4c3f44029aa4a5692d7101ee5fa51ae7dd5e42e1a7544625f9864fa4185d00fa",
+          "verification": {
+            "status": "local-runtime-match",
+            "method": "Live runtime normalized for Solidity immutable references and matched to Hardhat build output"
+          }
+        },
+        {
+          "contractName": "DrawManagerV5",
+          "source": "src/v5/DrawManagerV5.sol",
+          "address": "0x266ab124480baDDB4af8Dfe578dDAb9F1Ed7610c",
+          "constructorArgs": [
+            "0x97D9CA6DDD80869A32C951cc75b75D20e1300eDa",
+            "0xa8C05BAC957C5413ea4A0c0D101Aff84BA553afd",
+            "0xEC41F68FF6079603ea94b7e2b85B9AC12F490671",
+            "0xDf4c50B8C2C1a9922c067472311824153FFb01c0",
+            "0x629Bd7f323fD29E3dF75855C9BC542889c6c1268",
+            "0x80dE4674dEFC68F06F4772B8Ec2F89aBda43DBE9",
+            1789524529,
+            604800,
+            300,
+            28800
+          ],
+          "deployTx": "0xab87962e6114e83f08c7c4cd8dab659f7cac892b13e963356ebee425ae02dfc4",
+          "deployBlock": 105196286,
+          "runtimeBytecodeSha256": "11c792131eefe30037e2681267a86efe22640a990543ce44cbf6392c2ec76d91",
+          "verification": {
+            "status": "local-runtime-match",
+            "method": "Live runtime normalized for Solidity immutable references and matched to Hardhat build output"
+          }
+        }
+      ]
     }
   ]
 }

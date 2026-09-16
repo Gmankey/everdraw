@@ -62,6 +62,10 @@ test("mainnet deploy source enforces the four-contract acceptance lifecycle", ()
   assert.match(source, /verifyOwnershipState/);
   assert.match(source, /--record-commit/);
   assert.match(source, /DRAW_MANAGER_COMMIT_TX/);
+  assert.doesNotMatch(source, /runManifestBytecodeCheck/);
+  assert.match(source, /verifyRuntimeAgainstArtifact/);
+  assert.match(source, /Final owner executes PrizeVaultV5\.commitDrawManagerChange\(\) from its Ledger/);
+  assert.match(source, /--record-commit/);
 });
 test("requires five distinct privileged role addresses", () => {
   const roles = {
