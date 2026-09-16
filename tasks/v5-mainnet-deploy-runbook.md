@@ -376,7 +376,7 @@ Then verify in the live app:
 - vault reads the V5 prize vault
 - deposit/withdraw use the V5 vault
 - Patron pool uses `boostDeposit` / `boostWithdraw`
-- claim UI scans all unclaimed finalized prizes
+- My History shows non-clickable WINNER records; managed keeper claims and auto-compounds prizes
 - points profile shows V5 entries/recent draws/Patron source
 - V4.1-B remains accessible only as the approved sunset/previous-vault flow
 
@@ -409,7 +409,7 @@ Do not announce or route real users until all are true:
 - frontend live bundle contains mainnet V5 addresses
 - deposit cap reads `25000 MON`
 - min deposit matches explicit operator decision
-- security review decision is recorded
+- security review decision is recorded (MAINNET GO: tasks/v5-final-mainnet-closure-retest-2026-09-16.md)
 - first controlled deposit/withdraw smoke passes
 
 ## Rollback
