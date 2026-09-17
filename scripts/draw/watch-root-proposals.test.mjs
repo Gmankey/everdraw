@@ -200,6 +200,7 @@ test("mainnet watcher is independently configured and schedule-gated", () => {
   assert.match(workflow, /secrets\.V5_WATCHER_MAINNET_HEAD_RPC_URL/);
   assert.match(workflow, /secrets\.V5_WATCHER_MAINNET_HEALTHCHECK_URL/);
   assert.match(workflow, /\.watcher-cache-mainnet/);
+  assert.match(workflow, /WATCHER_LOG_CHUNK_SIZE: "100"/);
   assert.match(workflow, /if: always\(\)/);
 });
 
