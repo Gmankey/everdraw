@@ -3,7 +3,7 @@ primary_region = "sjc"
 
 # Create this app and its persistent cache volume once:
 #   flyctl apps create everdraw-keeper-v5-mainnet
-#   flyctl volumes create everdraw_keeper_v5_mainnet_cache \
+#   flyctl volumes create everdraw_v5_mainnet_cache \
 #     --app everdraw-keeper-v5-mainnet --region sjc --size 1
 #
 # Runtime targets and sensitive values are Fly secrets, not TOML values:
@@ -61,7 +61,7 @@ primary_region = "sjc"
   strategy = "immediate"
 
 [mounts]
-  source = "everdraw_keeper_v5_mainnet_cache"
+  source = "everdraw_v5_mainnet_cache"
   destination = "/data"
 
 # No [services] block: the keeper is a background worker with no inbound HTTP.

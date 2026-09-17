@@ -156,7 +156,7 @@ Create the independent mainnet app and persistent cache once:
 
 ```bash
 flyctl apps create everdraw-keeper-v5-mainnet
-flyctl volumes create everdraw_keeper_v5_mainnet_cache \
+flyctl volumes create everdraw_v5_mainnet_cache \
   --app everdraw-keeper-v5-mainnet --region sjc --size 1
 ```
 
