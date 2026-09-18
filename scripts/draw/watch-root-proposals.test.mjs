@@ -192,7 +192,7 @@ test("watcher canonical checkpoint detects reorg replacement", async () => {
 
 test("mainnet watcher is independently configured and schedule-gated", () => {
   const workflow = fs.readFileSync(new URL("../../.github/workflows/v5-watcher-mainnet.yml", import.meta.url), "utf8");
-  assert.match(workflow, /cron: "\*\/15 \* \* \* \*"/);
+  assert.ok(workflow.includes(`cron: "7,22,37,52 * * * *"`));
   assert.match(workflow, /vars\.V5_WATCHER_MAINNET_ENABLED == 'true'/);
   assert.match(workflow, /DEPLOYMENT_FILE: deployments\/monad-mainnet\.json/);
   assert.match(workflow, /WATCHER_CHAIN_ID: "143"/);
