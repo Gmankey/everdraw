@@ -21,3 +21,10 @@ export function buildV5DrawHealth({ state, nowMs = Date.now() }) {
 
   return { secondsRemaining, isLoading, isStarting: isDue && !isStalled, isStalled }
 }
+
+export function buildV5DataAvailability(status = "loading") {
+  return {
+    isReady: status === "ready",
+    showUnavailable: status === "unavailable",
+  }
+}

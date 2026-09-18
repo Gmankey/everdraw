@@ -9,7 +9,7 @@ import monIcon from './assets/MON.png'
 import shmonIcon from './assets/shmon.png'
 import { _cached, assertNotAborted, getCachedRoundInfo, isAbortError } from './rpcCache.js'
 import './App.css'
-import { buildV5DrawHealth } from './v5DrawHealth.js'
+import { buildV5DataAvailability, buildV5DrawHealth } from "./v5DrawHealth.js"
 import { scopeV5RowsToVault } from './v5VaultScope.js'
 import { buildV5PrizeWins } from './v5PrizeWins.js'
 import { walletParticipatedInDraw } from './v5DrawParticipation.js'
@@ -1875,7 +1875,7 @@ export function V5UatExperience() {
   const [pointsProfile, setPointsProfile] = useState(null)
   const [pointsHistory, setPointsHistory] = useState([])
   const [pointsTranches, setPointsTranches] = useState([])
-  const [dataAvailable, setDataAvailable] = useState(false)
+  const [dataStatus, setDataStatus] = useState("loading")
 
   const readProvider = useMemo(() => new ethers.JsonRpcProvider(cfg.rpcUrl), [cfg.rpcUrl])
   const vault = useMemo(() => new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, readProvider), [cfg.prizeVault, readProvider])
@@ -1982,7 +1982,7 @@ export function V5UatExperience() {
       return true
     } catch (err) {
       runtimeVerifiedAtRef.current = 0
-      setDataAvailable(false)
+      setDataStatus("unavailable")
       throw err
     }
   }, [cfg, claimManager, manager, randomnessOracle, readProvider, strategy, twabController, vault])
@@ -2106,14 +2106,14 @@ export function V5UatExperience() {
       readAtMs: Date.now(),
       boosterSupported: true,
     })
-    setDataAvailable(true)
+    setDataStatus("ready")
   }, [account, cfg.chainName, cfg.indexerUrl, claimManager, manager, readProvider, shmon, vault, verifyRuntime])
 
   const checkedRefresh = useCallback(async (...args) => {
     try {
       return await refresh(...args)
     } catch (err) {
-      setDataAvailable(false)
+      setDataStatus("unavailable")
       throw err
     }
   }, [refresh])
@@ -2249,6 +2249,7 @@ export function V5UatExperience() {
   }, [account, cfg, checkedRefresh, verifyRuntime])
 
   const drawHealth = buildV5DrawHealth({ state, nowMs: liveNowMs })
+  const dataAvailability = buildV5DataAvailability(dataStatus)
   const countdown = drawHealth.isLoading
     ? 'Loading draw…'
     : drawHealth.isStalled
@@ -2443,13 +2444,13 @@ export function V5UatExperience() {
           <button className={`vault-aux-btn ${v5Page === 'history' ? 'active' : ''}`} onClick={openHistoryPage}>My History</button>
         </section>
 
-        {!dataAvailable && (v5Page === 'vault' || v5Page === 'degen') ? (
+        {dataAvailability.showUnavailable && (v5Page === 'vault' || v5Page === 'degen') ? (
           <div className="claim-flow-confirm-panel v5-draw-health-banner" role="alert">
             <div className="claim-flow-eyebrow">PROTOCOL DATA UNAVAILABLE</div>
             <div className="claim-flow-confirm-copy">Transactions are temporarily disabled while the approved release configuration is verified.</div>
           </div>
         ) : null}
-        {dataAvailable && drawHealth.isStalled && (v5Page === 'vault' || v5Page === 'degen') ? (
+        {dataAvailability.isReady && drawHealth.isStalled && (v5Page === 'vault' || v5Page === 'degen') ? (
           <div className="claim-flow-confirm-panel v5-draw-health-banner" role="alert">
             <div className="claim-flow-eyebrow">DRAWS ARE PAUSED</div>
             <div className="claim-flow-confirm-copy">Your principal is safe and withdrawable anytime, but new deposits won't earn draw entries until draws resume.</div>
@@ -2479,7 +2480,7 @@ export function V5UatExperience() {
               boosterSupported={Boolean(state?.boosterSupported)}
               depositsDisabled={drawHealth.isStalled}
               onConnect={connect}
-              actionsDisabled={!dataAvailable}
+              actionsDisabled={!dataAvailability.isReady}
               onDeposit={() => transact('Patron Pool deposit', (signer) => (
                 degenDepositAsset === 'shMON'
                   ? depositV5Shmon(signer, degenAmount, 'boostDepositShmon')
@@ -2529,7 +2530,7 @@ export function V5UatExperience() {
             account={account}
             boosterSupported
             depositsDisabled={drawHealth.isStalled}
-            actionsDisabled={!dataAvailable}
+            actionsDisabled={!dataAvailability.isReady}
             onConnect={connect}
             onDeposit={() => transact('Deposit', (signer) => (
               playDepositAsset === 'shMON'
