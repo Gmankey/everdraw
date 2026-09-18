@@ -202,6 +202,9 @@ test("mainnet watcher is independently configured and schedule-gated", () => {
   assert.match(workflow, /\.watcher-cache-mainnet/);
   assert.match(workflow, /WATCHER_LOG_CHUNK_SIZE: "100"/);
   assert.match(workflow, /if: always\(\)/);
+  assert.match(workflow, /actions: write/);
+  assert.match(workflow, /Queue successor watcher/);
+  assert.match(workflow, /gh workflow run v5-watcher-mainnet.yml/);
 });
 
 test("workflow uses configured logs RPC and a five-minute cadence", () => {

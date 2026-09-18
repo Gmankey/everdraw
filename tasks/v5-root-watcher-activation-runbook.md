@@ -104,7 +104,10 @@ Before deposits open:
 
 1. Manually dispatch `v5-watcher-mainnet.yml` from `staging`.
 2. Confirm it resolves chain 143 and the activated manifest, reaches chain head, saves its distinct
-   `.watcher-cache-mainnet` state, and turns the mainnet Healthchecks check green.
+   `.watcher-cache-mainnet` state, turns the mainnet Healthchecks check green, and queues a successor
+   run before exiting. Confirm at least two consecutive mainnet jobs hand off without a Healthchecks
+   coverage gap. The schedule is recovery-only; continuous coverage must not depend on GitHub creating
+   every cron event.
 3. Deliberately propose a bad root on the release contracts, observe the Telegram mismatch alarm,
    and veto it from the designated guardian Ledger/multisig within the stored challenge deadline.
 4. Record the proposal, alert, veto, corrected proposal, finalize, and claim transactions in launch
