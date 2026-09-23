@@ -29,6 +29,9 @@ primary_region = "sjc"
 [env]
   NODE_ENV = "production"
   DEPLOYMENT_FILE = "deployments/monad-mainnet.json"
+  # Keep historical event reconstruction off RPC_URL: common mainnet RPC tiers
+  # cap eth_getLogs to 10-100 blocks, making first-draw reconstruction impractical.
+  WATCHER_LOGS_RPC_URL = "https://monad.gateway.tenderly.co"
   V5_KEEPER_EVENT_CACHE_FILE = "/data/keeper-v5-event-cache.json"
   V5_KEEPER_CLAIM_STATE_FILE = "/data/keeper-v5-claim-state.json"
   KEEPER_LOOP = "true"

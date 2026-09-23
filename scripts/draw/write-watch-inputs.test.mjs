@@ -8,6 +8,7 @@ import { Interface } from "ethers";
 process.env.WATCHER_LOGS_RPC_URL = "provider";
 const {
   DrawInputEventCache,
+  getLogsRange,
   participantAccountsFromLogs,
   queryLogsChunked,
 } = await import("./write-watch-inputs.mjs?canonical-cache-test");
@@ -206,4 +207,35 @@ test("event-cache writer persists no orphaned participant state during an in-fli
   assert.deepEqual(cache.state.participants.accounts, []);
   assert.equal(fs.existsSync(file), false);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("caller logs provider bisects ranges rejected by an RPC block cap", async () => {
+  const requested = [];
+  const provider = {
+    async getLogs({ fromBlock, toBlock }) {
+      requested.push([fromBlock, toBlock]);
+      if (toBlock - fromBlock + 1 > 10) {
+        throw new Error("eth_getLogs block range is limited to 10 blocks");
+      }
+      return [{ blockNumber: fromBlock }, { blockNumber: toBlock }];
+    },
+  };
+
+  const logs = await getLogsRange(
+    provider,
+    { address: "0x0000000000000000000000000000000000000A11" },
+    1,
+    25,
+  );
+
+  assert.deepEqual(requested, [
+    [1, 25],
+    [1, 13],
+    [1, 7],
+    [8, 13],
+    [14, 25],
+    [14, 19],
+    [20, 25],
+  ]);
+  assert.equal(logs.length, 8);
 });

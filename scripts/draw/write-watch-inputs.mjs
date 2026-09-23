@@ -163,7 +163,7 @@ function getLogsWithTimeout(provider, filter, from, to, label) {
 //  - and, if the fast logs RPC still can't serve a window, fall back to the caller's provider
 //    (the official RPC: slow but reliable). So neither a range cap nor drpc flakiness can break
 //    log collection.
-async function getLogsRange(provider, filter, from, to) {
+export async function getLogsRange(provider, filter, from, to) {
   let lastErr;
   for (let attempt = 0; attempt < RPC_RETRY_ATTEMPTS; attempt++) {
     try {
@@ -179,7 +179,15 @@ async function getLogsRange(provider, filter, from, to) {
       break;
     }
   }
-  if (USE_CALLER_LOGS_PROVIDER) throw lastErr;
+  if (USE_CALLER_LOGS_PROVIDER) {
+    if (isRangeLimitError(lastErr) && to > from) {
+      const mid = Math.floor((from + to) / 2);
+      const left = await getLogsRange(provider, filter, from, mid);
+      const right = await getLogsRange(provider, filter, mid + 1, to);
+      return [...left, ...right];
+    }
+    throw lastErr;
+  }
   // Fast logs RPC exhausted retries for this window — fall back to the caller's reliable provider.
   console.warn(`[logs ${from}-${to}] falling back to caller RPC after fast RPC failure: ${errMessage(lastErr)}`);
   try {
