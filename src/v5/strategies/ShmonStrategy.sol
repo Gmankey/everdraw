@@ -5,9 +5,7 @@ import {IYieldStrategyV5} from "../interfaces/IYieldStrategyV5.sol";
 
 interface IShmonVault {
     function deposit(uint256 assets, address receiver) external payable returns (uint256 shares);
-    function previewDeposit(uint256 assets) external view returns (uint256 shares);
-    function previewWithdraw(uint256 assets) external view returns (uint256 shares);
-    function previewRedeem(uint256 shares) external view returns (uint256 assets);
+    function convertToShares(uint256 assets) external view returns (uint256 shares);
     function convertToAssets(uint256 shares) external view returns (uint256 assets);
     function balanceOf(address account) external view returns (uint256);
     function transfer(address to, uint256 amount) external returns (bool);
@@ -65,16 +63,21 @@ contract ShmonStrategy is IYieldStrategyV5 {
     function depositSharesFrom(address from, uint256 shares) external onlyVault returns (uint256 assets) {
         if (shares == 0) revert ZeroShares();
         _safeTransferFrom(address(shmonVault), from, address(this), shares);
-        assets = shmonVault.previewRedeem(shares);
+        // Principal tracks gross shMON share ownership; unstaking fees apply only if the user later redeems.
+        assets = shmonVault.convertToAssets(shares);
         if (assets == 0) revert ZeroShares();
     }
 
     function withdrawShares(uint256 assets, address to) external onlyVault returns (uint256 shares) {
-        shares = shmonVault.previewWithdraw(assets);
+        // EverDraw transfers shares and must not price a separate, delayed shMON-to-MON unstake.
         uint256 held = shmonVault.balanceOf(address(this));
+        uint256 heldAssets = shmonVault.convertToAssets(held);
+        shares = assets >= heldAssets ? held : shmonVault.convertToShares(assets);
         if (shares > held) revert InsufficientShares(shares, held);
-        if (shares == 0) revert ZeroShares();
-        _safeTransfer(address(shmonVault), to, shares);
+        // A zero result clears sub-share or fully unbacked principal without overpaying from the prize pot.
+        if (shares != 0) {
+            _safeTransfer(address(shmonVault), to, shares);
+        }
     }
 
     function shareToken() external view returns (address) {
@@ -100,6 +103,7 @@ contract ShmonStrategy is IYieldStrategyV5 {
     function migrateTo(address newStrategy) external onlyVault returns (uint256 shares, uint256 nativeAssets) {
         if (newStrategy == address(0)) revert ZeroAddress();
         shares = shmonVault.balanceOf(address(this));
+        // A zero result clears sub-share or fully unbacked principal without overpaying from the prize pot.
         if (shares != 0) {
             _safeTransfer(address(shmonVault), newStrategy, shares);
         }

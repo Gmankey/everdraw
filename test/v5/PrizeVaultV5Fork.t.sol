@@ -11,7 +11,6 @@ import {MockRandomnessOracle} from "../mocks/MockRandomnessOracle.sol";
 
 interface IShmonRead {
     function balanceOf(address account) external view returns (uint256);
-    function previewRedeem(uint256 shares) external view returns (uint256);
     function convertToAssets(uint256 shares) external view returns (uint256);
     function previewDeposit(uint256 assets) external view returns (uint256);
     function deposit(uint256 assets, address receiver) external payable returns (uint256 shares);
@@ -91,10 +90,11 @@ contract PrizeVaultV5ForkTest is Test {
 
         uint256 before = IShmonRead(MAINNET_SHMON).balanceOf(alice);
         vm.prank(alice);
-        uint256 withdrawnShares = vault.withdrawShmon(0.25 ether);
+        uint256 withdrawnShares = vault.withdrawShmon(creditedPrincipal);
 
         assertEq(IShmonRead(MAINNET_SHMON).balanceOf(alice) - before, withdrawnShares);
-        assertEq(vault.principalOf(alice), creditedPrincipal - 0.25 ether);
+        assertEq(vault.principalOf(alice), 0);
+        assertEq(strategy.sharesHeld(), 0);
         assertEq(address(vault).balance, 0);
         assertEq(address(strategy).balance, 0);
     }
@@ -141,14 +141,18 @@ contract PrizeVaultV5ForkTest is Test {
         vault.depositShmon(shares);
         vm.stopPrank();
 
+        uint256 principal = vault.principalOf(alice);
         assertEq(IShmonRead(MAINNET_SHMON).balanceOf(address(strategy)), shares);
-        assertEq(vault.principalOf(alice), IShmonRead(MAINNET_SHMON).previewRedeem(shares));
+        assertEq(principal, IShmonRead(MAINNET_SHMON).convertToAssets(shares));
+        assertEq(vault.availableYield(), 0);
 
         uint256 before = IShmonRead(MAINNET_SHMON).balanceOf(alice);
         vm.prank(alice);
-        uint256 withdrawnShares = vault.withdrawShmon(0.25 ether);
+        uint256 withdrawnShares = vault.withdrawShmon(principal);
 
         assertEq(IShmonRead(MAINNET_SHMON).balanceOf(alice) - before, withdrawnShares);
+        assertEq(vault.principalOf(alice), 0);
+        assertEq(strategy.sharesHeld(), 0);
     }
 
     function test_fork_fullLifecycleMixedAssetsDrawClaimManyWithdrawAgainstRealShmon() public {
@@ -186,12 +190,15 @@ contract PrizeVaultV5ForkTest is Test {
 
         uint256 principalBeforeClaim = vault.principalOf(alice);
         claimManager.claimMany(leaves, proofs);
-        assertEq(vault.principalOf(alice), principalBeforeClaim + IShmonRead(MAINNET_SHMON).previewRedeem(leaf.amount));
+        uint256 principalAfterClaim = vault.principalOf(alice);
+        assertEq(principalAfterClaim, principalBeforeClaim + IShmonRead(MAINNET_SHMON).convertToAssets(leaf.amount));
 
         uint256 beforeWithdraw = IShmonRead(MAINNET_SHMON).balanceOf(alice);
         vm.prank(alice);
-        uint256 withdrawnShares = vault.withdrawShmon(0.5 ether);
+        uint256 withdrawnShares = vault.withdrawShmon(principalAfterClaim);
         assertEq(IShmonRead(MAINNET_SHMON).balanceOf(alice) - beforeWithdraw, withdrawnShares);
+        assertEq(vault.principalOf(alice), 0);
+        assertEq(twab.balanceOf(address(vault), alice), 0);
     }
 
     function _activateDrawManager(address drawManager_) internal {

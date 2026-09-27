@@ -653,20 +653,20 @@ contract PrizeVaultV5Test is Test {
         assertEq(strategy.totalAssets(), 4 ether);
     }
 
-    function test_withdrawUsesPreviewWithdrawNotPreviewDeposit() public {
+    function test_withdrawUsesGrossShareConversionNotUnstakingQuote() public {
         vm.deal(alice, 10 ether);
         vm.prank(alice);
         vault.deposit{value: 4 ether}();
 
         shmon.setWithdrawFeeBps(5);
-        uint256 expectedShares = shmon.previewWithdraw(1 ether);
+        uint256 expectedShares = shmon.convertToShares(1 ether);
 
         vm.prank(alice);
         vault.withdrawShmon(1 ether);
 
         assertEq(shmon.balanceOf(alice), expectedShares);
         assertEq(vault.principalOf(alice), 3 ether);
-        assertLt(strategy.sharesHeld(), 3 ether);
+        assertEq(strategy.sharesHeld(), 3 ether);
     }
 
     function test_strategyChangeUsesTimelock() public {

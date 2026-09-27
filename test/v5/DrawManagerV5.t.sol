@@ -804,7 +804,7 @@ contract DrawManagerV5Test is Test {
         uint256 expectedSponsorYield =
             (grossYield * (10 ether * halfPeriod)) / (10 ether * uint256(PERIOD) + 10 ether * halfPeriod);
         uint256 feeAssets = ((grossYield - expectedSponsorYield) * 1_000) / 10_000;
-        uint256 expectedFee = (shmon.previewWithdraw(grossYield) * feeAssets) / grossYield;
+        uint256 expectedFee = (shmon.convertToShares(grossYield) * feeAssets) / grossYield;
         assertEq(grossYield, 20 ether);
         assertEq(sponsorYield, expectedSponsorYield);
         assertEq(feeAmount, expectedFee);
