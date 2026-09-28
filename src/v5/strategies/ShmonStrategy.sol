@@ -18,16 +18,20 @@ contract ShmonStrategy is IYieldStrategyV5 {
     IShmonVault public immutable shmonVault;
     address public immutable owner;
     address public vault;
+    address public nativeMigrationSource;
 
     error NotVault();
     error NotOwner();
     error ZeroAddress();
     error VaultAlreadySet();
+    error MigrationSourceAlreadySet();
     error ZeroShares();
     error InsufficientShares(uint256 required, uint256 held);
     error ShareTransferFailed();
     error NativeTransferFailed();
     error UnexpectedNativeTransfer();
+
+    event NativeMigrationSourceSet(address indexed source);
 
     modifier onlyVault() {
         if (msg.sender != vault) revert NotVault();
@@ -46,13 +50,22 @@ contract ShmonStrategy is IYieldStrategyV5 {
     }
 
     receive() external payable {
-        revert UnexpectedNativeTransfer();
+        if (msg.sender != nativeMigrationSource) revert UnexpectedNativeTransfer();
     }
 
     function setVault(address _vault) external onlyOwner {
         if (_vault == address(0)) revert ZeroAddress();
         if (vault != address(0)) revert VaultAlreadySet();
         vault = _vault;
+    }
+
+    /// @notice Authorizes the one predecessor that may forward forced native MON during migration.
+    /// @dev Native MON is deliberately excluded from totalAssets, principal, and available yield.
+    function setNativeMigrationSource(address source) external onlyOwner {
+        if (source == address(0)) revert ZeroAddress();
+        if (nativeMigrationSource != address(0)) revert MigrationSourceAlreadySet();
+        nativeMigrationSource = source;
+        emit NativeMigrationSourceSet(source);
     }
 
     function deposit(uint256 assets) external payable onlyVault returns (uint256 shares) {

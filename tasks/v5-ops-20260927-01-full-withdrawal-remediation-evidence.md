@@ -157,28 +157,25 @@ The reviewer should independently confirm:
 
 ## Governed live remediation plan
 
-This is a plan only. Every live action requires operator approval.
+The executable, coordinated procedure is
+[tasks/v5-ops-20260927-01-strategy-migration-runbook.md](./v5-ops-20260927-01-strategy-migration-runbook.md).
+It supersedes the earlier contract-only outline.
 
-1. Decide whether to pause new deposits during the remediation window.
-   Withdrawals and `emergencyRedeemShares` must remain available.
-2. After independent approval, deploy only the reviewed `ShmonStrategy` with
-   the live shMON address and call its one-time `setVault(liveVault)`.
-3. Verify runtime bytecode, `shareToken()`, `vault()`, and the current vault
-   state through two independent RPCs.
-4. From the Ledger owner, call
-   `queueStrategyChange(replacementStrategy)`; record the event and 24-hour
-   effective time.
-5. During the timelock, keep monitoring normal and emergency exits. Abort with
-   `cancelStrategyChange()` if any address or bytecode check differs.
-6. After the delay and a final preflight, call `commitStrategyChange()` from
-   the Ledger owner. The vault atomically migrates all shMON shares and enforces
-   the existing migration-tolerance check.
-7. Verify the active strategy, old/new share balances, total assets, principal,
-   available yield, and runtime bytecode. Simulate the incident wallet's full
-   normal exit before asking that wallet to sign anything.
-8. Only after explicit user approval, perform a real user-path full withdrawal
-   and record the receipt as live closure evidence.
+The corrected procedure requires, before queueing:
 
-Until step 6 completes, the repository fix does not change the deployed
-strategy. The existing permissionless `emergencyRedeemShares` path remains the
-confirmed on-chain recovery route for the affected participant.
+1. deploy the independently approved replacement;
+2. call its one-time `setVault(liveVault)`;
+3. call its one-time `setNativeMigrationSource(currentStrategy)`;
+4. record replacement provenance and bytecode evidence in an append-only queued deployment record;
+5. build and test the replacement frontend manifest; and
+6. stage the keeper/frontend cutover without activating either early.
+
+After the Ledger commits the strategy change, the operator must append the activated deployment
+record, publish the matching production frontend manifest, redeploy the keeper from the same
+canonical `staging` commit, preserve indexer history/start block, and execute the live verification
+matrix. The old frontend intentionally fails closed after the strategy commit; users must reload
+once the matching artifact is live.
+
+No live transaction, deployment, queue, commit, or production cutover is authorized by this
+document. OPS-20260927-01 remains open until the normal full-exit path succeeds against the migrated
+mainnet stack and the production frontend.

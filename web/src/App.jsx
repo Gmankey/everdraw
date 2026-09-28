@@ -29,7 +29,7 @@ import {
   STREAK_MILESTONE_AWARDS,
 } from './v5PointsView.js'
 import { latestSettledDraw, participantRowsForDraw } from './v5PreviousDraw.js'
-import { assertV5RuntimeSnapshot, assertV5WalletChain, v5ReleaseConfigFromEnv, verifyV5WritePreconditions } from './v5ReleaseConfig.js'
+import { assertV5RuntimeSnapshot, assertV5WalletChain, v5ReleaseConfigFromEnv, v5ShmonApprovalTarget, verifyV5WritePreconditions } from './v5ReleaseConfig.js'
 import { v5PeriodAccountEvents } from './v5PeriodAccountEvents.js'
 import './shmon.css'
 
@@ -2328,7 +2328,7 @@ export function V5UatExperience() {
     const assets = parseV5Mon(amountValue)
     const shmonWrite = new ethers.Contract(cfg.shmon, V5_SHMON_ABI, signer)
     const vaultWrite = new ethers.Contract(cfg.prizeVault, V5_VAULT_ABI, signer)
-    const strategyAddress = cfg.shmonStrategy
+    const strategyAddress = v5ShmonApprovalTarget(cfg)
     const shares = await shmonWrite.previewDeposit(assets)
     if (shares <= 0n) throw new Error('shMON deposit amount is too small')
     setStatus('Approving shMON...')

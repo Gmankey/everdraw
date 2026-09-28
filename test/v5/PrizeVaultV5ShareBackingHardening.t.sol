@@ -268,4 +268,41 @@ contract PrizeVaultV5ShareBackingHardeningTest is Test {
         assertEq(vault.principalOf(alice), 4 ether);
         assertEq(twab.balanceOf(address(vault), alice), 4 ether);
     }
+
+    function test_nativeMigrationSourceIsOneTimeAndDoesNotAffectAccounting() public {
+        vm.deal(alice, 5 ether);
+        vm.prank(alice);
+        vault.deposit{value: 4 ether}();
+
+        address predecessor = makeAddr("predecessor");
+        address stranger = makeAddr("stranger");
+        vm.deal(predecessor, 1 ether);
+        vm.deal(stranger, 1 ether);
+
+        vm.prank(alice);
+        vm.expectRevert(ShmonStrategy.NotOwner.selector);
+        strategy.setNativeMigrationSource(predecessor);
+
+        vm.expectRevert(ShmonStrategy.ZeroAddress.selector);
+        strategy.setNativeMigrationSource(address(0));
+
+        vm.expectEmit(true, false, false, true, address(strategy));
+        emit ShmonStrategy.NativeMigrationSourceSet(predecessor);
+        strategy.setNativeMigrationSource(predecessor);
+
+        vm.expectRevert(ShmonStrategy.MigrationSourceAlreadySet.selector);
+        strategy.setNativeMigrationSource(stranger);
+
+        vm.prank(stranger);
+        (bool rejected,) = payable(address(strategy)).call{value: 1 ether}("");
+        assertFalse(rejected);
+
+        vm.prank(predecessor);
+        (bool accepted,) = payable(address(strategy)).call{value: 0.25 ether}("");
+        assertTrue(accepted);
+        assertEq(address(strategy).balance, 0.25 ether);
+        assertEq(strategy.totalAssets(), 4 ether);
+        assertEq(vault.availableYield(), 0);
+        assertEq(vault.principalOf(alice), 4 ether);
+    }
 }

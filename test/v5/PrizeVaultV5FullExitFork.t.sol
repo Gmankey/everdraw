@@ -25,6 +25,12 @@ interface IIncidentPrizeVault {
     function withdrawShmon(uint256 amount) external returns (uint256 shares);
 }
 
+contract ForceNativeToStrategy {
+    constructor(address payable target) payable {
+        selfdestruct(target);
+    }
+}
+
 contract PrizeVaultV5FullExitForkTest is Test {
     uint256 internal constant INCIDENT_BLOCK = 108_308_126;
     address internal constant MAINNET_SHMON = 0x1B68626dCa36c7fE922fD2d55E4f631d962dE19c;
@@ -74,6 +80,7 @@ contract PrizeVaultV5FullExitForkTest is Test {
 
         ShmonStrategy replacement = new ShmonStrategy(MAINNET_SHMON);
         replacement.setVault(LIVE_VAULT);
+        replacement.setNativeMigrationSource(LIVE_STRATEGY);
 
         vm.startPrank(LIVE_OWNER);
         incidentVault.queueStrategyChange(address(replacement));
@@ -126,5 +133,60 @@ contract PrizeVaultV5FullExitForkTest is Test {
         assertApproxEqAbs(vault.availableYield(), yieldBefore, 2);
         assertLe(IIncidentShmon(MAINNET_SHMON).convertToAssets(withdrawnShares), principal);
         assertLe(principal - IIncidentShmon(MAINNET_SHMON).convertToAssets(withdrawnShares), 2);
+    }
+
+    function test_fork_forcedNativeSurvivesTwoGovernedMigrationsWithoutAffectingAccounting() public {
+        IIncidentPrizeVault incidentVault = IIncidentPrizeVault(LIVE_VAULT);
+        uint256 principal = incidentVault.principalOf(LIVE_PARTICIPANT);
+        uint256 heldShares = IIncidentShmon(MAINNET_SHMON).balanceOf(LIVE_STRATEGY);
+        uint256 assetsBefore = IIncidentShmon(MAINNET_SHMON).convertToAssets(heldShares);
+        uint256 yieldBefore = incidentVault.availableYield();
+
+        ShmonStrategy firstReplacement = new ShmonStrategy(MAINNET_SHMON);
+        firstReplacement.setVault(LIVE_VAULT);
+        firstReplacement.setNativeMigrationSource(LIVE_STRATEGY);
+
+        vm.deal(address(this), 1 ether);
+        new ForceNativeToStrategy{value: 1 wei}(payable(LIVE_STRATEGY));
+
+        vm.startPrank(LIVE_OWNER);
+        incidentVault.queueStrategyChange(address(firstReplacement));
+        vm.warp(block.timestamp + incidentVault.STRATEGY_CHANGE_DELAY());
+        incidentVault.commitStrategyChange();
+        vm.stopPrank();
+
+        assertEq(firstReplacement.sharesHeld(), heldShares);
+        assertEq(address(firstReplacement).balance, 1 wei);
+        assertEq(firstReplacement.totalAssets(), assetsBefore);
+        assertEq(incidentVault.principalOf(LIVE_PARTICIPANT), principal);
+        assertEq(incidentVault.availableYield(), yieldBefore);
+
+        ShmonStrategy secondReplacement = new ShmonStrategy(MAINNET_SHMON);
+        secondReplacement.setVault(LIVE_VAULT);
+        secondReplacement.setNativeMigrationSource(address(firstReplacement));
+        new ForceNativeToStrategy{value: 0.25 ether}(payable(address(firstReplacement)));
+
+        vm.startPrank(LIVE_OWNER);
+        incidentVault.queueStrategyChange(address(secondReplacement));
+        vm.warp(block.timestamp + incidentVault.STRATEGY_CHANGE_DELAY());
+        incidentVault.commitStrategyChange();
+        vm.stopPrank();
+
+        assertEq(incidentVault.strategy(), address(secondReplacement));
+        assertEq(firstReplacement.sharesHeld(), 0);
+        assertEq(address(firstReplacement).balance, 0);
+        assertEq(secondReplacement.sharesHeld(), heldShares);
+        assertEq(address(secondReplacement).balance, 0.25 ether + 1 wei);
+        assertEq(secondReplacement.totalAssets(), assetsBefore);
+        assertEq(incidentVault.principalOf(LIVE_PARTICIPANT), principal);
+        assertEq(incidentVault.availableYield(), yieldBefore);
+
+        uint256 participantSharesBefore = IIncidentShmon(MAINNET_SHMON).balanceOf(LIVE_PARTICIPANT);
+        vm.prank(LIVE_PARTICIPANT);
+        uint256 withdrawnShares = incidentVault.withdrawShmon(principal);
+
+        assertEq(IIncidentShmon(MAINNET_SHMON).balanceOf(LIVE_PARTICIPANT) - participantSharesBefore, withdrawnShares);
+        assertEq(incidentVault.principalOf(LIVE_PARTICIPANT), 0);
+        assertEq(address(secondReplacement).balance, 0.25 ether + 1 wei);
     }
 }
