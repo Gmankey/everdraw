@@ -1,11 +1,18 @@
 #!/usr/bin/env node
 import "dotenv/config";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import hre from "hardhat";
+import {
+  deployStrategyIfConfirmed,
+  loadValidatedStrategyBuild,
+  STRATEGY_REPLACEMENT_CONFIRMATION,
+  STRATEGY_SOURCE,
+} from "./lib/v5-strategy-replacement-build.mjs";
 
 const { ethers } = hre;
 const MAINNET_CHAIN_ID = 143n;
-const CONFIRMATION = "DEPLOY V5 STRATEGY REPLACEMENT";
 
 function required(name) {
   const value = String(process.env[name] || "").trim();
@@ -19,6 +26,12 @@ function address(name) {
 
 function sameAddress(a, b) {
   return ethers.getAddress(a) === ethers.getAddress(b);
+}
+
+function runtimeSha256(bytecode) {
+  return createHash("sha256")
+    .update(Buffer.from(bytecode.replace(/^0x/, ""), "hex"))
+    .digest("hex");
 }
 
 async function send(label, promise) {
@@ -40,6 +53,12 @@ async function main() {
   const predecessor = address("CURRENT_STRATEGY_ADDRESS");
   const [deployer] = await ethers.getSigners();
   const deployCommit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  const sourceContent = readFileSync(STRATEGY_SOURCE, "utf8");
+  const { factory, provenance } = await loadValidatedStrategyBuild({
+    hre,
+    sourceContent,
+    sourceCommit: deployCommit,
+  });
 
   const vault = new ethers.Contract(
     vaultAddress,
@@ -73,18 +92,31 @@ async function main() {
     shmon,
     vault: vaultAddress,
     predecessor,
+    build: {
+      sourceCommit: provenance.sourceCommit,
+      sourceSha256: provenance.sourceSha256,
+      buildInfoSha256: provenance.buildInfoSha256,
+      normalizedRuntimeSha256: provenance.normalizedRuntimeSha256,
+      compiler: provenance.compiler,
+    },
   }, null, 2));
 
-  if (process.env.CONFIRM_STRATEGY_REPLACEMENT !== CONFIRMATION) {
-    console.log(`Preflight complete. Set CONFIRM_STRATEGY_REPLACEMENT="${CONFIRMATION}" to deploy and initialize.`);
+  const replacement = await deployStrategyIfConfirmed({
+    confirmation: process.env.CONFIRM_STRATEGY_REPLACEMENT,
+    factory,
+    shmon,
+  });
+  if (!replacement) {
+    console.log(
+      `Preflight complete. Set CONFIRM_STRATEGY_REPLACEMENT="${STRATEGY_REPLACEMENT_CONFIRMATION}" to deploy and initialize.`,
+    );
     return;
   }
 
-  const factory = await ethers.getContractFactory("ShmonStrategy");
-  const replacement = await factory.deploy(shmon);
   await replacement.waitForDeployment();
   const deployReceipt = await replacement.deploymentTransaction().wait();
   const replacementAddress = await replacement.getAddress();
+  const rawRuntimeSha256 = runtimeSha256(await ethers.provider.getCode(replacementAddress));
   console.log(`ShmonStrategy deployed: ${replacementAddress} tx=${deployReceipt.hash}`);
 
   const setVaultReceipt = await send("strategy.setVault", replacement.setVault(vaultAddress));
@@ -102,13 +134,18 @@ async function main() {
   console.log(JSON.stringify({
     replacementStrategy: replacementAddress,
     deployCommit,
+    sourceSha256: provenance.sourceSha256,
+    buildInfoSha256: provenance.buildInfoSha256,
+    runtimeBytecodeSha256: rawRuntimeSha256,
+    normalizedRuntimeSha256: provenance.normalizedRuntimeSha256,
+    compiler: provenance.compiler,
     deployBlock: deployReceipt.blockNumber,
     transactions: {
       deploy: deployReceipt.hash,
       setVault: setVaultReceipt.hash,
       setNativeMigrationSource: setSourceReceipt.hash,
     },
-    next: "Record the candidate, build the replacement manifest, then queue the vault strategy change from the final-owner Ledger.",
+    next: "Record the candidate, verify it with check:v5-strategy-replacement, then queue the vault strategy change from the final-owner Ledger.",
   }, null, 2));
 }
 

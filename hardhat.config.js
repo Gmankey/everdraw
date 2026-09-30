@@ -27,7 +27,7 @@ export default {
     },
     monadMainnet: {
       url: process.env.MONAD_MAINNET_RPC_URL || "",
-      chainId: Number(process.env.MONAD_MAINNET_CHAIN_ID || 101),
+      chainId: Number(process.env.MONAD_MAINNET_CHAIN_ID || 143),
       accounts: PRIVATE_KEY ? [PRIVATE_KEY] : []
     }
   }

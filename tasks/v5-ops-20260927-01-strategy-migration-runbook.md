@@ -28,13 +28,16 @@ Record before/after snapshots for:
 
 ## 2. Deploy and initialize the replacement
 
-The script is preflight-only unless the exact confirmation string is supplied. It reads the signer
-through the existing Hardhat network configuration and never generates or prints a key.
+The script is preflight-only unless the exact confirmation string is supplied. Every run first compiles
+`ShmonStrategy` and validates the required ABI, checked-out source against the Hardhat build input,
+artifact against build output, and the production Solidity 0.8.33/Paris/viaIR/optimizer settings. It
+reads the signer through the existing Hardhat network configuration and never generates or prints a key.
 
 ```bash
 git fetch origin staging
 git checkout --detach origin/staging
 git diff --exit-code
+export MONAD_MAINNET_CHAIN_ID=143
 export SHMON_ADDRESS=0x1B68626dCa36c7fE922fD2d55E4f631d962dE19c
 export PRIZE_VAULT_ADDRESS=0x97D9CA6DDD80869A32C951cc75b75D20e1300eDa
 export CURRENT_STRATEGY_ADDRESS=0xA3e037641825B17586cC9B5D4d9473A76f25c44b
@@ -62,10 +65,10 @@ Open a PR against `staging`. Append a new V5 record to
 use status `strategy-change-queued`. Copy all unchanged component provenance from the current
 active record and change only:
 
-- `deployCommit`: reviewed replacement source commit
+- preserve `deployCommit` from the original active stack; record the reviewed replacement commit only in `strategyMigration.sourceCommit` and the replacement component's `sourceCommit`
 - `addresses.shmonStrategy`: replacement address
 - the `ShmonStrategy` component: constructor args, address, deploy tx/block, compiler settings,
-  normalized runtime hash, and verification evidence
+  raw live runtime hash, immutable-normalized build/runtime hash, source/build-info hashes, compiler settings, and verification evidence
 - `strategyMigration`: predecessor, replacement, deploy/setVault/setSource/queue receipts,
   source commit, and queue effective time
 - `status`: `strategy-change-queued`
@@ -74,9 +77,16 @@ Keep `startBlock`, every non-strategy address, ownership, constructor parameters
 indexing metadata unchanged. Run:
 
 ```bash
-npm run check:bytecode -- deployments/monad-mainnet.json
 npm run check:deploy-source -- deployments/monad-mainnet.json
+MONAD_MAINNET_RPC_URL="<approved mainnet RPC>" npm run check:v5-strategy-replacement -- \
+  --deployment-file deployments/monad-mainnet.json \
+  --strategy-address <replacement>
 ```
+
+The generic `check:bytecode` command does not verify nested V5 components and is not an approval
+gate for this migration. The dedicated replacement verifier must report `status: verified`; it fails
+closed on missing RPC/code, raw or normalized runtime mismatch, stale build/source provenance, changed
+historical component provenance, wrong chain, or wrong wiring.
 
 The active deployment parser must continue selecting the old active record before the on-chain
 commit. The queued record is provenance, not permission to activate it early.
@@ -114,7 +124,7 @@ timelock:
 
 - keep the normal keeper, watcher, indexer, and alerts running;
 - monitor normal and emergency withdrawals;
-- compare live replacement runtime bytecode with the reviewed artifact;
+- rerun the dedicated V5 replacement verifier and retain its raw and normalized runtime evidence;
 - cancel from the Ledger if bytecode, wiring, accounting, or service readiness differs.
 
 ## 6. Coordinated activation
@@ -131,7 +141,7 @@ Do not activate the frontend before the strategy commit. At the agreed cutover:
    - all forced native MON moved to the replacement;
    - native MON is absent from `totalAssets()` and `availableYield()`;
    - principal, TWAB, sponsor, and Patron accounting are unchanged.
-5. Append a new `draw-manager-committed` record to `deployments/monad-mainnet.json`, preserving
+5. Rerun the dedicated V5 replacement verifier against the post-commit wiring, then append a new `draw-manager-committed` record to `deployments/monad-mainnet.json`, preserving
    the queued record and adding the commit receipt/time. Merge that record to `staging`.
 6. Generate the final frontend manifest from the canonical file and confirm it is equivalent to
    the tested candidate for all addresses.
