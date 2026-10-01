@@ -69,70 +69,126 @@ contract PrizeVaultV5ShareBackingHardeningTest is Test {
         assertEq(address(strategy).balance, 0);
     }
 
-    function test_participantExitRevertsAtomicallyWhenStrategyLacksRequiredShares() public {
+    function test_participantFullExitIgnoresExternalUnstakingSpread() public {
         vm.deal(alice, 10 ether);
         vm.prank(alice);
         vault.deposit{value: 4 ether}();
         shmon.setWithdrawFeeBps(5);
 
-        uint256 requiredShares = shmon.previewWithdraw(4 ether);
         uint256 heldShares = strategy.sharesHeld();
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(ShmonStrategy.InsufficientShares.selector, requiredShares, heldShares));
-        vault.withdrawShmon(4 ether);
+        uint256 shares = vault.withdrawShmon(4 ether);
 
-        assertEq(vault.principalOf(alice), 4 ether);
-        assertEq(vault.totalParticipantPrincipal(), 4 ether);
-        assertEq(vault.totalPrincipal(), 4 ether);
-        assertEq(twab.balanceOf(address(vault), alice), 4 ether);
-        assertEq(twab.totalParticipantSupply(address(vault)), 4 ether);
-        assertEq(twab.totalPrincipalSupply(address(vault)), 4 ether);
-        assertEq(strategy.sharesHeld(), heldShares);
-        assertEq(shmon.balanceOf(alice), 0);
+        assertEq(shares, heldShares);
+        assertEq(vault.principalOf(alice), 0);
+        assertEq(vault.totalParticipantPrincipal(), 0);
+        assertEq(vault.totalPrincipal(), 0);
+        assertEq(twab.balanceOf(address(vault), alice), 0);
+        assertEq(twab.totalParticipantSupply(address(vault)), 0);
+        assertEq(twab.totalPrincipalSupply(address(vault)), 0);
+        assertEq(strategy.sharesHeld(), 0);
+        assertEq(shmon.balanceOf(alice), heldShares);
     }
 
-    function test_sponsorExitRevertsAtomicallyWhenStrategyLacksRequiredShares() public {
+    function test_sponsorFullExitIgnoresExternalUnstakingSpread() public {
         vm.deal(sponsor, 10 ether);
         vm.prank(sponsor);
         vault.sponsorDeposit{value: 4 ether}();
         shmon.setWithdrawFeeBps(5);
 
-        uint256 requiredShares = shmon.previewWithdraw(4 ether);
         uint256 heldShares = strategy.sharesHeld();
         vm.prank(sponsor);
-        vm.expectRevert(abi.encodeWithSelector(ShmonStrategy.InsufficientShares.selector, requiredShares, heldShares));
-        vault.withdrawSponsorShmon(4 ether);
+        uint256 shares = vault.withdrawSponsorShmon(4 ether);
+        assertEq(shares, heldShares);
 
-        assertEq(vault.sponsorPrincipalOf(sponsor), 4 ether);
-        assertEq(vault.totalSponsorPrincipal(), 4 ether);
-        assertEq(vault.totalPrincipal(), 4 ether);
-        assertEq(twab.balanceOf(address(vault), sponsor), 4 ether);
-        assertEq(twab.delegateBalanceOf(address(vault), twab.SPONSOR_DELEGATE()), 4 ether);
-        assertEq(twab.totalPrincipalSupply(address(vault)), 4 ether);
-        assertEq(strategy.sharesHeld(), heldShares);
-        assertEq(shmon.balanceOf(sponsor), 0);
+        assertEq(vault.sponsorPrincipalOf(sponsor), 0);
+        assertEq(vault.totalSponsorPrincipal(), 0);
+        assertEq(vault.totalPrincipal(), 0);
+        assertEq(twab.balanceOf(address(vault), sponsor), 0);
+        assertEq(twab.delegateBalanceOf(address(vault), twab.SPONSOR_DELEGATE()), 0);
+        assertEq(twab.totalPrincipalSupply(address(vault)), 0);
+        assertEq(strategy.sharesHeld(), 0);
+        assertEq(shmon.balanceOf(sponsor), heldShares);
     }
 
-    function test_patronExitRevertsAtomicallyWhenStrategyLacksRequiredShares() public {
+    function test_patronFullExitIgnoresExternalUnstakingSpread() public {
         vm.deal(patron, 10 ether);
         vm.prank(patron);
         vault.boostDeposit{value: 4 ether}();
         shmon.setWithdrawFeeBps(5);
 
-        uint256 requiredShares = shmon.previewWithdraw(4 ether);
         uint256 heldShares = strategy.sharesHeld();
         vm.prank(patron);
-        vm.expectRevert(abi.encodeWithSelector(ShmonStrategy.InsufficientShares.selector, requiredShares, heldShares));
-        vault.boostWithdrawShmon(4 ether);
+        uint256 shares = vault.boostWithdrawShmon(4 ether);
+        assertEq(shares, heldShares);
 
-        assertEq(vault.boosterPrincipalOf(patron), 4 ether);
-        assertEq(vault.totalBoosterPrincipal(), 4 ether);
-        assertEq(vault.totalPrincipal(), 4 ether);
-        assertEq(twab.balanceOf(address(vault), patron), 4 ether);
-        assertEq(twab.delegateBalanceOf(address(vault), twab.BOOSTER_DELEGATE()), 4 ether);
-        assertEq(twab.totalPrincipalSupply(address(vault)), 4 ether);
-        assertEq(strategy.sharesHeld(), heldShares);
-        assertEq(shmon.balanceOf(patron), 0);
+        assertEq(vault.boosterPrincipalOf(patron), 0);
+        assertEq(vault.totalBoosterPrincipal(), 0);
+        assertEq(vault.totalPrincipal(), 0);
+        assertEq(twab.balanceOf(address(vault), patron), 0);
+        assertEq(twab.delegateBalanceOf(address(vault), twab.BOOSTER_DELEGATE()), 0);
+        assertEq(twab.totalPrincipalSupply(address(vault)), 0);
+        assertEq(strategy.sharesHeld(), 0);
+        assertEq(shmon.balanceOf(patron), heldShares);
+    }
+
+    function test_multiUserExitOrderPreservesRemainingBacking() public {
+        address bob = makeAddr("bob");
+        vm.deal(alice, 4 ether);
+        vm.deal(bob, 6 ether);
+        vm.prank(alice);
+        vault.deposit{value: 4 ether}();
+        vm.prank(bob);
+        vault.deposit{value: 6 ether}();
+        shmon.setWithdrawFeeBps(75);
+
+        vm.prank(alice);
+        uint256 aliceShares = vault.withdrawShmon(4 ether);
+
+        assertEq(shmon.convertToAssets(aliceShares), 4 ether);
+        assertEq(strategy.totalAssets(), 6 ether);
+        assertEq(vault.principalOf(bob), 6 ether);
+
+        uint256 heldBeforeBob = strategy.sharesHeld();
+        vm.prank(bob);
+        uint256 bobShares = vault.withdrawShmon(6 ether);
+
+        assertEq(bobShares, heldBeforeBob);
+        assertEq(shmon.convertToAssets(bobShares), 6 ether);
+        assertEq(vault.totalPrincipal(), 0);
+        assertEq(strategy.sharesHeld(), 0);
+    }
+
+    function test_directShareDepositUsesGrossAssetsWithoutPhantomYield() public {
+        shmon.setRate(2 ether);
+        shmon.setWithdrawFeeBps(100);
+        shmon.mintShares(alice, 2 ether);
+
+        vm.startPrank(alice);
+        shmon.approve(address(strategy), 2 ether);
+        uint256 assets = vault.depositShmon(2 ether);
+        vm.stopPrank();
+
+        assertEq(assets, 4 ether);
+        assertEq(vault.principalOf(alice), 4 ether);
+        assertEq(strategy.totalAssets(), 4 ether);
+        assertEq(vault.availableYield(), 0);
+    }
+
+    function test_subSharePrincipalDustCanFullyExitWithoutTakingYield() public {
+        vm.deal(alice, 1 wei);
+        vm.prank(alice);
+        vault.deposit{value: 1 wei}();
+        shmon.setRate(2 ether);
+
+        vm.prank(alice);
+        uint256 shares = vault.withdrawShmon(1 wei);
+
+        assertEq(shares, 0);
+        assertEq(vault.principalOf(alice), 0);
+        assertEq(twab.balanceOf(address(vault), alice), 0);
+        assertEq(strategy.sharesHeld(), 1);
+        assertEq(vault.availableYield(), 2 wei);
     }
 
     function test_roundingShortfallCannotTrapLastParticipantExit() public {
@@ -154,6 +210,8 @@ contract PrizeVaultV5ShareBackingHardeningTest is Test {
 
         vm.prank(alice);
         vault.withdrawShmon(10 ether);
+        vm.prank(address(strategy));
+        shmon.transfer(claimManager, 1);
         assertLt(strategy.totalAssets(), vault.totalPrincipal());
 
         uint256 heldBefore = strategy.sharesHeld();
@@ -209,5 +267,42 @@ contract PrizeVaultV5ShareBackingHardeningTest is Test {
         assertEq(next.sharesHeld(), 0);
         assertEq(vault.principalOf(alice), 4 ether);
         assertEq(twab.balanceOf(address(vault), alice), 4 ether);
+    }
+
+    function test_nativeMigrationSourceIsOneTimeAndDoesNotAffectAccounting() public {
+        vm.deal(alice, 5 ether);
+        vm.prank(alice);
+        vault.deposit{value: 4 ether}();
+
+        address predecessor = makeAddr("predecessor");
+        address stranger = makeAddr("stranger");
+        vm.deal(predecessor, 1 ether);
+        vm.deal(stranger, 1 ether);
+
+        vm.prank(alice);
+        vm.expectRevert(ShmonStrategy.NotOwner.selector);
+        strategy.setNativeMigrationSource(predecessor);
+
+        vm.expectRevert(ShmonStrategy.ZeroAddress.selector);
+        strategy.setNativeMigrationSource(address(0));
+
+        vm.expectEmit(true, false, false, true, address(strategy));
+        emit ShmonStrategy.NativeMigrationSourceSet(predecessor);
+        strategy.setNativeMigrationSource(predecessor);
+
+        vm.expectRevert(ShmonStrategy.MigrationSourceAlreadySet.selector);
+        strategy.setNativeMigrationSource(stranger);
+
+        vm.prank(stranger);
+        (bool rejected,) = payable(address(strategy)).call{value: 1 ether}("");
+        assertFalse(rejected);
+
+        vm.prank(predecessor);
+        (bool accepted,) = payable(address(strategy)).call{value: 0.25 ether}("");
+        assertTrue(accepted);
+        assertEq(address(strategy).balance, 0.25 ether);
+        assertEq(strategy.totalAssets(), 4 ether);
+        assertEq(vault.availableYield(), 0);
+        assertEq(vault.principalOf(alice), 4 ether);
     }
 }

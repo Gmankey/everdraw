@@ -38,6 +38,18 @@ Concretely:
 
 The root cause of this recurring miss is a test mock that redeems synchronously. The builder must add a **delayed-redeem mock** (`redeem` queues/reverts rather than delivering assets synchronously, mirroring shMON unbonding) and cover the deposit → draw → escrow → claim → withdraw path against it. Any code that assumes synchronous shMON redeem must fail in CI, not in production. See `memory/feedback_shmon_out_never_instant_mon.md`.
 
+## 2026-09-27 accounting clarification (OPS-20260927-01)
+
+ADR-0045 makes shMON shares the transfer and payout unit. Therefore EverDraw accounting uses the ERC-4626 gross ownership conversions, convertToAssets and convertToShares. It must not use previewRedeem or previewWithdraw: those methods quote a separate delayed shMON-to-MON unstake and include an external redemption spread that EverDraw does not execute.
+
+- Direct shMON deposits credit the gross asset value returned by convertToAssets(shares). This keeps direct-share deposits, native deposits, prize compounds, totalAssets(), and availableYield() on one basis.
+- Participant, sponsor, Patron, and prize-yield share transfers use convertToShares(assets), rounding down in favor of the pool. When a payout covers all gross assets still held by the strategy, every remaining share is transferred so conversion dust cannot trap the last account.
+- A nonzero asset payout below one shMON base unit may convert to zero shares. The principal debit still completes, and that sub-share rounding dust remains in the prize pot; this prevents an unwithdrawable final dust balance without transferring more than the account owns.
+- The recipient receives shMON shares. Any later shMON-to-MON unbonding fee or rate adjustment belongs to the recipient after an independent unstake and is not deducted from EverDraw principal.
+- If shMON conversion views or share transfers revert, the EverDraw transaction reverts atomically. Existing shortfall accounting and permissionless emergency share redemption remain the recovery paths.
+
+This clarification fixes OPS-20260927-01, where previewWithdraw(principal) required more shares than the live strategy held and blocked a true full exit. The implementation and live strategy migration remain subject to independent re-audit and the existing strategy-change timelock.
+
 ## Consequences
 
 - **Requires a contract change and redeploy** of PrizeVaultV5 / DrawManager / ClaimManager before mainnet. This is why catching it pre-mainnet matters — the alternative was discovering it after launch.
@@ -54,3 +66,20 @@ The root cause of this recurring miss is a test mock that redeems synchronously.
 
 - **PR #231** (`feat: denominate V5 payouts in shMON shares`, squashed to `c7914e9`): removed `ShmonStrategy.withdraw()` and the `redeem` interface entry; re-pointed `escrowYield` and all participant/sponsor/booster withdrawals at `withdrawShares`; added `depositShmonFor` so prize auto-compound (ADR-0043) restakes shMON shares as a fresh tranche; added `MockShmonDelayedRedeem` (its `redeem()` reverts) with the full deposit→draw→escrow→claim→withdraw lifecycle covered against it. 297 Forge tests pass with the delayed-redeem mock in-suite.
 - **Deployed to UAT** 2026-07-22 (deploy commit `c7914e9`, deploy block 47042467); DrawManager timelock committed and the keeper/indexer/frontend re-pointed. Draws 81–90 finalized and auto-claimed in shMON, emitting `ClaimPaid` + `PrizeCompounded`, indexed as `source=prize_compound`.
+
+## 2026-09-28 migration-native clarification
+
+A deployed predecessor can hold forced native MON even though its normal receive path rejects it.
+Its immutable `migrateTo` forwards that native balance together with shMON shares. A replacement
+must therefore accept native MON from exactly its configured predecessor or a third party can block
+the timelocked migration by forcing even one wei into the old strategy.
+
+Each replacement strategy sets a nonzero `nativeMigrationSource` exactly once, before it is queued.
+Only that address may use the receive path. Received native MON is never included in
+`totalAssets`, principal, TWAB, or `availableYield`; it remains inert and is forwarded to the
+next correctly configured replacement during a future migration. Direct native sends from every
+other address continue to revert.
+
+The migration acceptance suite must force both one wei and a nontrivial native balance into a
+predecessor, complete two consecutive governed migrations, preserve exact shMON ownership and all
+vault accounting, and complete a normal full participant exit.

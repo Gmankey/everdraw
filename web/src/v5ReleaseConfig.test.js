@@ -9,6 +9,7 @@ import {
   assertV5WalletChain,
   parseV5ReleaseManifest,
   v5ReleaseConfigFromEnv,
+  v5ShmonApprovalTarget,
   verifyV5WritePreconditions,
 } from './v5ReleaseConfig.js'
 
@@ -170,3 +171,33 @@ test('the V5 build preflight exits nonzero when mainnet manifest is absent', () 
   assert.notEqual(result.status, 0)
   assert.match(result.stderr, /VITE_V5_RELEASE_MANIFEST is required/)
 });
+
+test('strategy migration fails closed until the matching manifest is activated', () => {
+  const originalConfig = parseV5ReleaseManifest(mainnet)
+  const replacementStrategy = '0x1111111111111111111111111111111111111111'
+  const migratedSnapshot = {
+    ...snapshot(originalConfig),
+    code: { ...snapshot(originalConfig).code, shmonStrategy: '0x02' },
+    wiring: {
+      ...snapshot(originalConfig).wiring,
+      vaultStrategy: replacementStrategy,
+      strategyVault: originalConfig.prizeVault,
+      strategyShareToken: originalConfig.shmon,
+    },
+  }
+
+  assert.throws(
+    () => assertV5RuntimeSnapshot(originalConfig, migratedSnapshot),
+    /PrizeVault.strategy does not match the approved V5 release/,
+  )
+  assert.equal(v5ShmonApprovalTarget(originalConfig), originalConfig.shmonStrategy)
+
+  const migratedManifest = structuredClone(mainnet)
+  migratedManifest.releaseId = 'mainnet-strategy-migration'
+  migratedManifest.deployment.deployCommit = 'b'.repeat(40)
+  migratedManifest.deployment.addresses.shmonStrategy = replacementStrategy
+  const migratedConfig = parseV5ReleaseManifest(migratedManifest)
+
+  assert.equal(assertV5RuntimeSnapshot(migratedConfig, migratedSnapshot), true)
+  assert.equal(v5ShmonApprovalTarget(migratedConfig), replacementStrategy)
+})
