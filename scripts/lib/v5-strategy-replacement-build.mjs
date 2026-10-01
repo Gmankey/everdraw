@@ -14,6 +14,8 @@ const REQUIRED_FUNCTIONS = [
   "vault",
 ];
 
+const REQUIRED_IMMUTABLES = new Set(["shmonVault", "owner"]);
+
 function sha256Text(value) {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -36,6 +38,78 @@ function zeroImmutableReferences(bytecode, immutableReferences = {}) {
 
 function functionNames(abi = []) {
   return new Set(abi.filter((entry) => entry?.type === "function").map((entry) => entry.name));
+}
+
+function strategyContractDefinition(buildInfo) {
+  const ast = buildInfo.output?.sources?.[STRATEGY_SOURCE]?.ast;
+  const contract = ast?.nodes?.find(
+    (node) => node?.nodeType === "ContractDefinition" && node.name === STRATEGY_CONTRACT_NAME,
+  );
+  if (!contract) throw new Error("ShmonStrategy build output is missing its contract AST");
+  return contract;
+}
+
+function immutableReferencesByName(buildInfo, deployedOutput) {
+  const declarations = strategyContractDefinition(buildInfo).nodes.filter(
+    (node) =>
+      node?.nodeType === "VariableDeclaration" &&
+      node.stateVariable === true &&
+      node.mutability === "immutable",
+  );
+  const names = new Set(declarations.map((declaration) => declaration.name));
+  if (
+    declarations.length !== REQUIRED_IMMUTABLES.size ||
+    names.size !== REQUIRED_IMMUTABLES.size ||
+    [...REQUIRED_IMMUTABLES].some((name) => !names.has(name))
+  ) {
+    throw new Error("ShmonStrategy immutable declarations do not match shmonVault and owner");
+  }
+
+  const compilerReferences = deployedOutput.immutableReferences;
+  if (!compilerReferences || typeof compilerReferences !== "object" || Array.isArray(compilerReferences)) {
+    throw new Error("ShmonStrategy build output is missing immutable references");
+  }
+
+  const declarationById = new Map(declarations.map((declaration) => [String(declaration.id), declaration]));
+  const referenceIds = Object.keys(compilerReferences);
+  if (declarationById.size !== declarations.length) {
+    throw new Error("ShmonStrategy immutable declarations contain duplicate IDs");
+  }
+  if (
+    referenceIds.length !== declarationById.size ||
+    referenceIds.some((id) => !declarationById.has(id)) ||
+    [...declarationById].some(([id]) => !Object.hasOwn(compilerReferences, id))
+  ) {
+    throw new Error("ShmonStrategy immutable references contain unknown or unvalidated declaration IDs");
+  }
+
+  const runtimeLength = String(deployedOutput.object).replace(/^0x/, "").length / 2;
+  const result = {};
+  const occupied = new Set();
+  for (const [id, declaration] of declarationById) {
+    const references = compilerReferences[id];
+    if (!Array.isArray(references) || references.length === 0) {
+      throw new Error(`ShmonStrategy immutable ${declaration.name} has no runtime references`);
+    }
+    result[declaration.name] = references.map((reference) => {
+      const { start, length } = reference || {};
+      if (
+        !Number.isSafeInteger(start) ||
+        !Number.isSafeInteger(length) ||
+        start < 0 ||
+        length !== 32 ||
+        start + length > runtimeLength
+      ) {
+        throw new Error(`ShmonStrategy immutable ${declaration.name} has a malformed runtime reference`);
+      }
+      for (let offset = start; offset < start + length; offset += 1) {
+        if (occupied.has(offset)) throw new Error("ShmonStrategy immutable runtime references overlap");
+        occupied.add(offset);
+      }
+      return { start, length };
+    });
+  }
+  return result;
 }
 
 export function validateStrategyBuild({ artifact, buildInfo, sourceContent, sourceCommit }) {
@@ -71,6 +145,7 @@ export function validateStrategyBuild({ artifact, buildInfo, sourceContent, sour
   }
 
   const deployedOutput = output.evm.deployedBytecode;
+  const namedImmutableReferences = immutableReferencesByName(buildInfo, deployedOutput);
   const normalizedRuntime = zeroImmutableReferences(
     deployedOutput.object,
     deployedOutput.immutableReferences,
@@ -88,6 +163,7 @@ export function validateStrategyBuild({ artifact, buildInfo, sourceContent, sour
       optimizer: { enabled: true, runs: 200 },
     },
     deployedOutput,
+    immutableReferencesByName: namedImmutableReferences,
   };
 }
 

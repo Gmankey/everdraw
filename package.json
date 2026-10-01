@@ -48,7 +48,7 @@
     "draw:watch:inputs": "node scripts/draw/write-watch-inputs.mjs",
     "protocol:monitor-policy-test": "node --test scripts/protocol-monitor-policy.test.mjs",
     "check:v5-strategy-replacement": "node scripts/verify-v5-strategy-replacement.mjs",
-    "test:v5-strategy-release": "node --test scripts/v5-strategy-replacement-release.test.mjs"
+    "test:v5-strategy-release": "npm run build && node --test scripts/v5-strategy-replacement-release.test.mjs"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

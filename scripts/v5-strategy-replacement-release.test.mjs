@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -7,17 +8,24 @@ import {
   deployStrategyIfConfirmed,
   loadValidatedStrategyBuild,
   STRATEGY_CONTRACT_NAME,
+  STRATEGY_FQN,
   STRATEGY_SOURCE,
   validateStrategyBuild,
 } from "./lib/v5-strategy-replacement-build.mjs";
-import { verifyV5StrategyReplacement } from "./lib/v5-strategy-replacement-verifier.mjs";
+import {
+  verifyRuntime,
+  verifyV5StrategyReplacement,
+} from "./lib/v5-strategy-replacement-verifier.mjs";
 
 const COMMIT = "a".repeat(40);
 const STACK_COMMIT = "b".repeat(40);
 const SOURCE = "contract ShmonStrategy {}";
-const RUNTIME = "60000000";
-const LIVE_RUNTIME = "60110000";
-const IMMUTABLES = { "1": [{ start: 1, length: 1 }] };
+const ZERO_WORD = "00".repeat(32);
+const RUNTIME = "60" + ZERO_WORD + "61" + ZERO_WORD + "62" + ZERO_WORD + "63" + ZERO_WORD + "64";
+const IMMUTABLES = {
+  "101": [{ start: 1, length: 32 }, { start: 34, length: 32 }],
+  "102": [{ start: 67, length: 32 }, { start: 100, length: 32 }],
+};
 
 const ADDR = {
   old: "0x0000000000000000000000000000000000000001",
@@ -32,6 +40,20 @@ const ADDR = {
   wrong: "0x0000000000000000000000000000000000000010",
   zero: "0x0000000000000000000000000000000000000000",
 };
+
+function addressWord(address) {
+  return address.slice(2).toLowerCase().padStart(64, "0");
+}
+
+function replaceWord(runtime, start, address) {
+  const from = start * 2;
+  return runtime.slice(0, from) + addressWord(address) + runtime.slice(from + 64);
+}
+
+const LIVE_RUNTIME = [
+  ...IMMUTABLES["101"].map(({ start }) => [start, ADDR.share]),
+  ...IMMUTABLES["102"].map(({ start }) => [start, ADDR.deployer]),
+].reduce((runtime, [start, address]) => replaceWord(runtime, start, address), RUNTIME);
 
 const REQUIRED_ABI = [
   "nativeMigrationSource",
@@ -65,13 +87,39 @@ function buildInfo(source = SOURCE) {
       },
     },
     output: {
+      sources: {
+        [STRATEGY_SOURCE]: {
+          ast: {
+            nodes: [{
+              nodeType: "ContractDefinition",
+              name: STRATEGY_CONTRACT_NAME,
+              nodes: [
+                {
+                  nodeType: "VariableDeclaration",
+                  id: 101,
+                  name: "shmonVault",
+                  stateVariable: true,
+                  mutability: "immutable",
+                },
+                {
+                  nodeType: "VariableDeclaration",
+                  id: 102,
+                  name: "owner",
+                  stateVariable: true,
+                  mutability: "immutable",
+                },
+              ],
+            }],
+          },
+        },
+      },
       contracts: {
         [STRATEGY_SOURCE]: {
           [STRATEGY_CONTRACT_NAME]: {
             evm: {
               deployedBytecode: {
                 object: RUNTIME,
-                immutableReferences: IMMUTABLES,
+                immutableReferences: structuredClone(IMMUTABLES),
               },
             },
           },
@@ -229,6 +277,41 @@ test("validated build rejects absent, old, stale, and Cancun artifacts", async (
       /production EVM target/,
     );
   });
+  await t.test("unknown immutable declaration ID", () => {
+    const info = buildInfo();
+    info.output.contracts[STRATEGY_SOURCE][STRATEGY_CONTRACT_NAME]
+      .evm.deployedBytecode.immutableReferences["999"] = [{ start: 1, length: 32 }];
+    assert.throws(
+      () => validateStrategyBuild({ artifact: artifact(), buildInfo: info, sourceContent: SOURCE, sourceCommit: COMMIT }),
+      /unknown or unvalidated declaration IDs/,
+    );
+  });
+  await t.test("missing immutable declaration mapping", () => {
+    const info = buildInfo();
+    delete info.output.contracts[STRATEGY_SOURCE][STRATEGY_CONTRACT_NAME]
+      .evm.deployedBytecode.immutableReferences["102"];
+    assert.throws(
+      () => validateStrategyBuild({ artifact: artifact(), buildInfo: info, sourceContent: SOURCE, sourceCommit: COMMIT }),
+      /unknown or unvalidated declaration IDs/,
+    );
+  });
+  await t.test("malformed immutable reference", () => {
+    const info = buildInfo();
+    info.output.contracts[STRATEGY_SOURCE][STRATEGY_CONTRACT_NAME]
+      .evm.deployedBytecode.immutableReferences["101"][0].length = 31;
+    assert.throws(
+      () => validateStrategyBuild({ artifact: artifact(), buildInfo: info, sourceContent: SOURCE, sourceCommit: COMMIT }),
+      /malformed runtime reference/,
+    );
+  });
+  await t.test("unexpected immutable declaration name", () => {
+    const info = buildInfo();
+    info.output.sources[STRATEGY_SOURCE].ast.nodes[0].nodes[0].name = "unexpected";
+    assert.throws(
+      () => validateStrategyBuild({ artifact: artifact(), buildInfo: info, sourceContent: SOURCE, sourceCommit: COMMIT }),
+      /immutable declarations do not match/,
+    );
+  });
 });
 
 test("confirmation gate is exact and no-confirmation cannot deploy", async () => {
@@ -247,6 +330,57 @@ test("valid candidate binds raw runtime, normalized build, provenance, and wirin
   assert.equal(result.strategyAddress, ADDR.replacement);
   assert.equal(result.rawRuntimeSha256, hashRuntime(LIVE_RUNTIME));
   assert.equal(result.normalizedRuntimeSha256, fixture().provenance.normalizedRuntimeSha256);
+});
+
+test("actual Paris build rejects mutations at every compiler-declared immutable occurrence", async () => {
+  const hre = (await import("hardhat")).default;
+  const realArtifact = await hre.artifacts.readArtifact(STRATEGY_FQN);
+  const realBuildInfo = await hre.artifacts.getBuildInfo(STRATEGY_FQN);
+  const sourceContent = readFileSync(STRATEGY_SOURCE, "utf8");
+  const provenance = validateStrategyBuild({
+    artifact: realArtifact,
+    buildInfo: realBuildInfo,
+    sourceContent,
+    sourceCommit: COMMIT,
+  });
+  const expectedImmutableValues = {
+    shmonVault: ADDR.share,
+    owner: ADDR.deployer,
+  };
+  let liveRuntime = provenance.deployedOutput.object;
+  for (const [name, references] of Object.entries(provenance.immutableReferencesByName)) {
+    for (const { start } of references) {
+      liveRuntime = replaceWord(liveRuntime, start, expectedImmutableValues[name]);
+    }
+  }
+  const component = {
+    runtimeBytecodeSha256: hashRuntime(liveRuntime),
+    normalizedRuntimeSha256: provenance.normalizedRuntimeSha256,
+  };
+
+  assert.doesNotThrow(() => verifyRuntime({
+    component,
+    liveCode: "0x" + liveRuntime,
+    deployedOutput: provenance.deployedOutput,
+    immutableReferencesByName: provenance.immutableReferencesByName,
+    expectedImmutableValues,
+  }));
+
+  for (const [name, references] of Object.entries(provenance.immutableReferencesByName)) {
+    for (const { start } of references) {
+      const changed = replaceWord(liveRuntime, start, ADDR.wrong);
+      assert.throws(
+        () => verifyRuntime({
+          component: { ...component, runtimeBytecodeSha256: hashRuntime(changed) },
+          liveCode: "0x" + changed,
+          deployedOutput: provenance.deployedOutput,
+          immutableReferencesByName: provenance.immutableReferencesByName,
+          expectedImmutableValues,
+        }),
+        new RegExp("immutable " + name + " value mismatch at runtime byte " + start),
+      );
+    }
+  }
 });
 
 test("verifier rejects wrong or skipped component selection", async (t) => {
@@ -276,10 +410,25 @@ test("verifier rejects absent code, raw hash mismatch, and reviewed-build mismat
     await assert.rejects(verifyV5StrategyReplacement(inputs), /raw runtime hash mismatch/);
   });
   await t.test("normalized build mismatch", async () => {
-    const inputs = validInputs({ getCode: async () => "0x60112200" });
-    inputs.manifest.contracts[1].components[0].runtimeBytecodeSha256 = hashRuntime("60112200");
+    const changed = "ff" + LIVE_RUNTIME.slice(2);
+    const inputs = validInputs({ getCode: async () => "0x" + changed });
+    inputs.manifest.contracts[1].components[0].runtimeBytecodeSha256 = hashRuntime(changed);
     await assert.rejects(verifyV5StrategyReplacement(inputs), /reviewed build after immutable normalization/);
   });
+});
+
+test("verifier rejects every altered shmonVault and owner immutable occurrence", async () => {
+  for (const [name, id] of [["shmonVault", "101"], ["owner", "102"]]) {
+    for (const { start } of IMMUTABLES[id]) {
+      const changed = replaceWord(LIVE_RUNTIME, start, ADDR.wrong);
+      const inputs = validInputs({ getCode: async () => "0x" + changed });
+      inputs.manifest.contracts[1].components[0].runtimeBytecodeSha256 = hashRuntime(changed);
+      await assert.rejects(
+        verifyV5StrategyReplacement(inputs),
+        new RegExp("immutable " + name + " value mismatch at runtime byte " + start),
+      );
+    }
+  }
 });
 
 test("verifier rejects stale provenance and changed historical component provenance", async (t) => {

@@ -29,6 +29,39 @@ function runtimeSha256(bytecode) {
     .digest("hex");
 }
 
+function addressWord(address) {
+  return getAddress(address).slice(2).toLowerCase().padStart(64, "0");
+}
+
+function validateImmutableValues({ liveCode, immutableReferencesByName, expectedImmutableValues }) {
+  const code = String(liveCode).toLowerCase().replace(/^0x/, "");
+  const expectedNames = ["shmonVault", "owner"];
+  const mappedNames = Object.keys(immutableReferencesByName || {});
+  if (
+    mappedNames.length !== expectedNames.length ||
+    expectedNames.some((name) => !Object.hasOwn(immutableReferencesByName, name))
+  ) {
+    throw new Error("Replacement immutable mapping is unknown or incomplete");
+  }
+
+  for (const name of expectedNames) {
+    const expected = addressWord(expectedImmutableValues[name]);
+    const references = immutableReferencesByName[name];
+    if (!Array.isArray(references) || references.length === 0) {
+      throw new Error(`Replacement immutable ${name} has no validated references`);
+    }
+    for (const { start, length } of references) {
+      if (length !== 32 || !Number.isSafeInteger(start) || start < 0 || (start + length) * 2 > code.length) {
+        throw new Error(`Replacement immutable ${name} has a malformed reference`);
+      }
+      const actual = code.slice(start * 2, (start + length) * 2);
+      if (actual !== expected) {
+        throw new Error(`Replacement immutable ${name} value mismatch at runtime byte ${start}`);
+      }
+    }
+  }
+}
+
 export function zeroImmutableReferences(bytecode, immutableReferences = {}) {
   const chars = String(bytecode).toLowerCase().replace(/^0x/, "").split("");
   for (const references of Object.values(immutableReferences)) {
@@ -129,7 +162,13 @@ export function validateMigrationRecord({ candidate, component, previous, source
   }
 }
 
-export function verifyRuntime({ component, liveCode, deployedOutput }) {
+export function verifyRuntime({
+  component,
+  liveCode,
+  deployedOutput,
+  immutableReferencesByName,
+  expectedImmutableValues,
+}) {
   if (!liveCode || liveCode === "0x") throw new Error("Replacement strategy has no live bytecode");
   const rawRuntimeSha256 = runtimeSha256(liveCode);
   if (rawRuntimeSha256 !== component.runtimeBytecodeSha256) {
@@ -137,6 +176,7 @@ export function verifyRuntime({ component, liveCode, deployedOutput }) {
       `Replacement raw runtime hash mismatch: manifest=${component.runtimeBytecodeSha256} live=${rawRuntimeSha256}`,
     );
   }
+  validateImmutableValues({ liveCode, immutableReferencesByName, expectedImmutableValues });
   const expected = zeroImmutableReferences(deployedOutput.object, deployedOutput.immutableReferences);
   const actual = zeroImmutableReferences(liveCode, deployedOutput.immutableReferences);
   if (actual !== expected) {
@@ -195,6 +235,11 @@ export async function verifyV5StrategyReplacement({
     component: selected.component,
     liveCode,
     deployedOutput: provenance.deployedOutput,
+    immutableReferencesByName: provenance.immutableReferencesByName,
+    expectedImmutableValues: {
+      shmonVault: selected.component.constructorArgs[0],
+      owner: selected.candidate.strategyMigration.deployedBy,
+    },
   });
   const wiring = await readWiring(selected);
   validateWiring({ ...selected, wiring });
