@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ethers } from 'ethers'
 import VaultAnimationTest from './components/VaultAnimationTest'
+import DepositStoryEntry from './components/DepositStoryEntry'
 import ShmonPanel from './ShmonPanel'
 import { StatsPage } from './Stats.jsx'
 import { modal } from './walletModal.ts'
@@ -848,7 +849,7 @@ function FounderLaunchArticle() {
   )
 }
 
-function Header({ account, onConnect, currentPage, points, showDegen = false, onDegenClick, onVaultClick, onStatsClick, onProfileClick, onLeaderboardClick }) {
+function Header({ account, onConnect, currentPage, points, showDegen = false, onDegenClick, onVaultClick, onProfileClick, onLeaderboardClick }) {
   return (
     <header>
       <div className="logo">
@@ -858,16 +859,8 @@ function Header({ account, onConnect, currentPage, points, showDegen = false, on
       <nav className="nav-links">
         <a href="/#vault" className={`nav-link ${currentPage === 'vault' ? 'active' : ''}`} onClick={onVaultClick}>Vault</a>
         {showDegen ? <a href="#patron" className={`nav-link ${currentPage === 'degen' ? 'active' : ''}`} onClick={onDegenClick}>Patron</a> : null}
-        <a href="/#stats" className={`nav-link ${currentPage === 'stats' ? 'active' : ''}`} onClick={onStatsClick}>Stats</a>
         <a href="/#profile" className={`nav-link ${currentPage === 'profile' ? 'active' : ''}`} onClick={onProfileClick}>Profile</a>
         <a href="/#leaderboard" className={`nav-link ${currentPage === 'leaderboard' ? 'active' : ''}`} onClick={onLeaderboardClick}>Leaderboard</a>
-        <a href="/articles/drawn-back-to-defi" className={`nav-link ${currentPage === 'article' ? 'active' : ''}`}>Articles</a>
-        <a href="https://docs.everdraw.xyz" target="_blank" rel="noopener noreferrer" className="nav-link">Docs</a>
-        <a href="https://x.com/everdrawing" target="_blank" rel="noopener noreferrer" className="nav-link nav-link-x" aria-label="X / Twitter">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.746l7.73-8.835L1.254 2.25H8.08l4.253 5.622zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
-          </svg>
-        </a>
       </nav>
       <PointsHeaderWidget account={account} points={points} onProfileClick={onProfileClick} />
       <div className="header-actions">
@@ -883,6 +876,18 @@ function Header({ account, onConnect, currentPage, points, showDegen = false, on
       </div>
     </header>
   )
+}
+
+function FooterLinks() {
+  return <div className="footer-bar">
+    <nav className="footer-links" aria-label="Resources">
+      <a href="/articles/drawn-back-to-defi">Articles</a>
+      <a href="https://docs.everdraw.xyz" target="_blank" rel="noopener noreferrer">Docs</a>
+    </nav>
+    <a className="footer-social" href="https://x.com/everdrawing" target="_blank" rel="noopener noreferrer" aria-label="EverDraw on X" title="EverDraw on X">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.746l7.73-8.835L1.254 2.25H8.08l4.253 5.622zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+    </a>
+  </div>
 }
 
 function StatCard({ label, value, sub, icon }) {
@@ -1747,7 +1752,7 @@ function V5ActionCard({
           <details className="v5-patron-details">
             <summary>What is the Patron Pool?</summary>
             <p>
-              Depositing in the Patron Pool gives you 0 entries into the weekly draw. Instead, you become a patron and contribute your yield to the prize pool. This noble sacrifice helps make the weekly prize larger for everyone while you earn boosted EverDraw points.
+              Depositing in the Patron Pool does not give you entries into the weekly draw. Instead, you become a patron and contribute your yield to the prize pool. This noble sacrifice helps make the weekly prize larger for everyone while you earn BOOSTED EverDraw points. The longer you remain a patron, the bigger your boosted points.
             </p>
             <p>
               This pool is illiquid and deposits are not tradeable in DeFi. When you withdraw, you receive 100% of your initial MON deposit value back as shMON.
@@ -2557,6 +2562,7 @@ export function V5UatExperience() {
               <div className="v5-next-draw-overlay">
                 <div className="card-header vault-layer">
                   <div className="card-title">Next prize draw</div>
+                  <DepositStoryEntry disabled={Boolean(busy) || withdrawChoiceOpen} />
                 </div>
                 <div className="countdown-center vault-layer vault-center">
                   <div className="countdown-value">{countdown}</div>
@@ -2609,6 +2615,7 @@ export function V5UatExperience() {
               </>
             )}
           </div>
+          <FooterLinks />
         </footer>
       </div>
     </div>
@@ -4858,6 +4865,7 @@ export default function App() {
               EverDraw is currently in beta and is awaiting a formal third-party audit. By accessing or using EverDraw, you acknowledge that the protocol, yield integrations, indexer data, wallet connections, and related infrastructure are experimental software. You buy tickets, approve tokens, deposit assets, interact with third-party protocols, and secure your wallet entirely at your own risk. You are solely responsible for reviewing all risks, permissions, transaction details, applicable laws, and tax treatment before participating. EverDraw is not investment, tax, accounting, or legal advice, and all liability is disclaimed to the maximum extent permitted by law.
             </p>
           </div>
+          <FooterLinks />
         </footer>
       </div>
     </div>
