@@ -38,3 +38,6 @@ skills/gitbook-direct/config.env
 *.sqlite
 *.sqlite3
 *.bak
+
+# Local visual acceptance evidence and downloaded browser libraries
+.preview-qa/
