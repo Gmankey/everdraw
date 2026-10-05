@@ -117,6 +117,16 @@ const intersects=(a,b)=>a.x<b.x+b.width && a.x+a.width>b.x && a.y<b.y+b.height &
  assert.ok(topFrame.top>=128 && topFrame.top<=144,'Mobile upper bound stops at the deposit card below demo controls')
  await page.mouse.wheel(0,-10000);await run(100)
  assert.equal(await page.evaluate(()=>scrollY),mobileTop,'Mobile cannot scroll above the deposit card')
+ for(let n=0;n<4;n++){await next();await stage(n+1);await run(1000)}
+ await page.mouse.wheel(0,10000);await run(100)
+ const bubbleBottom=await dialog.locator('.action-bubble').boundingBox()
+ const nextBottom=await dialog.getByRole('button',{name:'Next',exact:true}).boundingBox()
+ assert.ok(bubbleBottom.y+bubbleBottom.height<=830,'Mobile lower bound includes the full active speech bubble')
+ assert.ok(nextBottom.y+nextBottom.height<=830,'Mobile lower bound keeps Next reachable')
+ const bubbleBoundScroll=await page.evaluate(()=>scrollY)
+ await page.mouse.wheel(0,10000);await run(100)
+ assert.equal(await page.evaluate(()=>scrollY),bubbleBoundScroll,'Mobile cannot scroll below the active speech bubble')
+ await next();await stage(5)
  await page.keyboard.press('Escape');await run(1000)
  const touchContext=await browser.newContext({viewport:{width:390,height:844},isMobile:true,hasTouch:true})
  const touchPage=await touchContext.newPage()
@@ -124,8 +134,14 @@ const intersects=(a,b)=>a.x<b.x+b.width && a.x+a.width>b.x && a.y<b.y+b.height &
  await touchPage.addInitScript(()=>{window.ethereum={on(){},removeListener(){},request:async({method})=>method==='eth_accounts'?[]:method==='eth_chainId'?'0x279f':null}})
  await touchPage.goto('http://127.0.0.1:4180/')
  await touchPage.getByRole('button',{name:'How does this work?',exact:true}).click()
- await touchPage.getByRole('dialog',{name:'How does this work? \u2014 demo mode'}).waitFor()
+ const touchDialog=touchPage.getByRole('dialog',{name:'How does this work? \u2014 demo mode'})
+ await touchDialog.waitFor()
  await touchPage.waitForTimeout(900)
+ for(let n=0;n<4;n++){
+  await touchDialog.getByRole('button',{name:'Next',exact:true}).click()
+  await touchPage.waitForTimeout(50)
+  assert.equal(await touchDialog.locator('main').getAttribute('data-stage'),String(n+1))
+ }
  const touchClient=await touchContext.newCDPSession(touchPage)
  const swipe=async(from,to)=>{
   await touchClient.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:200,y:from}]})
@@ -134,8 +150,15 @@ const intersects=(a,b)=>a.x<b.x+b.width && a.x+a.width>b.x && a.y<b.y+b.height &
   await touchPage.waitForTimeout(100)
  }
  const touchStart=await touchPage.evaluate(()=>scrollY)
- await swipe(700,300)
+ for(let n=0;n<4;n++) await swipe(700,100)
  assert.ok(await touchPage.evaluate(()=>scrollY)>touchStart,'A real mobile swipe scrolls toward the vault')
+ const touchBubble=await touchDialog.locator('.action-bubble').boundingBox()
+ const touchNext=await touchDialog.getByRole('button',{name:'Next',exact:true}).boundingBox()
+ assert.ok(touchBubble.y+touchBubble.height<=830,'A real mobile swipe reveals the full active speech bubble')
+ assert.ok(touchNext.y+touchNext.height<=830,'A real mobile swipe makes Next reachable')
+ const touchBottom=await touchPage.evaluate(()=>scrollY)
+ await swipe(700,100)
+ assert.equal(await touchPage.evaluate(()=>scrollY),touchBottom,'A real mobile swipe cannot pass the speech-bubble bound')
  await swipe(100,800)
  const touchTop=await touchPage.evaluate(()=>scrollY)
  const touchTopFrame=await touchPage.locator('.main-grid').evaluate(el=>el.getBoundingClientRect().top)
@@ -144,7 +167,7 @@ const intersects=(a,b)=>a.x<b.x+b.width && a.x+a.width>b.x && a.y<b.y+b.height &
  assert.equal(await touchPage.evaluate(()=>scrollY),touchTop,'A real mobile swipe cannot pass the upper bound')
  await touchContext.close()
  assert.deepEqual(errors,[])
- const result={passed:true,checks:['entry inside vault header','immediate Next at every stage','unchanged card sizes','centered locked desktop view','unrelated UI hidden','no captions overlap actors or ticket heading','pointer above vault and touching token','gradual ticket reset','deposit/prize label timing','timed confetti and congratulations','rapid skipping safe','mobile bounded scroll','amount and wallet isolation preserved'],visualApproval:'user approved 2026-10-04'}
+ const result={passed:true,checks:['entry inside vault header','immediate Next at every stage','unchanged card sizes','centered locked desktop view','unrelated UI hidden','no captions overlap actors or ticket heading','pointer above vault and touching token','gradual ticket reset','deposit/prize label timing','timed confetti and congratulations','rapid skipping safe','mobile bounded scroll includes active controls','amount and wallet isolation preserved'],visualApproval:'user approved 2026-10-04'}
  fs.writeFileSync(path.join(output,'focused-results.json'),JSON.stringify(result,null,2))
  console.log(JSON.stringify(result,null,2))
  }finally{await browser.close()}

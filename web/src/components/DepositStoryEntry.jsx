@@ -75,8 +75,10 @@ function InPlaceDemo({ onClose }) {
       const grid=document.querySelector('.main-grid').getBoundingClientRect()
       const shadow=shadowHost.current?.shadowRoot
       const chromeBottom=Math.max(128,...['.demo-heading','.demo-toolbar'].map(selector=>shadow?.querySelector(selector)?.getBoundingClientRect().bottom || 0))
+      const bubble=shadow?.querySelector('.action-bubble')?.getBoundingClientRect()
       const min=Math.max(0,grid.top+window.scrollY-chromeBottom-8)
-      const max=Math.max(min,grid.bottom+window.scrollY-window.innerHeight+16)
+      const contentBottom=Math.max(grid.bottom,bubble?.bottom || grid.bottom)
+      const max=Math.max(min,contentBottom+window.scrollY-window.innerHeight+16)
       return {min,max}
     }
     const clampMobileScroll=value=>{
