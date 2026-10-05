@@ -32,7 +32,11 @@ function InPlaceDemo({ onClose }) {
     closing.current=true;setVisible(false)
     closeTimer.current=setTimeout(onClose,450)
   }
-  const attach = useCallback(el => { if(el) setRoot(el.shadowRoot || el.attachShadow({mode:'open'})) },[])
+  const shadowHost=useRef(null)
+  const attach = useCallback(el => {
+    shadowHost.current=el
+    if(el) setRoot(el.shadowRoot || el.attachShadow({mode:'open'}))
+  },[])
   const host = useRef(null), focusY=useRef(window.scrollY), activeStage=useRef(0)
   const scrollFrame=useRef(null)
   useEffect(() => {
@@ -41,20 +45,68 @@ function InPlaceDemo({ onClose }) {
     const previousY=window.scrollY
     const html=document.documentElement, body=document.body
     const previousOverflow=html.style.overflow, previousBodyOverflow=body.style.overflow, previousGutter=html.style.scrollbarGutter, previousPadding=body.style.paddingRight
+    const previousHtmlOverscroll=html.style.overscrollBehaviorY, previousBodyOverscroll=body.style.overscrollBehaviorY
     const previousAnchor=body.style.overflowAnchor
     body.style.overflowAnchor='none'
-    const scrollbarWidth=window.innerWidth-html.clientWidth
-    if(scrollbarWidth) body.style.paddingRight=`${parseFloat(getComputedStyle(body).paddingRight)+scrollbarWidth}px`
-    html.style.overflow='hidden'
-    body.style.overflow='hidden'
     app.inert = true
+    const mobileQuery=matchMedia('(max-width: 720px)')
+    let keysBlocked=false, touchY=null
+    const blockKeys=event=>{if(['ArrowUp','ArrowDown','PageUp','PageDown','Home','End'].includes(event.key)) event.preventDefault()}
+    const setKeyBlocking=blocked=>{
+      if(keysBlocked===blocked) return
+      keysBlocked=blocked
+      window[blocked?'addEventListener':'removeEventListener']('keydown',blockKeys)
+    }
+    const applyScrollMode=()=>{
+      html.style.overflow=previousOverflow;body.style.overflow=previousBodyOverflow
+      html.style.scrollbarGutter=previousGutter;body.style.paddingRight=previousPadding
+      html.style.overscrollBehaviorY=previousHtmlOverscroll;body.style.overscrollBehaviorY=previousBodyOverscroll
+      if(mobileQuery.matches) {
+        html.style.overscrollBehaviorY='none';body.style.overscrollBehaviorY='none'
+        setKeyBlocking(false)
+        return
+      }
+      const scrollbarWidth=window.innerWidth-html.clientWidth
+      if(scrollbarWidth) body.style.paddingRight=`${parseFloat(getComputedStyle(body).paddingRight)+scrollbarWidth}px`
+      html.style.overflow='hidden';body.style.overflow='hidden'
+      setKeyBlocking(true)
+    }
+    const mobileScrollBounds=()=>{
+      const grid=document.querySelector('.main-grid').getBoundingClientRect()
+      const shadow=shadowHost.current?.shadowRoot
+      const chromeBottom=Math.max(128,...['.demo-heading','.demo-toolbar'].map(selector=>shadow?.querySelector(selector)?.getBoundingClientRect().bottom || 0))
+      const min=Math.max(0,grid.top+window.scrollY-chromeBottom-8)
+      const max=Math.max(min,grid.bottom+window.scrollY-window.innerHeight+16)
+      return {min,max}
+    }
+    const clampMobileScroll=value=>{
+      if(!mobileQuery.matches) return value
+      const {min,max}=mobileScrollBounds()
+      return Math.max(min,Math.min(max,value))
+    }
+    const handleWheel=event=>{
+      event.preventDefault()
+      if(mobileQuery.matches) window.scrollTo({top:clampMobileScroll(window.scrollY+event.deltaY),behavior:'instant'})
+    }
+    const handleTouchStart=event=>{touchY=event.touches[0]?.clientY ?? null}
+    const handleTouchMove=event=>{
+      event.preventDefault()
+      if(!mobileQuery.matches || touchY===null) return
+      const nextY=event.touches[0]?.clientY ?? touchY
+      window.scrollTo({top:clampMobileScroll(window.scrollY+touchY-nextY),behavior:'instant'})
+      touchY=nextY
+    }
+    window.addEventListener('wheel',handleWheel,{passive:false})
+    window.addEventListener('touchstart',handleTouchStart,{passive:true})
+    window.addEventListener('touchmove',handleTouchMove,{passive:false})
+    applyScrollMode()
     const update = () => {
       const grid=document.querySelector('.main-grid').getBoundingClientRect()
       const stacked=Math.abs(document.querySelector('#vault-card').getBoundingClientRect().top-document.querySelector('.v5-product-card').getBoundingClientRect().top)>10
       const target=stacked ? document.querySelector(activeStage.current>=2 && activeStage.current<=6 && activeStage.current!==5 ? '#vault-card' : '.v5-product-card').getBoundingClientRect() : grid
       const captionSpace=stacked && [2,3,4,6].includes(activeStage.current)?160:0
       const inset=Math.max(12,Math.min(72,(window.innerHeight-target.height-captionSpace-16)),(window.innerHeight-target.height-captionSpace)/2)
-      const destination=Math.max(0,target.y+window.scrollY-inset)
+      const destination=clampMobileScroll(Math.max(0,target.y+window.scrollY-inset))
       if(scrollFrame.current && Math.abs(destination-focusY.current)<1) return
       cancelAnimationFrame(scrollFrame.current)
       focusY.current=destination
@@ -69,24 +121,27 @@ function InPlaceDemo({ onClose }) {
       scrollFrame.current=requestAnimationFrame(scrollTick)
       setLayout(measure())
     }
-    const keepFocus=()=>setLayout(measure())
-    const blockScroll=event=>event.preventDefault()
-    const blockKeys=event=>{if(['ArrowUp','ArrowDown','PageUp','PageDown','Home','End'].includes(event.key)) event.preventDefault()}
+    const keepFocus=()=>{
+      if(mobileQuery.matches && !scrollFrame.current) {
+        const bounded=clampMobileScroll(window.scrollY)
+        if(Math.abs(bounded-window.scrollY)>.5) window.scrollTo({top:bounded,behavior:'instant'})
+      }
+      setLayout(measure())
+    }
+    const handleResize=()=>{applyScrollMode();update()}
     const observer = new ResizeObserver(update)
     observer.observe(document.querySelector('.main-grid'))
-    window.addEventListener('resize',update)
+    window.addEventListener('resize',handleResize)
     window.addEventListener('scroll',keepFocus)
-    window.addEventListener('wheel',blockScroll,{passive:false})
-    window.addEventListener('touchmove',blockScroll,{passive:false})
-    window.addEventListener('keydown',blockKeys)
     window.addEventListener('demo-stage-focus',update)
     const frame=requestAnimationFrame(()=>{update();setVisible(true)})
     return () => {
       cancelAnimationFrame(frame);cancelAnimationFrame(scrollFrame.current); clearTimeout(closeTimer.current); app.inert=prior; observer.disconnect()
-      window.removeEventListener('resize',update); window.removeEventListener('scroll',keepFocus)
-      window.removeEventListener('wheel',blockScroll); window.removeEventListener('touchmove',blockScroll)
-      window.removeEventListener('keydown',blockKeys); window.removeEventListener('demo-stage-focus',update)
+      window.removeEventListener('resize',handleResize); window.removeEventListener('scroll',keepFocus)
+      window.removeEventListener('wheel',handleWheel);window.removeEventListener('touchstart',handleTouchStart);window.removeEventListener('touchmove',handleTouchMove)
+      setKeyBlocking(false); window.removeEventListener('demo-stage-focus',update)
       html.style.overflow=previousOverflow; body.style.overflow=previousBodyOverflow; html.style.scrollbarGutter=previousGutter;body.style.paddingRight=previousPadding
+      html.style.overscrollBehaviorY=previousHtmlOverscroll;body.style.overscrollBehaviorY=previousBodyOverscroll
       body.style.overflowAnchor=previousAnchor
       window.scrollTo({top:previousY,behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'})
     }
