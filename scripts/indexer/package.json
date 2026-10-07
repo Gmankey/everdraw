@@ -33,6 +33,7 @@
     "ethers": {
       "ws": "8.21.0"
     },
-    "esbuild": "0.28.1"
+    "esbuild": "0.28.1",
+    "proxy-addr": "2.0.8"
   }
 }
