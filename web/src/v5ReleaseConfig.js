@@ -136,6 +136,10 @@ function sameAddress(actual, expected, label) {
   }
 }
 
+export function v5ShmonApprovalTarget(config) {
+  return config.shmonStrategy
+}
+
 export function assertV5RuntimeSnapshot(config, snapshot) {
   if (BigInt(snapshot?.chainId ?? 0) !== BigInt(config.chainId)) {
     throw new Error(`RPC chain ${snapshot?.chainId ?? '<missing>'} does not match approved chain ${config.chainId}`)

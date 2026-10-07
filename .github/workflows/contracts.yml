@@ -30,6 +30,7 @@ jobs:
         with:
           version: v1.7.1
       - run: npm run build
+      - run: npm run test:v5-strategy-release
       - run: npm run check:abi
       - run: npm run check:deploy-source
       - run: npm run keeper:v5:test

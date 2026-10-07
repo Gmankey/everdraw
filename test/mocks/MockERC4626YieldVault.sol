@@ -54,6 +54,10 @@ contract MockERC4626YieldVault {
         shares = (assets * 1e18) / rate;
     }
 
+    function convertToShares(uint256 assets) external view returns (uint256 shares) {
+        shares = (assets * 1e18) / rate;
+    }
+
     function previewWithdraw(uint256 assets) external view returns (uint256 shares) {
         uint256 grossAssets = withdrawFeeBps == 0
             ? assets
