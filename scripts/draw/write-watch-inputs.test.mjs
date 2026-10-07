@@ -8,6 +8,7 @@ import { Interface } from "ethers";
 process.env.WATCHER_LOGS_RPC_URL = "provider";
 const {
   DrawInputEventCache,
+  findSeedBlockForDraw,
   getLogsRange,
   participantAccountsFromLogs,
   queryLogsChunked,
@@ -238,4 +239,63 @@ test("caller logs provider bisects ranges rejected by an RPC block cap", async (
     [20, 25],
   ]);
   assert.equal(logs.length, 8);
+});
+
+
+test("seed lookup remains bounded after a multi-million-block weekly gap", async () => {
+  const fromBlock = 1_000_000;
+  const toBlock = 3_100_000;
+  const seedBlock = 3_000_000;
+  const baseTimestamp = 1_700_000_000;
+  const requestedLogRanges = [];
+  const requestedBlocks = [];
+  const seedInterface = new Interface([
+    "event SeedReceived(uint256 indexed drawId,uint64 indexed requestId,bytes32 seed)",
+  ]);
+  const seedEvent = seedInterface.encodeEventLog(seedInterface.getEvent("SeedReceived"), [
+    3n,
+    352979n,
+    `0x${"83".repeat(32)}`,
+  ]);
+  const hashFor = (blockNumber) => `0x${Number(blockNumber).toString(16).padStart(64, "0")}`;
+  const provider = {
+    async getBlock(blockNumber) {
+      requestedBlocks.push(Number(blockNumber));
+      return {
+        number: Number(blockNumber),
+        timestamp: baseTimestamp + Number(blockNumber),
+        hash: hashFor(blockNumber),
+      };
+    },
+    async getLogs({ fromBlock: from, toBlock: to }) {
+      requestedLogRanges.push([Number(from), Number(to)]);
+      if (Number(from) > seedBlock || Number(to) < seedBlock) return [];
+      return [{
+        address: MANAGER,
+        blockNumber: seedBlock,
+        blockHash: hashFor(seedBlock),
+        logIndex: 0,
+        index: 0,
+        topics: seedEvent.topics,
+        data: seedEvent.data,
+      }];
+    },
+  };
+  const manager = {
+    target: MANAGER,
+    async seedReceivedAt(drawId) {
+      assert.equal(drawId, 3n);
+      return BigInt(baseTimestamp + seedBlock);
+    },
+  };
+
+  assert.equal(
+    await findSeedBlockForDraw(provider, manager, 3n, fromBlock, toBlock),
+    seedBlock,
+  );
+  assert.equal(requestedLogRanges.length, 1);
+  assert.ok(requestedLogRanges[0][0] >= seedBlock - 256);
+  assert.ok(requestedLogRanges[0][1] <= seedBlock + 256);
+  assert.equal(requestedLogRanges.some(([from]) => from === fromBlock), false);
+  assert.ok(requestedBlocks.length < 40);
 });

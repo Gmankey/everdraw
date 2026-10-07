@@ -53,6 +53,7 @@ const DRAW_MANAGER_ABI = [
   "function claimManager() view returns (address)",
   "function payoutToken() view returns (address)",
   "function draws(uint256) view returns (uint64 periodStart,uint64 periodEnd,uint64 randomnessRequestId,bytes32 seed,uint256 totalTwab,uint256 totalPayout,uint32 winnerCount,uint32 rewardLegCount,bytes32 root,uint64 proposedAt,address proposer,uint8 status,uint256 grossYield,uint256 sponsorYield,uint256 feeAmount)",
+  "function seedReceivedAt(uint256) view returns (uint64)",
   "function drawRewardLegCount(uint256) view returns (uint256)",
   "function drawRewardLegAt(uint256,uint256) view returns (address token,uint256 amount)",
   "function drawFeeRecipientCount(uint256) view returns (uint256)",
@@ -543,10 +544,18 @@ export class DrawInputEventCache {
   }
 
   async seedBlockFor({ provider, drawManagerAddress, vaultAddress, drawId, fromBlock, toBlock }) {
-    await this.syncSeeds({ provider, drawManagerAddress, vaultAddress, fromBlock, toBlock });
-    const block = this.state.seeds.blocks[BigInt(drawId).toString()];
-    if (!block) throw new Error(`No SeedReceived event found for draw ${drawId}`);
-    return Number(block);
+    await this.ensureCanonical({ provider, drawManagerAddress, vaultAddress, fromBlock });
+    const key = BigInt(drawId).toString();
+    const cached = this.state.seeds.blocks[key];
+    if (cached) return Number(cached);
+
+    // Resolve only this draw around its on-chain seed timestamp. Advancing a
+    // global cursor here makes a weekly draw scan millions of unrelated blocks.
+    const manager = new Contract(drawManagerAddress, DRAW_MANAGER_ABI, provider);
+    const block = await findSeedBlockForDraw(provider, manager, drawId, fromBlock, toBlock);
+    this.state.seeds.blocks = { ...(this.state.seeds.blocks || {}), [key]: block };
+    this.save();
+    return block;
   }
 
   async participantAccounts({ provider, drawManagerAddress, vaultAddress, fromBlock, toBlock }) {
@@ -555,23 +564,44 @@ export class DrawInputEventCache {
   }
 }
 
-async function seedBlockFor(provider, manager, drawId, fromBlock, toBlock) {
-  // The seed for a draw always arrives shortly before now (after the draw's period). No need to
-  // scan full history — search a recent window first, widening only if not found.
-  // NOTE: build an explicit {address, topics} filter. ethers' manager.filters.SeedReceived(id)
-  // returns a DeferredTopicFilter that does NOT spread to {address,topics}; passing it to
-  // getLogs silently drops the topic filter and returns EVERY log (was fetching ~25k logs/1000
-  // blocks and hanging the RPC). Pin topic0 + the indexed drawId.
+export async function blockAtOrAfterTimestamp(provider, timestamp, fromBlock, toBlock) {
+  const target = Number(timestamp);
+  let low = Number(fromBlock);
+  let high = Number(toBlock);
+  if (!Number.isSafeInteger(target) || target <= 0) throw new Error(`Invalid block timestamp ${timestamp}`);
+  if (!Number.isSafeInteger(low) || !Number.isSafeInteger(high) || low > high) {
+    throw new Error(`Invalid block search range ${fromBlock}..${toBlock}`);
+  }
+
+  while (low < high) {
+    const mid = low + Math.floor((high - low) / 2);
+    const block = await retryTransient(
+      () => withTimeout(provider.getBlock(mid), `seed timestamp block ${mid}`),
+      `seed timestamp block ${mid}`,
+    );
+    if (!block) throw new Error(`Missing canonical block ${mid} while locating seed timestamp`);
+    if (Number(block.timestamp) < target) low = mid + 1;
+    else high = mid;
+  }
+  return low;
+}
+
+export async function findSeedBlockForDraw(provider, manager, drawId, fromBlock, toBlock) {
+  // Pin topic0 + the indexed drawId so the RPC returns only this draw's seed.
   const iface = new Interface(DRAW_MANAGER_ABI);
   const seedTopic0 = iface.getEvent("SeedReceived").topicHash;
   const drawIdTopic = "0x" + BigInt(drawId).toString(16).padStart(64, "0");
   const filter = { address: getAddress(manager.target), topics: [seedTopic0, drawIdTopic] };
-  const seedLookback = Number(process.env.WATCHER_SEED_LOOKBACK || 50_000);
-  const recentFrom = Math.max(Number(fromBlock), Number(toBlock) - seedLookback);
-  let logs = await queryLogsChunked(provider, filter, recentFrom, toBlock, `seed:d${drawId}`);
-  if (logs.length === 0 && recentFrom > Number(fromBlock)) {
-    logs = await queryLogsChunked(provider, filter, fromBlock, recentFrom - 1, `seed-wide:d${drawId}`);
-  }
+  const receivedAt = await retryTransient(
+    () => manager.seedReceivedAt(drawId),
+    `seedReceivedAt(${drawId})`,
+  );
+  if (BigInt(receivedAt) === 0n) throw new Error(`Draw ${drawId} has no recorded seed timestamp`);
+  const anchor = await blockAtOrAfterTimestamp(provider, receivedAt, fromBlock, toBlock);
+  const radius = positiveIntEnv("WATCHER_SEED_BLOCK_RADIUS", 256);
+  const narrowFrom = Math.max(Number(fromBlock), anchor - radius);
+  const narrowTo = Math.min(Number(toBlock), anchor + radius);
+  const logs = await queryLogsChunked(provider, filter, narrowFrom, narrowTo, `seed:d${drawId}`);
   if (logs.length === 0) throw new Error(`No SeedReceived event found for draw ${drawId}`);
   return logs[logs.length - 1].blockNumber;
 }
@@ -614,7 +644,7 @@ export async function buildDrawInput({
   const twabAddress = getAddress(await manager.twabController());
   const seedBlock = eventCache
     ? await eventCache.seedBlockFor({ provider, drawManagerAddress, vaultAddress, drawId, fromBlock, toBlock })
-    : await seedBlockFor(provider, manager, drawId, fromBlock, toBlock);
+    : await findSeedBlockForDraw(provider, manager, drawId, fromBlock, toBlock);
   const twab = new Contract(twabAddress, TWAB_ABI, provider);
   const accountSet = eventCache
     ? await eventCache.participantAccounts({ provider, drawManagerAddress, vaultAddress, fromBlock, toBlock: seedBlock })

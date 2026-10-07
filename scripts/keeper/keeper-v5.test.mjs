@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { claimDrawIds, firstRecentDrawId } from "../keeper-v5.js";
+import { claimDrawIds, firstRecentDrawId, syncParticipantEventCache } from "../keeper-v5.js";
 import {
   ClaimRetryState,
   claimFinalizedDrawSafely,
@@ -146,3 +146,28 @@ test("managed keeper refuses to start without its required success heartbeat", (
 });
 
 test("keeper includes ClaimLeaf.kind in claimMany payloads", () => { const source = readFileSync(new URL("../keeper-v5.js", import.meta.url), "utf8"); assert.equal(source.includes("kind: leaf.kind"), true); });
+
+
+test("keeper advances participant discovery during an idle loop", async () => {
+  const calls = [];
+  const eventCache = {
+    async syncParticipants(args) {
+      calls.push(args);
+    },
+  };
+  const provider = { name: "read-provider" };
+
+  await syncParticipantEventCache({
+    eventCache,
+    provider,
+    drawManagerAddress: DRAW_MANAGER,
+    vaultAddress: "0x3333333333333333333333333333333333333333",
+    fromBlock: 100,
+    toBlock: 2_100_100,
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].provider, provider);
+  assert.equal(calls[0].fromBlock, 100);
+  assert.equal(calls[0].toBlock, 2_100_100);
+});
