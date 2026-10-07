@@ -415,6 +415,23 @@ async function reconcileLifecycleDraw({ manager, signer, provider, drawManagerAd
   return false;
 }
 
+export async function syncParticipantEventCache({
+  eventCache,
+  provider,
+  drawManagerAddress,
+  vaultAddress,
+  fromBlock,
+  toBlock,
+}) {
+  await eventCache.syncParticipants({
+    provider,
+    drawManagerAddress,
+    vaultAddress,
+    fromBlock,
+    toBlock,
+  });
+}
+
 async function runOnce() {
   if (!RPC_URL) throw new Error("Missing KEEPER_RPC_URL/RPC_URL/MONAD_TESTNET_RPC_URL");
   if (!PRIVATE_KEY) throw new Error("Missing PRIVATE_KEY for keeper signer");
@@ -503,6 +520,18 @@ async function runOnce() {
   if (balance < floorWei) {
     throw new Error(`keeper balance low: ${signer.address} balance=${balance} floor=${floorWei} oracleFee=${oracleFeeWei}`);
   }
+
+  // Advance participant discovery on every loop. Weekly draws otherwise leave the
+  // cursor idle long enough for RPC providers to prune the required log range.
+  const latestBlock = await rpcRead("readProvider.getBlockNumber", () => readProvider.getBlockNumber());
+  await syncParticipantEventCache({
+    eventCache,
+    provider: readProvider,
+    drawManagerAddress,
+    vaultAddress: deployment.addresses.prizeVault,
+    fromBlock,
+    toBlock: latestBlock,
+  });
 
   let acted = false;
   const currentDrawId = await rpcRead("manager.currentDrawId", () => manager.currentDrawId());
