@@ -65,7 +65,7 @@ contract PrizeVaultV5Test is Test {
         vault.setDepositCap(1 ether);
     }
 
-    function test_rawNativeTransfersToVaultAndStrategyRevert() public {
+    function test_rawNativeTransferToVaultRevertsButStrategyDustIsNotBacking() public {
         vm.deal(alice, 2 ether);
 
         vm.prank(alice);
@@ -74,9 +74,11 @@ contract PrizeVaultV5Test is Test {
         assertEq(bytes4(vaultData), PrizeVaultV5.UnexpectedNativeTransfer.selector);
 
         vm.prank(alice);
-        (bool strategyOk, bytes memory strategyData) = address(strategy).call{value: 1 ether}("");
-        assertFalse(strategyOk);
-        assertEq(bytes4(strategyData), ShmonStrategy.UnexpectedNativeTransfer.selector);
+        (bool strategyOk,) = address(strategy).call{value: 1 ether}("");
+        assertTrue(strategyOk);
+        assertEq(address(strategy).balance, 1 ether);
+        assertEq(strategy.totalAssets(), 0);
+        assertEq(vault.availableYield(), 0);
     }
 
     function test_nativeDepositCreditsPrincipalAndTwab() public {

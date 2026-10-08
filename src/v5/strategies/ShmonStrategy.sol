@@ -26,7 +26,8 @@ contract ShmonStrategy is IYieldStrategyV5 {
     error InsufficientAssets(uint256 required, uint256 held);
     error ShareTransferFailed();
     error NativeTransferFailed();
-    error UnexpectedNativeTransfer();
+
+    event NativeDustReceived(address indexed sender, uint256 amount);
 
     modifier onlyVault() {
         if (msg.sender != vault) revert NotVault();
@@ -44,8 +45,10 @@ contract ShmonStrategy is IYieldStrategyV5 {
         owner = msg.sender;
     }
 
+    /// @dev Native currency can be forced into any contract. It is deliberately excluded
+    /// from totalAssets() and is forwarded only when the vault migrates this adapter.
     receive() external payable {
-        revert UnexpectedNativeTransfer();
+        emit NativeDustReceived(msg.sender, msg.value);
     }
 
     function setVault(address _vault) external onlyOwner {
