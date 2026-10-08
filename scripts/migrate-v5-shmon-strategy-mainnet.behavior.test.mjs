@@ -6,6 +6,7 @@ import {
   validateApprovedRuntimeCodehash,
   validateSourceIdentity,
   verifyApprovedTarget,
+  verifyCommittedChainIdentity,
   verifyCommittedSnapshots,
   verifyPhaseState,
 } from "./lib/v5-strategy-migration-verifier.mjs";
@@ -95,6 +96,65 @@ function snapshot(overrides = {}) {
     ...overrides,
   };
 }
+
+const BEFORE_HASH = `0x${"11".repeat(32)}`;
+const AFTER_HASH = `0x${"22".repeat(32)}`;
+
+test("binds the commit receipt to consecutive canonical snapshot headers", () => {
+  assert.deepEqual(
+    verifyCommittedChainIdentity({
+      transaction: { blockNumber: 101, blockHash: AFTER_HASH },
+      confirmedTransaction: { blockNumber: 101, blockHash: AFTER_HASH },
+      receipt: { blockNumber: 101, blockHash: AFTER_HASH },
+      confirmedReceipt: { blockNumber: 101, blockHash: AFTER_HASH },
+      before: { blockNumber: 100, blockHash: BEFORE_HASH },
+      after: { blockNumber: 101, blockHash: AFTER_HASH, blockParentHash: BEFORE_HASH },
+      confirmedBeforeBlock: { hash: BEFORE_HASH },
+      confirmedAfterBlock: { hash: AFTER_HASH, parentHash: BEFORE_HASH },
+    }),
+    {
+      beforeBlockHash: BEFORE_HASH,
+      commitBlockHash: AFTER_HASH,
+      receiptBlockHash: AFTER_HASH,
+    },
+  );
+});
+
+test("rejects a receipt and snapshots from different same-height chains", () => {
+  assert.throws(
+    () => verifyCommittedChainIdentity({
+      transaction: { blockNumber: 101, blockHash: AFTER_HASH },
+      confirmedTransaction: { blockNumber: 101, blockHash: AFTER_HASH },
+      receipt: { blockNumber: 101, blockHash: AFTER_HASH },
+      confirmedReceipt: { blockNumber: 101, blockHash: AFTER_HASH },
+      before: { blockNumber: 100, blockHash: BEFORE_HASH },
+      after: {
+        blockNumber: 101,
+        blockHash: `0x${"33".repeat(32)}`,
+        blockParentHash: BEFORE_HASH,
+      },
+      confirmedBeforeBlock: { hash: BEFORE_HASH },
+      confirmedAfterBlock: { hash: AFTER_HASH, parentHash: BEFORE_HASH },
+    }),
+    /does not match the before\/after snapshot chain/,
+  );
+});
+
+test("rejects a reorg observed after snapshot state reads", () => {
+  assert.throws(
+    () => verifyCommittedChainIdentity({
+      transaction: { blockNumber: 101, blockHash: AFTER_HASH },
+      confirmedTransaction: { blockNumber: 101, blockHash: AFTER_HASH },
+      receipt: { blockNumber: 101, blockHash: AFTER_HASH },
+      confirmedReceipt: { blockNumber: 101, blockHash: `0x${"44".repeat(32)}` },
+      before: { blockNumber: 100, blockHash: BEFORE_HASH },
+      after: { blockNumber: 101, blockHash: AFTER_HASH, blockParentHash: BEFORE_HASH },
+      confirmedBeforeBlock: { hash: BEFORE_HASH },
+      confirmedAfterBlock: { hash: AFTER_HASH, parentHash: BEFORE_HASH },
+    }),
+    /changed during verification/,
+  );
+});
 
 test("materializes the approved shMON immutable into the compiled runtime", () => {
   const runtime = materializeShmonStrategyRuntime(deployedBytecode, SHMON);

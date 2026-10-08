@@ -6,6 +6,7 @@ import {
   loadApprovedStrategyBuild,
   validateApprovedRuntimeCodehash,
   validateSourceIdentity,
+  verifyCommittedChainIdentity,
   verifyApprovedTarget,
   verifyCommittedSnapshots,
   verifyPhaseState,
@@ -116,6 +117,7 @@ async function snapshot({
     chainId: (await ethers.provider.getNetwork()).chainId.toString(),
     blockNumber,
     blockHash: block.hash,
+    blockParentHash: block.parentHash,
     blockTimestamp: Number(block.timestamp),
     vault: await vault.getAddress(),
     owner,
@@ -185,6 +187,22 @@ async function committedEvidence({
     targetAddress,
     blockTag: receipt.blockNumber,
   });
+  const [confirmedTransaction, confirmedReceipt, confirmedBeforeBlock, confirmedAfterBlock] = await Promise.all([
+    ethers.provider.getTransaction(txHash),
+    ethers.provider.getTransactionReceipt(txHash),
+    ethers.provider.getBlock(receipt.blockNumber - 1),
+    ethers.provider.getBlock(receipt.blockNumber),
+  ]);
+  const chainIdentity = verifyCommittedChainIdentity({
+    transaction,
+    confirmedTransaction,
+    receipt,
+    confirmedReceipt,
+    before,
+    after,
+    confirmedBeforeBlock,
+    confirmedAfterBlock,
+  });
   const conservation = verifyCommittedSnapshots({
     before,
     after,
@@ -196,6 +214,7 @@ async function committedEvidence({
     transactionIndex: receipt.index,
     before,
     after,
+    chainIdentity,
     conservation,
   };
 }

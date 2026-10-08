@@ -131,7 +131,7 @@ MIGRATION_COMMIT_TX=<mined-commit-transaction> \
 node scripts/migrate-v5-shmon-strategy-mainnet.js --verify --phase committed
 ```
 
-The verifier authenticates the transaction target and selector, then compares the previous block with the mined block. Save both RPC outputs, receipt, and before/after snapshots in the external ops-evidence directory; their block hashes and conservation results must agree. Import them into `tasks/` using a separate evidence checkout after verification.
+The verifier authenticates the transaction target and selector, binds the receipt block hash to the mined block header, binds that header to the previous snapshot through its parent hash, and re-reads the receipt and both headers after all state reads to detect a reorg or inconsistent RPC. Save both RPC outputs, receipt, headers, and before/after snapshots in the external ops-evidence directory; their block hashes and conservation results must agree. Import them into `tasks/` using a separate evidence checkout after verification.
 
 ## Phase 5 - prove the current holder can exit
 
