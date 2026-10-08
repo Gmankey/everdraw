@@ -5,9 +5,6 @@ import {IYieldStrategyV5} from "../interfaces/IYieldStrategyV5.sol";
 
 interface IShmonVault {
     function deposit(uint256 assets, address receiver) external payable returns (uint256 shares);
-    function previewDeposit(uint256 assets) external view returns (uint256 shares);
-    function previewWithdraw(uint256 assets) external view returns (uint256 shares);
-    function previewRedeem(uint256 shares) external view returns (uint256 assets);
     function convertToAssets(uint256 shares) external view returns (uint256 assets);
     function balanceOf(address account) external view returns (uint256);
     function transfer(address to, uint256 amount) external returns (bool);
@@ -18,7 +15,7 @@ interface IShmonVault {
 /// @notice V5 strategy adapter for shMON-style ERC4626/native staking vaults.
 contract ShmonStrategy is IYieldStrategyV5 {
     IShmonVault public immutable shmonVault;
-    address public immutable owner;
+    address public owner;
     address public vault;
 
     error NotVault();
@@ -26,7 +23,7 @@ contract ShmonStrategy is IYieldStrategyV5 {
     error ZeroAddress();
     error VaultAlreadySet();
     error ZeroShares();
-    error InsufficientShares(uint256 required, uint256 held);
+    error InsufficientAssets(uint256 required, uint256 held);
     error ShareTransferFailed();
     error NativeTransferFailed();
     error UnexpectedNativeTransfer();
@@ -64,15 +61,24 @@ contract ShmonStrategy is IYieldStrategyV5 {
 
     function depositSharesFrom(address from, uint256 shares) external onlyVault returns (uint256 assets) {
         if (shares == 0) revert ZeroShares();
+        uint256 heldBefore = shmonVault.balanceOf(address(this));
+        uint256 assetsBefore = shmonVault.convertToAssets(heldBefore);
         _safeTransferFrom(address(shmonVault), from, address(this), shares);
-        assets = shmonVault.previewRedeem(shares);
+        uint256 assetsAfter = shmonVault.convertToAssets(shmonVault.balanceOf(address(this)));
+        if (assetsAfter <= assetsBefore) revert ZeroShares();
+        assets = assetsAfter - assetsBefore;
         if (assets == 0) revert ZeroShares();
     }
 
     function withdrawShares(uint256 assets, address to) external onlyVault returns (uint256 shares) {
-        shares = shmonVault.previewWithdraw(assets);
         uint256 held = shmonVault.balanceOf(address(this));
-        if (shares > held) revert InsufficientShares(shares, held);
+        uint256 backingAssets = shmonVault.convertToAssets(held);
+        if (assets > backingAssets) revert InsufficientAssets(assets, backingAssets);
+
+        // Share payouts must use the same fee-free accounting basis as totalAssets().
+        // previewWithdraw/previewRedeem quote an underlying redemption and may include
+        // an exit fee even though EverDraw only transfers shMON shares.
+        shares = assets == backingAssets ? held : (held * assets) / backingAssets;
         if (shares == 0) revert ZeroShares();
         _safeTransfer(address(shmonVault), to, shares);
     }

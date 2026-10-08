@@ -8,6 +8,10 @@ interface IDrawManagerV5ClaimManager {
     function claimManager() external view returns (address);
 }
 
+interface IERC20BalanceV5 {
+    function balanceOf(address account) external view returns (uint256);
+}
+
 /// @title PrizeVaultV5
 /// @notice Continuous V5 principal vault. Draw/claim logic lives outside this contract.
 contract PrizeVaultV5 {
@@ -20,6 +24,7 @@ contract PrizeVaultV5 {
 
     EverdrawTwabController public immutable twabController;
     IYieldStrategyV5 public strategy;
+    bytes32 public immutable strategyCodehash;
 
     address public owner;
     address public pendingOwner;
@@ -77,6 +82,7 @@ contract PrizeVaultV5 {
 
     error NotOwner();
     error NotPauser();
+    error NotOwnerOrPauser();
     error ZeroAddress();
     error ZeroAmount();
     error DepositTooSmall();
@@ -90,8 +96,11 @@ contract PrizeVaultV5 {
     error NoPendingDrawManagerChange();
     error TimelockNotElapsed();
     error StrategyMigrationShortfall(uint256 beforeAssets, uint256 afterAssets);
+    error StrategyMigrationShareMismatch(uint256 expected, uint256 received, uint256 remaining);
     error StrategyShareTokenMismatch(address currentToken, address newToken);
+    error StrategyVaultMismatch(address expectedVault, address configuredVault);
     error NotDrawManager();
+    error StrategyCodehashMismatch(bytes32 expected, bytes32 actual);
     error InsufficientYield(uint256 requested, uint256 available);
     error NoStrategyAssets();
     error UnexpectedNativeTransfer();
@@ -103,6 +112,11 @@ contract PrizeVaultV5 {
 
     modifier onlyPauser() {
         if (msg.sender != pauser) revert NotPauser();
+        _;
+    }
+
+    modifier onlyOwnerOrPauser() {
+        if (msg.sender != owner && msg.sender != pauser) revert NotOwnerOrPauser();
         _;
     }
 
@@ -124,7 +138,10 @@ contract PrizeVaultV5 {
     }
 
     constructor(address _twabController, address _strategy, uint256 _depositCap, string memory _symbol) {
-        if (_twabController == address(0) || _strategy == address(0)) revert ZeroAddress();
+        if (_twabController == address(0) || _strategy == address(0) || _strategy.code.length == 0) {
+            revert ZeroAddress();
+        }
+        strategyCodehash = _strategy.codehash;
         owner = msg.sender;
         pauser = msg.sender;
         twabController = EverdrawTwabController(_twabController);
@@ -214,7 +231,7 @@ contract PrizeVaultV5 {
         emit DrawManagerSet(drawManager);
     }
 
-    function cancelDrawManagerChange() external onlyOwner {
+    function cancelDrawManagerChange() external onlyOwnerOrPauser {
         if (pendingDrawManagerEffectiveAt == 0) revert NoPendingDrawManagerChange();
         pendingDrawManager = address(0);
         pendingDrawManagerEffectiveAt = 0;
@@ -245,12 +262,20 @@ contract PrizeVaultV5 {
         if (newStrategy == address(0) || newStrategy.code.length == 0) revert ZeroAddress();
         pendingStrategy = newStrategy;
         pendingStrategyEffectiveAt = uint64(block.timestamp + STRATEGY_CHANGE_DELAY);
+        bytes32 candidateCodehash = newStrategy.codehash;
+        if (candidateCodehash != strategyCodehash) {
+            revert StrategyCodehashMismatch(strategyCodehash, candidateCodehash);
+        }
         emit StrategyChangeQueued(newStrategy, pendingStrategyEffectiveAt);
     }
 
     function commitStrategyChange() external onlyOwner {
         if (pendingStrategyEffectiveAt == 0) revert NoPendingStrategyChange();
         if (block.timestamp < pendingStrategyEffectiveAt) revert TimelockNotElapsed();
+        bytes32 candidateCodehash = pendingStrategy.codehash;
+        if (candidateCodehash != strategyCodehash) {
+            revert StrategyCodehashMismatch(strategyCodehash, candidateCodehash);
+        }
         IYieldStrategyV5 oldStrategy = strategy;
         IYieldStrategyV5 newStrategy = IYieldStrategyV5(pendingStrategy);
         address currentShareToken = oldStrategy.shareToken();
@@ -258,10 +283,26 @@ contract PrizeVaultV5 {
         if (newShareToken != currentShareToken) {
             revert StrategyShareTokenMismatch(currentShareToken, newShareToken);
         }
+        address configuredVault = newStrategy.vault();
+        if (configuredVault != address(this)) {
+            revert StrategyVaultMismatch(address(this), configuredVault);
+        }
+
         uint256 beforeAssets = oldStrategy.totalAssets();
+        uint256 beforeShares = IERC20BalanceV5(currentShareToken).balanceOf(address(oldStrategy));
+        if (beforeShares != 0) {
+            uint256 targetSharesBefore = IERC20BalanceV5(currentShareToken).balanceOf(pendingStrategy);
+            oldStrategy.migrateTo(pendingStrategy);
+            uint256 oldSharesAfter = IERC20BalanceV5(currentShareToken).balanceOf(address(oldStrategy));
+            uint256 targetSharesAfter = IERC20BalanceV5(currentShareToken).balanceOf(pendingStrategy);
+            uint256 receivedShares =
+                targetSharesAfter >= targetSharesBefore ? targetSharesAfter - targetSharesBefore : 0;
+            if (oldSharesAfter != 0 || receivedShares != beforeShares) {
+                revert StrategyMigrationShareMismatch(beforeShares, receivedShares, oldSharesAfter);
+            }
+        }
 
         if (beforeAssets != 0) {
-            oldStrategy.migrateTo(pendingStrategy);
             uint256 afterAssets = newStrategy.totalAssets();
             if (afterAssets * 10_000 < beforeAssets * (10_000 - STRATEGY_MIGRATION_TOLERANCE_BPS)) {
                 revert StrategyMigrationShortfall(beforeAssets, afterAssets);
@@ -274,7 +315,7 @@ contract PrizeVaultV5 {
         emit StrategyChanged(address(strategy));
     }
 
-    function cancelStrategyChange() external onlyOwner {
+    function cancelStrategyChange() external onlyOwnerOrPauser {
         if (pendingStrategyEffectiveAt == 0) revert NoPendingStrategyChange();
         pendingStrategy = address(0);
         pendingStrategyEffectiveAt = 0;
@@ -421,6 +462,18 @@ contract PrizeVaultV5 {
         require(strategy.transferShares(msg.sender, shares), "share transfer failed");
 
         emit SponsorWithdraw(msg.sender, principalAmount);
+        emit EmergencySharesRedeemed(msg.sender, principalAmount, shares);
+    }
+
+    function emergencyRedeemBoosterShares(uint256 principalAmount) external nonReentrant returns (uint256 shares) {
+        if (principalAmount == 0) revert ZeroAmount();
+        if (boosterPrincipalOf[msg.sender] < principalAmount) revert InsufficientBalance();
+
+        shares = _emergencySharesForPrincipal(principalAmount);
+        _debitBooster(msg.sender, principalAmount);
+        require(strategy.transferShares(msg.sender, shares), "share transfer failed");
+
+        emit BoostWithdraw(msg.sender, principalAmount, boosterPrincipalOf[msg.sender], uint64(block.timestamp));
         emit EmergencySharesRedeemed(msg.sender, principalAmount, shares);
     }
 

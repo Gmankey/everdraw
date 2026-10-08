@@ -208,6 +208,9 @@ async function main() {
   const configuredCompoundVault = await claimManager.contract.compoundVaultFor(manager.address);
   const vaultPayoutToken = await vault.contract.payoutToken();
   const managerPayoutToken = await manager.contract.payoutToken();
+  const configuredStrategy = await vault.contract.strategy();
+  const configuredStrategyCodehash = await vault.contract.strategyCodehash();
+  const liveStrategyCodehash = ethers.keccak256(await ethers.provider.getCode(strategy.address));
   if (pendingDrawManager.toLowerCase() !== manager.address.toLowerCase()) {
     throw new Error(`Pending draw manager mismatch: expected ${manager.address}, got ${pendingDrawManager}`);
   }
@@ -219,6 +222,14 @@ async function main() {
   }
   if (managerPayoutToken.toLowerCase() !== shmon.toLowerCase()) {
     throw new Error("Draw manager payout token mismatch: expected " + shmon + ", got " + managerPayoutToken);
+  }
+  if (configuredStrategy.toLowerCase() !== strategy.address.toLowerCase()) {
+    throw new Error(`Vault strategy mismatch: expected ${strategy.address}, got ${configuredStrategy}`);
+  }
+  if (configuredStrategyCodehash !== liveStrategyCodehash) {
+    throw new Error(
+      `Vault strategy codehash mismatch: expected ${liveStrategyCodehash}, got ${configuredStrategyCodehash}`,
+    );
   }
 
   const record = {

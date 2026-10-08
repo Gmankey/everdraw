@@ -653,24 +653,25 @@ contract PrizeVaultV5Test is Test {
         assertEq(strategy.totalAssets(), 4 ether);
     }
 
-    function test_withdrawUsesPreviewWithdrawNotPreviewDeposit() public {
+    function test_withdrawUsesFeeFreeShareConversionBasis() public {
         vm.deal(alice, 10 ether);
         vm.prank(alice);
         vault.deposit{value: 4 ether}();
 
         shmon.setWithdrawFeeBps(5);
-        uint256 expectedShares = shmon.previewWithdraw(1 ether);
-
         vm.prank(alice);
-        vault.withdrawShmon(1 ether);
+        uint256 shares = vault.withdrawShmon(1 ether);
 
-        assertEq(shmon.balanceOf(alice), expectedShares);
+        assertEq(shares, 1 ether);
+        assertEq(shmon.balanceOf(alice), 1 ether);
         assertEq(vault.principalOf(alice), 3 ether);
-        assertLt(strategy.sharesHeld(), 3 ether);
+        assertEq(strategy.sharesHeld(), 3 ether);
+        assertEq(strategy.totalAssets(), 3 ether);
     }
 
     function test_strategyChangeUsesTimelock() public {
         ShmonStrategy next = new ShmonStrategy(address(shmon));
+        next.setVault(address(vault));
 
         vault.queueStrategyChange(address(next));
 
@@ -681,6 +682,67 @@ contract PrizeVaultV5Test is Test {
         vault.commitStrategyChange();
 
         assertEq(address(vault.strategy()), address(next));
+    }
+
+    function test_strategyMigrationRequiresTargetBoundToThisVault() public {
+        ShmonStrategy next = new ShmonStrategy(address(shmon));
+        vault.queueStrategyChange(address(next));
+        vm.warp(block.timestamp + vault.STRATEGY_CHANGE_DELAY());
+
+        vm.expectRevert(abi.encodeWithSelector(PrizeVaultV5.StrategyVaultMismatch.selector, address(vault), address(0)));
+        vault.commitStrategyChange();
+
+        assertEq(address(vault.strategy()), address(strategy));
+        assertEq(vault.pendingStrategy(), address(next));
+    }
+
+    function test_strategyMigrationRechecksRuntimeAtCommit() public {
+        ShmonStrategy next = new ShmonStrategy(address(shmon));
+        next.setVault(address(vault));
+        vault.queueStrategyChange(address(next));
+
+        vm.etch(address(next), hex"60006000fd");
+        vm.warp(block.timestamp + vault.STRATEGY_CHANGE_DELAY());
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                PrizeVaultV5.StrategyCodehashMismatch.selector, vault.strategyCodehash(), address(next).codehash
+            )
+        );
+        vault.commitStrategyChange();
+
+        assertEq(address(vault.strategy()), address(strategy));
+        assertEq(vault.pendingStrategy(), address(next));
+    }
+
+    function test_pauserCanCancelStrategyAndDrawManagerChanges() public {
+        vault.setPauser(alice);
+        ShmonStrategy next = new ShmonStrategy(address(shmon));
+        next.setVault(address(vault));
+        DummyDrawManager nextManager = new DummyDrawManager();
+
+        vault.queueStrategyChange(address(next));
+        vault.queueDrawManagerChange(address(nextManager));
+
+        vm.prank(alice);
+        vault.cancelStrategyChange();
+        vm.prank(alice);
+        vault.cancelDrawManagerChange();
+
+        assertEq(vault.pendingStrategy(), address(0));
+        assertEq(vault.pendingStrategyEffectiveAt(), 0);
+        assertEq(vault.pendingDrawManager(), address(0));
+        assertEq(vault.pendingDrawManagerEffectiveAt(), 0);
+    }
+
+    function test_unrelatedAccountCannotCancelPrivilegedChanges() public {
+        ShmonStrategy next = new ShmonStrategy(address(shmon));
+        next.setVault(address(vault));
+        vault.queueStrategyChange(address(next));
+
+        vm.prank(bob);
+        vm.expectRevert(PrizeVaultV5.NotOwnerOrPauser.selector);
+        vault.cancelStrategyChange();
     }
 
     function test_setDrawManagerQueuesTimelockedChange() public {
