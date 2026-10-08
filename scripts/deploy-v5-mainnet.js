@@ -313,6 +313,7 @@ async function verifyWiring({
     strategy.contract.vault(),
     vault.contract.payoutToken(),
     vault.contract.strategy(),
+    vault.contract.strategyCodehash(),
     vault.contract.twabController(),
     vault.contract.pauser(),
     vault.contract.minDeposit(),
@@ -345,6 +346,7 @@ async function verifyWiring({
     strategyVault,
     vaultPayoutToken,
     vaultStrategy,
+    configuredStrategyCodehash,
     vaultTwab,
     configuredPauser,
     minDeposit,
@@ -395,6 +397,13 @@ async function verifyWiring({
     if (!sameAddress(actual, expected)) {
       throw new Error(`${label} mismatch: expected ${expected}, got ${actual}`);
     }
+  }
+
+  const liveStrategyCodehash = ethers.keccak256(await ethers.provider.getCode(strategy.address));
+  if (configuredStrategyCodehash !== liveStrategyCodehash) {
+    throw new Error(
+      `vault.strategyCodehash mismatch: expected ${liveStrategyCodehash}, got ${configuredStrategyCodehash}`,
+    );
   }
 
   if (
@@ -646,7 +655,7 @@ async function deployAndQueue() {
     deployedBy: deployer.address,
     source: "src/v5",
     deployCommit,
-    adrs: ["ADR-0042", "ADR-0043", "ADR-0045"],
+    adrs: ["ADR-0042", "ADR-0043", "ADR-0045", "ADR-0047", "ADR-0051"],
     addresses,
     ownership: {
       status: "pending-acceptance",

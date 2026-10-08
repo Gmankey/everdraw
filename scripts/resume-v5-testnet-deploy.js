@@ -86,6 +86,7 @@ async function main() {
     vault.owner(),
     claimManager.owner(),
     vault.strategy(),
+    vault.strategyCodehash(),
     vault.twabController(),
     strategy.vault(),
     twab.registeredVaults(addresses.prizeVault),
@@ -99,18 +100,22 @@ async function main() {
     ["vault owner", wiring[0], signer.address],
     ["claim manager owner", wiring[1], signer.address],
     ["vault strategy", wiring[2], addresses.shmonStrategy],
-    ["vault TWAB", wiring[3], addresses.twabController],
-    ["strategy vault", wiring[4], addresses.prizeVault],
-    ["manager vault", wiring[6], addresses.prizeVault],
-    ["manager TWAB", wiring[7], addresses.twabController],
-    ["manager claim manager", wiring[8], addresses.claimManager],
-    ["manager oracle", wiring[9], addresses.pythRandomnessOracle],
-    ["oracle consumer", wiring[10], addresses.drawManager],
+    ["vault TWAB", wiring[4], addresses.twabController],
+    ["strategy vault", wiring[5], addresses.prizeVault],
+    ["manager vault", wiring[7], addresses.prizeVault],
+    ["manager TWAB", wiring[8], addresses.twabController],
+    ["manager claim manager", wiring[9], addresses.claimManager],
+    ["manager oracle", wiring[10], addresses.pythRandomnessOracle],
+    ["oracle consumer", wiring[11], addresses.drawManager],
   ];
   for (const [label, actual, expected] of checks) {
     if (!sameAddress(actual, expected)) throw new Error(`${label} mismatch: ${actual} != ${expected}`);
   }
-  if (!wiring[5]) throw new Error("TWAB vault registration is missing");
+  const liveStrategyCodehash = ethers.keccak256(await ethers.provider.getCode(addresses.shmonStrategy));
+  if (wiring[3] !== liveStrategyCodehash) {
+    throw new Error(`vault strategy codehash mismatch: ${wiring[3]} != ${liveStrategyCodehash}`);
+  }
+  if (!wiring[6]) throw new Error("TWAB vault registration is missing");
 
   if (!(await read("authorizedSource", () => claimManager.authorizedSource(addresses.drawManager)))) {
     deployTxs.claimAuthorizeManager = await send(

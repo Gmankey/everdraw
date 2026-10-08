@@ -64,6 +64,9 @@ test("mainnet deploy source enforces the four-contract acceptance lifecycle", ()
   assert.match(source, /DRAW_MANAGER_COMMIT_TX/);
   assert.doesNotMatch(source, /runManifestBytecodeCheck/);
   assert.match(source, /verifyRuntimeAgainstArtifact/);
+  assert.match(source, /vault\.contract\.strategyCodehash\(\)/);
+  assert.match(source, /vault\.strategyCodehash mismatch/);
+  assert.match(source, /"ADR-0051"/);
   assert.match(source, /Final owner executes PrizeVaultV5\.commitDrawManagerChange\(\) from its Ledger/);
   assert.match(source, /--record-commit/);
 });

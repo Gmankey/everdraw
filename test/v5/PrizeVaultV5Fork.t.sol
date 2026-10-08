@@ -142,7 +142,7 @@ contract PrizeVaultV5ForkTest is Test {
         vm.stopPrank();
 
         assertEq(IShmonRead(MAINNET_SHMON).balanceOf(address(strategy)), shares);
-        assertEq(vault.principalOf(alice), IShmonRead(MAINNET_SHMON).previewRedeem(shares));
+        assertEq(vault.principalOf(alice), IShmonRead(MAINNET_SHMON).convertToAssets(shares));
 
         uint256 before = IShmonRead(MAINNET_SHMON).balanceOf(alice);
         vm.prank(alice);
@@ -185,13 +185,139 @@ contract PrizeVaultV5ForkTest is Test {
         proofs[0] = new bytes32[](0);
 
         uint256 principalBeforeClaim = vault.principalOf(alice);
+        uint256 assetsBeforeClaim = strategy.totalAssets();
         claimManager.claimMany(leaves, proofs);
-        assertEq(vault.principalOf(alice), principalBeforeClaim + IShmonRead(MAINNET_SHMON).previewRedeem(leaf.amount));
+        uint256 creditedPrize = strategy.totalAssets() - assetsBeforeClaim;
+        assertEq(vault.principalOf(alice), principalBeforeClaim + creditedPrize);
+        assertApproxEqAbs(
+            creditedPrize, IShmonRead(MAINNET_SHMON).convertToAssets(leaf.amount), 1, "aggregate conversion rounding"
+        );
 
-        uint256 beforeWithdraw = IShmonRead(MAINNET_SHMON).balanceOf(alice);
+        uint256 alicePrincipal = vault.principalOf(alice);
         vm.prank(alice);
-        uint256 withdrawnShares = vault.withdrawShmon(0.5 ether);
-        assertEq(IShmonRead(MAINNET_SHMON).balanceOf(alice) - beforeWithdraw, withdrawnShares);
+        vault.withdrawShmon(alicePrincipal);
+        assertEq(vault.principalOf(alice), 0);
+
+        uint256 bobPrincipal = vault.principalOf(bob);
+        vm.prank(bob);
+        vault.withdrawShmon(bobPrincipal);
+        assertEq(vault.principalOf(bob), 0);
+        assertEq(vault.totalPrincipal(), 0);
+    }
+
+    function test_fork_participantFullExitAgainstRealShmon() public {
+        vm.deal(alice, 2 ether);
+        vm.prank(alice, alice);
+        vault.deposit{value: 1 ether}();
+
+        uint256 principal = vault.principalOf(alice);
+        uint256 held = strategy.sharesHeld();
+        vm.prank(alice);
+        uint256 shares = vault.withdrawShmon(principal);
+
+        assertEq(shares, held);
+        assertEq(IShmonRead(MAINNET_SHMON).balanceOf(alice), held);
+        assertEq(vault.principalOf(alice), 0);
+        assertEq(vault.totalPrincipal(), 0);
+        assertEq(strategy.sharesHeld(), 0);
+    }
+
+    function test_fork_sponsorFullExitAgainstRealShmon() public {
+        address sponsor = makeAddr("fork sponsor");
+        vm.deal(sponsor, 2 ether);
+        vm.prank(sponsor, sponsor);
+        vault.sponsorDeposit{value: 1 ether}();
+
+        uint256 principal = vault.sponsorPrincipalOf(sponsor);
+        uint256 held = strategy.sharesHeld();
+        vm.prank(sponsor);
+        uint256 shares = vault.withdrawSponsorShmon(principal);
+
+        assertEq(shares, held);
+        assertEq(IShmonRead(MAINNET_SHMON).balanceOf(sponsor), held);
+        assertEq(vault.sponsorPrincipalOf(sponsor), 0);
+        assertEq(vault.totalPrincipal(), 0);
+        assertEq(strategy.sharesHeld(), 0);
+    }
+
+    function test_fork_directShmonSponsorFullExitAgainstRealShmon() public {
+        address sponsor = makeAddr("direct shmon sponsor");
+        vm.deal(sponsor, 2 ether);
+
+        vm.startPrank(sponsor, sponsor);
+        uint256 depositedShares = IShmonRead(MAINNET_SHMON).deposit{value: 1 ether}(1 ether, sponsor);
+        IShmonRead(MAINNET_SHMON).approve(address(strategy), depositedShares);
+        uint256 creditedAssets = vault.sponsorDepositShmon(depositedShares);
+        uint256 withdrawnShares = vault.withdrawSponsorShmon(creditedAssets);
+        vm.stopPrank();
+
+        assertEq(withdrawnShares, depositedShares);
+        assertEq(IShmonRead(MAINNET_SHMON).balanceOf(sponsor), depositedShares);
+        assertEq(vault.sponsorPrincipalOf(sponsor), 0);
+        assertEq(vault.totalPrincipal(), 0);
+        assertEq(strategy.sharesHeld(), 0);
+    }
+
+    function test_fork_nativePatronFullExitAgainstRealShmon() public {
+        address patron = makeAddr("native patron");
+        vm.deal(patron, 2 ether);
+
+        vm.prank(patron, patron);
+        vault.boostDeposit{value: 1 ether}();
+
+        uint256 principal = vault.boosterPrincipalOf(patron);
+        uint256 held = strategy.sharesHeld();
+        vm.prank(patron);
+        uint256 withdrawnShares = vault.boostWithdrawShmon(principal);
+
+        assertEq(withdrawnShares, held);
+        assertEq(IShmonRead(MAINNET_SHMON).balanceOf(patron), held);
+        assertEq(vault.boosterPrincipalOf(patron), 0);
+        assertEq(vault.totalPrincipal(), 0);
+        assertEq(strategy.sharesHeld(), 0);
+    }
+
+    function test_fork_directShmonPatronFullExitAgainstRealShmon() public {
+        address patron = makeAddr("fork patron");
+        vm.deal(patron, 2 ether);
+
+        vm.startPrank(patron, patron);
+        uint256 depositedShares = IShmonRead(MAINNET_SHMON).deposit{value: 1 ether}(1 ether, patron);
+        IShmonRead(MAINNET_SHMON).approve(address(strategy), depositedShares);
+        uint256 creditedAssets = vault.boostDepositShmon(depositedShares);
+        uint256 withdrawnShares = vault.boostWithdrawShmon(creditedAssets);
+        vm.stopPrank();
+
+        assertEq(withdrawnShares, depositedShares);
+        assertEq(IShmonRead(MAINNET_SHMON).balanceOf(patron), depositedShares);
+        assertEq(vault.boosterPrincipalOf(patron), 0);
+        assertEq(vault.totalPrincipal(), 0);
+        assertEq(strategy.sharesHeld(), 0);
+    }
+
+    function test_fork_patronExitPreservesUnrelatedParticipantBacking() public {
+        address patron = makeAddr("mixed fork patron");
+        vm.deal(alice, 2 ether);
+        vm.deal(patron, 6 ether);
+        vm.prank(alice, alice);
+        vault.deposit{value: 1 ether}();
+        vm.prank(patron, patron);
+        vault.boostDeposit{value: 5 ether}();
+
+        uint256 participantPrincipal = vault.principalOf(alice);
+        uint256 patronPrincipal = vault.boosterPrincipalOf(patron);
+        vm.prank(patron);
+        vault.boostWithdrawShmon(patronPrincipal);
+
+        assertEq(vault.boosterPrincipalOf(patron), 0);
+        assertEq(vault.principalOf(alice), participantPrincipal);
+        assertGe(strategy.totalAssets(), participantPrincipal);
+        assertLe(strategy.totalAssets() - participantPrincipal, 2);
+
+        vm.prank(alice);
+        vault.withdrawShmon(participantPrincipal);
+        assertEq(vault.totalPrincipal(), 0);
+        assertLe(strategy.totalAssets(), 2);
     }
 
     function _activateDrawManager(address drawManager_) internal {
