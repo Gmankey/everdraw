@@ -9,6 +9,12 @@ import {MockERC4626YieldVault} from "../mocks/MockERC4626YieldVault.sol";
 
 contract ShareBackingDrawManager {}
 
+contract ForceNativeToStrategy {
+    constructor(address payable recipient) payable {
+        selfdestruct(recipient);
+    }
+}
+
 contract PrizeVaultV5ShareBackingHardeningTest is Test {
     EverdrawTwabController internal twab;
     MockERC4626YieldVault internal shmon;
@@ -30,9 +36,7 @@ contract PrizeVaultV5ShareBackingHardeningTest is Test {
         twab.registerVault(address(vault));
     }
 
-    /// @dev Executable M-1 probe: this reproduces the raw-MON accounting precondition that
-    /// previously exposed principal shares as apparent yield and allowed an underfunded exit.
-    function test_rawNativeMonCannotBecomeYieldOrUnderfundParticipantExit() public {
+    function test_rawNativeMonIsExcludedFromYieldAndParticipantExit() public {
         vm.deal(alice, 10 ether);
         vm.prank(alice);
         vault.deposit{value: 4 ether}();
@@ -40,11 +44,10 @@ contract PrizeVaultV5ShareBackingHardeningTest is Test {
         address donor = makeAddr("native donor");
         vm.deal(donor, 1 ether);
         vm.prank(donor);
-        (bool donated, bytes memory data) = payable(address(strategy)).call{value: 1 ether}("");
-        assertFalse(donated);
-        assertEq(bytes4(data), ShmonStrategy.UnexpectedNativeTransfer.selector);
+        (bool donated,) = payable(address(strategy)).call{value: 1 ether}("");
+        assertTrue(donated);
 
-        assertEq(address(strategy).balance, 0);
+        assertEq(address(strategy).balance, 1 ether);
         assertEq(strategy.totalAssets(), 4 ether);
         assertEq(vault.availableYield(), 0);
 
@@ -66,7 +69,7 @@ contract PrizeVaultV5ShareBackingHardeningTest is Test {
         assertEq(vault.principalOf(alice), 0);
         assertEq(vault.totalPrincipal(), 0);
         assertEq(twab.balanceOf(address(vault), alice), 0);
-        assertEq(address(strategy).balance, 0);
+        assertEq(address(strategy).balance, 1 ether);
     }
 
     function test_participantFullExitIgnoresUnderlyingRedeemFee() public {
@@ -178,6 +181,44 @@ contract PrizeVaultV5ShareBackingHardeningTest is Test {
         assertEq(strategy.sharesHeld(), 0);
         assertEq(next.sharesHeld(), 4 ether);
         assertEq(vault.principalOf(alice), 4 ether);
+    }
+
+    function test_forcedNativeDustMigratesWithoutAffectingSharesOrPrincipal() public {
+        vm.deal(alice, 10 ether);
+        vm.prank(alice);
+        vault.deposit{value: 4 ether}();
+
+        ShmonStrategy next = new ShmonStrategy(address(shmon));
+        next.setVault(address(vault));
+        uint256 sharesBefore = strategy.sharesHeld();
+        uint256 principalBefore = vault.totalPrincipal();
+        uint256 assetsBefore = strategy.totalAssets();
+
+        vault.queueStrategyChange(address(next));
+        vm.deal(address(this), 1 wei);
+        new ForceNativeToStrategy{value: 1 wei}(payable(address(strategy)));
+        assertEq(address(strategy).balance, 1 wei);
+        assertEq(strategy.totalAssets(), assetsBefore);
+        assertEq(vault.availableYield(), 0);
+
+        vm.warp(block.timestamp + vault.STRATEGY_CHANGE_DELAY());
+        vault.commitStrategyChange();
+
+        assertEq(address(vault.strategy()), address(next));
+        assertEq(strategy.sharesHeld(), 0);
+        assertEq(next.sharesHeld(), sharesBefore);
+        assertEq(address(strategy).balance, 0);
+        assertEq(address(next).balance, 1 wei);
+        assertEq(next.totalAssets(), assetsBefore);
+        assertEq(vault.totalPrincipal(), principalBefore);
+        assertEq(vault.availableYield(), 0);
+
+        uint256 remainingPrincipal = vault.principalOf(alice);
+        vm.prank(alice);
+        vault.withdrawShmon(remainingPrincipal);
+        assertEq(vault.principalOf(alice), 0);
+        assertEq(next.sharesHeld(), 0);
+        assertEq(address(next).balance, 1 wei);
     }
 
     function test_differentStrategyRuntimeIsRejectedBeforeQueue() public {

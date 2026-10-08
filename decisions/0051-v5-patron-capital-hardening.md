@@ -36,6 +36,20 @@ Direct shMON deposits are credited from the strategy's measured `convertToAssets
 after the transfer. This also prevents a fee-bearing redemption quote from reducing the credited
 principal even though no redemption occurred.
 
+### Native dust and migration authentication
+
+A strategy accepts native MON because native currency can be forced into a contract without invoking
+its receiver. Raw MON is never included in `totalAssets()`, principal, or prize yield. It remains
+non-accounting dust and is forwarded in full only when the vault migrates to the next approved
+strategy. Every same-code replacement accepts that forwarding, so dust cannot freeze recovery.
+
+For the existing unrestricted vault, the migration tool authenticates the replacement against the
+exact locally compiled runtime with the approved shMON immutable materialized, the independently
+approved clean Git commit, and the intended vault binding. Verification is phase-specific:
+pre-queue, queued, and committed. Committed verification is anchored to the actual
+`commitStrategyChange()` transaction and compares its previous block with its mined block for
+exact shMON and native-dust movement plus unchanged principal totals and cap.
+
 ### Patron emergency exit
 
 The fresh vault release includes `emergencyRedeemBoosterShares`. It is permissionless for the

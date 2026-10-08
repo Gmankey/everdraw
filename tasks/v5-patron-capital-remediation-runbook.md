@@ -16,6 +16,8 @@ Source finding: `tasks/v5-patron-capital-review-2026-10-08.md`
 - The current mainnet vault is repaired only to restore exits. It does not gain the new Patron emergency exit or constrained-migration code and must remain withdraw-only after migration.
 - A fresh full-stack deployment is required for the complete ADR-0051 design.
 - Every transaction must be simulated, decoded, and independently checked before signing.
+- Native MON held by a strategy is non-accounting dust: it is excluded from principal/yield and forwarded only during migration.
+- Run every verifier from a dedicated clean checkout of the approved commit. Save command output outside that checkout, then add it to `tasks/` through a separate evidence commit after execution.
 - Never put a private key in this document, the repository, shell history, or chat.
 
 ## Canonical live targets
@@ -52,28 +54,36 @@ HARDHAT_NETWORK=monadMainnet \
 node scripts/migrate-v5-shmon-strategy-mainnet.js
 ```
 
-This sends no transactions. Save the JSON output under `tasks/` and have a second reviewer confirm the targets and calldata.
+This sends no transactions. Save the JSON output in the external ops-evidence directory and have a second reviewer confirm the targets and calldata.
 
 ## Phase 2 - deploy and bind the corrected adapter
 
-The operator supplies a funded deployment signer through the existing Hardhat network configuration. The script does not read, prompt for, print, or persist a key itself.
+The operator supplies a funded deployment signer through the existing Hardhat network configuration. The script does not read, prompt for, print, or persist a key itself. Set `APPROVED_REPLACEMENT_COMMIT` and `APPROVED_STRATEGY_RUNTIME_CODEHASH` to the exact values independently approved by the auditor. The script rejects a different commit, any dirty or untracked worktree content, a stale compiled source, or a different runtime before deploying. Force a clean rebuild first:
+
+```sh
+npx hardhat compile --force
+```
 
 ```sh
 HARDHAT_NETWORK=monadMainnet \
+APPROVED_REPLACEMENT_COMMIT=<audited-40-character-commit> \
+APPROVED_STRATEGY_RUNTIME_CODEHASH=<audited-0x-runtime-codehash> \
 node scripts/migrate-v5-shmon-strategy-mainnet.js --deploy
 ```
 
-Record the strategy address, deployment receipt, `setVault` receipt, runtime codehash, `shareToken()`, and `vault()`. The expected values are mainnet shMON and the current vault.
+Record the replacement source commit, strategy address, deployment receipt, `setVault` receipt, exact runtime codehash, source/settings hashes, `shareToken()`, and `vault()`. The runtime must match the locally compiled approved adapter byte-for-byte after materializing the approved mainnet shMON immutable.
 
-Independently verify without signing:
+Independently verify the valid unqueued target without signing:
 
 ```sh
 HARDHAT_NETWORK=monadMainnet \
+APPROVED_REPLACEMENT_COMMIT=<audited-40-character-commit> \
+APPROVED_STRATEGY_RUNTIME_CODEHASH=<audited-0x-runtime-codehash> \
 NEW_STRATEGY_ADDRESS=<replacement> \
-node scripts/migrate-v5-shmon-strategy-mainnet.js --verify
+node scripts/migrate-v5-shmon-strategy-mainnet.js --verify --phase prequeue
 ```
 
-At this point the replacement must be neither active nor funded. Do not proceed if it has any unexpected shMON balance or vault binding.
+The replacement must be bound to the current vault, contain the approved mainnet shMON immutable, and hold no unexpected shMON shares. Native MON is reported but is allowed non-accounting dust and cannot block migration. Save the JSON output in the external ops-evidence directory and corroborate it through the independent RPC.
 
 ## Phase 3 - Ledger queue and 24-hour review
 
@@ -84,7 +94,16 @@ After the receipt:
 1. Confirm `StrategyChangeQueued` contains the reviewed replacement.
 2. Confirm `pendingStrategy()` and `pendingStrategyEffectiveAt()` from two RPCs.
 3. Confirm monitoring alerts.
-4. Re-run `--verify`.
+4. Run the queued-phase verifier through both RPCs:
+
+   ```sh
+   HARDHAT_NETWORK=monadMainnet \
+   APPROVED_REPLACEMENT_COMMIT=<audited-40-character-commit> \
+   APPROVED_STRATEGY_RUNTIME_CODEHASH=<audited-0x-runtime-codehash> \
+   NEW_STRATEGY_ADDRESS=<replacement> \
+   node scripts/migrate-v5-shmon-strategy-mainnet.js --verify --phase queued
+   ```
+
 5. Wait the full `STRATEGY_CHANGE_DELAY`.
 6. Cancel from the owner if any check differs. The deployed current vault does not grant its pauser cancellation authority; that improvement exists only in the fresh release.
 
@@ -98,18 +117,21 @@ Immediately after mining, verify:
 - old strategy shMON balance is zero;
 - replacement shMON balance equals the old pre-commit share balance exactly;
 - replacement `totalAssets()` is not below the accepted rounding tolerance;
-- all three recorded principal totals are unchanged;
-- no unexpected native MON or token transfer occurred.
+- participant, sponsor, Patron, and aggregate principal totals are unchanged;
+- the old adapter's entire native-dust balance moved to the replacement and remains excluded from backing.
 
-Run:
+Run the transaction-pinned committed verifier through the primary and independent RPCs:
 
 ```sh
 HARDHAT_NETWORK=monadMainnet \
+APPROVED_REPLACEMENT_COMMIT=<audited-40-character-commit> \
+APPROVED_STRATEGY_RUNTIME_CODEHASH=<audited-0x-runtime-codehash> \
 NEW_STRATEGY_ADDRESS=<replacement> \
-node scripts/migrate-v5-shmon-strategy-mainnet.js --verify
+MIGRATION_COMMIT_TX=<mined-commit-transaction> \
+node scripts/migrate-v5-shmon-strategy-mainnet.js --verify --phase committed
 ```
 
-Save receipts and before/after snapshots under `tasks/`.
+The verifier authenticates the transaction target and selector, then compares the previous block with the mined block. Save both RPC outputs, receipt, and before/after snapshots in the external ops-evidence directory; their block hashes and conservation results must agree. Import them into `tasks/` using a separate evidence checkout after verification.
 
 ## Phase 5 - prove the current holder can exit
 
