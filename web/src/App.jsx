@@ -1755,7 +1755,7 @@ function V5ActionCard({
               Depositing in the Patron Pool does not give you entries into the weekly draw. Instead, you become a patron and contribute your yield to the prize pool. This noble sacrifice helps make the weekly prize larger for everyone while you earn BOOSTED EverDraw points. The longer you remain a patron, the bigger your boosted points.
             </p>
             <p>
-              This pool is illiquid and deposits are not tradeable in DeFi. When you withdraw, you receive 100% of your initial MON deposit value back as shMON.
+              When the vault is fully backed, withdrawing returns shMON worth your recorded principal at that time, subject to any conversion rounding.
             </p>
           </details>
         )}
