@@ -20,6 +20,73 @@ function asBigInt(value) {
   return BigInt(value ?? 0);
 }
 
+function normalizedHash(value, label) {
+  const hash = String(value || "").toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/.test(hash)) throw new Error(`Missing or invalid ${label}`);
+  return hash;
+}
+
+export function verifyCommittedChainIdentity({
+  transaction,
+  confirmedTransaction,
+  receipt,
+  confirmedReceipt,
+  before,
+  after,
+  confirmedBeforeBlock,
+  confirmedAfterBlock,
+}) {
+  const transactionHash = normalizedHash(transaction?.blockHash, "transaction block hash");
+  const confirmedTransactionHash = normalizedHash(
+    confirmedTransaction?.blockHash,
+    "confirmed transaction block hash",
+  );
+  const receiptHash = normalizedHash(receipt?.blockHash, "receipt block hash");
+  const confirmedReceiptHash = normalizedHash(
+    confirmedReceipt?.blockHash,
+    "confirmed receipt block hash",
+  );
+  const beforeHash = normalizedHash(before?.blockHash, "pre-commit block hash");
+  const afterHash = normalizedHash(after?.blockHash, "commit block hash");
+  const afterParentHash = normalizedHash(after?.blockParentHash, "commit parent hash");
+  const confirmedBeforeHash = normalizedHash(
+    confirmedBeforeBlock?.hash,
+    "confirmed pre-commit block hash",
+  );
+  const confirmedAfterHash = normalizedHash(
+    confirmedAfterBlock?.hash,
+    "confirmed commit block hash",
+  );
+  const confirmedAfterParentHash = normalizedHash(
+    confirmedAfterBlock?.parentHash,
+    "confirmed commit parent hash",
+  );
+
+  if (Number(transaction.blockNumber) !== Number(receipt.blockNumber)
+      || Number(confirmedTransaction?.blockNumber) !== Number(receipt.blockNumber)
+      || Number(receipt.blockNumber) !== Number(after.blockNumber)
+      || Number(before.blockNumber) + 1 !== Number(after.blockNumber)) {
+    throw new Error("Migration receipt and snapshot block numbers are not consecutive");
+  }
+  if (transactionHash !== receiptHash || receiptHash !== afterHash || afterParentHash !== beforeHash) {
+    throw new Error("Migration receipt/header does not match the before/after snapshot chain");
+  }
+  if (Number(confirmedReceipt?.blockNumber) !== Number(receipt.blockNumber)
+      || confirmedTransactionHash !== transactionHash
+      || confirmedReceiptHash !== receiptHash
+      || confirmedBeforeHash !== beforeHash
+      || confirmedAfterHash !== afterHash
+      || confirmedAfterParentHash !== beforeHash) {
+    throw new Error("Migration receipt or snapshot headers changed during verification");
+  }
+
+  return {
+    beforeBlockHash: beforeHash,
+    commitBlockHash: afterHash,
+    receiptBlockHash: receiptHash,
+  };
+}
+
 export function materializeShmonStrategyRuntime(deployedBytecode, approvedShmon) {
   const chars = normalizedBytecode(deployedBytecode?.object).split("");
   const immutableGroups = Object.values(deployedBytecode?.immutableReferences || {});

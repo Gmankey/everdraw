@@ -33,7 +33,7 @@ The migration CLI now fails closed unless all of the following match:
 - the mainnet shMON immutable equals `0x1B68626dCa36c7fE922fD2d55E4f631d962dE19c`;
 - `shareToken()` and one-time `vault()` binding match the approved dependencies.
 
-Committed-phase verification authenticates the mined transaction target and selector and uses block-hash-pinned snapshots from the block before commit and the commit block. It checks exact shMON share conservation, exact native-dust conservation, and unchanged participant, sponsor, Patron, aggregate principal, and deposit cap.
+Committed-phase verification authenticates the mined transaction target and selector and records numbered snapshots from the block before commit and the commit block. It checks exact shMON share conservation, exact native-dust conservation, and unchanged participant, sponsor, Patron, aggregate principal, and deposit cap. The follow-up remediation binds those snapshots to the receipt/header chain and re-reads the identities after state collection.
 
 Executable negative controls reject plausible getters with arbitrary/stale runtime, wrong immutable, wrong vault binding, stale compiled source, wrong or dirty source identity, wrong approved runtime hash, missing shares, changed principal, and invalid phase state.
 

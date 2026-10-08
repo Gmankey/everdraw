@@ -47,8 +47,10 @@ For the existing unrestricted vault, the migration tool authenticates the replac
 exact locally compiled runtime with the approved shMON immutable materialized, the independently
 approved clean Git commit, and the intended vault binding. Verification is phase-specific:
 pre-queue, queued, and committed. Committed verification is anchored to the actual
-`commitStrategyChange()` transaction and compares its previous block with its mined block for
-exact shMON and native-dust movement plus unchanged principal totals and cap.
+`commitStrategyChange()` transaction. It binds the transaction and receipt to the mined block
+header, binds that header to the previous block through its parent hash, and re-reads those
+identities after state collection before accepting exact shMON and native-dust movement plus
+unchanged principal totals and cap.
 
 ### Patron emergency exit
 
