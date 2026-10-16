@@ -12,6 +12,9 @@ on:
       - 'scripts/indexer/**'
       - '.github/workflows/indexer.yml'
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest

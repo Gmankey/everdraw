@@ -153,7 +153,8 @@ export function assertPublicMainnetFrontendRpc(env, config) {
     } catch {
       continue
     }
-    if (parsed.hostname.endsWith('alchemy.com') || parsed.pathname.startsWith('/v2/')) {
+    const hostname = parsed.hostname.toLowerCase()
+    if (hostname === 'alchemy.com' || hostname.endsWith('.alchemy.com') || parsed.pathname.startsWith('/v2/')) {
       throw new Error(`${name} must not expose a credential-bearing RPC in the frontend bundle`)
     }
   }

@@ -90,6 +90,10 @@ test('mainnet rejects secret-bearing third-party RPC endpoints', () => {
 test('mainnet rejects secret RPCs through alternate frontend environment paths', () => {
   const config = parseV5ReleaseManifest(mainnet)
   assert.equal(assertPublicMainnetFrontendRpc({ VITE_RPC_URL: 'https://rpc.monad.xyz' }, config), true)
+  assert.equal(assertPublicMainnetFrontendRpc({
+    VITE_RPC_URL: 'https://rpc.monad.xyz',
+    VITE_SECONDARY_RPC_URL: 'https://notalchemy.com/rpc',
+  }, config), true)
   assert.throws(
     () => assertPublicMainnetFrontendRpc({
       VITE_RPC_URL: 'https://monad-mainnet.g.alchemy.com/v2/not-a-real-key',
