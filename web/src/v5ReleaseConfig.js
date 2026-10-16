@@ -92,6 +92,11 @@ export function parseV5ReleaseManifest(raw, { expectedEnvironment } = {}) {
   const uniqueContracts = new Set(REQUIRED_CONTRACTS.map((name) => addresses[name].toLowerCase()))
   if (uniqueContracts.size !== REQUIRED_CONTRACTS.length) throw new Error('V5 contract addresses must be distinct')
 
+  const rpcUrl = httpsUrl(manifest.chain?.rpcUrl, 'V5 RPC URL')
+  if (manifest.environment === 'mainnet' && new URL(rpcUrl).hostname !== 'rpc.monad.xyz') {
+    throw new Error('Mainnet V5 release manifest must use the public Monad RPC')
+  }
+
   const deployCommit = requiredString(manifest.deployment?.deployCommit, 'V5 deploy commit')
   if (!/^[0-9a-f]{40}$/i.test(deployCommit)) throw new Error('Invalid V5 deploy commit')
 
@@ -108,7 +113,7 @@ export function parseV5ReleaseManifest(raw, { expectedEnvironment } = {}) {
       symbol: requiredString(manifest.chain?.nativeCurrency?.symbol, 'V5 native currency symbol'),
       decimals: positiveInteger(manifest.chain?.nativeCurrency?.decimals, 'V5 native currency decimals'),
     },
-    rpcUrl: httpsUrl(manifest.chain?.rpcUrl, 'V5 RPC URL'),
+    rpcUrl,
     explorerUrl: httpsUrl(manifest.chain?.explorerUrl, 'V5 explorer URL'),
     deployCommit: deployCommit.toLowerCase(),
     startBlock: positiveInteger(manifest.deployment?.startBlock, 'V5 start block'),

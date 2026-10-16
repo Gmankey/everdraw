@@ -58,10 +58,11 @@ class FakeProvider {
     return { hash: blockHash(blockNumber), timestamp: 1782950400 + blockNumber };
   }
 
-  async getLogs(filter: { address: string; fromBlock: number; toBlock: number }): Promise<FakeLog[]> {
+  async getLogs(filter: { address: string | string[]; fromBlock: number; toBlock: number }): Promise<FakeLog[]> {
+    const addresses = new Set((Array.isArray(filter.address) ? filter.address : [filter.address]).map((value) => value.toLowerCase()));
     return this.logs.filter(
       (log) =>
-        log.address.toLowerCase() === filter.address.toLowerCase() &&
+        addresses.has(log.address.toLowerCase()) &&
         log.blockNumber >= Number(filter.fromBlock) &&
         log.blockNumber <= Number(filter.toBlock)
     );

@@ -20,7 +20,7 @@ const mainnet = {
     ...V5_UAT_RELEASE_MANIFEST.chain,
     id: 143,
     name: 'Monad Mainnet',
-    rpcUrl: 'https://rpc.example',
+    rpcUrl: 'https://rpc.monad.xyz',
     explorerUrl: 'https://explorer.example',
   },
   deployment: {
@@ -72,6 +72,19 @@ test('UAT resolves one complete committed manifest without per-address fallbacks
   assert.equal(config.chainId, 10143)
   assert.equal(config.drawManager, V5_UAT_RELEASE_MANIFEST.deployment.addresses.drawManager)
 });
+
+test('mainnet rejects secret-bearing third-party RPC endpoints', () => {
+  assert.throws(
+    () => parseV5ReleaseManifest({
+      ...mainnet,
+      chain: {
+        ...mainnet.chain,
+        rpcUrl: 'https://monad-mainnet.g.alchemy.com/v2/not-a-real-key',
+      },
+    }, { expectedEnvironment: 'mainnet' }),
+    /public Monad RPC/,
+  )
+})
 
 test('mainnet rejects missing, malformed, mixed-environment, and mixed-address manifests', () => {
   assert.throws(

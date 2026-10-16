@@ -4,8 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import { Contract, Interface, JsonRpcProvider, getAddress } from "ethers";
 import { spawnSync } from "node:child_process";
-import { assertCanonicalLogBatch, queryLogsChunked, retryTransient } from "./write-watch-inputs.mjs";
+import { assertCanonicalLogBatch, queryLogsChunked, retryTransient, rpcUsageSnapshot } from "./write-watch-inputs.mjs";
 import { buildWatcherDrawInput, ingestWatcherReconstructionLogs } from "./reconstruct-watcher-input.mjs";
+import { IndependentWatcherCache, rootNeedsIndependentVerification } from "./independent-watcher-cache.mjs";
 import { readActiveV5Deployment, resolveV5RuntimeTargets } from "../keeper/v5-deployment.mjs";
 
 const RPC_URL = process.env.WATCHER_RPC_URL || process.env.RPC_URL;
@@ -16,6 +17,7 @@ const EXPECTED_CHAIN_ID = BigInt(process.env.WATCHER_CHAIN_ID || "10143");
 const CONFIGURED_DRAW_MANAGER_ADDRESS = process.env.DRAW_MANAGER_ADDRESS;
 const CONFIGURED_FROM_BLOCK = process.env.WATCHER_FROM_BLOCK || process.env.V5_WATCHER_FROM_BLOCK;
 const STATE_FILE = process.env.WATCHER_STATE_FILE || path.join(os.tmpdir(), "everdraw-v5-watcher-state.json");
+const INDEPENDENT_STATE_FILE = process.env.WATCHER_INDEPENDENT_STATE_FILE || `${STATE_FILE}.independent`;
 const MAX_BLOCKS_PER_RUN = Number(process.env.WATCHER_MAX_BLOCKS_PER_RUN || "250000");
 const CLAIM_PROOF_URL = process.env.WATCHER_CLAIM_PROOF_URL;
 const CLAIM_PROOF_TOKEN = process.env.WATCHER_CLAIM_PROOF_TOKEN;
@@ -66,6 +68,8 @@ const MIN_VETO_REMAINING_SEC = Number(process.env.WATCHER_MIN_VETO_REMAINING_SEC
 const ABI = [
   "function vault() view returns (address)",
   "function challengeEndsAt(uint256) view returns (uint64)",
+  "function currentDrawId() view returns (uint256)",
+  "function draws(uint256) view returns (uint64 periodStart,uint64 periodEnd,uint64 randomnessRequestId,bytes32 seed,uint256 totalTwab,uint256 totalPayout,uint32 winnerCount,uint32 rewardLegCount,bytes32 root,uint64 proposedAt,address proposer,uint8 status,uint256 grossYield,uint256 sponsorYield,uint256 feeAmount)",
   "event RootProposed(uint256 indexed drawId, bytes32 indexed root, uint32 winnerCount, uint256 totalPayout, address indexed proposer, bytes32 algorithmVersion, uint64 challengeEndsAt)",
   "event RootFinalized(uint256 indexed drawId, bytes32 indexed root, uint32 winnerCount, uint256 totalPayout)",
   "event SeedReceived(uint256 indexed drawId, uint64 indexed requestId, bytes32 seed)",
@@ -342,6 +346,34 @@ export async function main() {
     [deployment.addresses.twabController.toLowerCase(), "EverdrawTwabController"],
   ]);
   const monitoredAddresses = [...contractLabels.keys()];
+  const independentCache = new IndependentWatcherCache({
+    file: INDEPENDENT_STATE_FILE,
+    chainId,
+    drawManagerAddress,
+    vaultAddress,
+    fromBlock,
+  });
+  const verifyIndependentRoot = async ({ drawId, root, eventKind, throughBlock }) => {
+    await independentCache.syncThrough(provider, throughBlock);
+    independentCache.assertEvent(eventKind, drawId, root);
+    const seedBlock = independentCache.seedBlock(drawId);
+    if (!seedBlock) throw new Error(`Independent RPC has no SeedReceived block for draw ${drawId}`);
+    const input = await retryTransient(
+      () => buildWatcherDrawInput({
+        provider,
+        drawManagerAddress,
+        drawId,
+        seedBlock,
+        participantAccounts: independentCache.accounts(),
+      }),
+      `draw ${drawId} independent security-RPC reconstruction`,
+    );
+    const result = recompute(input);
+    if (result.root.toLowerCase() === String(root).toLowerCase()) {
+      independentCache.markVerified(drawId, root);
+    }
+    return { input, result };
+  };
   let state = readState({ chainId, drawManagerAddress, vaultAddress, fromBlock });
   if (state && !await retryTransient(
     () => canonicalCheckpointMatches(provider, state),
@@ -426,19 +458,12 @@ export async function main() {
               await alarm(message);
             }
             console.log(`watcher draw ${drawId} storedChallengeEndsAt=${storedChallengeEndsAt}`);
-            const seedBlock = reconstruction.seedBlocks[drawId];
-            if (!seedBlock) throw new Error(`Watcher has no SeedReceived block for draw ${drawId}`);
-            const input = await retryTransient(
-              () => buildWatcherDrawInput({
-                provider,
-                drawManagerAddress,
-                drawId,
-                seedBlock,
-                participantAccounts: reconstruction.accounts,
-              }),
-              `draw ${drawId} independent reconstruction`,
-            );
-            const recomputed = recompute(input);
+            const { result: recomputed } = await verifyIndependentRoot({
+              drawId,
+              root: proposedRoot,
+              eventKind: "proposals",
+              throughBlock: Number(log.blockNumber),
+            });
             checked++;
             if (recomputed.root.toLowerCase() !== proposedRoot) {
               const message = `EverDraw V5 root mismatch draw ${drawId}\nproposed=${proposedRoot}\nrecomputed=${recomputed.root.toLowerCase()}\noperator action: verify and vetoRoot(${drawId}) from Ledger if confirmed`;
@@ -470,19 +495,12 @@ export async function main() {
             const finalized = iface.parseLog(log);
             const drawId = finalized.args.drawId.toString();
             const finalizedRoot = finalized.args.root.toLowerCase();
-            const seedBlock = reconstruction.seedBlocks[drawId];
-            if (!seedBlock) throw new Error(`Watcher has no SeedReceived block for finalized draw ${drawId}`);
-            const input = await retryTransient(
-              () => buildWatcherDrawInput({
-                provider,
-                drawManagerAddress,
-                drawId,
-                seedBlock,
-                participantAccounts: reconstruction.accounts,
-              }),
-              `finalized draw ${drawId} independent reconstruction`,
-            );
-            const recomputed = recompute(input);
+            const { input, result: recomputed } = await verifyIndependentRoot({
+              drawId,
+              root: finalizedRoot,
+              eventKind: "finalizations",
+              throughBlock: Number(log.blockNumber),
+            });
             if (recomputed.root.toLowerCase() !== finalizedRoot) {
               const message = `EverDraw V5 finalized root mismatch draw ${drawId}\nfinalized=${finalizedRoot}\nrecomputed=${recomputed.root.toLowerCase()}`;
               coverageFailures.push(message);
@@ -491,6 +509,7 @@ export async function main() {
               continue;
             }
             await publishClaimProofs({ input, result: recomputed, vaultAddress });
+            independentCache.markFinalizationHandled(drawId, finalizedRoot);
           }
 
           // Recheck immediately before persistence. Proposal reconstruction can take
@@ -524,6 +543,54 @@ export async function main() {
     );
   }
   const caughtUp = runEnd === latest;
+  if (caughtUp) {
+    const currentDrawId = await retryTransient(
+      () => withRpcTimeout(manager.currentDrawId(), "watcher current draw"),
+      "watcher current draw",
+    );
+    if (currentDrawId > 0n) {
+      const currentDraw = await retryTransient(
+        () => withRpcTimeout(manager.draws(currentDrawId), `watcher draw ${currentDrawId}`),
+        `watcher draw ${currentDrawId}`,
+      );
+      if (rootNeedsIndependentVerification({
+        status: currentDraw.status,
+        root: currentDraw.root,
+        verifiedRoot: independentCache.verifiedRoot(currentDrawId),
+      })) {
+        const { result } = await verifyIndependentRoot({
+          drawId: currentDrawId,
+          root: currentDraw.root,
+          eventKind: "proposals",
+          throughBlock: latest,
+        });
+        checked++;
+        if (result.root.toLowerCase() !== currentDraw.root.toLowerCase()) {
+          const message = `EverDraw V5 independently discovered root mismatch draw ${currentDrawId}\nonchain=${currentDraw.root.toLowerCase()}\nrecomputed=${result.root.toLowerCase()}\noperator action: verify and vetoRoot(${currentDrawId}) from Ledger if confirmed`;
+          coverageFailures.push(message);
+          rootMismatches.push(message);
+          await alarm(message);
+        }
+      }
+      if (Number(currentDraw.status) === 4 && !independentCache.finalizationHandled(currentDrawId, currentDraw.root)) {
+        const { input, result } = await verifyIndependentRoot({
+          drawId: currentDrawId,
+          root: currentDraw.root,
+          eventKind: "finalizations",
+          throughBlock: latest,
+        });
+        if (result.root.toLowerCase() !== currentDraw.root.toLowerCase()) {
+          const message = "EverDraw V5 independently discovered finalized root mismatch draw " + currentDrawId + "\nfinalized=" + currentDraw.root.toLowerCase() + "\nrecomputed=" + result.root.toLowerCase();
+          coverageFailures.push(message);
+          rootMismatches.push(message);
+          await alarm(message);
+        } else {
+          await publishClaimProofs({ input, result, vaultAddress });
+          independentCache.markFinalizationHandled(currentDrawId, currentDraw.root);
+        }
+      }
+    }
+  }
   if (!caughtUp) {
     console.warn(`watcher bootstrap incomplete: cursor ${runEnd}, chain head ${latest}; healthcheck remains unconfirmed`);
   }
@@ -555,6 +622,7 @@ export async function main() {
   }
   if (caughtUp && HEALTHCHECKS_PING_URL) await fetch(HEALTHCHECKS_PING_URL).catch(() => {});
   console.log(`watcher checked ${checked} RootProposed events through block ${runEnd} (scan start ${scanFromBlock}, chain head ${latest})`);
+  console.log(`watcher rpc usage ${JSON.stringify(rpcUsageSnapshot())}`);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

@@ -146,6 +146,8 @@ test("managed keeper refuses to start without its required success heartbeat", (
 });
 
 test("keeper includes ClaimLeaf.kind in claimMany payloads", () => { const source = readFileSync(new URL("../keeper-v5.js", import.meta.url), "utf8"); assert.equal(source.includes("kind: leaf.kind"), true); });
+test("keeper balance health reads use KEEPER_READ_RPC_URL, not the transaction RPC", () => { const source = readFileSync(new URL("../keeper-v5.js", import.meta.url), "utf8"); assert.equal(source.includes("readProvider.getBalance(signer.address)"), true); assert.equal(source.includes("writeProvider.getBalance(signer.address)"), false); });
+test("keeper validates the paid write provider only when sending a transaction", () => { const source = readFileSync(new URL("../keeper-v5.js", import.meta.url), "utf8"); const runOnce = source.slice(source.indexOf("async function runOnce"), source.indexOf("async function main")); assert.equal(runOnce.includes("writeProvider.getNetwork"), false); assert.equal(source.includes("signer.provider.getNetwork()"), true); });
 
 
 test("keeper advances participant discovery during an idle loop", async () => {

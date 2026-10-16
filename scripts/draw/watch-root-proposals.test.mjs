@@ -4,6 +4,7 @@ import test from "node:test";
 import { Interface } from "ethers";
 
 import { compute } from "./compute-winners.js";
+import { rootNeedsIndependentVerification } from "./independent-watcher-cache.mjs";
 import { ingestWatcherReconstructionLogs } from "./reconstruct-watcher-input.mjs";
 import {
   canCheckpointBatch,
@@ -21,6 +22,15 @@ import {
   participantAccountsFromLogs,
   retryTransient,
 } from "./write-watch-inputs.mjs";
+
+
+test("a proposed or finalized root cannot be healthy until independently verified", () => {
+  const root = "0x" + "11".repeat(32);
+  assert.equal(rootNeedsIndependentVerification({ status: 2, root, verifiedRoot: undefined }), false);
+  assert.equal(rootNeedsIndependentVerification({ status: 3, root, verifiedRoot: undefined }), true);
+  assert.equal(rootNeedsIndependentVerification({ status: 4, root, verifiedRoot: "0x" + "22".repeat(32) }), true);
+  assert.equal(rootNeedsIndependentVerification({ status: 3, root, verifiedRoot: root }), false);
+});
 
 test("privileged governance events identify the contract and transaction", () => {
   const message = formatPrivilegedChange({
@@ -201,6 +211,8 @@ test("mainnet watcher is independently configured and schedule-gated", () => {
   assert.match(workflow, /secrets\.V5_WATCHER_MAINNET_HEALTHCHECK_URL/);
   assert.match(workflow, /\.watcher-cache-mainnet/);
   assert.match(workflow, /WATCHER_LOG_CHUNK_SIZE: "100"/);
+  assert.match(workflow, /WATCHER_INDEPENDENT_STATE_FILE/);
+  assert.match(workflow, /WATCHER_INDEPENDENT_LOG_CHUNK_SIZE: "1000"/);
   assert.match(workflow, /if: always\(\)/);
   assert.match(workflow, /actions: write/);
   assert.match(workflow, /Queue successor watcher/);

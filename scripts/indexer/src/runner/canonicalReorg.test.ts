@@ -68,6 +68,7 @@ class FakeProvider {
   version: ChainVersion = 'a';
   reorgDuringFetch = false;
   getLogsCalls = 0;
+  getLogsAddressCounts: number[] = [];
   missingBlockNumber: number | null = null;
 
   async getBlockNumber(): Promise<number> {
@@ -79,15 +80,17 @@ class FakeProvider {
     return { hash: hash(blockNumber, this.version), timestamp: 1782950400 + blockNumber };
   }
 
-  async getLogs(filter: { address: string; fromBlock: number; toBlock: number }): Promise<FakeLog[]> {
+  async getLogs(filter: { address: string | string[]; fromBlock: number; toBlock: number }): Promise<FakeLog[]> {
+    const addresses = new Set((Array.isArray(filter.address) ? filter.address : [filter.address]).map((value) => value.toLowerCase()));
+    this.getLogsAddressCounts.push(addresses.size);
     const result = logs(this.version).filter(
       (log) =>
-        log.address.toLowerCase() === filter.address.toLowerCase() &&
+        addresses.has(log.address.toLowerCase()) &&
         log.blockNumber >= Number(filter.fromBlock) &&
         log.blockNumber <= Number(filter.toBlock)
     );
     this.getLogsCalls += 1;
-    if (this.reorgDuringFetch && this.getLogsCalls === 3) {
+    if (this.reorgDuringFetch && this.getLogsCalls === 1) {
       this.version = 'b';
     }
     return result;
@@ -146,6 +149,7 @@ assert.deepEqual(rawEventsRepo.getRange(100, 106).map((row) => row.eventName), [
   'PrizeCompounded',
 ]);
 assert.equal(rawEventsRepo.getRange(100, 106)[0].wallet, walletA);
+assert.deepEqual(provider.getLogsAddressCounts.slice(0, 7), Array(7).fill(3), "each chunk must use one combined address filter");
 
 const afterInitial = rebuilds;
 provider.version = 'b';
@@ -246,3 +250,77 @@ assert.equal(missingStatus.lastScannedBlock, 99, 'cursor must not advance past a
 assert.equal(missingStatus.canonicalHash, null);
 
 console.log('canonicalReorg.test.ts ok');
+
+assert.equal(provider.getLogsCalls >= 7, true, 'combined address filters use one eth_getLogs call per block chunk');
+
+const disagreementDb = new Database(':memory:');
+applySchema(disagreementDb);
+const disagreementCanonical = new FakeProvider();
+const disagreementLogs = new FakeProvider();
+disagreementLogs.version = 'b';
+const disagreementRunner = createIndexerRunner({
+  config: { ...config, chunkSize: 7, rpcRetryAttempts: 1 },
+  rawEventsRepo: createRawEventsRepo(disagreementDb),
+  indexerStateRepo: createIndexerStateRepo(disagreementDb),
+  provider: disagreementCanonical as unknown as AbstractProvider,
+  logsProvider: disagreementLogs as unknown as AbstractProvider,
+  deriveRoundsService: { rebuildFromRaw() {} },
+  deriveWalletRoundsService: { rebuildFromRaw() {} },
+  deriveWalletStatsService: { rebuild() {} },
+});
+await assert.rejects(
+  disagreementRunner.syncOnce(),
+  /Canonical log mismatch/,
+  'logs from a provider on a different canonical view must not advance the cursor',
+);
+assert.equal((await disagreementRunner.getStatus()).lastScannedBlock, 99);
+
+const errorDb = new Database(':memory:');
+applySchema(errorDb);
+const errorProvider = new FakeProvider();
+errorProvider.getLogs = async () => { throw new Error('RPC unavailable'); };
+const errorRunner = createIndexerRunner({
+  config: { ...config, chunkSize: 7, rpcRetryAttempts: 1 },
+  rawEventsRepo: createRawEventsRepo(errorDb),
+  indexerStateRepo: createIndexerStateRepo(errorDb),
+  provider: new FakeProvider() as unknown as AbstractProvider,
+  logsProvider: errorProvider as unknown as AbstractProvider,
+  deriveRoundsService: { rebuildFromRaw() {} },
+  deriveWalletRoundsService: { rebuildFromRaw() {} },
+  deriveWalletStatsService: { rebuild() {} },
+});
+await assert.rejects(
+  errorRunner.syncOnce(),
+  /RPC unavailable/,
+  'an RPC error must not be interpreted as an empty log result',
+);
+assert.equal((await errorRunner.getStatus()).lastScannedBlock, 99);
+
+class RangeLimitedProvider extends FakeProvider {
+  async getLogs(filter: { address: string | string[]; fromBlock: number; toBlock: number }): Promise<FakeLog[]> {
+    if (Number(filter.toBlock) - Number(filter.fromBlock) > 1) {
+      throw new Error('eth_getLogs block range limited to 2 blocks');
+    }
+    return super.getLogs(filter);
+  }
+}
+
+const adaptiveDb = new Database(':memory:');
+applySchema(adaptiveDb);
+const adaptiveRunner = createIndexerRunner({
+  config: { ...config, chunkSize: 7, rpcRetryAttempts: 1 },
+  rawEventsRepo: createRawEventsRepo(adaptiveDb),
+  indexerStateRepo: createIndexerStateRepo(adaptiveDb),
+  provider: new FakeProvider() as unknown as AbstractProvider,
+  logsProvider: new RangeLimitedProvider() as unknown as AbstractProvider,
+  deriveRoundsService: { rebuildFromRaw() {} },
+  deriveWalletRoundsService: { rebuildFromRaw() {} },
+  deriveWalletStatsService: { rebuild() {} },
+});
+await adaptiveRunner.syncOnce();
+assert.equal((await adaptiveRunner.getStatus()).lastScannedBlock, 106);
+assert.equal(
+  createRawEventsRepo(adaptiveDb).getRange(100, 106).length,
+  7,
+  'adaptive range splitting must preserve every event',
+);
