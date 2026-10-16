@@ -3,9 +3,12 @@ export type RpcProviderRole = 'canonical' | 'logs' | 'fallback';
 export interface RpcTelemetrySnapshot {
   calls: Record<string, number>;
   errors: Record<string, number>;
+  wireCalls: Record<string, number>;
+  wireErrors: Record<string, number>;
   fallbackReasons: Record<string, number>;
   fallbackRequestsInWindow: number;
   fallbackBudgetPerHour: number;
+  fallbackBudgetScope: 'process';
   fallbackBudgetWindowStartedAt: string | null;
   lastFallbackAt: string | null;
 }
@@ -25,9 +28,18 @@ function increment(target: Record<string, number>, key: string): void {
   target[key] = (target[key] ?? 0) + 1;
 }
 
+export function redactRpcSecrets(value: unknown): string {
+  return String(value ?? '')
+    .replace(/https?:\/\/[^\s"'<>]*(?:alchemy\.com|tenderly\.co)[^\s"'<>]*/gi, '[redacted-rpc-url]')
+    .replace(/https?:\/\/[^\s"'<>]*\/v2\/[^\s"'<>]+/gi, '[redacted-rpc-url]')
+    .replace(/([?&](?:api[_-]?key|access[_-]?key|token)=)[^&\s"'<>]+/gi, '$1[redacted]');
+}
+
 export class RpcPolicy {
   private readonly calls: Record<string, number> = {};
   private readonly errors: Record<string, number> = {};
+  private readonly wireCalls: Record<string, number> = {};
+  private readonly wireErrors: Record<string, number> = {};
   private readonly fallbackReasons: Record<string, number> = {};
   private windowStartedAt = 0;
   private fallbackRequests = 0;
@@ -62,13 +74,24 @@ export class RpcPolicy {
     return this.attempt('fallback', input.method, input.fallback);
   }
 
+  recordWireRequest(role: RpcProviderRole, method: string): void {
+    increment(this.wireCalls, `${role}:${method}`);
+  }
+
+  recordWireError(role: RpcProviderRole, method: string): void {
+    increment(this.wireErrors, `${role}:${method}`);
+  }
+
   snapshot(): RpcTelemetrySnapshot {
     return {
       calls: { ...this.calls },
       errors: { ...this.errors },
+      wireCalls: { ...this.wireCalls },
+      wireErrors: { ...this.wireErrors },
       fallbackReasons: { ...this.fallbackReasons },
       fallbackRequestsInWindow: this.fallbackRequests,
       fallbackBudgetPerHour: this.options.fallbackMaxRequestsPerHour,
+      fallbackBudgetScope: 'process',
       fallbackBudgetWindowStartedAt: this.windowStartedAt ? new Date(this.windowStartedAt).toISOString() : null,
       lastFallbackAt: this.lastFallbackAtMs ? new Date(this.lastFallbackAtMs).toISOString() : null,
     };

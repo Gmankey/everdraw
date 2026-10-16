@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import test from 'node:test';
-import { RpcPolicy } from './rpcPolicy.js';
+import { InstrumentedJsonRpcProvider } from './service.js';
+import { RpcPolicy, redactRpcSecrets } from './rpcPolicy.js';
 
 function policy(overrides: Record<string, unknown> = {}) {
   return new RpcPolicy({
@@ -96,4 +98,44 @@ test('a failing fallback enters cooldown without consuming urgent services elsew
     }),
     /cooldown active/,
   );
+});
+
+
+test('instrumented provider counts actual wire payloads by role', async (t) => {
+  const server = http.createServer(async (request, response) => {
+    let body = '';
+    for await (const part of request) body += part;
+    const calls = JSON.parse(body);
+    const handle = (call: { id: number; method: string }) => ({
+      jsonrpc: '2.0',
+      id: call.id,
+      result: call.method === 'eth_chainId' ? '0x8f' : '0x2a',
+    });
+    response.setHeader('content-type', 'application/json');
+    response.end(JSON.stringify(Array.isArray(calls) ? calls.map(handle) : handle(calls)));
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Missing loopback server address');
+  const rpc = policy({ attempts: 1 });
+  const provider = new InstrumentedJsonRpcProvider(
+    `http://127.0.0.1:${address.port}`,
+    'canonical',
+    rpc,
+  );
+  t.after(() => provider.destroy());
+  assert.equal(await provider.getBlockNumber(), 42);
+  const snapshot = rpc.snapshot();
+  assert.equal(snapshot.wireCalls['canonical:eth_blockNumber'], 1);
+  assert.ok((snapshot.wireCalls['canonical:eth_chainId'] || 0) >= 1);
+  assert.equal(snapshot.fallbackBudgetScope, 'process');
+});
+
+
+test('RPC redaction removes endpoint credentials before logging', () => {
+  const secret = 'not-a-real-secret-value';
+  const output = redactRpcSecrets(`request failed https://monad-mainnet.g.alchemy.com/v2/${secret}?apiKey=${secret}`);
+  assert.equal(output.includes(secret), false);
+  assert.match(output, /redacted-rpc-url/);
 });

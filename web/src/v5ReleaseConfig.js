@@ -141,6 +141,29 @@ function sameAddress(actual, expected, label) {
   }
 }
 
+export function assertPublicMainnetFrontendRpc(env, config) {
+  if (config?.environment !== 'mainnet') return true
+  for (const [name, rawValue] of Object.entries(env || {})) {
+    if (!name.startsWith('VITE_') || !name.includes('RPC')) continue
+    const value = String(rawValue || '').trim()
+    if (!value) continue
+    let parsed
+    try {
+      parsed = new URL(value)
+    } catch {
+      continue
+    }
+    if (parsed.hostname.endsWith('alchemy.com') || parsed.pathname.startsWith('/v2/')) {
+      throw new Error(`${name} must not expose a credential-bearing RPC in the frontend bundle`)
+    }
+  }
+  const legacyRpc = String(env?.VITE_RPC_URL || '').trim()
+  if (legacyRpc && new URL(legacyRpc).hostname !== 'rpc.monad.xyz') {
+    throw new Error('VITE_RPC_URL must use the public Monad RPC for a mainnet V5 build')
+  }
+  return true
+}
+
 export function assertV5RuntimeSnapshot(config, snapshot) {
   if (BigInt(snapshot?.chainId ?? 0) !== BigInt(config.chainId)) {
     throw new Error(`RPC chain ${snapshot?.chainId ?? '<missing>'} does not match approved chain ${config.chainId}`)

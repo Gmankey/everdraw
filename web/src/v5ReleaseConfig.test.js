@@ -5,6 +5,7 @@ import test from 'node:test'
 
 import {
   V5_UAT_RELEASE_MANIFEST,
+  assertPublicMainnetFrontendRpc,
   assertV5RuntimeSnapshot,
   assertV5WalletChain,
   parseV5ReleaseManifest,
@@ -83,6 +84,23 @@ test('mainnet rejects secret-bearing third-party RPC endpoints', () => {
       },
     }, { expectedEnvironment: 'mainnet' }),
     /public Monad RPC/,
+  )
+})
+
+test('mainnet rejects secret RPCs through alternate frontend environment paths', () => {
+  const config = parseV5ReleaseManifest(mainnet)
+  assert.equal(assertPublicMainnetFrontendRpc({ VITE_RPC_URL: 'https://rpc.monad.xyz' }, config), true)
+  assert.throws(
+    () => assertPublicMainnetFrontendRpc({
+      VITE_RPC_URL: 'https://monad-mainnet.g.alchemy.com/v2/not-a-real-key',
+    }, config),
+    /must not expose/,
+  )
+  assert.throws(
+    () => assertPublicMainnetFrontendRpc({
+      VITE_SECONDARY_RPC_URL: 'https://example.invalid/v2/not-a-real-key',
+    }, config),
+    /must not expose/,
   )
 })
 

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { Contract, Interface, JsonRpcProvider, getAddress } from "ethers";
 import { spawnSync } from "node:child_process";
-import { assertCanonicalLogBatch, queryLogsChunked, retryTransient, rpcUsageSnapshot } from "./write-watch-inputs.mjs";
+import { CountingJsonRpcProvider, assertCanonicalLogBatch, queryLogsChunked, redactRpcSecrets, retryTransient, rpcUsageSnapshot } from "./write-watch-inputs.mjs";
 import { buildWatcherDrawInput, ingestWatcherReconstructionLogs } from "./reconstruct-watcher-input.mjs";
 import { IndependentWatcherCache, rootNeedsIndependentVerification } from "./independent-watcher-cache.mjs";
 import { readActiveV5Deployment, resolveV5RuntimeTargets } from "../keeper/v5-deployment.mjs";
@@ -307,20 +307,22 @@ export async function main() {
   // Current head/config reads may use a lightweight endpoint so archive stalls cannot
   // hide liveness, but they never supply participant reconstruction data.
   fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
-  const provider = new JsonRpcProvider(RPC_URL);
-  const headProvider = HEAD_RPC_URL === RPC_URL ? provider : new JsonRpcProvider(HEAD_RPC_URL);
-  const chainId = (await retryTransient(() => provider.getNetwork(), "watcher chain")).chainId;
+  const provider = new CountingJsonRpcProvider(RPC_URL, "security");
+  const headProvider = new CountingJsonRpcProvider(
+    HEAD_RPC_URL,
+    "canonical",
+    undefined,
+    undefined,
+    HEAD_RPC_TIMEOUT_MS,
+  );
   const headChainId = (await retryTransient(() => headProvider.getNetwork(), "watcher head chain")).chainId;
-  if (chainId !== EXPECTED_CHAIN_ID || headChainId !== EXPECTED_CHAIN_ID) {
-    throw new Error(`Watcher RPC chain mismatch: reconstruction=${chainId} head=${headChainId} expected=${EXPECTED_CHAIN_ID}`);
-  }
-  for (const [label, candidate] of [["reconstruction", provider], ["head", headProvider]]) {
-    const code = await retryTransient(
-      () => withRpcTimeout(candidate.getCode(drawManagerAddress), `watcher ${label} DrawManager bytecode`),
-      `watcher ${label} DrawManager bytecode`,
-    );
-    if (code === "0x") throw new Error(`Watcher ${label} RPC has no DrawManager bytecode at ${drawManagerAddress}`);
-  }
+  if (headChainId !== EXPECTED_CHAIN_ID) throw new Error(`Watcher head RPC chain mismatch: ${headChainId} expected=${EXPECTED_CHAIN_ID}`);
+  const chainId = headChainId;
+  const headCode = await retryTransient(
+    () => withRpcTimeout(headProvider.getCode(drawManagerAddress), "watcher head DrawManager bytecode"),
+    "watcher head DrawManager bytecode",
+  );
+  if (headCode === "0x") throw new Error(`Watcher head RPC has no DrawManager bytecode at ${drawManagerAddress}`);
   const latest = await retryTransient(
     () => withRpcTimeout(headProvider.getBlockNumber(), "watcher chain head"),
     "watcher chain head",
@@ -353,9 +355,24 @@ export async function main() {
     vaultAddress,
     fromBlock,
   });
+  let securityProviderValidated = false;
+  const validateSecurityProvider = async () => {
+    if (securityProviderValidated) return;
+    const securityChainId = (await retryTransient(() => provider.getNetwork(), "watcher security chain")).chainId;
+    if (securityChainId !== EXPECTED_CHAIN_ID) {
+      throw new Error(`Watcher security RPC chain mismatch: ${securityChainId} expected=${EXPECTED_CHAIN_ID}`);
+    }
+    const code = await retryTransient(
+      () => withRpcTimeout(provider.getCode(drawManagerAddress), "watcher security DrawManager bytecode"),
+      "watcher security DrawManager bytecode",
+    );
+    if (code === "0x") throw new Error(`Watcher security RPC has no DrawManager bytecode at ${drawManagerAddress}`);
+    securityProviderValidated = true;
+  };
   const verifyIndependentRoot = async ({ drawId, root, eventKind, throughBlock }) => {
-    await independentCache.syncThrough(provider, throughBlock);
-    independentCache.assertEvent(eventKind, drawId, root);
+    await validateSecurityProvider();
+    await independentCache.syncThrough(provider, throughBlock, { canonicalProvider: headProvider });
+    const event = independentCache.assertEvent(eventKind, drawId, root);
     const seedBlock = independentCache.seedBlock(drawId);
     if (!seedBlock) throw new Error(`Independent RPC has no SeedReceived block for draw ${drawId}`);
     const input = await retryTransient(
@@ -369,14 +386,15 @@ export async function main() {
       `draw ${drawId} independent security-RPC reconstruction`,
     );
     const result = recompute(input);
-    if (result.root.toLowerCase() === String(root).toLowerCase()) {
-      independentCache.markVerified(drawId, root);
-    }
-    return { input, result };
+    const evidence = await independentCache.assertEvidenceCanonical(headProvider, eventKind, drawId, root);
+    const proposalEvidence = eventKind === "proposals"
+      ? evidence
+      : await independentCache.assertEvidenceCanonical(headProvider, "proposals", drawId, root);
+    return { input, result, event, evidence, proposalEvidence };
   };
   let state = readState({ chainId, drawManagerAddress, vaultAddress, fromBlock });
   if (state && !await retryTransient(
-    () => canonicalCheckpointMatches(provider, state),
+    () => canonicalCheckpointMatches(headProvider, state),
     "watcher canonical checkpoint",
   )) {
     console.warn(`watcher reorg detected at block ${state.lastScannedBlock}; rebuilding from ${fromBlock}`);
@@ -395,12 +413,63 @@ export async function main() {
   const coverageFailures = [];
   const rootMismatches = [];
   const enforceLiveWindow = shouldEnforceLiveWindow(state);
+  const verifyProposal = async ({ drawId, root, throughBlock, discoveryDeadline }) => {
+    const { result, event, proposalEvidence } = await verifyIndependentRoot({
+      drawId,
+      root,
+      eventKind: "proposals",
+      throughBlock,
+    });
+    checked++;
+    let acceptable = true;
+    const independentDeadline = Number(event.challengeEndsAt);
+    const storedChallengeEndsAt = await retryTransient(
+      () => withRpcTimeout(manager.challengeEndsAt(drawId), `draw ${drawId} challenge deadline`),
+      `draw ${drawId} challenge deadline`,
+    );
+    if (discoveryDeadline != null && Number(discoveryDeadline) !== independentDeadline) {
+      const message = `EverDraw V5 proposal deadline provider disagreement draw ${drawId}\ndiscovery=${discoveryDeadline}\nindependent=${independentDeadline}`;
+      coverageFailures.push(message);
+      rootMismatches.push(message);
+      acceptable = false;
+      await alarm(message);
+    }
+    if (challengeDeadlineMismatch({ eventDeadline: independentDeadline, storedDeadline: storedChallengeEndsAt })) {
+      const message = `EverDraw V5 challenge deadline mismatch draw ${drawId}\nevent=${independentDeadline}\nonchain=${storedChallengeEndsAt}`;
+      coverageFailures.push(message);
+      rootMismatches.push(message);
+      acceptable = false;
+      await alarm(message);
+    }
+    console.log(`watcher draw ${drawId} storedChallengeEndsAt=${storedChallengeEndsAt}`);
+    if (result.root.toLowerCase() !== String(root).toLowerCase()) {
+      const message = `EverDraw V5 root mismatch draw ${drawId}\nproposed=${String(root).toLowerCase()}\nrecomputed=${result.root.toLowerCase()}\noperator action: verify and vetoRoot(${drawId}) from Ledger if confirmed`;
+      coverageFailures.push(message);
+      rootMismatches.push(message);
+      acceptable = false;
+      await alarm(message);
+    }
+    if (enforceLiveWindow) {
+      const timingFailure = proposalCoverageFailure({
+        challengeEndsAt: storedChallengeEndsAt,
+        observedAt: Math.floor(Date.now() / 1000),
+      });
+      if (timingFailure) {
+        const message = `EverDraw V5 watcher coverage late for draw ${drawId}: ${timingFailure}`;
+        coverageFailures.push(message);
+        acceptable = false;
+        await alarm(message);
+      }
+    }
+    if (acceptable) independentCache.markVerified(drawId, proposalEvidence);
+    return { result, acceptable };
+  };
 
   if (scanFromBlock <= latest) {
     const seedTopic = iface.getEvent("SeedReceived").topicHash;
     const transferTopic = iface.getEvent("Transfer").topicHash;
     await queryLogsChunked(
-      provider,
+      headProvider,
       {
         address: monitoredAddresses,
         topics: [[rootTopic, finalizedTopic, seedTopic, transferTopic, ...privilegedTopics.keys()]],
@@ -444,44 +513,12 @@ export async function main() {
             const proposal = iface.parseLog(log);
             const drawId = proposal.args.drawId.toString();
             const proposedRoot = proposal.args.root.toLowerCase();
-            const storedChallengeEndsAt = await retryTransient(
-              () => withRpcTimeout(manager.challengeEndsAt(drawId), `draw ${drawId} challenge deadline`),
-              `draw ${drawId} challenge deadline`,
-            );
-            if (challengeDeadlineMismatch({
-              eventDeadline: proposal.args.challengeEndsAt,
-              storedDeadline: storedChallengeEndsAt,
-            })) {
-              const message = `EverDraw V5 challenge deadline mismatch draw ${drawId}\nevent=${proposal.args.challengeEndsAt}\nonchain=${storedChallengeEndsAt}`;
-              coverageFailures.push(message);
-              rootMismatches.push(message);
-              await alarm(message);
-            }
-            console.log(`watcher draw ${drawId} storedChallengeEndsAt=${storedChallengeEndsAt}`);
-            const { result: recomputed } = await verifyIndependentRoot({
+            await verifyProposal({
               drawId,
               root: proposedRoot,
-              eventKind: "proposals",
               throughBlock: Number(log.blockNumber),
+              discoveryDeadline: proposal.args.challengeEndsAt,
             });
-            checked++;
-            if (recomputed.root.toLowerCase() !== proposedRoot) {
-              const message = `EverDraw V5 root mismatch draw ${drawId}\nproposed=${proposedRoot}\nrecomputed=${recomputed.root.toLowerCase()}\noperator action: verify and vetoRoot(${drawId}) from Ledger if confirmed`;
-              coverageFailures.push(message);
-              rootMismatches.push(message);
-              await alarm(message);
-            }
-            if (enforceLiveWindow) {
-              const timingFailure = proposalCoverageFailure({
-                challengeEndsAt: storedChallengeEndsAt,
-                observedAt: Math.floor(Date.now() / 1000),
-              });
-              if (timingFailure) {
-                const message = `EverDraw V5 watcher coverage late for draw ${drawId}: ${timingFailure}`;
-                coverageFailures.push(message);
-                await alarm(message);
-              }
-            }
           }
 
           const finalizations = logs
@@ -495,7 +532,7 @@ export async function main() {
             const finalized = iface.parseLog(log);
             const drawId = finalized.args.drawId.toString();
             const finalizedRoot = finalized.args.root.toLowerCase();
-            const { input, result: recomputed } = await verifyIndependentRoot({
+            const { input, result: recomputed, evidence } = await verifyIndependentRoot({
               drawId,
               root: finalizedRoot,
               eventKind: "finalizations",
@@ -509,12 +546,12 @@ export async function main() {
               continue;
             }
             await publishClaimProofs({ input, result: recomputed, vaultAddress });
-            independentCache.markFinalizationHandled(drawId, finalizedRoot);
+            independentCache.markFinalizationHandled(drawId, evidence);
           }
 
           // Recheck immediately before persistence. Proposal reconstruction can take
           // long enough for the canonical chain to change after the initial log read.
-          const verified = await assertCanonicalLogBatch(provider, {
+          const verified = await assertCanonicalLogBatch(headProvider, {
             windows,
             logs,
             boundaryHashes: canonical.boundaryHashes,
@@ -543,6 +580,7 @@ export async function main() {
     );
   }
   const caughtUp = runEnd === latest;
+  let currentEvidence;
   if (caughtUp) {
     const currentDrawId = await retryTransient(
       () => withRpcTimeout(manager.currentDrawId(), "watcher current draw"),
@@ -553,27 +591,21 @@ export async function main() {
         () => withRpcTimeout(manager.draws(currentDrawId), `watcher draw ${currentDrawId}`),
         `watcher draw ${currentDrawId}`,
       );
+      await independentCache.ensureCanonical(headProvider);
+      currentEvidence = { drawId: currentDrawId, root: currentDraw.root, status: Number(currentDraw.status) };
       if (rootNeedsIndependentVerification({
         status: currentDraw.status,
         root: currentDraw.root,
         verifiedRoot: independentCache.verifiedRoot(currentDrawId),
       })) {
-        const { result } = await verifyIndependentRoot({
+        await verifyProposal({
           drawId: currentDrawId,
           root: currentDraw.root,
-          eventKind: "proposals",
           throughBlock: latest,
         });
-        checked++;
-        if (result.root.toLowerCase() !== currentDraw.root.toLowerCase()) {
-          const message = `EverDraw V5 independently discovered root mismatch draw ${currentDrawId}\nonchain=${currentDraw.root.toLowerCase()}\nrecomputed=${result.root.toLowerCase()}\noperator action: verify and vetoRoot(${currentDrawId}) from Ledger if confirmed`;
-          coverageFailures.push(message);
-          rootMismatches.push(message);
-          await alarm(message);
-        }
       }
       if (Number(currentDraw.status) === 4 && !independentCache.finalizationHandled(currentDrawId, currentDraw.root)) {
-        const { input, result } = await verifyIndependentRoot({
+        const { input, result, evidence } = await verifyIndependentRoot({
           drawId: currentDrawId,
           root: currentDraw.root,
           eventKind: "finalizations",
@@ -586,7 +618,7 @@ export async function main() {
           await alarm(message);
         } else {
           await publishClaimProofs({ input, result, vaultAddress });
-          independentCache.markFinalizationHandled(currentDrawId, currentDraw.root);
+          independentCache.markFinalizationHandled(currentDrawId, evidence);
         }
       }
     }
@@ -601,13 +633,24 @@ export async function main() {
   }
   if (caughtUp) {
     const finalCanonical = await retryTransient(
-      () => canonicalCheckpointMatches(provider, {
+      () => canonicalCheckpointMatches(headProvider, {
         lastScannedBlock: runEnd,
         lastScannedBlockHash: lastCheckpointHash,
       }),
       "watcher final canonical checkpoint",
     );
     if (!finalCanonical) throw new Error(`Watcher canonical checkpoint changed at block ${runEnd}`);
+    await independentCache.ensureCanonical(headProvider);
+    if (currentEvidence && rootNeedsIndependentVerification({
+      status: currentEvidence.status,
+      root: currentEvidence.root,
+      verifiedRoot: independentCache.verifiedRoot(currentEvidence.drawId),
+    })) {
+      throw new Error(`Independent proposal evidence changed before health for draw ${currentEvidence.drawId}`);
+    }
+    if (currentEvidence?.status === 4 && !independentCache.finalizationHandled(currentEvidence.drawId, currentEvidence.root)) {
+      throw new Error(`Independent finalization evidence changed before health for draw ${currentEvidence.drawId}`);
+    }
     writeState({
       chainId,
       drawManagerAddress,
@@ -627,7 +670,8 @@ export async function main() {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(async (err) => {
-    if (!err.alreadyAlarmed) await alarm(`EverDraw V5 watcher failed: ${err.stack || err.message}`);
+    console.error(`watcher rpc usage ${JSON.stringify(rpcUsageSnapshot())}`);
+    if (!err.alreadyAlarmed) await alarm(`EverDraw V5 watcher failed: ${redactRpcSecrets(err.stack || err.message)}`);
     process.exit(1);
   });
 }

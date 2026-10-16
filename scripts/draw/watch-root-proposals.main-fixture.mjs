@@ -1,0 +1,202 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { Interface, JsonRpcProvider, Network } from 'ethers';
+import { readActiveV5Deployment } from '../keeper/v5-deployment.mjs';
+import { compute } from './compute-winners.js';
+
+const scenario = process.argv[2];
+if (!['valid', 'expired', 'deadline-mismatch', 'reorg', 'idle'].includes(scenario)) {
+  throw new Error(`Unknown watcher fixture scenario ${scenario}`);
+}
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'everdraw-watcher-main-'));
+const deployment = readActiveV5Deployment('deployments/monad-mainnet.json', { expectedChainId: 143 });
+const addresses = deployment.addresses;
+const start = deployment.startBlock;
+const latest = start + 4;
+for (const name of [
+  'DRAW_MANAGER_ADDRESS',
+  'WATCHER_FROM_BLOCK',
+  'V5_WATCHER_FROM_BLOCK',
+  'TELEGRAM_BOT_TOKEN',
+  'TELEGRAM_CHAT_ID',
+  'WATCHER_CLAIM_PROOF_URL',
+  'WATCHER_CLAIM_PROOF_TOKEN',
+]) delete process.env[name];
+Object.assign(process.env, {
+  DEPLOYMENT_FILE: 'deployments/monad-mainnet.json',
+  WATCHER_CHAIN_ID: '143',
+  WATCHER_RPC_URL: 'http://security.invalid',
+  WATCHER_HEAD_RPC_URL: 'http://head.invalid',
+  WATCHER_LOGS_RPC_URL: 'http://discovery.invalid',
+  WATCHER_STATE_FILE: path.join(temp, 'state.json'),
+  WATCHER_INDEPENDENT_STATE_FILE: path.join(temp, 'independent.json'),
+  WATCHER_HEALTHCHECKS_PING_URL: 'http://health.invalid',
+  WATCHER_REQUIRE_CLAIM_PROOF_PUBLISH: 'false',
+  WATCHER_LOG_CHUNK_SIZE: '100',
+  WATCHER_INDEPENDENT_LOG_CHUNK_SIZE: '100',
+  WATCHER_RPC_RETRY_ATTEMPTS: '1',
+  WATCHER_LOG_CONCURRENCY: '1',
+});
+
+const alice = '0x00000000000000000000000000000000000000a1';
+const bob = '0x00000000000000000000000000000000000000b1';
+const zero = '0x0000000000000000000000000000000000000000';
+const payoutToken = '0x1B68626dCa36c7fE922fD2d55E4f631d962dE19c';
+const seed1 = `0x${'11'.repeat(32)}`;
+const seed2 = `0x${'22'.repeat(32)}`;
+const now = Math.floor(Date.now() / 1000);
+const eventDeadline = scenario === 'expired' ? now - 60 : now + 7_200;
+const storedDeadline = scenario === 'deadline-mismatch' ? eventDeadline + 1 : eventDeadline;
+let version = 1;
+const drawInput = {
+  algoVersion: 'everdraw-v5-draw-algorithm/3',
+  chainId: '143',
+  claimManager: addresses.claimManager,
+  drawId: '1',
+  drawManager: addresses.drawManager,
+  vault: addresses.prizeVault,
+  twabController: addresses.twabController,
+  seed: seed1,
+  seedBlock: start + 1,
+  periodStart: '100',
+  periodEnd: '200',
+  totalTwab: '10',
+  totalPayout: '100',
+  prizeLegs: [{ token: payoutToken, amount: '100', feeAmount: '0' }],
+  feeRecipients: [],
+  tierBps: [10_000],
+  accounts: [{ address: alice, twab: '10' }],
+};
+const proposedRoot = compute(drawInput).root;
+const abi = new Interface([
+  'function vault() view returns(address)',
+  'function claimManager() view returns(address)',
+  'function twabController() view returns(address)',
+  'function payoutToken() view returns(address)',
+  'function currentDrawId() view returns(uint256)',
+  'function challengeEndsAt(uint256) view returns(uint64)',
+  'function draws(uint256) view returns(uint64 periodStart,uint64 periodEnd,uint64 randomnessRequestId,bytes32 seed,uint256 totalTwab,uint256 totalPayout,uint32 winnerCount,uint32 rewardLegCount,bytes32 root,uint64 proposedAt,address proposer,uint8 status,uint256 grossYield,uint256 sponsorYield,uint256 feeAmount)',
+  'function drawRewardLegCount(uint256) view returns(uint256)',
+  'function drawFeeRecipientCount(uint256) view returns(uint256)',
+  'function getTwabBetween(address,address,uint256,uint256) view returns(uint256)',
+  'event Transfer(address indexed from,address indexed to,uint256 amount)',
+  'event SeedReceived(uint256 indexed drawId,uint64 indexed requestId,bytes32 seed)',
+  'event RootProposed(uint256 indexed drawId,bytes32 indexed root,uint32 winnerCount,uint256 totalPayout,address indexed proposer,bytes32 algorithmVersion,uint64 challengeEndsAt)',
+]);
+
+const counts = {};
+let health = 0;
+const hash = (blockNumber) => `0x${(BigInt(blockNumber) * 10n + BigInt(version)).toString(16).padStart(64, '0')}`;
+function count(provider, method) {
+  const key = `${provider._getConnection().url}:${method}`;
+  counts[key] = (counts[key] || 0) + 1;
+}
+function eventLog(address, blockNumber, name, args) {
+  const encoded = abi.encodeEventLog(abi.getEvent(name), args);
+  return {
+    address,
+    blockNumber,
+    blockHash: hash(blockNumber),
+    transactionHash: `0x${'44'.repeat(32)}`,
+    index: 0,
+    logIndex: 0,
+    topics: encoded.topics,
+    data: encoded.data,
+  };
+}
+
+JsonRpcProvider.prototype.getNetwork = async function getNetwork() {
+  count(this, 'eth_chainId');
+  return Network.from(143);
+};
+JsonRpcProvider.prototype.getCode = async function getCode() {
+  count(this, 'eth_getCode');
+  return '0x6000';
+};
+JsonRpcProvider.prototype.getBlockNumber = async function getBlockNumber() {
+  count(this, 'eth_blockNumber');
+  return latest;
+};
+JsonRpcProvider.prototype.getBlock = async function getBlock(blockNumber) {
+  count(this, 'eth_getBlockByNumber');
+  return { number: Number(blockNumber), hash: hash(blockNumber), timestamp: now };
+};
+JsonRpcProvider.prototype.getLogs = async function getLogs(filter) {
+  count(this, 'eth_getLogs');
+  if (this._getConnection().url.includes('discovery')) return [];
+  const logs = [
+    eventLog(addresses.prizeVault, start, 'Transfer', [zero, version === 1 ? alice : bob, 10n]),
+    eventLog(addresses.drawManager, start + 1, 'SeedReceived', [1n, 1n, version === 1 ? seed1 : seed2]),
+    eventLog(addresses.drawManager, start + 2, 'RootProposed', [1n, proposedRoot, 1, 100n, alice, seed1, eventDeadline]),
+  ];
+  return logs.filter((log) => log.blockNumber >= Number(filter.fromBlock) && log.blockNumber <= Number(filter.toBlock));
+};
+JsonRpcProvider.prototype.call = async function call(transaction) {
+  const parsed = abi.parseTransaction({ data: transaction.data });
+  count(this, parsed.name);
+  let values;
+  switch (parsed.name) {
+    case 'vault': values = [addresses.prizeVault]; break;
+    case 'claimManager': values = [addresses.claimManager]; break;
+    case 'twabController': values = [addresses.twabController]; break;
+    case 'payoutToken': values = [payoutToken]; break;
+    case 'currentDrawId': values = [scenario === 'idle' ? 0n : 1n]; break;
+    case 'challengeEndsAt': values = [storedDeadline]; break;
+    case 'getTwabBetween': values = [parsed.args[1].toLowerCase() === (version === 1 ? alice : bob) ? 10n : 0n]; break;
+    case 'drawRewardLegCount':
+    case 'drawFeeRecipientCount': values = [0n]; break;
+    case 'draws': values = [100, 200, 1, version === 1 ? seed1 : seed2, 10, 100, 1, 0, proposedRoot, eventDeadline - 28_800, alice, 3, 100, 0, 0]; break;
+    default: throw new Error(`Unexpected call ${parsed.name}`);
+  }
+  return abi.encodeFunctionResult(parsed.fragment, values);
+};
+global.fetch = async (url) => {
+  assert.equal(String(url), 'http://health.invalid');
+  health += 1;
+  return { ok: true };
+};
+
+const initialState = {
+  version: 3,
+  chainId: '143',
+  drawManagerAddress: addresses.drawManager,
+  vaultAddress: addresses.prizeVault,
+  fromBlock: start,
+  lastScannedBlock: start - 1,
+  lastScannedBlockHash: hash(start - 1),
+  participantAccounts: [],
+  seedBlocks: {},
+  liveMonitoring: true,
+};
+fs.writeFileSync(process.env.WATCHER_STATE_FILE, JSON.stringify(initialState));
+const { main } = await import('./watch-root-proposals.mjs');
+
+if (scenario === 'valid') {
+  await main();
+  assert.equal(health, 1);
+  assert.ok((counts['http://head.invalid:challengeEndsAt'] || 0) > 0);
+} else if (scenario === 'expired' || scenario === 'deadline-mismatch') {
+  await assert.rejects(main(), /coverage failure/);
+  assert.equal(health, 0);
+  assert.ok((counts['http://head.invalid:challengeEndsAt'] || 0) > 0);
+} else if (scenario === 'reorg') {
+  await main();
+  assert.equal(health, 1);
+  const securityScans = counts['http://security.invalid:eth_getLogs'] || 0;
+  version = 2;
+  assert.notEqual(compute({ ...drawInput, seed: seed2, accounts: [{ address: bob, twab: '10' }] }).root, proposedRoot);
+  await assert.rejects(main(), /coverage failure/);
+  assert.equal(health, 1, 'a reorg-invalidated root must not emit a second healthy heartbeat');
+  assert.ok((counts['http://security.invalid:eth_getLogs'] || 0) > securityScans, 'security history must be rescanned after reorg');
+} else {
+  await main();
+  assert.equal(health, 1);
+  const securityCalls = Object.entries(counts)
+    .filter(([key]) => key.startsWith('http://security.invalid:'))
+    .reduce((sum, [, value]) => sum + value, 0);
+  assert.equal(securityCalls, 0, 'an idle no-root cycle must not call the paid security provider');
+}
+
+console.log(JSON.stringify({ scenario, health, counts }));

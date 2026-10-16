@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
-import { Contract, Interface, JsonRpcProvider, getAddress } from "ethers";
+import { Contract, FetchRequest, Interface, JsonRpcProvider, getAddress } from "ethers";
 
 const DEPLOYMENT_FILE = process.env.DEPLOYMENT_FILE || "deployments/monad-testnet.json";
 const RPC_URL = process.env.WATCHER_RPC_URL || process.env.KEEPER_RPC_URL || process.env.RPC_URL || process.env.MONAD_TESTNET_RPC_URL;
@@ -18,7 +18,7 @@ const USE_CALLER_LOGS_PROVIDER = LOGS_RPC_URL === "provider";
 let _logsProvider;
 function logsProvider(provider) {
   if (USE_CALLER_LOGS_PROVIDER) return provider;
-  if (!_logsProvider) _logsProvider = new JsonRpcProvider(LOGS_RPC_URL);
+  if (!_logsProvider) _logsProvider = new CountingJsonRpcProvider(LOGS_RPC_URL, "discovery");
   return _logsProvider;
 }
 function positiveIntEnv(name, fallback) {
@@ -46,12 +46,39 @@ const RPC_RETRY_MAX_DELAY_MS = positiveIntEnv("WATCHER_RPC_RETRY_MAX_DELAY_MS", 
 const MAX_LOG_LOOKBACK = positiveIntEnv("WATCHER_LOG_MAX_LOOKBACK", 50_000_000);
 const CACHE_VERSION = 2;
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
-const RPC_USAGE = { calls: {}, errors: {}, fallbackReasons: {} };
+const RPC_USAGE = { calls: {}, errors: {}, wireCalls: {}, wireErrors: {}, fallbackReasons: {} };
 function countRpc(bucket, key) {
   RPC_USAGE[bucket][key] = (RPC_USAGE[bucket][key] || 0) + 1;
 }
 export function rpcUsageSnapshot() {
   return JSON.parse(JSON.stringify(RPC_USAGE));
+}
+
+export class CountingJsonRpcProvider extends JsonRpcProvider {
+  constructor(url, role, network, options, timeoutMs = LOG_TIMEOUT_MS) {
+    const request = new FetchRequest(url);
+    request.timeout = timeoutMs;
+    super(request, network, options);
+    this.rpcRole = role;
+  }
+
+  async _send(payload) {
+    const requests = Array.isArray(payload) ? payload : [payload];
+    for (const request of requests) countRpc("wireCalls", `${this.rpcRole}:${request.method}`);
+    try {
+      const responses = await super._send(payload);
+      const responseById = new Map(responses.map((response) => [response.id, response]));
+      for (const request of requests) {
+        if (responseById.get(request.id)?.error) {
+          countRpc("wireErrors", `${this.rpcRole}:${request.method}`);
+        }
+      }
+      return responses;
+    } catch (error) {
+      for (const request of requests) countRpc("wireErrors", `${this.rpcRole}:${request.method}`);
+      throw error;
+    }
+  }
 }
 
 const DRAW_MANAGER_ABI = [
@@ -102,8 +129,14 @@ function errText(err) {
     err?.info?.error?.message,
   ].filter(Boolean).join(" ").toLowerCase();
 }
+export function redactRpcSecrets(value) {
+  return String(value ?? "")
+    .replace(/https?:\/\/[^\s"'<>]*(?:alchemy\.com|tenderly\.co)[^\s"'<>]*/gi, "[redacted-rpc-url]")
+    .replace(/https?:\/\/[^\s"'<>]*\/v2\/[^\s"'<>]+/gi, "[redacted-rpc-url]")
+    .replace(/([?&](?:api[_-]?key|access[_-]?key|token)=)[^&\s"'<>]+/gi, "$1[redacted]");
+}
 function errMessage(err) {
-  return err?.shortMessage || err?.error?.message || err?.info?.error?.message || err?.message || String(err);
+  return redactRpcSecrets(err?.shortMessage || err?.error?.message || err?.info?.error?.message || err?.message || String(err));
 }
 function errCode(err) {
   return err?.error?.code ?? err?.info?.error?.code;
@@ -779,7 +812,7 @@ async function main() {
   const drawId = BigInt(process.env.DRAW_ID || process.argv[2] || 0);
   if (drawId <= 0n) throw new Error("Usage: DRAW_ID=<id> npm run draw:watch:inputs -- <id>");
 
-  const provider = new JsonRpcProvider(RPC_URL);
+  const provider = new CountingJsonRpcProvider(RPC_URL, "canonical");
   const toBlock = await provider.getBlockNumber();
   const eventCache = new DrawInputEventCache({ drawManagerAddress, file: process.env.WATCHER_EVENT_CACHE_FILE });
   const input = await buildDrawInput({ provider, drawManagerAddress, drawId, fromBlock, toBlock, eventCache });

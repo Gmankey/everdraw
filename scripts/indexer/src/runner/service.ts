@@ -1,4 +1,4 @@
-import { JsonRpcProvider, Interface, ethers } from 'ethers';
+import { FetchRequest, JsonRpcProvider, Interface, ethers } from 'ethers';
 import type { Block, AbstractProvider } from 'ethers';
 import { nowIso, nowUnix } from '../utils/time.js';
 import type { SupportedEventName, RawEventRow, V5DeploymentScope } from '../types/domain.js';
@@ -12,8 +12,8 @@ import type { DeriveV5TranchesService } from '../services/deriveV5Tranches.js';
 import type { PointsReplayStateRepo } from '../repositories/pointsReplayStateRepo.js';
 import type { RunnerConfig } from './config.js';
 import { POOL_EVENT_ABI } from './abi.js';
-import { RpcPolicy } from './rpcPolicy.js';
-import type { RpcTelemetrySnapshot } from './rpcPolicy.js';
+import { RpcPolicy, redactRpcSecrets } from './rpcPolicy.js';
+import type { RpcProviderRole, RpcTelemetrySnapshot } from './rpcPolicy.js';
 
 const LAST_FINALIZED_BLOCK_KEY_PREFIX = 'last_finalized_block';
 const LAST_FINALIZED_BLOCK_HASH_KEY_PREFIX = 'last_finalized_block_hash';
@@ -123,18 +123,6 @@ export function createIndexerRunner(input: {
   providersToValidate?: AbstractProvider[];
 }): IndexerRunner {
   const { config, rawEventsRepo, indexerStateRepo, deriveRoundsService, deriveWalletRoundsService, deriveWalletStatsService, deriveV5TranchesService, derivePointsService, pointsReplayStateRepo } = input;
-  const providerBundle = input.provider
-    ? {
-      canonicalProvider: input.provider,
-      logsProvider: input.logsProvider ?? input.provider,
-      fallbackProvider: input.fallbackProvider,
-      providersToValidate: input.providersToValidate
-        ?? [input.provider, input.logsProvider, input.fallbackProvider].filter(Boolean) as AbstractProvider[],
-    }
-    : makeProviders(config);
-  const provider = providerBundle.canonicalProvider;
-  const logsProvider = providerBundle.logsProvider;
-  const fallbackProvider = providerBundle.fallbackProvider;
   const rpcPolicy = new RpcPolicy({
     timeoutMs: config.rpcTimeoutMs ?? 10_000,
     attempts: config.rpcRetryAttempts ?? 3,
@@ -143,6 +131,18 @@ export function createIndexerRunner(input: {
     fallbackMaxRequestsPerHour: config.fallbackMaxRequestsPerHour ?? 0,
     fallbackCooldownMs: config.fallbackCooldownMs ?? 60_000,
   });
+  const providerBundle = input.provider
+    ? {
+      canonicalProvider: input.provider,
+      logsProvider: input.logsProvider ?? input.provider,
+      fallbackProvider: input.fallbackProvider,
+      providersToValidate: input.providersToValidate
+        ?? [input.provider, input.logsProvider, input.fallbackProvider].filter(Boolean) as AbstractProvider[],
+    }
+    : makeProviders(config, rpcPolicy);
+  const provider = providerBundle.canonicalProvider;
+  const logsProvider = providerBundle.logsProvider;
+  const fallbackProvider = providerBundle.fallbackProvider;
   const canonicalRequest = <T>(
     method: string,
     operation: () => Promise<T>,
@@ -221,15 +221,13 @@ export function createIndexerRunner(input: {
         nowUnix(),
       );
     } catch (error) {
-      pointsReplayStateRepo.recordFailure(
-        error instanceof Error ? error.message : String(error),
-        nowUnix(),
-      );
+      const redactedError = redactRpcSecrets(error instanceof Error ? error.stack ?? error.message : error);
+      pointsReplayStateRepo.recordFailure(redactedError, nowUnix());
       console.error(
         '[indexer][points] replay failed; event ingestion and all other derived state are'
         + ' unaffected. Points are frozen at the last successful replay and rebuild once this'
         + ' is resolved. See points.status in /api/health:',
-        error,
+        redactedError,
       );
     } finally {
       lastPointsReplayAtMs = Date.now();
@@ -493,7 +491,7 @@ export function createIndexerRunner(input: {
           await sleep(sleepMs);
           continue;
         } catch (error) {
-          console.error('[indexer] sync failed', error);
+          console.error('[indexer] sync failed', redactRpcSecrets(error instanceof Error ? error.stack ?? error.message : error));
         }
 
         await sleep(config.pollIntervalMs);
@@ -502,16 +500,39 @@ export function createIndexerRunner(input: {
   };
 }
 
-function isLogRangeLimitError(error: unknown): boolean {
-  const message = String(
-    (error as { shortMessage?: string; message?: string })?.shortMessage
-      ?? (error as { message?: string })?.message
-      ?? error,
-  ).toLowerCase();
-  return message.includes('block range')
-    || message.includes('range limit')
-    || message.includes('maximum range')
-    || (message.includes('limited to') && message.includes('blocks'));
+function rpcErrorText(error: unknown): string {
+  const messages: string[] = [];
+  const seen = new Set<unknown>();
+  const visit = (value: unknown, depth: number): void => {
+    if (value == null || depth > 6 || seen.has(value)) return;
+    if (typeof value === 'string') {
+      messages.push(value);
+      try { visit(JSON.parse(value), depth + 1); } catch {}
+      return;
+    }
+    if (typeof value !== 'object') return;
+    seen.add(value);
+    const record = value as Record<string, unknown>;
+    for (const key of ["shortMessage", "message", "reason", "body", "error", "info", "data"]) {
+      visit(record[key], depth + 1);
+    }
+    for (const [key, nested] of Object.entries(record)) {
+      if (['shortMessage', 'message', 'reason', 'body', 'error', 'info', 'data'].includes(key)) {
+        visit(nested, depth + 1);
+      }
+    }
+  };
+  visit(error, 0);
+  return messages.join(' | ').toLowerCase();
+}
+
+export function isLogRangeLimitError(error: unknown): boolean {
+  const message = rpcErrorText(error);
+  if (/rate limit|quota|compute unit|capacity|too many requests|\b429\b/.test(message)) return false;
+  const identifiesBlockResults = /block|eth_getlogs|log result/.test(message);
+  const identifiesRange = /range|too many blocks|limited to [0-9]+ blocks|maximum.*blocks/.test(message);
+  const identifiesLimit = /limit|limited|maximum|exceed|too (wide|large|many)/.test(message);
+  return identifiesBlockResults && identifiesRange && identifiesLimit;
 }
 
 async function fetchLogsAdaptive(input: {
@@ -520,8 +541,9 @@ async function fetchLogsAdaptive(input: {
   addresses: string[];
   fromBlock: number;
   toBlock: number;
+  splitDepth?: number;
 }): Promise<any[]> {
-  const { provider, rpcPolicy, addresses, fromBlock, toBlock } = input;
+  const { provider, rpcPolicy, addresses, fromBlock, toBlock, splitDepth = 0 } = input;
   try {
     return await rpcPolicy.request({
       role: 'logs',
@@ -534,11 +556,24 @@ async function fetchLogsAdaptive(input: {
     });
   } catch (error) {
     if (!isLogRangeLimitError(error) || fromBlock >= toBlock) throw error;
+    if (splitDepth >= 32) throw new Error(`Log range split depth exceeded for ${fromBlock}-${toBlock}`, { cause: error });
     const midpoint = Math.floor((fromBlock + toBlock) / 2);
-    const [left, right] = await Promise.all([
-      fetchLogsAdaptive({ provider, rpcPolicy, addresses, fromBlock, toBlock: midpoint }),
-      fetchLogsAdaptive({ provider, rpcPolicy, addresses, fromBlock: midpoint + 1, toBlock }),
-    ]);
+    const left = await fetchLogsAdaptive({
+      provider,
+      rpcPolicy,
+      addresses,
+      fromBlock,
+      toBlock: midpoint,
+      splitDepth: splitDepth + 1,
+    });
+    const right = await fetchLogsAdaptive({
+      provider,
+      rpcPolicy,
+      addresses,
+      fromBlock: midpoint + 1,
+      toBlock,
+      splitDepth: splitDepth + 1,
+    });
     return [...left, ...right];
   }
 }
@@ -660,18 +695,49 @@ function createDeploymentWiringReader(
   };
 }
 
-function makeProviders(config: RunnerConfig): {
+export class InstrumentedJsonRpcProvider extends JsonRpcProvider {
+  constructor(
+    url: string,
+    private readonly role: RpcProviderRole,
+    private readonly rpcPolicy: RpcPolicy,
+    timeoutMs = 10_000,
+  ) {
+    const request = new FetchRequest(url);
+    request.timeout = timeoutMs;
+    super(request);
+  }
+
+  override async _send(payload: any): Promise<any[]> {
+    const requests = Array.isArray(payload) ? payload : [payload];
+    for (const request of requests) this.rpcPolicy.recordWireRequest(this.role, request.method);
+    try {
+      const responses = await super._send(payload);
+      const responseById = new Map(responses.map((response) => [response.id, response]));
+      for (const request of requests) {
+        const response = responseById.get(request.id);
+        if (response && 'error' in response) this.rpcPolicy.recordWireError(this.role, request.method);
+      }
+      return responses;
+    } catch (error) {
+      for (const request of requests) this.rpcPolicy.recordWireError(this.role, request.method);
+      throw error;
+    }
+  }
+}
+
+function makeProviders(config: RunnerConfig, rpcPolicy: RpcPolicy): {
   canonicalProvider: AbstractProvider;
   logsProvider: AbstractProvider;
   fallbackProvider?: AbstractProvider;
   providersToValidate: AbstractProvider[];
 } {
-  const canonicalProvider = new JsonRpcProvider(config.rpcUrl);
+  const timeoutMs = config.rpcTimeoutMs ?? 10_000;
+  const canonicalProvider = new InstrumentedJsonRpcProvider(config.rpcUrl, 'canonical', rpcPolicy, timeoutMs);
   const logsProvider = !config.logsRpcUrl || config.logsRpcUrl === config.rpcUrl
     ? canonicalProvider
-    : new JsonRpcProvider(config.logsRpcUrl);
+    : new InstrumentedJsonRpcProvider(config.logsRpcUrl, 'logs', rpcPolicy, timeoutMs);
   const fallbackProvider = config.rpcUrlFallback
-    ? new JsonRpcProvider(config.rpcUrlFallback)
+    ? new InstrumentedJsonRpcProvider(config.rpcUrlFallback, 'fallback', rpcPolicy, timeoutMs)
     : undefined;
   return {
     canonicalProvider,

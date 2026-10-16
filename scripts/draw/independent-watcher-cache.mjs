@@ -19,12 +19,13 @@ const topics = ["Transfer", "SeedReceived", "RootProposed", "RootFinalized"]
 
 function emptyState(scope) {
   return {
-    version: 1,
+    version: 2,
     ...scope,
     lastScannedBlock: scope.fromBlock - 1,
     lastScannedBlockHash: "",
     participantAccounts: [],
     seedBlocks: {},
+    seedEvidence: {},
     proposals: {},
     finalizations: {},
     verifiedRoots: {},
@@ -37,6 +38,20 @@ function atomicWrite(file, state) {
   const temp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(temp, JSON.stringify({ ...state, updatedAt: new Date().toISOString() }) + "\n");
   fs.renameSync(temp, file);
+}
+
+function evidenceMatches(marker, event, seed) {
+  return Boolean(
+    marker
+    && event
+    && seed
+    && marker.root === event.root
+    && marker.eventBlockNumber === event.blockNumber
+    && marker.eventBlockHash === event.blockHash
+    && marker.seedBlockNumber === seed.blockNumber
+    && marker.seedBlockHash === seed.blockHash
+    && marker.seed === seed.seed
+  );
 }
 
 export function rootNeedsIndependentVerification({ status, root, verifiedRoot }) {
@@ -61,32 +76,32 @@ export class IndependentWatcherCache {
     try {
       const value = JSON.parse(fs.readFileSync(this.file, "utf8"));
       if (
-        value.version !== 1
+        value.version !== 2
         || value.chainId !== this.scope.chainId
         || getAddress(value.drawManagerAddress) !== this.scope.drawManagerAddress
         || getAddress(value.vaultAddress) !== this.scope.vaultAddress
         || Number(value.fromBlock) !== this.scope.fromBlock
       ) return emptyState(this.scope);
-      value.publishedFinalizations ||= {};
       return value;
     } catch {
       return emptyState(this.scope);
     }
   }
 
-  async ensureCanonical(provider) {
-    if (!this.state.lastScannedBlockHash || this.state.lastScannedBlock < this.scope.fromBlock) return;
-    const block = await provider.getBlock(this.state.lastScannedBlock);
-    if (!block?.hash || block.hash.toLowerCase() !== this.state.lastScannedBlockHash.toLowerCase()) {
-      this.state = emptyState(this.scope);
-      atomicWrite(this.file, this.state);
-    }
+  async ensureCanonical(canonicalProvider) {
+    if (!this.state.lastScannedBlockHash || this.state.lastScannedBlock < this.scope.fromBlock) return true;
+    const block = await canonicalProvider.getBlock(this.state.lastScannedBlock);
+    if (block?.hash?.toLowerCase() === this.state.lastScannedBlockHash.toLowerCase()) return true;
+    this.state = emptyState(this.scope);
+    atomicWrite(this.file, this.state);
+    return false;
   }
 
-  async syncThrough(provider, targetBlock, {
+  async syncThrough(logProvider, targetBlock, {
+    canonicalProvider = logProvider,
     chunkSize = Number(process.env.WATCHER_INDEPENDENT_LOG_CHUNK_SIZE || "1000"),
   } = {}) {
-    await this.ensureCanonical(provider);
+    await this.ensureCanonical(canonicalProvider);
     const from = Math.max(this.scope.fromBlock, Number(this.state.lastScannedBlock) + 1);
     if (from > Number(targetBlock)) return;
     const filter = {
@@ -94,7 +109,7 @@ export class IndependentWatcherCache {
       topics: [topics],
     };
     await queryLogsChunked(
-      provider,
+      canonicalProvider,
       filter,
       from,
       Number(targetBlock),
@@ -102,7 +117,7 @@ export class IndependentWatcherCache {
       {
         chunkSize,
         concurrency: 1,
-        getLogs: (start, end) => getLogsRangeDirect(provider, filter, start, end),
+        getLogs: (start, end) => getLogsRangeDirect(logProvider, filter, start, end),
         onBatch: async ({ windows, logs, canonical }) => {
           const reconstructed = ingestWatcherReconstructionLogs({
             logs,
@@ -114,14 +129,22 @@ export class IndependentWatcherCache {
           for (const log of logs) {
             if (getAddress(log.address) !== this.scope.drawManagerAddress) continue;
             const parsed = iface.parseLog(log);
-            if (parsed?.name === "RootProposed") {
-              this.state.proposals[parsed.args.drawId.toString()] = {
+            const drawId = parsed?.args?.drawId?.toString();
+            if (parsed?.name === "SeedReceived") {
+              this.state.seedEvidence[drawId] = {
+                seed: parsed.args.seed.toLowerCase(),
+                blockNumber: Number(log.blockNumber),
+                blockHash: String(log.blockHash).toLowerCase(),
+              };
+            } else if (parsed?.name === "RootProposed") {
+              this.state.proposals[drawId] = {
                 root: parsed.args.root.toLowerCase(),
+                challengeEndsAt: Number(parsed.args.challengeEndsAt),
                 blockNumber: Number(log.blockNumber),
                 blockHash: String(log.blockHash).toLowerCase(),
               };
             } else if (parsed?.name === "RootFinalized") {
-              this.state.finalizations[parsed.args.drawId.toString()] = {
+              this.state.finalizations[drawId] = {
                 root: parsed.args.root.toLowerCase(),
                 blockNumber: Number(log.blockNumber),
                 blockHash: String(log.blockHash).toLowerCase(),
@@ -147,22 +170,60 @@ export class IndependentWatcherCache {
     return event;
   }
 
-  markVerified(drawId, root) {
-    this.state.verifiedRoots[BigInt(drawId).toString()] = String(root).toLowerCase();
+  async assertEvidenceCanonical(canonicalProvider, kind, drawId, root) {
+    const key = BigInt(drawId).toString();
+    const event = this.assertEvent(kind, key, root);
+    const seed = this.state.seedEvidence[key];
+    if (!seed) throw new Error(`Independent RPC has no canonical seed evidence for draw ${key}`);
+    const [eventBlock, seedBlock, checkpoint] = await Promise.all([
+      canonicalProvider.getBlock(event.blockNumber),
+      canonicalProvider.getBlock(seed.blockNumber),
+      canonicalProvider.getBlock(this.state.lastScannedBlock),
+    ]);
+    if (eventBlock?.hash?.toLowerCase() !== event.blockHash) {
+      throw new Error(`Independent ${kind} evidence is non-canonical for draw ${key}`);
+    }
+    if (seedBlock?.hash?.toLowerCase() !== seed.blockHash) {
+      throw new Error(`Independent seed evidence is non-canonical for draw ${key}`);
+    }
+    if (checkpoint?.hash?.toLowerCase() !== this.state.lastScannedBlockHash.toLowerCase()) {
+      this.state = emptyState(this.scope);
+      atomicWrite(this.file, this.state);
+      throw new Error(`Independent checkpoint changed while verifying draw ${key}`);
+    }
+    return {
+      root: event.root,
+      eventBlockNumber: event.blockNumber,
+      eventBlockHash: event.blockHash,
+      seedBlockNumber: seed.blockNumber,
+      seedBlockHash: seed.blockHash,
+      seed: seed.seed,
+    };
+  }
+
+  markVerified(drawId, evidence) {
+    this.state.verifiedRoots[BigInt(drawId).toString()] = evidence;
     atomicWrite(this.file, this.state);
   }
 
   verifiedRoot(drawId) {
-    return this.state.verifiedRoots[BigInt(drawId).toString()];
+    const key = BigInt(drawId).toString();
+    const marker = this.state.verifiedRoots[key];
+    return evidenceMatches(marker, this.state.proposals[key], this.state.seedEvidence[key])
+      ? marker.root
+      : undefined;
   }
 
-  markFinalizationHandled(drawId, root) {
-    this.state.publishedFinalizations[BigInt(drawId).toString()] = String(root).toLowerCase();
+  markFinalizationHandled(drawId, evidence) {
+    this.state.publishedFinalizations[BigInt(drawId).toString()] = evidence;
     atomicWrite(this.file, this.state);
   }
 
   finalizationHandled(drawId, root) {
-    return this.state.publishedFinalizations[BigInt(drawId).toString()] === String(root).toLowerCase();
+    const key = BigInt(drawId).toString();
+    const marker = this.state.publishedFinalizations[key];
+    return marker?.root === String(root).toLowerCase()
+      && evidenceMatches(marker, this.state.finalizations[key], this.state.seedEvidence[key]);
   }
 
   accounts() {

@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/validate-v5-release-config.mjs && vite build",
-    "test:v5-release": "node --test src/v5ReleaseConfig.test.js",
+    "build": "node scripts/validate-v5-release-config.mjs && vite build && npm run scan:rpc-secrets",
+    "test:v5-release": "node --test src/v5ReleaseConfig.test.js scripts/assert-no-rpc-secrets.test.mjs",
     "test:v5-period-events": "node --test src/v5PeriodAccountEvents.test.js",
     "lint": "eslint .",
     "test:rpc-cache": "node --test src/rpcCache.test.js",
@@ -20,7 +20,8 @@
     "test:history-result": "node --test src/v5HistoryResult.test.js",
     "test:rpc-read": "node --test src/v5RpcRead.test.js",
     "test:v5-navigation": "node --test src/v5Navigation.test.js",
-    "test:draw-participation": "node --test src/v5DrawParticipation.test.js"
+    "test:draw-participation": "node --test src/v5DrawParticipation.test.js",
+    "scan:rpc-secrets": "node scripts/assert-no-rpc-secrets.mjs"
   },
   "dependencies": {
     "@reown/appkit": "1.8.21",

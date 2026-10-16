@@ -15,6 +15,7 @@ const iface = new Interface([
   "event Transfer(address indexed from,address indexed to,uint256 amount)",
   "event SeedReceived(uint256 indexed drawId,uint64 indexed requestId,bytes32 seed)",
   "event RootProposed(uint256 indexed drawId,bytes32 indexed root,uint32 winnerCount,uint256 totalPayout,address indexed proposer,bytes32 algorithmVersion,uint64 challengeEndsAt)",
+  "event RootFinalized(uint256 indexed drawId,bytes32 indexed root,uint32 winnerCount,uint256 totalPayout)",
 ]);
 
 function log(address, blockNumber, name, args) {
@@ -55,7 +56,7 @@ test("independent cache fails closed when the discovery provider saw a proposal 
     log(vault, 100, "Transfer", [zero, alice, 1n]),
     log(manager, 101, "SeedReceived", [1n, 9n, root]),
   ];
-  await cache.syncThrough(provider(securityLogs), 102, { chunkSize: 3 });
+  await cache.syncThrough(provider(securityLogs), 103, { chunkSize: 4 });
   assert.throws(
     () => cache.assertEvent("proposals", 1n, root),
     /missing\/mismatched proposals event/,
@@ -72,6 +73,7 @@ test("independent cache accepts and persists a canonically verified proposal", a
     log(vault, 100, "Transfer", [zero, alice, 1n]),
     log(manager, 101, "SeedReceived", [1n, 9n, root]),
     log(manager, 102, "RootProposed", [1n, root, 1, 1n, alice, root, 9999]),
+    log(manager, 103, "RootFinalized", [1n, root, 1, 1n]),
   ];
   const cache = new IndependentWatcherCache({
     file: cacheFile,
@@ -80,10 +82,12 @@ test("independent cache accepts and persists a canonically verified proposal", a
     vaultAddress: vault,
     fromBlock: 100,
   });
-  await cache.syncThrough(provider(securityLogs), 102, { chunkSize: 3 });
+  await cache.syncThrough(provider(securityLogs), 103, { chunkSize: 4 });
   assert.equal(cache.assertEvent("proposals", 1n, root).blockNumber, 102);
-  cache.markVerified(1n, root);
-  cache.markFinalizationHandled(1n, root);
+  const proposalEvidence = await cache.assertEvidenceCanonical(provider(securityLogs), "proposals", 1n, root);
+  const finalizationEvidence = await cache.assertEvidenceCanonical(provider(securityLogs), "finalizations", 1n, root);
+  cache.markVerified(1n, proposalEvidence);
+  cache.markFinalizationHandled(1n, finalizationEvidence);
 
   const restored = new IndependentWatcherCache({
     file: cacheFile,

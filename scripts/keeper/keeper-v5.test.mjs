@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
+import http from "node:http";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { claimDrawIds, firstRecentDrawId, syncParticipantEventCache } from "../keeper-v5.js";
+import {
+  CountingJsonRpcProvider,
+  claimDrawIds,
+  firstRecentDrawId,
+  rpcUsageSnapshot,
+  syncParticipantEventCache,
+} from "../keeper-v5.js";
 import {
   ClaimRetryState,
   claimFinalizedDrawSafely,
@@ -128,6 +135,46 @@ test("large recent window, not V5_KEEPER_FROM_BLOCK, keeps legacy draw ids eligi
 test("a successful claim still reports lifecycle activity", async () => {
   const claimed = await claimFinalizedDrawSafely(83n, async () => true);
   assert.equal(claimed, true);
+});
+
+test("keeper wire telemetry counts actual ethers transport calls and errors", async (t) => {
+  const server = http.createServer(async (request, response) => {
+    let body = "";
+    for await (const part of request) body += part;
+    const call = JSON.parse(body);
+    const result = call.method === "eth_blockNumber"
+      ? { jsonrpc: "2.0", id: call.id, result: "0x2a" }
+      : { jsonrpc: "2.0", id: call.id, error: { code: -32000, message: "test failure" } };
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify(result));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const provider = new CountingJsonRpcProvider(
+    `http://127.0.0.1:${address.port}`,
+    "read-test",
+    143,
+    { staticNetwork: true, batchMaxCount: 1 },
+  );
+  t.after(() => provider.destroy());
+  const before = rpcUsageSnapshot();
+  assert.equal(await provider.getBlockNumber(), 42);
+  await assert.rejects(provider.getBalance(DRAW_MANAGER), /test failure/);
+  const after = rpcUsageSnapshot();
+  assert.equal(
+    after.wireCalls["read-test:eth_blockNumber"],
+    (before.wireCalls["read-test:eth_blockNumber"] || 0) + 1,
+  );
+  assert.equal(
+    after.wireCalls["read-test:eth_getBalance"],
+    (before.wireCalls["read-test:eth_getBalance"] || 0) + 1,
+  );
+  assert.equal(
+    after.wireErrors["read-test:eth_getBalance"],
+    (before.wireErrors["read-test:eth_getBalance"] || 0) + 1,
+  );
 });
 
 test("managed keeper refuses to start without its required success heartbeat", () => {

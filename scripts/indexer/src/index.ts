@@ -16,6 +16,7 @@ import { createDeriveWalletStatsService } from './services/deriveWalletStats.js'
 import { createDerivePointsService } from './services/derivePoints.js';
 import { createDeriveV5TranchesService } from './services/deriveV5Tranches.js';
 import { getRunnerConfig } from './runner/config.js';
+import { redactRpcSecrets } from './runner/rpcPolicy.js';
 import { assertProviderChainId, createIndexerRunner } from './runner/service.js';
 import { createApiServer } from './server.js';
 
@@ -109,6 +110,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
-  console.error(error);
+  console.error(redactRpcSecrets(error instanceof Error ? error.stack ?? error.message : error));
   process.exit(1);
 });

@@ -3,8 +3,8 @@ import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { AbiCoder, Contract, JsonRpcProvider, Wallet, ZeroAddress, getAddress, keccak256 } from "ethers";
-import { DrawInputEventCache, buildDrawInput } from "./draw/write-watch-inputs.mjs";
+import { AbiCoder, Contract, FetchRequest, JsonRpcProvider, Wallet, ZeroAddress, getAddress, keccak256 } from "ethers";
+import { DrawInputEventCache, buildDrawInput, redactRpcSecrets } from "./draw/write-watch-inputs.mjs";
 import { compute } from "./draw/compute-winners.js";
 import { deriveKeeperBalanceThresholds } from "./keeper/balance-thresholds.mjs";
 import {
@@ -45,8 +45,34 @@ const KEEPER_EVENT_CACHE_FILE = process.env.V5_KEEPER_EVENT_CACHE_FILE || proces
 const KEEPER_CLAIM_STATE_FILE = process.env.V5_KEEPER_CLAIM_STATE_FILE;
 const CLAIM_TRANSIENT_ALERT_THRESHOLD = Number(process.env.KEEPER_CLAIM_TRANSIENT_ALERT_THRESHOLD || 3);
 const abi = AbiCoder.defaultAbiCoder();
-const RPC_USAGE = { calls: {}, errors: {} };
+const RPC_USAGE = { calls: {}, errors: {}, wireCalls: {}, wireErrors: {} };
 function countRpc(bucket, key) { RPC_USAGE[bucket][key] = (RPC_USAGE[bucket][key] || 0) + 1; }
+export function rpcUsageSnapshot() { return JSON.parse(JSON.stringify(RPC_USAGE)); }
+
+export class CountingJsonRpcProvider extends JsonRpcProvider {
+  constructor(url, role, network, options, timeoutMs = RPC_TIMEOUT_MS) {
+    const request = new FetchRequest(url);
+    request.timeout = timeoutMs;
+    super(request, network, options);
+    this.rpcRole = role;
+  }
+
+  async _send(payload) {
+    const requests = Array.isArray(payload) ? payload : [payload];
+    for (const request of requests) countRpc("wireCalls", `${this.rpcRole}:${request.method}`);
+    try {
+      const responses = await super._send(payload);
+      const responseById = new Map(responses.map((response) => [response.id, response]));
+      for (const request of requests) {
+        if (responseById.get(request.id)?.error) countRpc("wireErrors", `${this.rpcRole}:${request.method}`);
+      }
+      return responses;
+    } catch (error) {
+      for (const request of requests) countRpc("wireErrors", `${this.rpcRole}:${request.method}`);
+      throw error;
+    }
+  }
+}
 
 const DRAW_MANAGER_ABI = [
   "function vault() view returns (address)",
@@ -140,7 +166,7 @@ function withTimeout(promise, label, timeoutMs = RPC_TIMEOUT_MS) {
 }
 
 function errorMessage(err) {
-  return err?.shortMessage || err?.reason || err?.message || String(err);
+  return redactRpcSecrets(err?.shortMessage || err?.reason || err?.message || String(err));
 }
 
 async function rpcRead(label, fn, { retries = RPC_RETRIES, timeoutMs = RPC_TIMEOUT_MS, role = 'read' } = {}) {
@@ -447,8 +473,8 @@ async function runOnce() {
   if (!PRIVATE_KEY) throw new Error("Missing PRIVATE_KEY for keeper signer");
   const deployment = readDeployment();
   const { drawManagerAddress, claimManagerAddress, fromBlock } = resolveV5RuntimeTargets(deployment);
-  const writeProvider = new JsonRpcProvider(RPC_URL);
-  const readProvider = new JsonRpcProvider(READ_RPC_URL);
+  const writeProvider = new CountingJsonRpcProvider(RPC_URL, "write");
+  const readProvider = new CountingJsonRpcProvider(READ_RPC_URL, "read");
   const signer = new Wallet(PRIVATE_KEY, writeProvider);
   const manager = new Contract(drawManagerAddress, DRAW_MANAGER_ABI, readProvider);
   const eventCache = new DrawInputEventCache({
@@ -547,6 +573,7 @@ async function runOnce() {
     console.log("no draw exists yet");
     acted = await maybeStartDraw({ manager, provider: readProvider, signer, fromBlock });
     const quarantined = claimState.quarantinedCount();
+    console.log(`[keeper-v5] RPC_USAGE ${JSON.stringify(rpcUsageSnapshot())}`);
     await ping(true, `keeper loop ok; quarantinedClaims=${quarantined}`);
     return acted;
   }
@@ -628,7 +655,7 @@ async function runOnce() {
               `[keeper-v5] CLAIM_RETRY drawId=${drawId} failures=${retry.failures} threshold=${CLAIM_TRANSIENT_ALERT_THRESHOLD}`,
             );
             if (reachedTransientAlertThreshold(retry.failures, CLAIM_TRANSIENT_ALERT_THRESHOLD)) {
-              await ping(false, `${message}\n${err?.stack || err?.message || err}`);
+              await ping(false, `${message}\n${redactRpcSecrets(err?.stack || err?.message || err)}`);
             }
           },
           onSuccess: async () => claimState.clearTransientFailure(stateKey),
@@ -639,7 +666,7 @@ async function runOnce() {
   }
   const quarantined = claimState.quarantinedCount();
   console.log(`[keeper-v5] CLAIM_QUARANTINE_HEARTBEAT count=${quarantined}`);
-  console.log(`[keeper-v5] RPC_USAGE ${JSON.stringify(RPC_USAGE)}`);
+  console.log(`[keeper-v5] RPC_USAGE ${JSON.stringify(rpcUsageSnapshot())}`);
   await ping(true, `keeper loop ok; quarantinedClaims=${quarantined}`);
   return acted;
 }
@@ -650,7 +677,8 @@ async function main() {
       const acted = await runOnce();
       console.log(`keeper loop ok acted=${acted}`);
     } catch (err) {
-      await ping(false, err.stack || err.message);
+      console.error(`[keeper-v5] RPC_USAGE ${JSON.stringify(rpcUsageSnapshot())}`);
+      await ping(false, redactRpcSecrets(err.stack || err.message));
       throw err;
     }
     if (LOOP) await new Promise((resolve) => setTimeout(resolve, INTERVAL_MS));
@@ -659,7 +687,7 @@ async function main() {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch((err) => {
-    console.error(err);
+    console.error(redactRpcSecrets(err?.stack || err?.message || err));
     process.exit(1);
   });
 }
