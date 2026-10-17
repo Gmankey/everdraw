@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
-import { Contract, Interface, JsonRpcProvider, getAddress } from "ethers";
+import { Contract, FetchRequest, Interface, JsonRpcProvider, getAddress } from "ethers";
 
 const DEPLOYMENT_FILE = process.env.DEPLOYMENT_FILE || "deployments/monad-testnet.json";
 const RPC_URL = process.env.WATCHER_RPC_URL || process.env.KEEPER_RPC_URL || process.env.RPC_URL || process.env.MONAD_TESTNET_RPC_URL;
@@ -18,7 +18,7 @@ const USE_CALLER_LOGS_PROVIDER = LOGS_RPC_URL === "provider";
 let _logsProvider;
 function logsProvider(provider) {
   if (USE_CALLER_LOGS_PROVIDER) return provider;
-  if (!_logsProvider) _logsProvider = new JsonRpcProvider(LOGS_RPC_URL);
+  if (!_logsProvider) _logsProvider = new CountingJsonRpcProvider(LOGS_RPC_URL, "discovery");
   return _logsProvider;
 }
 function positiveIntEnv(name, fallback) {
@@ -46,6 +46,40 @@ const RPC_RETRY_MAX_DELAY_MS = positiveIntEnv("WATCHER_RPC_RETRY_MAX_DELAY_MS", 
 const MAX_LOG_LOOKBACK = positiveIntEnv("WATCHER_LOG_MAX_LOOKBACK", 50_000_000);
 const CACHE_VERSION = 2;
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+const RPC_USAGE = { calls: {}, errors: {}, wireCalls: {}, wireErrors: {}, fallbackReasons: {} };
+function countRpc(bucket, key) {
+  RPC_USAGE[bucket][key] = (RPC_USAGE[bucket][key] || 0) + 1;
+}
+export function rpcUsageSnapshot() {
+  return JSON.parse(JSON.stringify(RPC_USAGE));
+}
+
+export class CountingJsonRpcProvider extends JsonRpcProvider {
+  constructor(url, role, network, options, timeoutMs = LOG_TIMEOUT_MS) {
+    const request = new FetchRequest(url);
+    request.timeout = timeoutMs;
+    super(request, network, options);
+    this.rpcRole = role;
+  }
+
+  async _send(payload) {
+    const requests = Array.isArray(payload) ? payload : [payload];
+    for (const request of requests) countRpc("wireCalls", `${this.rpcRole}:${request.method}`);
+    try {
+      const responses = await super._send(payload);
+      const responseById = new Map(responses.map((response) => [response.id, response]));
+      for (const request of requests) {
+        if (responseById.get(request.id)?.error) {
+          countRpc("wireErrors", `${this.rpcRole}:${request.method}`);
+        }
+      }
+      return responses;
+    } catch (error) {
+      for (const request of requests) countRpc("wireErrors", `${this.rpcRole}:${request.method}`);
+      throw error;
+    }
+  }
+}
 
 const DRAW_MANAGER_ABI = [
   "function vault() view returns (address)",
@@ -95,8 +129,14 @@ function errText(err) {
     err?.info?.error?.message,
   ].filter(Boolean).join(" ").toLowerCase();
 }
+export function redactRpcSecrets(value) {
+  return String(value ?? "")
+    .replace(/https?:\/\/[^\s"'<>]*(?:alchemy\.com|tenderly\.co)[^\s"'<>]*/gi, "[redacted-rpc-url]")
+    .replace(/https?:\/\/[^\s"'<>]*\/v2\/[^\s"'<>]+/gi, "[redacted-rpc-url]")
+    .replace(/([?&](?:api[_-]?key|access[_-]?key|token)=)[^&\s"'<>]+/gi, "$1[redacted]");
+}
 function errMessage(err) {
-  return err?.shortMessage || err?.error?.message || err?.info?.error?.message || err?.message || String(err);
+  return redactRpcSecrets(err?.shortMessage || err?.error?.message || err?.info?.error?.message || err?.message || String(err));
 }
 function errCode(err) {
   return err?.error?.code ?? err?.info?.error?.code;
@@ -154,8 +194,15 @@ function withTimeout(promise, label, timeoutMs = LOG_TIMEOUT_MS) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-function getLogsWithTimeout(provider, filter, from, to, label) {
-  return withTimeout(provider.getLogs({ ...filter, fromBlock: from, toBlock: to }), label);
+async function getLogsWithTimeout(provider, filter, from, to, label) {
+  const role = label.includes('fallback') ? 'fallback' : 'logs';
+  countRpc('calls', `${role}:eth_getLogs`);
+  try {
+    return await withTimeout(provider.getLogs({ ...filter, fromBlock: from, toBlock: to }), label);
+  } catch (error) {
+    countRpc('errors', `${role}:eth_getLogs`);
+    throw error;
+  }
 }
 
 // Fetch logs across [from, to]:
@@ -191,6 +238,7 @@ export async function getLogsRange(provider, filter, from, to) {
   }
   // Fast logs RPC exhausted retries for this window — fall back to the caller's reliable provider.
   console.warn(`[logs ${from}-${to}] falling back to caller RPC after fast RPC failure: ${errMessage(lastErr)}`);
+  countRpc('fallbackReasons', 'logs-rpc-exhausted');
   try {
     return await retryTransient(
       () => getLogsWithTimeout(provider, filter, from, to, `logs fallback ${from}-${to}`),
@@ -207,9 +255,46 @@ export async function getLogsRange(provider, filter, from, to) {
   }
 }
 
+export async function getLogsRangeDirect(provider, filter, from, to, {
+  attempts = RPC_RETRY_ATTEMPTS,
+  timeoutMs = LOG_TIMEOUT_MS,
+  baseDelayMs = RPC_RETRY_BASE_DELAY_MS,
+  maxDelayMs = RPC_RETRY_MAX_DELAY_MS,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+} = {}) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      countRpc('calls', 'independent:eth_getLogs');
+      return await withTimeout(
+        provider.getLogs({ ...filter, fromBlock: from, toBlock: to }),
+        `independent logs ${from}-${to}`,
+        timeoutMs,
+      );
+    } catch (error) {
+      lastError = error;
+      countRpc('errors', 'independent:eth_getLogs');
+      if (isRangeLimitError(error) && to > from) {
+        const mid = Math.floor((from + to) / 2);
+        const left = await getLogsRangeDirect(provider, filter, from, mid, {
+          attempts, timeoutMs, baseDelayMs, maxDelayMs, sleep,
+        });
+        const right = await getLogsRangeDirect(provider, filter, mid + 1, to, {
+          attempts, timeoutMs, baseDelayMs, maxDelayMs, sleep,
+        });
+        return [...left, ...right];
+      }
+      if (!isTransientError(error) || attempt === attempts) throw error;
+      await sleep(Math.min(maxDelayMs, baseDelayMs * (2 ** (attempt - 1))));
+    }
+  }
+  throw lastError;
+}
+
 async function canonicalBlockHashes(provider, blockNumbers, label) {
   const unique = [...new Set(blockNumbers.map(Number))];
   const entries = await Promise.all(unique.map(async (blockNumber) => {
+    countRpc('calls', 'canonical:eth_getBlockByNumber');
     const block = await retryTransient(
       () => withTimeout(provider.getBlock(blockNumber), `${label} canonical block ${blockNumber}`),
       `${label} canonical block ${blockNumber}`,
@@ -255,20 +340,25 @@ export async function queryLogsChunked(
   fromBlock,
   toBlock,
   label = "logs",
-  { onBatch, getLogs = (f, t) => getLogsRange(provider, filter, f, t) } = {},
+  {
+    onBatch,
+    getLogs = (f, t) => getLogsRange(provider, filter, f, t),
+    chunkSize = CHUNK_SIZE,
+    concurrency = LOG_CONCURRENCY,
+  } = {},
 ) {
   // Build all [from,to] windows, then fetch them in bounded batches. Default to sequential:
   // Tenderly has hung under concurrent getLogs during live keeper proposeRoot.
   const effectiveFrom = Math.max(Number(fromBlock), Number(toBlock) - MAX_LOG_LOOKBACK);
   const windows = [];
-  for (let from = effectiveFrom; from <= Number(toBlock); from += CHUNK_SIZE) {
-    windows.push([from, Math.min(from + CHUNK_SIZE - 1, Number(toBlock))]);
+  for (let from = effectiveFrom; from <= Number(toBlock); from += chunkSize) {
+    windows.push([from, Math.min(from + chunkSize - 1, Number(toBlock))]);
   }
   const logs = [];
   const t0 = Date.now();
-  console.log(`[${label}] scanning ${windows.length} windows of ${CHUNK_SIZE} blocks (${effectiveFrom}..${toBlock})`);
-  for (let i = 0; i < windows.length; i += LOG_CONCURRENCY) {
-    const batch = windows.slice(i, i + LOG_CONCURRENCY);
+  console.log(`[${label}] scanning ${windows.length} windows of ${chunkSize} blocks (${effectiveFrom}..${toBlock})`);
+  for (let i = 0; i < windows.length; i += concurrency) {
+    const batch = windows.slice(i, i + concurrency);
     const boundaryHashes = await canonicalBlockHashes(
       provider,
       batch.flat(),
@@ -284,8 +374,8 @@ export async function queryLogsChunked(
     });
     logs.push(...batchLogs);
     if (onBatch) await onBatch({ windows: batch, logs: batchLogs, canonical });
-    if ((i / LOG_CONCURRENCY) % 10 === 0) {
-      console.log(`[${label}] ${Math.min(i + LOG_CONCURRENCY, windows.length)}/${windows.length} windows, ${Math.round((Date.now() - t0) / 1000)}s, ${logs.length} logs`);
+    if ((i / concurrency) % 10 === 0) {
+      console.log(`[${label}] ${Math.min(i + concurrency, windows.length)}/${windows.length} windows, ${Math.round((Date.now() - t0) / 1000)}s, ${logs.length} logs`);
     }
   }
   console.log(`[${label}] done: ${windows.length} windows in ${Math.round((Date.now() - t0) / 1000)}s, ${logs.length} logs`);
@@ -722,7 +812,7 @@ async function main() {
   const drawId = BigInt(process.env.DRAW_ID || process.argv[2] || 0);
   if (drawId <= 0n) throw new Error("Usage: DRAW_ID=<id> npm run draw:watch:inputs -- <id>");
 
-  const provider = new JsonRpcProvider(RPC_URL);
+  const provider = new CountingJsonRpcProvider(RPC_URL, "canonical");
   const toBlock = await provider.getBlockNumber();
   const eventCache = new DrawInputEventCache({ drawManagerAddress, file: process.env.WATCHER_EVENT_CACHE_FILE });
   const input = await buildDrawInput({ provider, drawManagerAddress, drawId, fromBlock, toBlock, eventCache });

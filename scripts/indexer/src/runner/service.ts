@@ -1,4 +1,4 @@
-import { FallbackProvider, JsonRpcProvider, Interface, ethers } from 'ethers';
+import { FetchRequest, JsonRpcProvider, Interface, ethers } from 'ethers';
 import type { Block, AbstractProvider } from 'ethers';
 import { nowIso, nowUnix } from '../utils/time.js';
 import type { SupportedEventName, RawEventRow, V5DeploymentScope } from '../types/domain.js';
@@ -12,6 +12,8 @@ import type { DeriveV5TranchesService } from '../services/deriveV5Tranches.js';
 import type { PointsReplayStateRepo } from '../repositories/pointsReplayStateRepo.js';
 import type { RunnerConfig } from './config.js';
 import { POOL_EVENT_ABI } from './abi.js';
+import { RpcPolicy, redactRpcSecrets } from './rpcPolicy.js';
+import type { RpcProviderRole, RpcTelemetrySnapshot } from './rpcPolicy.js';
 
 const LAST_FINALIZED_BLOCK_KEY_PREFIX = 'last_finalized_block';
 const LAST_FINALIZED_BLOCK_HASH_KEY_PREFIX = 'last_finalized_block_hash';
@@ -94,6 +96,7 @@ export interface IndexerRunner {
     rewindCount: number;
     v5Deployments: V5DeploymentScope[];
     points: PointsReplayStatus;
+    rpc: RpcTelemetrySnapshot;
   }>;
   start(): Promise<never>;
 }
@@ -109,6 +112,8 @@ export function createIndexerRunner(input: {
   derivePointsService?: DerivePointsService;
   pointsReplayStateRepo?: PointsReplayStateRepo;
   provider?: AbstractProvider;
+  logsProvider?: AbstractProvider;
+  fallbackProvider?: AbstractProvider;
   deploymentWiringReader?: (deployment: V5DeploymentScope) => Promise<{
     vaultDrawManager: string;
     managerVault: string;
@@ -118,11 +123,34 @@ export function createIndexerRunner(input: {
   providersToValidate?: AbstractProvider[];
 }): IndexerRunner {
   const { config, rawEventsRepo, indexerStateRepo, deriveRoundsService, deriveWalletRoundsService, deriveWalletStatsService, deriveV5TranchesService, derivePointsService, pointsReplayStateRepo } = input;
+  const rpcPolicy = new RpcPolicy({
+    timeoutMs: config.rpcTimeoutMs ?? 10_000,
+    attempts: config.rpcRetryAttempts ?? 3,
+    baseDelayMs: config.rpcRetryBaseDelayMs ?? 500,
+    maxDelayMs: config.rpcRetryMaxDelayMs ?? 5_000,
+    fallbackMaxRequestsPerHour: config.fallbackMaxRequestsPerHour ?? 0,
+    fallbackCooldownMs: config.fallbackCooldownMs ?? 60_000,
+  });
   const providerBundle = input.provider
-    ? { provider: input.provider, providersToValidate: input.providersToValidate ?? [input.provider] }
-    : makeProvider(config.rpcUrl, config.rpcUrlFallback);
-  const provider = providerBundle.provider;
-  const deploymentWiringReader = input.deploymentWiringReader ?? createDeploymentWiringReader(provider);
+    ? {
+      canonicalProvider: input.provider,
+      logsProvider: input.logsProvider ?? input.provider,
+      fallbackProvider: input.fallbackProvider,
+      providersToValidate: input.providersToValidate
+        ?? [input.provider, input.logsProvider, input.fallbackProvider].filter(Boolean) as AbstractProvider[],
+    }
+    : makeProviders(config, rpcPolicy);
+  const provider = providerBundle.canonicalProvider;
+  const logsProvider = providerBundle.logsProvider;
+  const fallbackProvider = providerBundle.fallbackProvider;
+  const canonicalRequest = <T>(
+    method: string,
+    operation: () => Promise<T>,
+    fallback?: () => Promise<T>,
+    fallbackReason?: string,
+  ) => rpcPolicy.request({ role: 'canonical', method, operation, fallback, fallbackReason });
+  const deploymentWiringReader = input.deploymentWiringReader
+    ?? createDeploymentWiringReader(provider, fallbackProvider, rpcPolicy);
   const iface = new Interface(POOL_EVENT_ABI);
   const stateScope = config.chainId + ':' + config.poolAddresses.map((address) => address.toLowerCase()).sort().join(',');
   const lastFinalizedBlockKey = LAST_FINALIZED_BLOCK_KEY_PREFIX + ':' + stateScope;
@@ -193,15 +221,13 @@ export function createIndexerRunner(input: {
         nowUnix(),
       );
     } catch (error) {
-      pointsReplayStateRepo.recordFailure(
-        error instanceof Error ? error.message : String(error),
-        nowUnix(),
-      );
+      const redactedError = redactRpcSecrets(error instanceof Error ? error.stack ?? error.message : error);
+      pointsReplayStateRepo.recordFailure(redactedError, nowUnix());
       console.error(
         '[indexer][points] replay failed; event ingestion and all other derived state are'
         + ' unaffected. Points are frozen at the last successful replay and rebuild once this'
         + ' is resolved. See points.status in /api/health:',
-        error,
+        redactedError,
       );
     } finally {
       lastPointsReplayAtMs = Date.now();
@@ -250,7 +276,12 @@ export function createIndexerRunner(input: {
   }
 
   async function recordCanonicalCheckpoint(blockNumber: number): Promise<void> {
-    const block = await provider.getBlock(blockNumber);
+    const block = await canonicalRequest(
+      'eth_getBlockByNumber',
+      () => provider.getBlock(blockNumber),
+      fallbackProvider ? () => fallbackProvider.getBlock(blockNumber) : undefined,
+      'canonical-checkpoint',
+    );
     if (!block?.hash) throw new Error(`Missing canonical block hash for ${blockNumber}`);
     const checkpoint = { blockNumber, blockHash: block.hash.toLowerCase() };
     const history = canonicalHistory().filter((item) => item.blockNumber < blockNumber);
@@ -265,7 +296,12 @@ export function createIndexerRunner(input: {
     if (cursor < config.deployBlock) return cursor;
 
     const expectedHash = indexerStateRepo.get(lastFinalizedBlockHashKey)?.value.toLowerCase();
-    const current = await provider.getBlock(cursor);
+    const current = await canonicalRequest(
+      'eth_getBlockByNumber',
+      () => provider.getBlock(cursor),
+      fallbackProvider ? () => fallbackProvider.getBlock(cursor) : undefined,
+      'cursor-reconciliation',
+    );
     if (current?.hash && (!expectedHash || current.hash.toLowerCase() === expectedHash)) {
       if (!expectedHash) await recordCanonicalCheckpoint(cursor);
       return cursor;
@@ -275,7 +311,12 @@ export function createIndexerRunner(input: {
     let ancestorHash: string | null = null;
     const history = canonicalHistory().filter((item) => item.blockNumber < cursor).reverse();
     for (const checkpoint of history) {
-      const block = await provider.getBlock(checkpoint.blockNumber);
+      const block = await canonicalRequest(
+        'eth_getBlockByNumber',
+        () => provider.getBlock(checkpoint.blockNumber),
+        fallbackProvider ? () => fallbackProvider.getBlock(checkpoint.blockNumber) : undefined,
+        'reorg-ancestor-search',
+      );
       if (block?.hash?.toLowerCase() === checkpoint.blockHash.toLowerCase()) {
         ancestor = checkpoint.blockNumber;
         ancestorHash = checkpoint.blockHash.toLowerCase();
@@ -295,7 +336,12 @@ export function createIndexerRunner(input: {
   }
 
   async function canonicalBlockHash(blockNumber: number): Promise<string> {
-    const block = await withRetry(() => provider.getBlock(blockNumber));
+    const block = await canonicalRequest(
+      'eth_getBlockByNumber',
+      () => provider.getBlock(blockNumber),
+      fallbackProvider ? () => fallbackProvider.getBlock(blockNumber) : undefined,
+      'range-boundary',
+    );
     if (!block?.hash) throw new Error(`Missing canonical block hash for ${blockNumber}`);
     return block.hash.toLowerCase();
   }
@@ -351,7 +397,12 @@ export function createIndexerRunner(input: {
 
     async syncOnce() {
       console.log('[indexer] syncOnce starting...');
-      const latestBlock = await provider.getBlockNumber();
+      const latestBlock = await canonicalRequest(
+        'eth_blockNumber',
+        () => provider.getBlockNumber(),
+        fallbackProvider ? () => fallbackProvider.getBlockNumber() : undefined,
+        'chain-head',
+      );
       const finalizedHead = Math.max(config.deployBlock, latestBlock - config.confirmations);
       const lastFinalizedBlock = await reconcileCanonicalCursor();
       const fromBlock = Math.max(config.deployBlock, lastFinalizedBlock + 1);
@@ -370,12 +421,17 @@ export function createIndexerRunner(input: {
           canonicalBlockHash(start),
           canonicalBlockHash(end),
         ]);
-        const rowArrays = await Promise.all(
-          config.poolAddresses.map((addr) =>
-            fetchChunk({ provider, iface, contractAddress: addr, fromBlock: start, toBlock: end, interChunkDelayMs: 50 })
-          )
-        );
-        const rows = rowArrays.flat();
+        const rows = await fetchChunk({
+          canonicalProvider: provider,
+          logsProvider,
+          fallbackProvider,
+          rpcPolicy,
+          iface,
+          contractAddresses: config.poolAddresses,
+          fromBlock: start,
+          toBlock: end,
+          interChunkDelayMs: 50,
+        });
         const [afterStartHash, afterEndHash] = await Promise.all([
           canonicalBlockHash(start),
           canonicalBlockHash(end),
@@ -404,7 +460,11 @@ export function createIndexerRunner(input: {
     },
 
     async getStatus() {
-      const chainHead = await provider.getBlockNumber();
+      const chainHead = await rpcPolicy.request({
+        role: 'canonical',
+        method: 'eth_blockNumber',
+        operation: () => provider.getBlockNumber(),
+      });
       const confirmedHead = Math.max(config.deployBlock, chainHead - config.confirmations);
       const lastScannedBlock = Number(indexerStateRepo.get(lastFinalizedBlockKey)?.value ?? (config.deployBlock - 1));
       return {
@@ -416,6 +476,7 @@ export function createIndexerRunner(input: {
         rewindCount: Number(indexerStateRepo.get(rewindCountKey)?.value ?? 0),
         v5Deployments: config.v5Deployments,
         points: pointsStatus(),
+        rpc: rpcPolicy.snapshot(),
       };
     },
 
@@ -430,7 +491,7 @@ export function createIndexerRunner(input: {
           await sleep(sleepMs);
           continue;
         } catch (error) {
-          console.error('[indexer] sync failed', error);
+          console.error('[indexer] sync failed', redactRpcSecrets(error instanceof Error ? error.stack ?? error.message : error));
         }
 
         await sleep(config.pollIntervalMs);
@@ -439,53 +500,168 @@ export function createIndexerRunner(input: {
   };
 }
 
-async function fetchChunk(input: {
- provider: AbstractProvider;
- iface: Interface;
- contractAddress: string;
- fromBlock: number;
- toBlock: number;
- interChunkDelayMs: number;
-}): Promise<RawEventRow[]> {
- const { provider, iface, contractAddress, fromBlock, toBlock, interChunkDelayMs } = input;
- const output: RawEventRow[] = [];
- const blockCache = new Map<number, Block>();
-
- const rawLogs = await withRetry(() =>
- provider.getLogs({ address: contractAddress, fromBlock, toBlock })
- );
-
- for (const log of rawLogs) {
- let parsed;
- try {
- parsed = iface.parseLog({ topics: [...log.topics], data: log.data });
- } catch {
- continue;
- }
- if (!parsed) continue;
- if (!SUPPORTED_EVENTS.includes(parsed.name as SupportedEventName)) continue;
-
- let block = blockCache.get(log.blockNumber);
- if (!block) {
- const fetched = await withRetry(() => provider.getBlock(log.blockNumber));
- if (!fetched) {
- throw new Error(`Missing canonical block metadata for supported log at block ${log.blockNumber}`);
- }
- block = fetched;
- blockCache.set(log.blockNumber, block);
- }
- if (!block.hash || !log.blockHash || block.hash.toLowerCase() !== String(log.blockHash).toLowerCase()) {
- throw new Error(`Canonical log mismatch at block ${log.blockNumber}`);
- }
- output.push(toRawEventRow({ log, parsed, blockTimestamp: new Date(Number(block.timestamp) * 1000).toISOString() }));
- }
-
- await sleep(interChunkDelayMs);
- return output.sort((a, b) => a.blockNumber !== b.blockNumber ? a.blockNumber - b.blockNumber : a.logIndex - b.logIndex);
+function rpcErrorText(error: unknown): string {
+  const messages: string[] = [];
+  const seen = new Set<unknown>();
+  const visit = (value: unknown, depth: number): void => {
+    if (value == null || depth > 6 || seen.has(value)) return;
+    if (typeof value === 'string') {
+      messages.push(value);
+      try { visit(JSON.parse(value), depth + 1); } catch {}
+      return;
+    }
+    if (typeof value !== 'object') return;
+    seen.add(value);
+    const record = value as Record<string, unknown>;
+    for (const key of ["shortMessage", "message", "reason", "body", "error", "info", "data"]) {
+      visit(record[key], depth + 1);
+    }
+    for (const [key, nested] of Object.entries(record)) {
+      if (['shortMessage', 'message', 'reason', 'body', 'error', 'info', 'data'].includes(key)) {
+        visit(nested, depth + 1);
+      }
+    }
+  };
+  visit(error, 0);
+  return messages.join(' | ').toLowerCase();
 }
 
+export function isLogRangeLimitError(error: unknown): boolean {
+  const message = rpcErrorText(error);
+  if (/rate limit|quota|compute unit|capacity|too many requests|\b429\b/.test(message)) return false;
+  const identifiesBlockResults = /block|eth_getlogs|log result/.test(message);
+  const identifiesRange = /range|too many blocks|limited to [0-9]+ blocks|maximum.*blocks/.test(message);
+  const identifiesLimit = /limit|limited|maximum|exceed|too (wide|large|many)/.test(message);
+  return identifiesBlockResults && identifiesRange && identifiesLimit;
+}
 
-function createDeploymentWiringReader(provider: AbstractProvider) {
+async function fetchLogsAdaptive(input: {
+  provider: AbstractProvider;
+  rpcPolicy: RpcPolicy;
+  addresses: string[];
+  fromBlock: number;
+  toBlock: number;
+  splitDepth?: number;
+}): Promise<any[]> {
+  const { provider, rpcPolicy, addresses, fromBlock, toBlock, splitDepth = 0 } = input;
+  try {
+    return await rpcPolicy.request({
+      role: 'logs',
+      method: 'eth_getLogs',
+      operation: () => provider.getLogs({
+        address: addresses,
+        fromBlock,
+        toBlock,
+      }),
+    });
+  } catch (error) {
+    if (!isLogRangeLimitError(error) || fromBlock >= toBlock) throw error;
+    if (splitDepth >= 32) throw new Error(`Log range split depth exceeded for ${fromBlock}-${toBlock}`, { cause: error });
+    const midpoint = Math.floor((fromBlock + toBlock) / 2);
+    const left = await fetchLogsAdaptive({
+      provider,
+      rpcPolicy,
+      addresses,
+      fromBlock,
+      toBlock: midpoint,
+      splitDepth: splitDepth + 1,
+    });
+    const right = await fetchLogsAdaptive({
+      provider,
+      rpcPolicy,
+      addresses,
+      fromBlock: midpoint + 1,
+      toBlock,
+      splitDepth: splitDepth + 1,
+    });
+    return [...left, ...right];
+  }
+}
+
+async function fetchChunk(input: {
+  canonicalProvider: AbstractProvider;
+  logsProvider: AbstractProvider;
+  fallbackProvider?: AbstractProvider;
+  rpcPolicy: RpcPolicy;
+  iface: Interface;
+  contractAddresses: string[];
+  fromBlock: number;
+  toBlock: number;
+  interChunkDelayMs: number;
+}): Promise<RawEventRow[]> {
+  const {
+    canonicalProvider,
+    logsProvider,
+    fallbackProvider,
+    rpcPolicy,
+    iface,
+    contractAddresses,
+    fromBlock,
+    toBlock,
+    interChunkDelayMs,
+  } = input;
+  const output: RawEventRow[] = [];
+  const blockCache = new Map<number, Block>();
+  const allowedAddresses = new Set(contractAddresses.map((address) => address.toLowerCase()));
+
+  const rawLogs = await fetchLogsAdaptive({
+    provider: logsProvider,
+    rpcPolicy,
+    addresses: contractAddresses,
+    fromBlock,
+    toBlock,
+  });
+
+  for (const log of rawLogs) {
+    if (!allowedAddresses.has(log.address.toLowerCase())) {
+      throw new Error(`Logs RPC returned unexpected address ${log.address}`);
+    }
+    let parsed;
+    try {
+      parsed = iface.parseLog({ topics: [...log.topics], data: log.data });
+    } catch {
+      continue;
+    }
+    if (!parsed) continue;
+    if (!SUPPORTED_EVENTS.includes(parsed.name as SupportedEventName)) continue;
+
+    let block = blockCache.get(log.blockNumber);
+    if (!block) {
+      const fetched = await rpcPolicy.request({
+        role: 'canonical',
+        method: 'eth_getBlockByNumber',
+        operation: () => canonicalProvider.getBlock(log.blockNumber),
+        fallback: fallbackProvider ? () => fallbackProvider.getBlock(log.blockNumber) : undefined,
+        fallbackReason: 'log-block-metadata',
+      });
+      if (!fetched) {
+        throw new Error(`Missing canonical block metadata for supported log at block ${log.blockNumber}`);
+      }
+      block = fetched;
+      blockCache.set(log.blockNumber, block);
+    }
+    if (!block.hash || !log.blockHash || block.hash.toLowerCase() !== String(log.blockHash).toLowerCase()) {
+      throw new Error(`Canonical log mismatch at block ${log.blockNumber}`);
+    }
+    output.push(toRawEventRow({
+      log,
+      parsed,
+      blockTimestamp: new Date(Number(block.timestamp) * 1000).toISOString(),
+    }));
+  }
+
+  await sleep(interChunkDelayMs);
+  return output.sort((left, right) =>
+    left.blockNumber !== right.blockNumber
+      ? left.blockNumber - right.blockNumber
+      : left.logIndex - right.logIndex);
+}
+
+function createDeploymentWiringReader(
+  provider: AbstractProvider,
+  fallbackProvider: AbstractProvider | undefined,
+  rpcPolicy: RpcPolicy,
+) {
   const vaultInterface = new Interface(['function drawManager() view returns (address)']);
   const managerInterface = new Interface([
     'function vault() view returns (address)',
@@ -494,7 +670,13 @@ function createDeploymentWiringReader(provider: AbstractProvider) {
   const claimInterface = new Interface(['function authorizedSource(address) view returns (bool)']);
   const read = async (to: string, iface: Interface, method: string, args: unknown[] = []) => {
     const data = iface.encodeFunctionData(method, args);
-    const result = await withRetry(() => provider.call({ to, data }));
+    const result = await rpcPolicy.request({
+      role: 'canonical',
+      method: 'eth_call',
+      operation: () => provider.call({ to, data }),
+      fallback: fallbackProvider ? () => fallbackProvider.call({ to, data }) : undefined,
+      fallbackReason: 'deployment-wiring',
+    });
     return iface.decodeFunctionResult(method, result);
   };
   return async (deployment: V5DeploymentScope) => {
@@ -512,25 +694,62 @@ function createDeploymentWiringReader(provider: AbstractProvider) {
     };
   };
 }
-function makeProvider(rpcUrl: string, rpcUrlFallback?: string): {
-  provider: AbstractProvider;
-  providersToValidate: AbstractProvider[];
-} {
-  const primary = new JsonRpcProvider(rpcUrl);
-  if (!rpcUrlFallback) {
-    return { provider: primary, providersToValidate: [primary] };
+
+export class InstrumentedJsonRpcProvider extends JsonRpcProvider {
+  constructor(
+    url: string,
+    private readonly role: RpcProviderRole,
+    private readonly rpcPolicy: RpcPolicy,
+    timeoutMs = 10_000,
+  ) {
+    const request = new FetchRequest(url);
+    request.timeout = timeoutMs;
+    super(request);
   }
 
-  const fallback = new JsonRpcProvider(rpcUrlFallback);
-  return {
-    provider: new FallbackProvider([
-    { provider: primary, priority: 1, stallTimeout: 2000 },
-    { provider: fallback, priority: 2, stallTimeout: 2000 },
-    ], undefined, { quorum: 1 }),
-    providersToValidate: [primary, fallback],
-  };
+  override async _send(payload: any): Promise<any[]> {
+    const requests = Array.isArray(payload) ? payload : [payload];
+    for (const request of requests) this.rpcPolicy.recordWireRequest(this.role, request.method);
+    try {
+      const responses = await super._send(payload);
+      const responseById = new Map(responses.map((response) => [response.id, response]));
+      for (const request of requests) {
+        const response = responseById.get(request.id);
+        if (response && 'error' in response) this.rpcPolicy.recordWireError(this.role, request.method);
+      }
+      return responses;
+    } catch (error) {
+      for (const request of requests) this.rpcPolicy.recordWireError(this.role, request.method);
+      throw error;
+    }
+  }
 }
 
+function makeProviders(config: RunnerConfig, rpcPolicy: RpcPolicy): {
+  canonicalProvider: AbstractProvider;
+  logsProvider: AbstractProvider;
+  fallbackProvider?: AbstractProvider;
+  providersToValidate: AbstractProvider[];
+} {
+  const timeoutMs = config.rpcTimeoutMs ?? 10_000;
+  const canonicalProvider = new InstrumentedJsonRpcProvider(config.rpcUrl, 'canonical', rpcPolicy, timeoutMs);
+  const logsProvider = !config.logsRpcUrl || config.logsRpcUrl === config.rpcUrl
+    ? canonicalProvider
+    : new InstrumentedJsonRpcProvider(config.logsRpcUrl, 'logs', rpcPolicy, timeoutMs);
+  const fallbackProvider = config.rpcUrlFallback
+    ? new InstrumentedJsonRpcProvider(config.rpcUrlFallback, 'fallback', rpcPolicy, timeoutMs)
+    : undefined;
+  return {
+    canonicalProvider,
+    logsProvider,
+    fallbackProvider,
+    providersToValidate: [...new Set([
+      canonicalProvider,
+      logsProvider,
+      fallbackProvider,
+    ].filter(Boolean) as AbstractProvider[])],
+  };
+}
 export async function assertProviderChainId(
   provider: Pick<AbstractProvider, 'getNetwork'>,
   expectedChainId: number,

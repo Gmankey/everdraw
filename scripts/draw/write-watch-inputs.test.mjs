@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -7,12 +8,46 @@ import { Interface } from "ethers";
 
 process.env.WATCHER_LOGS_RPC_URL = "provider";
 const {
+  CountingJsonRpcProvider,
   DrawInputEventCache,
   findSeedBlockForDraw,
   getLogsRange,
   participantAccountsFromLogs,
   queryLogsChunked,
+  redactRpcSecrets,
+  rpcUsageSnapshot,
 } = await import("./write-watch-inputs.mjs?canonical-cache-test");
+
+test("watcher wire telemetry counts actual ethers transport payloads", async (t) => {
+  const server = http.createServer(async (request, response) => {
+    let body = "";
+    for await (const part of request) body += part;
+    const call = JSON.parse(body);
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({ jsonrpc: "2.0", id: call.id, result: "0x2a" }));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const provider = new CountingJsonRpcProvider(
+    `http://127.0.0.1:${address.port}`,
+    "canonical-test",
+    143,
+    { staticNetwork: true, batchMaxCount: 1 },
+  );
+  t.after(() => provider.destroy());
+  const before = rpcUsageSnapshot().wireCalls["canonical-test:eth_blockNumber"] || 0;
+  assert.equal(await provider.getBlockNumber(), 42);
+  assert.equal(rpcUsageSnapshot().wireCalls["canonical-test:eth_blockNumber"], before + 1);
+});
+
+test("watcher redacts RPC endpoint credentials from errors", () => {
+  const secret = "not-a-real-secret-value";
+  const output = redactRpcSecrets(`failed https://monad-mainnet.g.alchemy.com/v2/${secret}`);
+  assert.equal(output.includes(secret), false);
+  assert.match(output, /redacted-rpc-url/);
+});
 
 const ZERO = "0x0000000000000000000000000000000000000000";
 const VAULT = "0x0000000000000000000000000000000000000A11";

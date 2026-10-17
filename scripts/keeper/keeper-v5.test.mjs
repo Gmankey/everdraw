@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
+import http from "node:http";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { claimDrawIds, firstRecentDrawId, syncParticipantEventCache } from "../keeper-v5.js";
+import {
+  CountingJsonRpcProvider,
+  claimDrawIds,
+  firstRecentDrawId,
+  rpcUsageSnapshot,
+  syncParticipantEventCache,
+} from "../keeper-v5.js";
 import {
   ClaimRetryState,
   claimFinalizedDrawSafely,
@@ -130,6 +137,46 @@ test("a successful claim still reports lifecycle activity", async () => {
   assert.equal(claimed, true);
 });
 
+test("keeper wire telemetry counts actual ethers transport calls and errors", async (t) => {
+  const server = http.createServer(async (request, response) => {
+    let body = "";
+    for await (const part of request) body += part;
+    const call = JSON.parse(body);
+    const result = call.method === "eth_blockNumber"
+      ? { jsonrpc: "2.0", id: call.id, result: "0x2a" }
+      : { jsonrpc: "2.0", id: call.id, error: { code: -32000, message: "test failure" } };
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify(result));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const provider = new CountingJsonRpcProvider(
+    `http://127.0.0.1:${address.port}`,
+    "read-test",
+    143,
+    { staticNetwork: true, batchMaxCount: 1 },
+  );
+  t.after(() => provider.destroy());
+  const before = rpcUsageSnapshot();
+  assert.equal(await provider.getBlockNumber(), 42);
+  await assert.rejects(provider.getBalance(DRAW_MANAGER), /test failure/);
+  const after = rpcUsageSnapshot();
+  assert.equal(
+    after.wireCalls["read-test:eth_blockNumber"],
+    (before.wireCalls["read-test:eth_blockNumber"] || 0) + 1,
+  );
+  assert.equal(
+    after.wireCalls["read-test:eth_getBalance"],
+    (before.wireCalls["read-test:eth_getBalance"] || 0) + 1,
+  );
+  assert.equal(
+    after.wireErrors["read-test:eth_getBalance"],
+    (before.wireErrors["read-test:eth_getBalance"] || 0) + 1,
+  );
+});
+
 test("managed keeper refuses to start without its required success heartbeat", () => {
   const result = spawnSync(process.execPath, ["-e", "import('./scripts/keeper-v5.js')"], {
     cwd: process.cwd(),
@@ -146,6 +193,8 @@ test("managed keeper refuses to start without its required success heartbeat", (
 });
 
 test("keeper includes ClaimLeaf.kind in claimMany payloads", () => { const source = readFileSync(new URL("../keeper-v5.js", import.meta.url), "utf8"); assert.equal(source.includes("kind: leaf.kind"), true); });
+test("keeper balance health reads use KEEPER_READ_RPC_URL, not the transaction RPC", () => { const source = readFileSync(new URL("../keeper-v5.js", import.meta.url), "utf8"); assert.equal(source.includes("readProvider.getBalance(signer.address)"), true); assert.equal(source.includes("writeProvider.getBalance(signer.address)"), false); });
+test("keeper validates the paid write provider only when sending a transaction", () => { const source = readFileSync(new URL("../keeper-v5.js", import.meta.url), "utf8"); const runOnce = source.slice(source.indexOf("async function runOnce"), source.indexOf("async function main")); assert.equal(runOnce.includes("writeProvider.getNetwork"), false); assert.equal(source.includes("signer.provider.getNetwork()"), true); });
 
 
 test("keeper advances participant discovery during an idle loop", async () => {

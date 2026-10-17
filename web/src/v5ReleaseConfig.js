@@ -92,6 +92,11 @@ export function parseV5ReleaseManifest(raw, { expectedEnvironment } = {}) {
   const uniqueContracts = new Set(REQUIRED_CONTRACTS.map((name) => addresses[name].toLowerCase()))
   if (uniqueContracts.size !== REQUIRED_CONTRACTS.length) throw new Error('V5 contract addresses must be distinct')
 
+  const rpcUrl = httpsUrl(manifest.chain?.rpcUrl, 'V5 RPC URL')
+  if (manifest.environment === 'mainnet' && new URL(rpcUrl).hostname !== 'rpc.monad.xyz') {
+    throw new Error('Mainnet V5 release manifest must use the public Monad RPC')
+  }
+
   const deployCommit = requiredString(manifest.deployment?.deployCommit, 'V5 deploy commit')
   if (!/^[0-9a-f]{40}$/i.test(deployCommit)) throw new Error('Invalid V5 deploy commit')
 
@@ -108,7 +113,7 @@ export function parseV5ReleaseManifest(raw, { expectedEnvironment } = {}) {
       symbol: requiredString(manifest.chain?.nativeCurrency?.symbol, 'V5 native currency symbol'),
       decimals: positiveInteger(manifest.chain?.nativeCurrency?.decimals, 'V5 native currency decimals'),
     },
-    rpcUrl: httpsUrl(manifest.chain?.rpcUrl, 'V5 RPC URL'),
+    rpcUrl,
     explorerUrl: httpsUrl(manifest.chain?.explorerUrl, 'V5 explorer URL'),
     deployCommit: deployCommit.toLowerCase(),
     startBlock: positiveInteger(manifest.deployment?.startBlock, 'V5 start block'),
@@ -134,6 +139,30 @@ function sameAddress(actual, expected, label) {
   if (!ethers.isAddress(actual) || ethers.getAddress(actual) !== expected) {
     throw new Error(`${label} does not match the approved V5 release`)
   }
+}
+
+export function assertPublicMainnetFrontendRpc(env, config) {
+  if (config?.environment !== 'mainnet') return true
+  for (const [name, rawValue] of Object.entries(env || {})) {
+    if (!name.startsWith('VITE_') || !name.includes('RPC')) continue
+    const value = String(rawValue || '').trim()
+    if (!value) continue
+    let parsed
+    try {
+      parsed = new URL(value)
+    } catch {
+      continue
+    }
+    const hostname = parsed.hostname.toLowerCase()
+    if (hostname === 'alchemy.com' || hostname.endsWith('.alchemy.com') || parsed.pathname.startsWith('/v2/')) {
+      throw new Error(`${name} must not expose a credential-bearing RPC in the frontend bundle`)
+    }
+  }
+  const legacyRpc = String(env?.VITE_RPC_URL || '').trim()
+  if (legacyRpc && new URL(legacyRpc).hostname !== 'rpc.monad.xyz') {
+    throw new Error('VITE_RPC_URL must use the public Monad RPC for a mainnet V5 build')
+  }
+  return true
 }
 
 export function assertV5RuntimeSnapshot(config, snapshot) {

@@ -66,6 +66,7 @@ export function createApiServer(params: {
         rewindCount: status.rewindCount,
         v5Deployments: status.v5Deployments,
         lag: status.lag,
+        rpc: status.rpc,
         dbStatus: 'ok',
         // Reported separately from dbStatus/lag on purpose: a failing points replay does
         // not stop ingestion, and a healthy cursor must not imply points are current.

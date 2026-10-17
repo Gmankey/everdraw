@@ -7,6 +7,15 @@ const CLAIM_MANAGER = '0x0000000000000000000000000000000000000033';
 const KEYS = [
   'RPC_URL',
   'INDEXER_RPC_URL',
+  'INDEXER_LOGS_RPC_URL',
+  'RPC_URL_FALLBACK',
+  'INDEXER_RPC_TIMEOUT_MS',
+  'INDEXER_RPC_RETRY_ATTEMPTS',
+  'INDEXER_RPC_RETRY_BASE_DELAY_MS',
+  'INDEXER_RPC_RETRY_MAX_DELAY_MS',
+  'INDEXER_FALLBACK_MAX_REQUESTS_PER_HOUR',
+  'INDEXER_FALLBACK_COOLDOWN_MS',
+  'INDEXER_POLL_INTERVAL_MS',
   'POOL_ADDRESSES',
   'POOL_ADDRESS',
   'INDEXER_POOL_ADDRESS',
@@ -39,6 +48,9 @@ try {
   resetEnv();
   const config = getRunnerConfig();
   assert.equal(config.confirmations, 12);
+  assert.equal(config.logsRpcUrl, config.rpcUrl);
+  assert.equal(config.pollIntervalMs, 15_000);
+  assert.equal(config.fallbackMaxRequestsPerHour, 0);
   assert.equal(config.v5Deployments.length, 1);
 
   resetEnv();

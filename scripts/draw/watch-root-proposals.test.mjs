@@ -4,8 +4,10 @@ import test from "node:test";
 import { Interface } from "ethers";
 
 import { compute } from "./compute-winners.js";
+import { rootNeedsIndependentVerification } from "./independent-watcher-cache.mjs";
 import { ingestWatcherReconstructionLogs } from "./reconstruct-watcher-input.mjs";
 import {
+  acknowledgedCoverageIncidents,
   canCheckpointBatch,
   canonicalCheckpointMatches,
   challengeDeadlineMismatch,
@@ -21,6 +23,15 @@ import {
   participantAccountsFromLogs,
   retryTransient,
 } from "./write-watch-inputs.mjs";
+
+
+test("a proposed or finalized root cannot be healthy until independently verified", () => {
+  const root = "0x" + "11".repeat(32);
+  assert.equal(rootNeedsIndependentVerification({ status: 2, root, verifiedRoot: undefined }), false);
+  assert.equal(rootNeedsIndependentVerification({ status: 3, root, verifiedRoot: undefined }), true);
+  assert.equal(rootNeedsIndependentVerification({ status: 4, root, verifiedRoot: "0x" + "22".repeat(32) }), true);
+  assert.equal(rootNeedsIndependentVerification({ status: 3, root, verifiedRoot: root }), false);
+});
 
 test("privileged governance events identify the contract and transaction", () => {
   const message = formatPrivilegedChange({
@@ -105,6 +116,15 @@ test("bootstrap timing is not treated as live coverage and only root mismatches 
   assert.equal(canCheckpointBatch(1), false);
 });
 
+test("historical coverage acknowledgment accepts evidence-bound incident tokens and rejects draw IDs", () => {
+  const first = "1:0x" + "aa".repeat(32);
+  const normalized = "2:0x" + "bb".repeat(32);
+  assert.deepEqual(
+    [...acknowledgedCoverageIncidents(first.toUpperCase().replace("0X", "0x") + ", 002:" + "0x" + "bb".repeat(32))],
+    [first, normalized],
+  );
+  assert.throws(() => acknowledgedCoverageIncidents("1"), /draw:fingerprint incident tokens/);
+});
 test("current RPC calls have a bounded timeout", async () => {
   await assert.rejects(
     withRpcTimeout(new Promise(() => {}), "watcher chain head", 5),
@@ -201,6 +221,9 @@ test("mainnet watcher is independently configured and schedule-gated", () => {
   assert.match(workflow, /secrets\.V5_WATCHER_MAINNET_HEALTHCHECK_URL/);
   assert.match(workflow, /\.watcher-cache-mainnet/);
   assert.match(workflow, /WATCHER_LOG_CHUNK_SIZE: "100"/);
+  assert.match(workflow, /WATCHER_INDEPENDENT_STATE_FILE/);
+  assert.match(workflow, /WATCHER_INDEPENDENT_LOG_CHUNK_SIZE: "1000"/);
+  assert.match(workflow, /V5_WATCHER_MAINNET_ACKNOWLEDGED_COVERAGE_GAPS/);
   assert.match(workflow, /if: always\(\)/);
   assert.match(workflow, /actions: write/);
   assert.match(workflow, /Queue successor watcher/);
@@ -216,6 +239,7 @@ test("workflow uses configured logs RPC and a five-minute cadence", () => {
   assert.match(workflow, /if: always\(\)/);
   assert.match(workflow, /WATCHER_HEAD_RPC_URL: https:\/\/testnet-rpc\.monad\.xyz/);
   assert.match(workflow, /WATCHER_HEAD_RPC_TIMEOUT_MS: "10000"/);
+  assert.match(workflow, /V5_WATCHER_UAT_ACKNOWLEDGED_COVERAGE_GAPS/);
   assert.match(watcher, /buildWatcherDrawInput\(\{\s*provider,/);
   assert.doesNotMatch(watcher, /DrawInputEventCache|buildDrawInput/);
   assert.match(watcher, /headProvider\.getBlockNumber\(\)/);

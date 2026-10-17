@@ -3,7 +3,14 @@ import { MIN_QUALIFYING_MON } from '../services/pointsMath.js';
 
 export interface RunnerConfig {
   rpcUrl: string;
+  logsRpcUrl?: string;
   rpcUrlFallback?: string;
+  rpcTimeoutMs?: number;
+  rpcRetryAttempts?: number;
+  rpcRetryBaseDelayMs?: number;
+  rpcRetryMaxDelayMs?: number;
+  fallbackMaxRequestsPerHour?: number;
+  fallbackCooldownMs?: number;
   chainId: number;
   poolAddresses: string[];
   v5Deployments: V5DeploymentScope[];
@@ -24,6 +31,7 @@ export interface RunnerConfig {
 
 export function getRunnerConfig(): RunnerConfig {
   const rpcUrl = process.env.RPC_URL ?? process.env.INDEXER_RPC_URL;
+  const logsRpcUrl = process.env.INDEXER_LOGS_RPC_URL?.trim() || rpcUrl;
   const rpcUrlFallback = process.env.RPC_URL_FALLBACK?.trim() || undefined;
   const raw = process.env.POOL_ADDRESSES ?? process.env.POOL_ADDRESS ?? process.env.INDEXER_POOL_ADDRESS ?? '';
   const poolAddresses = raw.split(',').map((a) => a.trim().toLowerCase()).filter(Boolean);
@@ -38,6 +46,7 @@ export function getRunnerConfig(): RunnerConfig {
   const claimProofIngestSecret = process.env.CLAIM_PROOF_INGEST_SECRET?.trim() ?? '';
 
   if (!rpcUrl) throw new Error('Missing RPC_URL');
+  if (!logsRpcUrl) throw new Error('Missing INDEXER_LOGS_RPC_URL');
   if (!poolAddresses.length) throw new Error('Missing POOL_ADDRESSES');
   if (!deployBlock) throw new Error('Missing START_BLOCK');
   if (!Number.isInteger(chainId) || chainId <= 0) throw new Error('Missing or invalid INDEXER_CHAIN_ID');
@@ -71,9 +80,27 @@ export function getRunnerConfig(): RunnerConfig {
     }
   }
 
+  const positiveInteger = (name: string, fallback: number): number => {
+    const value = Number(process.env[name] ?? fallback);
+    if (!Number.isSafeInteger(value) || value < 1) throw new Error(`${name} must be a positive integer`);
+    return value;
+  };
+  const nonNegativeInteger = (name: string, fallback: number): number => {
+    const value = Number(process.env[name] ?? fallback);
+    if (!Number.isSafeInteger(value) || value < 0) throw new Error(`${name} must be a non-negative integer`);
+    return value;
+  };
+
   return {
     rpcUrl,
+    logsRpcUrl,
     rpcUrlFallback,
+    rpcTimeoutMs: positiveInteger('INDEXER_RPC_TIMEOUT_MS', 10_000),
+    rpcRetryAttempts: positiveInteger('INDEXER_RPC_RETRY_ATTEMPTS', 3),
+    rpcRetryBaseDelayMs: positiveInteger('INDEXER_RPC_RETRY_BASE_DELAY_MS', 500),
+    rpcRetryMaxDelayMs: positiveInteger('INDEXER_RPC_RETRY_MAX_DELAY_MS', 5_000),
+    fallbackMaxRequestsPerHour: nonNegativeInteger('INDEXER_FALLBACK_MAX_REQUESTS_PER_HOUR', 0),
+    fallbackCooldownMs: nonNegativeInteger('INDEXER_FALLBACK_COOLDOWN_MS', 60_000),
     chainId,
     poolAddresses,
     v5Deployments,
@@ -82,7 +109,7 @@ export function getRunnerConfig(): RunnerConfig {
     confirmations,
     chunkSize: Number(process.env.INDEXER_CHUNK_SIZE ?? 100),
     maxBlocksPerSync: Number(process.env.INDEXER_MAX_BLOCKS_PER_SYNC ?? 10_000),
-    pollIntervalMs: Number(process.env.INDEXER_POLL_INTERVAL_MS ?? 2000),
+    pollIntervalMs: Number(process.env.INDEXER_POLL_INTERVAL_MS ?? 15_000),
     pointsMinQualifyingMon,
     pointsReplayMaxIdleMs,
   };

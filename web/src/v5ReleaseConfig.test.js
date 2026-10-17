@@ -5,6 +5,7 @@ import test from 'node:test'
 
 import {
   V5_UAT_RELEASE_MANIFEST,
+  assertPublicMainnetFrontendRpc,
   assertV5RuntimeSnapshot,
   assertV5WalletChain,
   parseV5ReleaseManifest,
@@ -20,7 +21,7 @@ const mainnet = {
     ...V5_UAT_RELEASE_MANIFEST.chain,
     id: 143,
     name: 'Monad Mainnet',
-    rpcUrl: 'https://rpc.example',
+    rpcUrl: 'https://rpc.monad.xyz',
     explorerUrl: 'https://explorer.example',
   },
   deployment: {
@@ -72,6 +73,40 @@ test('UAT resolves one complete committed manifest without per-address fallbacks
   assert.equal(config.chainId, 10143)
   assert.equal(config.drawManager, V5_UAT_RELEASE_MANIFEST.deployment.addresses.drawManager)
 });
+
+test('mainnet rejects secret-bearing third-party RPC endpoints', () => {
+  assert.throws(
+    () => parseV5ReleaseManifest({
+      ...mainnet,
+      chain: {
+        ...mainnet.chain,
+        rpcUrl: 'https://monad-mainnet.g.alchemy.com/v2/not-a-real-key',
+      },
+    }, { expectedEnvironment: 'mainnet' }),
+    /public Monad RPC/,
+  )
+})
+
+test('mainnet rejects secret RPCs through alternate frontend environment paths', () => {
+  const config = parseV5ReleaseManifest(mainnet)
+  assert.equal(assertPublicMainnetFrontendRpc({ VITE_RPC_URL: 'https://rpc.monad.xyz' }, config), true)
+  assert.equal(assertPublicMainnetFrontendRpc({
+    VITE_RPC_URL: 'https://rpc.monad.xyz',
+    VITE_SECONDARY_RPC_URL: 'https://notalchemy.com/rpc',
+  }, config), true)
+  assert.throws(
+    () => assertPublicMainnetFrontendRpc({
+      VITE_RPC_URL: 'https://monad-mainnet.g.alchemy.com/v2/not-a-real-key',
+    }, config),
+    /must not expose/,
+  )
+  assert.throws(
+    () => assertPublicMainnetFrontendRpc({
+      VITE_SECONDARY_RPC_URL: 'https://example.invalid/v2/not-a-real-key',
+    }, config),
+    /must not expose/,
+  )
+})
 
 test('mainnet rejects missing, malformed, mixed-environment, and mixed-address manifests', () => {
   assert.throws(
