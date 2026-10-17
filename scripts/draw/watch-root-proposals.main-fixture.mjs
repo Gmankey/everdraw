@@ -7,9 +7,10 @@ import { readActiveV5Deployment } from '../keeper/v5-deployment.mjs';
 import { compute } from './compute-winners.js';
 
 const scenario = process.argv[2];
-if (!['valid', 'expired', 'deadline-mismatch', 'reorg', 'idle'].includes(scenario)) {
+if (!['valid', 'expired', 'deadline-mismatch', 'finalized-upgrade', 'finalized-invalid', 'reorg', 'idle'].includes(scenario)) {
   throw new Error(`Unknown watcher fixture scenario ${scenario}`);
 }
+const isFinalizedScenario = scenario.startsWith('finalized-');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'everdraw-watcher-main-'));
 const deployment = readActiveV5Deployment('deployments/monad-mainnet.json', { expectedChainId: 143 });
 const addresses = deployment.addresses;
@@ -47,7 +48,7 @@ const payoutToken = '0x1B68626dCa36c7fE922fD2d55E4f631d962dE19c';
 const seed1 = `0x${'11'.repeat(32)}`;
 const seed2 = `0x${'22'.repeat(32)}`;
 const now = Math.floor(Date.now() / 1000);
-const eventDeadline = scenario === 'expired' ? now - 60 : now + 7_200;
+const eventDeadline = scenario === 'expired' || isFinalizedScenario ? now - 60 : now + 7_200;
 const storedDeadline = scenario === 'deadline-mismatch' ? eventDeadline + 1 : eventDeadline;
 let version = 1;
 const drawInput = {
@@ -70,6 +71,8 @@ const drawInput = {
   accounts: [{ address: alice, twab: '10' }],
 };
 const proposedRoot = compute(drawInput).root;
+const invalidRoot = `0x${'99'.repeat(32)}`;
+const chainRoot = scenario === 'finalized-invalid' ? invalidRoot : proposedRoot;
 const abi = new Interface([
   'function vault() view returns(address)',
   'function claimManager() view returns(address)',
@@ -84,10 +87,12 @@ const abi = new Interface([
   'event Transfer(address indexed from,address indexed to,uint256 amount)',
   'event SeedReceived(uint256 indexed drawId,uint64 indexed requestId,bytes32 seed)',
   'event RootProposed(uint256 indexed drawId,bytes32 indexed root,uint32 winnerCount,uint256 totalPayout,address indexed proposer,bytes32 algorithmVersion,uint64 challengeEndsAt)',
+  'event RootFinalized(uint256 indexed drawId,bytes32 indexed root,uint32 winnerCount,uint256 totalPayout)',
 ]);
 
 const counts = {};
 let health = 0;
+let healthFailures = 0;
 const hash = (blockNumber) => `0x${(BigInt(blockNumber) * 10n + BigInt(version)).toString(16).padStart(64, '0')}`;
 function count(provider, method) {
   const key = `${provider._getConnection().url}:${method}`;
@@ -129,8 +134,11 @@ JsonRpcProvider.prototype.getLogs = async function getLogs(filter) {
   const logs = [
     eventLog(addresses.prizeVault, start, 'Transfer', [zero, version === 1 ? alice : bob, 10n]),
     eventLog(addresses.drawManager, start + 1, 'SeedReceived', [1n, 1n, version === 1 ? seed1 : seed2]),
-    eventLog(addresses.drawManager, start + 2, 'RootProposed', [1n, proposedRoot, 1, 100n, alice, seed1, eventDeadline]),
+    eventLog(addresses.drawManager, start + 2, 'RootProposed', [1n, chainRoot, 1, 100n, alice, seed1, eventDeadline]),
   ];
+  if (isFinalizedScenario) {
+    logs.push(eventLog(addresses.drawManager, start + 3, 'RootFinalized', [1n, chainRoot, 1, 100n]));
+  }
   return logs.filter((log) => log.blockNumber >= Number(filter.fromBlock) && log.blockNumber <= Number(filter.toBlock));
 };
 JsonRpcProvider.prototype.call = async function call(transaction) {
@@ -147,14 +155,16 @@ JsonRpcProvider.prototype.call = async function call(transaction) {
     case 'getTwabBetween': values = [parsed.args[1].toLowerCase() === (version === 1 ? alice : bob) ? 10n : 0n]; break;
     case 'drawRewardLegCount':
     case 'drawFeeRecipientCount': values = [0n]; break;
-    case 'draws': values = [100, 200, 1, version === 1 ? seed1 : seed2, 10, 100, 1, 0, proposedRoot, eventDeadline - 28_800, alice, 3, 100, 0, 0]; break;
+    case 'draws': values = [100, 200, 1, version === 1 ? seed1 : seed2, 10, 100, 1, 0, chainRoot, eventDeadline - 28_800, alice, isFinalizedScenario ? 4 : 3, 100, 0, 0]; break;
     default: throw new Error(`Unexpected call ${parsed.name}`);
   }
   return abi.encodeFunctionResult(parsed.fragment, values);
 };
 global.fetch = async (url) => {
-  assert.equal(String(url), 'http://health.invalid');
-  health += 1;
+  const target = String(url);
+  if (target === 'http://health.invalid') health += 1;
+  else if (target === 'http://health.invalid/fail') healthFailures += 1;
+  else assert.fail(`Unexpected fetch ${target}`);
   return { ok: true };
 };
 
@@ -164,13 +174,16 @@ const initialState = {
   drawManagerAddress: addresses.drawManager,
   vaultAddress: addresses.prizeVault,
   fromBlock: start,
-  lastScannedBlock: start - 1,
-  lastScannedBlockHash: hash(start - 1),
-  participantAccounts: [],
-  seedBlocks: {},
+  lastScannedBlock: isFinalizedScenario ? latest : start - 1,
+  lastScannedBlockHash: hash(isFinalizedScenario ? latest : start - 1),
+  participantAccounts: isFinalizedScenario ? [alice] : [],
+  seedBlocks: isFinalizedScenario ? { '1': start + 1 } : {},
   liveMonitoring: true,
 };
 fs.writeFileSync(process.env.WATCHER_STATE_FILE, JSON.stringify(initialState));
+if (isFinalizedScenario) {
+  fs.writeFileSync(process.env.WATCHER_INDEPENDENT_STATE_FILE, JSON.stringify({ version: 2 }));
+}
 const { main } = await import('./watch-root-proposals.mjs');
 
 if (scenario === 'valid') {
@@ -181,6 +194,35 @@ if (scenario === 'valid') {
   await assert.rejects(main(), /coverage failure/);
   assert.equal(health, 0);
   assert.ok((counts['http://head.invalid:challengeEndsAt'] || 0) > 0);
+} else if (scenario === 'finalized-upgrade') {
+  await assert.rejects(main(), /coverage failure/);
+  assert.equal(health, 0);
+  assert.equal(healthFailures, 1, 'the historical coverage incident must alert once');
+  const securityCallsAfterRecovery = Object.entries(counts)
+    .filter(([key]) => key.startsWith('http://security.invalid:'))
+    .reduce((sum, [, value]) => sum + value, 0);
+  await assert.rejects(main(), /coverage failure/);
+  const securityCallsAfterIdleRetry = Object.entries(counts)
+    .filter(([key]) => key.startsWith('http://security.invalid:'))
+    .reduce((sum, [, value]) => sum + value, 0);
+  assert.equal(securityCallsAfterIdleRetry, securityCallsAfterRecovery, 'an unacknowledged idle retry must not reconstruct again');
+  assert.equal(healthFailures, 1, 'an existing historical incident must not alert every cycle');
+  process.env.WATCHER_ACKNOWLEDGED_COVERAGE_GAPS = '1';
+  await main();
+  assert.equal(health, 1, 'health recovers only after explicit operator acknowledgment');
+  const securityCallsAfterAcknowledgment = Object.entries(counts)
+    .filter(([key]) => key.startsWith('http://security.invalid:'))
+    .reduce((sum, [, value]) => sum + value, 0);
+  assert.equal(securityCallsAfterAcknowledgment, securityCallsAfterRecovery, 'acknowledgment must not trigger reconstruction');
+  const recovered = JSON.parse(fs.readFileSync(process.env.WATCHER_INDEPENDENT_STATE_FILE, 'utf8'));
+  assert.equal(recovered.verifiedRoots['1'], undefined, 'historical recovery must not claim timely live verification');
+  assert.ok(recovered.historicalFinalizedRoots['1']);
+  assert.ok(recovered.coverageIncidents['1'].acknowledgedAt);
+} else if (scenario === 'finalized-invalid') {
+  await assert.rejects(main(), /coverage failure/);
+  assert.equal(health, 0);
+  const rejected = JSON.parse(fs.readFileSync(process.env.WATCHER_INDEPENDENT_STATE_FILE, 'utf8'));
+  assert.equal(rejected.historicalFinalizedRoots['1'], undefined);
 } else if (scenario === 'reorg') {
   await main();
   assert.equal(health, 1);

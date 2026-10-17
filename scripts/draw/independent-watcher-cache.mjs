@@ -19,7 +19,7 @@ const topics = ["Transfer", "SeedReceived", "RootProposed", "RootFinalized"]
 
 function emptyState(scope) {
   return {
-    version: 2,
+    version: 3,
     ...scope,
     lastScannedBlock: scope.fromBlock - 1,
     lastScannedBlockHash: "",
@@ -29,6 +29,8 @@ function emptyState(scope) {
     proposals: {},
     finalizations: {},
     verifiedRoots: {},
+    historicalFinalizedRoots: {},
+    coverageIncidents: {},
     publishedFinalizations: {},
   };
 }
@@ -76,7 +78,7 @@ export class IndependentWatcherCache {
     try {
       const value = JSON.parse(fs.readFileSync(this.file, "utf8"));
       if (
-        value.version !== 2
+        value.version !== 3
         || value.chainId !== this.scope.chainId
         || getAddress(value.drawManagerAddress) !== this.scope.drawManagerAddress
         || getAddress(value.vaultAddress) !== this.scope.vaultAddress
@@ -212,6 +214,82 @@ export class IndependentWatcherCache {
     return evidenceMatches(marker, this.state.proposals[key], this.state.seedEvidence[key])
       ? marker.root
       : undefined;
+  }
+
+  markHistoricalFinalizedIntegrity(drawId, { proposalEvidence, finalizationEvidence }) {
+    const key = BigInt(drawId).toString();
+    this.state.historicalFinalizedRoots[key] = {
+      root: proposalEvidence.root,
+      proposalEvidence,
+      finalizationEvidence,
+      recoveredAt: new Date().toISOString(),
+    };
+    atomicWrite(this.file, this.state);
+  }
+
+  historicalFinalizedRoot(drawId) {
+    const key = BigInt(drawId).toString();
+    const marker = this.state.historicalFinalizedRoots[key];
+    if (!marker || marker.root !== marker.proposalEvidence?.root || marker.root !== marker.finalizationEvidence?.root) {
+      return undefined;
+    }
+    const proposalMatches = evidenceMatches(
+      marker.proposalEvidence,
+      this.state.proposals[key],
+      this.state.seedEvidence[key],
+    );
+    const finalizationMatches = evidenceMatches(
+      marker.finalizationEvidence,
+      this.state.finalizations[key],
+      this.state.seedEvidence[key],
+    );
+    return proposalMatches && finalizationMatches ? marker.root : undefined;
+  }
+
+  integrityVerifiedRoot(drawId) {
+    return this.verifiedRoot(drawId) || this.historicalFinalizedRoot(drawId);
+  }
+
+  recordCoverageIncident(drawId, root, evidence) {
+    const key = BigInt(drawId).toString();
+    const normalizedRoot = String(root).toLowerCase();
+    const existing = this.state.coverageIncidents[key];
+    if (existing?.root === normalizedRoot) return false;
+    this.state.coverageIncidents[key] = {
+      root: normalizedRoot,
+      kind: "historical-finalized-integrity-recovery",
+      evidence,
+      detectedAt: new Date().toISOString(),
+      notifiedAt: null,
+      acknowledgedAt: null,
+      acknowledgment: null,
+    };
+    atomicWrite(this.file, this.state);
+    return true;
+  }
+
+  markCoverageIncidentNotified(drawId, root) {
+    const key = BigInt(drawId).toString();
+    const incident = this.state.coverageIncidents[key];
+    if (!incident || incident.root !== String(root).toLowerCase() || incident.notifiedAt) return false;
+    incident.notifiedAt = new Date().toISOString();
+    atomicWrite(this.file, this.state);
+    return true;
+  }
+
+  acknowledgeCoverageIncident(drawId, root, acknowledgment) {
+    const key = BigInt(drawId).toString();
+    const incident = this.state.coverageIncidents[key];
+    if (!incident || incident.root !== String(root).toLowerCase() || incident.acknowledgedAt) return false;
+    incident.acknowledgedAt = new Date().toISOString();
+    incident.acknowledgment = String(acknowledgment);
+    atomicWrite(this.file, this.state);
+    return true;
+  }
+
+  coverageIncident(drawId, root) {
+    const incident = this.state.coverageIncidents[BigInt(drawId).toString()];
+    return incident?.root === String(root).toLowerCase() ? { ...incident } : undefined;
   }
 
   markFinalizationHandled(drawId, evidence) {

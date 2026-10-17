@@ -49,6 +49,26 @@ Closed in code and regression tests.
 - Recursive splitting is depth-bounded and sequential, preventing fan-out.
 - A loopback JSON-RPC server returns a standard nested -32602 range error; the actual ethers provider bisects, completes and advances the cursor with one request in flight.
 
+## R328-01: finalized-history cache recovery applied live veto timing
+
+Closed in code and full-main regression tests.
+
+- Proposed roots still require the configured live veto window and strict agreement between discovery, independent event and on-chain deadlines.
+- A finalized current draw with missing/version-invalidated independent cache is reconstructed from canonical independent proposal, seed, transfer and finalization evidence without pretending its historical veto window remains actionable.
+- Historical finalized integrity is stored separately from `verifiedRoots`; it cannot be reported as a proposal verified in time for veto.
+- The watcher persists a hash-bound `historical-finalized-integrity-recovery` incident before persisting the recovered-integrity marker, alerts once, and withholds health until explicit operator review.
+- Acknowledgment is a comma-separated draw-ID allowlist in `WATCHER_ACKNOWLEDGED_COVERAGE_GAPS`, wired from the `V5_WATCHER_UAT_ACKNOWLEDGED_COVERAGE_GAPS` and `V5_WATCHER_MAINNET_ACKNOWLEDGED_COVERAGE_GAPS` GitHub Actions variables. Malformed values fail closed.
+- After acknowledgment, the durable incident records the timestamp/source, health resumes, and idle cycles do not repeat security-provider reconstruction.
+- Canonical divergence clears the recovery marker and incident with the rest of the independent cache, forcing reconstruction on the replacement chain.
+- Full-main negative coverage retains rejection of invalid finalized roots, canonical reorgs, expired live proposals and deadline disagreement.
+
+Acknowledgment procedure:
+
+1. Confirm the alert draw/root against the canonical DrawManager and review the independently reconstructed proposal/finalization evidence.
+2. Set the environment-specific GitHub Actions variable to the draw ID, or append it to the existing comma-separated list.
+3. Dispatch the watcher again. A healthy ping is allowed only after the incident is marked acknowledged in the canonical cache.
+4. After the acknowledged marker is persisted and the current draw advances, remove the temporary variable entry. The incident remains in the cache audit record.
+
 ## RPC routing and limits
 
 ### Indexer
@@ -116,16 +136,17 @@ Watcher:
 - WATCHER_HEAD_RPC_URL=https://rpc.monad.xyz
 - WATCHER_INDEPENDENT_LOG_CHUNK_SIZE=1000
 - WATCHER_INDEPENDENT_STATE_FILE=.watcher-cache-mainnet/independent-state.json
+- WATCHER_ACKNOWLEDGED_COVERAGE_GAPS=<empty normally; reviewed draw IDs only>
 
 ## Verification
 
 - Indexer TypeScript build: pass.
 - Indexer tests: 34/34 pass.
 - Keeper tests: 23/23 pass.
-- Watcher tests: 32/32 pass.
+- Watcher tests: 36/36 pass.
 - Frontend release/artifact tests: 9/9 pass.
 - Frontend production build and generated-artifact scan: pass with V5 disabled.
-- The auditor's former watcher reproduction now exits nonzero at the expired recovered proposal.
+- The auditor's finalized-upgrade reproduction now performs one security scan across two unacknowledged cycles rather than reconstructing repeatedly; the committed full-main regression then supplies explicit acknowledgment and proves health recovery without another security-provider call.
 - The auditor's former indexer reproduction now exits nonzero because sync succeeds instead of throwing the expected unsplit-range error.
 
 ## Remaining live acceptance gates

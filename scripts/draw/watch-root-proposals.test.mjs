@@ -7,6 +7,7 @@ import { compute } from "./compute-winners.js";
 import { rootNeedsIndependentVerification } from "./independent-watcher-cache.mjs";
 import { ingestWatcherReconstructionLogs } from "./reconstruct-watcher-input.mjs";
 import {
+  acknowledgedCoverageDraws,
   canCheckpointBatch,
   canonicalCheckpointMatches,
   challengeDeadlineMismatch,
@@ -115,6 +116,11 @@ test("bootstrap timing is not treated as live coverage and only root mismatches 
   assert.equal(canCheckpointBatch(1), false);
 });
 
+test("historical coverage acknowledgment accepts explicit draw IDs and rejects malformed values", () => {
+  assert.deepEqual([...acknowledgedCoverageDraws("1, 002,9")], ["1", "2", "9"]);
+  assert.throws(() => acknowledgedCoverageDraws("1,all"), /comma-separated list of draw IDs/);
+});
+
 test("current RPC calls have a bounded timeout", async () => {
   await assert.rejects(
     withRpcTimeout(new Promise(() => {}), "watcher chain head", 5),
@@ -213,6 +219,7 @@ test("mainnet watcher is independently configured and schedule-gated", () => {
   assert.match(workflow, /WATCHER_LOG_CHUNK_SIZE: "100"/);
   assert.match(workflow, /WATCHER_INDEPENDENT_STATE_FILE/);
   assert.match(workflow, /WATCHER_INDEPENDENT_LOG_CHUNK_SIZE: "1000"/);
+  assert.match(workflow, /V5_WATCHER_MAINNET_ACKNOWLEDGED_COVERAGE_GAPS/);
   assert.match(workflow, /if: always\(\)/);
   assert.match(workflow, /actions: write/);
   assert.match(workflow, /Queue successor watcher/);
@@ -228,6 +235,7 @@ test("workflow uses configured logs RPC and a five-minute cadence", () => {
   assert.match(workflow, /if: always\(\)/);
   assert.match(workflow, /WATCHER_HEAD_RPC_URL: https:\/\/testnet-rpc\.monad\.xyz/);
   assert.match(workflow, /WATCHER_HEAD_RPC_TIMEOUT_MS: "10000"/);
+  assert.match(workflow, /V5_WATCHER_UAT_ACKNOWLEDGED_COVERAGE_GAPS/);
   assert.match(watcher, /buildWatcherDrawInput\(\{\s*provider,/);
   assert.doesNotMatch(watcher, /DrawInputEventCache|buildDrawInput/);
   assert.match(watcher, /headProvider\.getBlockNumber\(\)/);

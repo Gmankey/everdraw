@@ -286,6 +286,18 @@ export function proposalCoverageFailure({ challengeEndsAt, observedAt, minRemain
 export function shouldEnforceLiveWindow(state) {
   return state?.liveMonitoring === true;
 }
+export function acknowledgedCoverageDraws(value = process.env.WATCHER_ACKNOWLEDGED_COVERAGE_GAPS || "") {
+  const acknowledged = new Set();
+  for (const raw of String(value).split(",")) {
+    const drawId = raw.trim();
+    if (!drawId) continue;
+    if (!/^\d+$/.test(drawId)) {
+      throw new Error("WATCHER_ACKNOWLEDGED_COVERAGE_GAPS must be a comma-separated list of draw IDs");
+    }
+    acknowledged.add(BigInt(drawId).toString());
+  }
+  return acknowledged;
+}
 
 export function canCheckpointBatch(rootMismatchCount) {
   return Number(rootMismatchCount) === 0;
@@ -413,7 +425,8 @@ export async function main() {
   const coverageFailures = [];
   const rootMismatches = [];
   const enforceLiveWindow = shouldEnforceLiveWindow(state);
-  const verifyProposal = async ({ drawId, root, throughBlock, discoveryDeadline }) => {
+  const coverageAcknowledgments = acknowledgedCoverageDraws();
+  const verifyProposal = async ({ drawId, root, throughBlock, discoveryDeadline, verificationMode = "live" }) => {
     const { result, event, proposalEvidence } = await verifyIndependentRoot({
       drawId,
       root,
@@ -449,7 +462,7 @@ export async function main() {
       acceptable = false;
       await alarm(message);
     }
-    if (enforceLiveWindow) {
+    if (verificationMode === "live" && enforceLiveWindow) {
       const timingFailure = proposalCoverageFailure({
         challengeEndsAt: storedChallengeEndsAt,
         observedAt: Math.floor(Date.now() / 1000),
@@ -461,8 +474,8 @@ export async function main() {
         await alarm(message);
       }
     }
-    if (acceptable) independentCache.markVerified(drawId, proposalEvidence);
-    return { result, acceptable };
+    if (acceptable && verificationMode === "live") independentCache.markVerified(drawId, proposalEvidence);
+    return { result, acceptable, proposalEvidence };
   };
 
   if (scanFromBlock <= latest) {
@@ -593,18 +606,27 @@ export async function main() {
       );
       await independentCache.ensureCanonical(headProvider);
       currentEvidence = { drawId: currentDrawId, root: currentDraw.root, status: Number(currentDraw.status) };
-      if (rootNeedsIndependentVerification({
-        status: currentDraw.status,
+      const currentStatus = Number(currentDraw.status);
+      const integrityRoot = currentStatus === 4
+        ? independentCache.integrityVerifiedRoot(currentDrawId)
+        : independentCache.verifiedRoot(currentDrawId);
+      const needsIntegrityRecovery = rootNeedsIndependentVerification({
+        status: currentStatus,
         root: currentDraw.root,
-        verifiedRoot: independentCache.verifiedRoot(currentDrawId),
-      })) {
-        await verifyProposal({
+        verifiedRoot: integrityRoot,
+      });
+      let historicalProposal;
+      if (needsIntegrityRecovery) {
+        historicalProposal = await verifyProposal({
           drawId: currentDrawId,
           root: currentDraw.root,
           throughBlock: latest,
+          verificationMode: currentStatus === 4 ? "historical-finalized" : "live",
         });
       }
-      if (Number(currentDraw.status) === 4 && !independentCache.finalizationHandled(currentDrawId, currentDraw.root)) {
+      const finalizationHandled = currentStatus === 4
+        && independentCache.finalizationHandled(currentDrawId, currentDraw.root);
+      if (currentStatus === 4 && (!finalizationHandled || needsIntegrityRecovery)) {
         const { input, result, evidence } = await verifyIndependentRoot({
           drawId: currentDrawId,
           root: currentDraw.root,
@@ -616,9 +638,45 @@ export async function main() {
           coverageFailures.push(message);
           rootMismatches.push(message);
           await alarm(message);
-        } else {
-          await publishClaimProofs({ input, result, vaultAddress });
-          independentCache.markFinalizationHandled(currentDrawId, evidence);
+        } else if (!historicalProposal || historicalProposal.acceptable) {
+          if (needsIntegrityRecovery) {
+            const recoveryEvidence = {
+              proposalEvidence: historicalProposal.proposalEvidence,
+              finalizationEvidence: evidence,
+            };
+            // Persist the incident first. A crash between these writes remains fail-closed
+            // and retries reconstruction instead of losing the live-coverage gap.
+            independentCache.recordCoverageIncident(currentDrawId, currentDraw.root, recoveryEvidence);
+            independentCache.markHistoricalFinalizedIntegrity(currentDrawId, recoveryEvidence);
+          }
+          if (!finalizationHandled) {
+            await publishClaimProofs({ input, result, vaultAddress });
+            independentCache.markFinalizationHandled(currentDrawId, evidence);
+          }
+        }
+      }
+      if (currentStatus === 4) {
+        let incident = independentCache.coverageIncident(currentDrawId, currentDraw.root);
+        if (incident && !incident.notifiedAt) {
+          await alarm(
+            `EverDraw V5 historical coverage gap draw ${currentDrawId}\n`
+            + `root=${currentDraw.root.toLowerCase()}\n`
+            + "finalized root integrity recovered, but timely live veto coverage is unproven\n"
+            + `operator action: review and add draw ${currentDrawId} to WATCHER_ACKNOWLEDGED_COVERAGE_GAPS`,
+          );
+          independentCache.markCoverageIncidentNotified(currentDrawId, currentDraw.root);
+          incident = independentCache.coverageIncident(currentDrawId, currentDraw.root);
+        }
+        if (incident && coverageAcknowledgments.has(currentDrawId.toString())) {
+          independentCache.acknowledgeCoverageIncident(
+            currentDrawId,
+            currentDraw.root,
+            "WATCHER_ACKNOWLEDGED_COVERAGE_GAPS",
+          );
+          incident = independentCache.coverageIncident(currentDrawId, currentDraw.root);
+        }
+        if (incident && !incident.acknowledgedAt) {
+          coverageFailures.push(`Historical finalized coverage gap awaiting acknowledgment for draw ${currentDrawId}`);
         }
       }
     }
@@ -644,7 +702,9 @@ export async function main() {
     if (currentEvidence && rootNeedsIndependentVerification({
       status: currentEvidence.status,
       root: currentEvidence.root,
-      verifiedRoot: independentCache.verifiedRoot(currentEvidence.drawId),
+      verifiedRoot: currentEvidence.status === 4
+        ? independentCache.integrityVerifiedRoot(currentEvidence.drawId)
+        : independentCache.verifiedRoot(currentEvidence.drawId),
     })) {
       throw new Error(`Independent proposal evidence changed before health for draw ${currentEvidence.drawId}`);
     }

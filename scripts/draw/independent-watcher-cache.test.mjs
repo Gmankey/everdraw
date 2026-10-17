@@ -99,3 +99,50 @@ test("independent cache accepts and persists a canonically verified proposal", a
   assert.equal(restored.verifiedRoot(1n), root);
   assert.equal(restored.finalizationHandled(1n, root), true);
 });
+
+test("historical finalized integrity remains distinct from timely proposal verification", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "everdraw-independent-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const cacheFile = path.join(dir, "state.json");
+  const securityLogs = [
+    log(vault, 100, "Transfer", [zero, alice, 1n]),
+    log(manager, 101, "SeedReceived", [1n, 9n, root]),
+    log(manager, 102, "RootProposed", [1n, root, 1, 1n, alice, root, 9999]),
+    log(manager, 103, "RootFinalized", [1n, root, 1, 1n]),
+  ];
+  const cache = new IndependentWatcherCache({
+    file: cacheFile,
+    chainId: 143n,
+    drawManagerAddress: manager,
+    vaultAddress: vault,
+    fromBlock: 100,
+  });
+  await cache.syncThrough(provider(securityLogs), 103, { chunkSize: 4 });
+  const proposalEvidence = await cache.assertEvidenceCanonical(provider(securityLogs), "proposals", 1n, root);
+  const finalizationEvidence = await cache.assertEvidenceCanonical(provider(securityLogs), "finalizations", 1n, root);
+  const recoveryEvidence = { proposalEvidence, finalizationEvidence };
+
+  assert.equal(cache.verifiedRoot(1n), undefined);
+  assert.equal(cache.recordCoverageIncident(1n, root, recoveryEvidence), true);
+  assert.equal(cache.recordCoverageIncident(1n, root, recoveryEvidence), false);
+  cache.markHistoricalFinalizedIntegrity(1n, recoveryEvidence);
+  assert.equal(cache.verifiedRoot(1n), undefined, "historical recovery must not claim timely live verification");
+  assert.equal(cache.historicalFinalizedRoot(1n), root);
+  assert.equal(cache.integrityVerifiedRoot(1n), root);
+  assert.equal(cache.coverageIncident(1n, root).notifiedAt, null);
+  assert.equal(cache.markCoverageIncidentNotified(1n, root), true);
+  assert.equal(cache.markCoverageIncidentNotified(1n, root), false);
+  assert.equal(cache.coverageIncident(1n, root).acknowledgedAt, null);
+  assert.equal(cache.acknowledgeCoverageIncident(1n, root, "test-operator"), true);
+
+  const restored = new IndependentWatcherCache({
+    file: cacheFile,
+    chainId: 143n,
+    drawManagerAddress: manager,
+    vaultAddress: vault,
+    fromBlock: 100,
+  });
+  assert.equal(restored.integrityVerifiedRoot(1n), root);
+  assert.ok(restored.coverageIncident(1n, root).notifiedAt);
+  assert.equal(restored.coverageIncident(1n, root).acknowledgment, "test-operator");
+});
