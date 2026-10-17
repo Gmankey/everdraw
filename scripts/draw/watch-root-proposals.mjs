@@ -286,15 +286,18 @@ export function proposalCoverageFailure({ challengeEndsAt, observedAt, minRemain
 export function shouldEnforceLiveWindow(state) {
   return state?.liveMonitoring === true;
 }
-export function acknowledgedCoverageDraws(value = process.env.WATCHER_ACKNOWLEDGED_COVERAGE_GAPS || "") {
+export function acknowledgedCoverageIncidents(value = process.env.WATCHER_ACKNOWLEDGED_COVERAGE_GAPS || "") {
   const acknowledged = new Set();
   for (const raw of String(value).split(",")) {
-    const drawId = raw.trim();
-    if (!drawId) continue;
-    if (!/^\d+$/.test(drawId)) {
-      throw new Error("WATCHER_ACKNOWLEDGED_COVERAGE_GAPS must be a comma-separated list of draw IDs");
+    const token = raw.trim();
+    if (!token) continue;
+    const match = token.match(/^(\d+):(0x[0-9a-fA-F]{64})$/);
+    if (!match) {
+      throw new Error(
+        "WATCHER_ACKNOWLEDGED_COVERAGE_GAPS must be a comma-separated list of draw:fingerprint incident tokens",
+      );
     }
-    acknowledged.add(BigInt(drawId).toString());
+    acknowledged.add(BigInt(match[1]).toString() + ":" + match[2].toLowerCase());
   }
   return acknowledged;
 }
@@ -425,7 +428,7 @@ export async function main() {
   const coverageFailures = [];
   const rootMismatches = [];
   const enforceLiveWindow = shouldEnforceLiveWindow(state);
-  const coverageAcknowledgments = acknowledgedCoverageDraws();
+  const coverageAcknowledgments = acknowledgedCoverageIncidents();
   const verifyProposal = async ({ drawId, root, throughBlock, discoveryDeadline, verificationMode = "live" }) => {
     const { result, event, proposalEvidence } = await verifyIndependentRoot({
       drawId,
@@ -655,30 +658,30 @@ export async function main() {
           }
         }
       }
-      if (currentStatus === 4) {
-        let incident = independentCache.coverageIncident(currentDrawId, currentDraw.root);
-        if (incident && !incident.notifiedAt) {
-          await alarm(
-            `EverDraw V5 historical coverage gap draw ${currentDrawId}\n`
-            + `root=${currentDraw.root.toLowerCase()}\n`
-            + "finalized root integrity recovered, but timely live veto coverage is unproven\n"
-            + `operator action: review and add draw ${currentDrawId} to WATCHER_ACKNOWLEDGED_COVERAGE_GAPS`,
-          );
-          independentCache.markCoverageIncidentNotified(currentDrawId, currentDraw.root);
-          incident = independentCache.coverageIncident(currentDrawId, currentDraw.root);
-        }
-        if (incident && coverageAcknowledgments.has(currentDrawId.toString())) {
-          independentCache.acknowledgeCoverageIncident(
-            currentDrawId,
-            currentDraw.root,
-            "WATCHER_ACKNOWLEDGED_COVERAGE_GAPS",
-          );
-          incident = independentCache.coverageIncident(currentDrawId, currentDraw.root);
-        }
-        if (incident && !incident.acknowledgedAt) {
-          coverageFailures.push(`Historical finalized coverage gap awaiting acknowledgment for draw ${currentDrawId}`);
-        }
-      }
+    }
+  }
+  for (const activeIncident of independentCache.activeCoverageIncidents()) {
+    let incident = activeIncident;
+    if (!incident.notifiedAt) {
+      await alarm(
+        "EverDraw V5 historical coverage gap draw " + incident.drawId + "\n"
+        + "root=" + incident.root + "\n"
+        + "incident=" + incident.id + "\n"
+        + "finalized root integrity recovered, but timely live veto coverage is unproven\n"
+        + "operator action: review and add the exact incident token to WATCHER_ACKNOWLEDGED_COVERAGE_GAPS",
+      );
+      independentCache.markCoverageIncidentNotified(incident.id);
+      incident = independentCache.coverageIncident(incident.id);
+    }
+    if (coverageAcknowledgments.has(incident.id)) {
+      independentCache.acknowledgeCoverageIncident(
+        incident.id,
+        "WATCHER_ACKNOWLEDGED_COVERAGE_GAPS:" + incident.id,
+      );
+      incident = independentCache.coverageIncident(incident.id);
+    }
+    if (!incident.acknowledgedAt) {
+      coverageFailures.push("Historical finalized coverage gap awaiting acknowledgment: " + incident.id);
     }
   }
   if (!caughtUp) {

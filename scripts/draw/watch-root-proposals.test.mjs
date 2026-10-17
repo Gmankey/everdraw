@@ -7,7 +7,7 @@ import { compute } from "./compute-winners.js";
 import { rootNeedsIndependentVerification } from "./independent-watcher-cache.mjs";
 import { ingestWatcherReconstructionLogs } from "./reconstruct-watcher-input.mjs";
 import {
-  acknowledgedCoverageDraws,
+  acknowledgedCoverageIncidents,
   canCheckpointBatch,
   canonicalCheckpointMatches,
   challengeDeadlineMismatch,
@@ -116,11 +116,15 @@ test("bootstrap timing is not treated as live coverage and only root mismatches 
   assert.equal(canCheckpointBatch(1), false);
 });
 
-test("historical coverage acknowledgment accepts explicit draw IDs and rejects malformed values", () => {
-  assert.deepEqual([...acknowledgedCoverageDraws("1, 002,9")], ["1", "2", "9"]);
-  assert.throws(() => acknowledgedCoverageDraws("1,all"), /comma-separated list of draw IDs/);
+test("historical coverage acknowledgment accepts evidence-bound incident tokens and rejects draw IDs", () => {
+  const first = "1:0x" + "aa".repeat(32);
+  const normalized = "2:0x" + "bb".repeat(32);
+  assert.deepEqual(
+    [...acknowledgedCoverageIncidents(first.toUpperCase().replace("0X", "0x") + ", 002:" + "0x" + "bb".repeat(32))],
+    [first, normalized],
+  );
+  assert.throws(() => acknowledgedCoverageIncidents("1"), /draw:fingerprint incident tokens/);
 });
-
 test("current RPC calls have a bounded timeout", async () => {
   await assert.rejects(
     withRpcTimeout(new Promise(() => {}), "watcher chain head", 5),

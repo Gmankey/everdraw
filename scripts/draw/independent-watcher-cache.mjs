@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { Interface, getAddress } from "ethers";
 import {
   getLogsRangeDirect,
@@ -19,7 +20,7 @@ const topics = ["Transfer", "SeedReceived", "RootProposed", "RootFinalized"]
 
 function emptyState(scope) {
   return {
-    version: 3,
+    version: 4,
     ...scope,
     lastScannedBlock: scope.fromBlock - 1,
     lastScannedBlockHash: "",
@@ -33,6 +34,39 @@ function emptyState(scope) {
     coverageIncidents: {},
     publishedFinalizations: {},
   };
+}
+
+function normalizedEvidence(evidence) {
+  const normalize = (value) => ({
+    root: String(value?.root || "").toLowerCase(),
+    eventBlockNumber: Number(value?.eventBlockNumber),
+    eventBlockHash: String(value?.eventBlockHash || "").toLowerCase(),
+    seedBlockNumber: Number(value?.seedBlockNumber),
+    seedBlockHash: String(value?.seedBlockHash || "").toLowerCase(),
+    seed: String(value?.seed || "").toLowerCase(),
+  });
+  return {
+    proposalEvidence: normalize(evidence?.proposalEvidence),
+    finalizationEvidence: normalize(evidence?.finalizationEvidence),
+  };
+}
+
+export function coverageIncidentId(drawId, root, evidence, scope = {}) {
+  const key = BigInt(drawId).toString();
+  const normalizedRoot = String(root).toLowerCase();
+  const identity = JSON.stringify({
+    deployment: {
+      chainId: String(scope.chainId || ""),
+      drawManagerAddress: String(scope.drawManagerAddress || "").toLowerCase(),
+      vaultAddress: String(scope.vaultAddress || "").toLowerCase(),
+      fromBlock: Number(scope.fromBlock || 0),
+    },
+    drawId: key,
+    root: normalizedRoot,
+    evidence: normalizedEvidence(evidence),
+  });
+  const fingerprint = "0x" + createHash("sha256").update(identity).digest("hex");
+  return key + ":" + fingerprint;
 }
 
 function atomicWrite(file, state) {
@@ -78,7 +112,7 @@ export class IndependentWatcherCache {
     try {
       const value = JSON.parse(fs.readFileSync(this.file, "utf8"));
       if (
-        value.version !== 3
+        value.version !== 4
         || value.chainId !== this.scope.chainId
         || getAddress(value.drawManagerAddress) !== this.scope.drawManagerAddress
         || getAddress(value.vaultAddress) !== this.scope.vaultAddress
@@ -94,7 +128,11 @@ export class IndependentWatcherCache {
     if (!this.state.lastScannedBlockHash || this.state.lastScannedBlock < this.scope.fromBlock) return true;
     const block = await canonicalProvider.getBlock(this.state.lastScannedBlock);
     if (block?.hash?.toLowerCase() === this.state.lastScannedBlockHash.toLowerCase()) return true;
-    this.state = emptyState(this.scope);
+    const retainedIncidents = structuredClone(this.state.coverageIncidents || {});
+    this.state = {
+      ...emptyState(this.scope),
+      coverageIncidents: retainedIncidents,
+    };
     atomicWrite(this.file, this.state);
     return false;
   }
@@ -253,43 +291,62 @@ export class IndependentWatcherCache {
   recordCoverageIncident(drawId, root, evidence) {
     const key = BigInt(drawId).toString();
     const normalizedRoot = String(root).toLowerCase();
-    const existing = this.state.coverageIncidents[key];
-    if (existing?.root === normalizedRoot) return false;
-    this.state.coverageIncidents[key] = {
+    const id = coverageIncidentId(key, normalizedRoot, evidence, this.scope);
+    if (this.state.coverageIncidents[id]) return false;
+    const supersededAt = new Date().toISOString();
+    for (const incident of Object.values(this.state.coverageIncidents)) {
+      if (incident.drawId === key && !incident.supersededAt) {
+        incident.supersededAt = supersededAt;
+        incident.resolution = "replaced-by-canonical-evidence";
+      }
+    }
+    this.state.coverageIncidents[id] = {
+      id,
+      drawId: key,
       root: normalizedRoot,
       kind: "historical-finalized-integrity-recovery",
-      evidence,
+      evidence: normalizedEvidence(evidence),
       detectedAt: new Date().toISOString(),
       notifiedAt: null,
       acknowledgedAt: null,
       acknowledgment: null,
+      supersededAt: null,
+      resolution: null,
     };
     atomicWrite(this.file, this.state);
     return true;
   }
 
-  markCoverageIncidentNotified(drawId, root) {
-    const key = BigInt(drawId).toString();
-    const incident = this.state.coverageIncidents[key];
-    if (!incident || incident.root !== String(root).toLowerCase() || incident.notifiedAt) return false;
+  markCoverageIncidentNotified(id) {
+    const incident = this.state.coverageIncidents[String(id)];
+    if (!incident || incident.supersededAt || incident.notifiedAt) return false;
     incident.notifiedAt = new Date().toISOString();
     atomicWrite(this.file, this.state);
     return true;
   }
 
-  acknowledgeCoverageIncident(drawId, root, acknowledgment) {
-    const key = BigInt(drawId).toString();
-    const incident = this.state.coverageIncidents[key];
-    if (!incident || incident.root !== String(root).toLowerCase() || incident.acknowledgedAt) return false;
+  acknowledgeCoverageIncident(id, acknowledgment) {
+    const incident = this.state.coverageIncidents[String(id)];
+    if (!incident || incident.supersededAt || incident.acknowledgedAt) return false;
     incident.acknowledgedAt = new Date().toISOString();
     incident.acknowledgment = String(acknowledgment);
     atomicWrite(this.file, this.state);
     return true;
   }
 
-  coverageIncident(drawId, root) {
-    const incident = this.state.coverageIncidents[BigInt(drawId).toString()];
-    return incident?.root === String(root).toLowerCase() ? { ...incident } : undefined;
+  coverageIncident(id) {
+    const incident = this.state.coverageIncidents[String(id)];
+    return incident ? structuredClone(incident) : undefined;
+  }
+
+  activeCoverageIncidents() {
+    return Object.values(this.state.coverageIncidents)
+      .filter((incident) => !incident.supersededAt)
+      .map((incident) => structuredClone(incident));
+  }
+
+  unresolvedCoverageIncidents() {
+    return this.activeCoverageIncidents().filter((incident) => !incident.acknowledgedAt);
   }
 
   markFinalizationHandled(drawId, evidence) {

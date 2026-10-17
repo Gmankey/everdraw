@@ -57,17 +57,27 @@ Closed in code and full-main regression tests.
 - A finalized current draw with missing/version-invalidated independent cache is reconstructed from canonical independent proposal, seed, transfer and finalization evidence without pretending its historical veto window remains actionable.
 - Historical finalized integrity is stored separately from `verifiedRoots`; it cannot be reported as a proposal verified in time for veto.
 - The watcher persists a hash-bound `historical-finalized-integrity-recovery` incident before persisting the recovered-integrity marker, alerts once, and withholds health until explicit operator review.
-- Acknowledgment is a comma-separated draw-ID allowlist in `WATCHER_ACKNOWLEDGED_COVERAGE_GAPS`, wired from the `V5_WATCHER_UAT_ACKNOWLEDGED_COVERAGE_GAPS` and `V5_WATCHER_MAINNET_ACKNOWLEDGED_COVERAGE_GAPS` GitHub Actions variables. Malformed values fail closed.
+- Acknowledgment is a comma-separated list of exact `drawId:0x<64-hex-fingerprint>` incident tokens in `WATCHER_ACKNOWLEDGED_COVERAGE_GAPS`, wired from the `V5_WATCHER_UAT_ACKNOWLEDGED_COVERAGE_GAPS` and `V5_WATCHER_MAINNET_ACKNOWLEDGED_COVERAGE_GAPS` GitHub Actions variables. The alert prints the token; draw-ID-only and malformed values fail closed.
 - After acknowledgment, the durable incident records the timestamp/source, health resumes, and idle cycles do not repeat security-provider reconstruction.
-- Canonical divergence clears the recovery marker and incident with the rest of the independent cache, forcing reconstruction on the replacement chain.
+- Canonical divergence clears reconstructed root markers but retains the incident audit ledger. Identical reconstructed evidence retains its prior review; changed root or changed proposal/finalization/seed block identity supersedes the old record and creates a fresh unacknowledged incident.
 - Full-main negative coverage retains rejection of invalid finalized roots, canonical reorgs, expired live proposals and deadline disagreement.
+
+## R328-02/R328-03: acknowledgment lifecycle and canonical identity
+
+Closed in code and full-main regression tests.
+
+- Every active unresolved incident in the deployment-scoped independent cache gates health, including incidents from earlier draws after `currentDrawId` advances.
+- The draw-advance regression covers AwaitingSeed, Seeded, Proposed and Finalized states and permits a past-draw acknowledgment without repeating reconstruction.
+- Incident IDs bind the draw, root, proposal block/hash, finalization block/hash and seed block/hash/value.
+- A retained old token cannot acknowledge a changed root or the same root reconstructed from different canonical evidence.
+- Superseded incidents remain in the ledger with `supersededAt` and `resolution=replaced-by-canonical-evidence`; only the replacement incident is actionable.
 
 Acknowledgment procedure:
 
-1. Confirm the alert draw/root against the canonical DrawManager and review the independently reconstructed proposal/finalization evidence.
-2. Set the environment-specific GitHub Actions variable to the draw ID, or append it to the existing comma-separated list.
+1. Confirm the alert draw/root and printed incident token against the canonical DrawManager and review the independently reconstructed proposal/finalization/seed evidence.
+2. Set the environment-specific GitHub Actions variable to the exact printed incident token, or append that token to the existing comma-separated list. Remove any legacy draw-ID-only value first.
 3. Dispatch the watcher again. A healthy ping is allowed only after the incident is marked acknowledged in the canonical cache.
-4. After the acknowledged marker is persisted and the current draw advances, remove the temporary variable entry. The incident remains in the cache audit record.
+4. After the acknowledged marker is persisted, remove the temporary variable entry. The incident remains in the cache audit record; a canonical replacement requires a different token and a new review.
 
 ## RPC routing and limits
 
@@ -136,17 +146,17 @@ Watcher:
 - WATCHER_HEAD_RPC_URL=https://rpc.monad.xyz
 - WATCHER_INDEPENDENT_LOG_CHUNK_SIZE=1000
 - WATCHER_INDEPENDENT_STATE_FILE=.watcher-cache-mainnet/independent-state.json
-- WATCHER_ACKNOWLEDGED_COVERAGE_GAPS=<empty normally; reviewed draw IDs only>
+- WATCHER_ACKNOWLEDGED_COVERAGE_GAPS=<empty normally; exact reviewed incident tokens only>
 
 ## Verification
 
 - Indexer TypeScript build: pass.
 - Indexer tests: 34/34 pass.
 - Keeper tests: 23/23 pass.
-- Watcher tests: 36/36 pass.
+- Watcher tests: 39/39 pass.
 - Frontend release/artifact tests: 9/9 pass.
 - Frontend production build and generated-artifact scan: pass with V5 disabled.
-- The auditor's finalized-upgrade reproduction now performs one security scan across two unacknowledged cycles rather than reconstructing repeatedly; the committed full-main regression then supplies explicit acknowledgment and proves health recovery without another security-provider call.
+- Full-main regressions prove one-time recovery, no repeated unacknowledged reconstruction, prior-draw gating across every later lifecycle status, and fresh acknowledgment after canonical replacement.
 - The auditor's former indexer reproduction now exits nonzero because sync succeeds instead of throwing the expected unsplit-range error.
 
 ## Remaining live acceptance gates

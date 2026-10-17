@@ -7,7 +7,7 @@ import { readActiveV5Deployment } from '../keeper/v5-deployment.mjs';
 import { compute } from './compute-winners.js';
 
 const scenario = process.argv[2];
-if (!['valid', 'expired', 'deadline-mismatch', 'finalized-upgrade', 'finalized-invalid', 'reorg', 'idle'].includes(scenario)) {
+if (!['valid', 'expired', 'deadline-mismatch', 'finalized-upgrade', 'finalized-invalid', 'finalized-advance', 'finalized-reorg-ack', 'reorg', 'idle'].includes(scenario)) {
   throw new Error(`Unknown watcher fixture scenario ${scenario}`);
 }
 const isFinalizedScenario = scenario.startsWith('finalized-');
@@ -15,7 +15,7 @@ const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'everdraw-watcher-main-'));
 const deployment = readActiveV5Deployment('deployments/monad-mainnet.json', { expectedChainId: 143 });
 const addresses = deployment.addresses;
 const start = deployment.startBlock;
-const latest = start + 4;
+let latest = start + 4;
 for (const name of [
   'DRAW_MANAGER_ADDRESS',
   'WATCHER_FROM_BLOCK',
@@ -24,6 +24,7 @@ for (const name of [
   'TELEGRAM_CHAT_ID',
   'WATCHER_CLAIM_PROOF_URL',
   'WATCHER_CLAIM_PROOF_TOKEN',
+  'WATCHER_ACKNOWLEDGED_COVERAGE_GAPS',
 ]) delete process.env[name];
 Object.assign(process.env, {
   DEPLOYMENT_FILE: 'deployments/monad-mainnet.json',
@@ -70,9 +71,22 @@ const drawInput = {
   tierBps: [10_000],
   accounts: [{ address: alice, twab: '10' }],
 };
+const draw2Input = {
+  ...drawInput,
+  drawId: '2',
+  seed: seed2,
+  seedBlock: start + 5,
+  periodStart: '200',
+  periodEnd: '300',
+  accounts: [{ address: bob, twab: '10' }],
+};
+const draw2Root = compute(draw2Input).root;
+const draw2Deadline = now + 7_200;
 const proposedRoot = compute(drawInput).root;
 const invalidRoot = `0x${'99'.repeat(32)}`;
-const chainRoot = scenario === 'finalized-invalid' ? invalidRoot : proposedRoot;
+let chainRoot = scenario === 'finalized-invalid' ? invalidRoot : proposedRoot;
+let currentDrawId = scenario === 'idle' ? 0n : 1n;
+let currentDrawStatus = isFinalizedScenario ? 4 : 3;
 const abi = new Interface([
   'function vault() view returns(address)',
   'function claimManager() view returns(address)',
@@ -139,6 +153,16 @@ JsonRpcProvider.prototype.getLogs = async function getLogs(filter) {
   if (isFinalizedScenario) {
     logs.push(eventLog(addresses.drawManager, start + 3, 'RootFinalized', [1n, chainRoot, 1, 100n]));
   }
+  if (currentDrawId === 2n && currentDrawStatus >= 2) {
+    logs.push(eventLog(addresses.prizeVault, start + 5, 'Transfer', [zero, bob, 10n]));
+    logs.push(eventLog(addresses.drawManager, start + 5, 'SeedReceived', [2n, 2n, seed2]));
+  }
+  if (currentDrawId === 2n && currentDrawStatus >= 3) {
+    logs.push(eventLog(addresses.drawManager, start + 6, 'RootProposed', [2n, draw2Root, 1, 100n, bob, seed2, draw2Deadline]));
+  }
+  if (currentDrawId === 2n && currentDrawStatus >= 4) {
+    logs.push(eventLog(addresses.drawManager, start + 7, 'RootFinalized', [2n, draw2Root, 1, 100n]));
+  }
   return logs.filter((log) => log.blockNumber >= Number(filter.fromBlock) && log.blockNumber <= Number(filter.toBlock));
 };
 JsonRpcProvider.prototype.call = async function call(transaction) {
@@ -150,12 +174,22 @@ JsonRpcProvider.prototype.call = async function call(transaction) {
     case 'claimManager': values = [addresses.claimManager]; break;
     case 'twabController': values = [addresses.twabController]; break;
     case 'payoutToken': values = [payoutToken]; break;
-    case 'currentDrawId': values = [scenario === 'idle' ? 0n : 1n]; break;
-    case 'challengeEndsAt': values = [storedDeadline]; break;
-    case 'getTwabBetween': values = [parsed.args[1].toLowerCase() === (version === 1 ? alice : bob) ? 10n : 0n]; break;
+    case 'currentDrawId': values = [currentDrawId]; break;
+    case 'challengeEndsAt': values = [BigInt(parsed.args[0]) === 2n ? draw2Deadline : storedDeadline]; break;
+    case 'getTwabBetween': values = [parsed.args[1].toLowerCase() === (currentDrawId === 2n || version === 2 ? bob : alice) ? 10n : 0n]; break;
     case 'drawRewardLegCount':
     case 'drawFeeRecipientCount': values = [0n]; break;
-    case 'draws': values = [100, 200, 1, version === 1 ? seed1 : seed2, 10, 100, 1, 0, chainRoot, eventDeadline - 28_800, alice, isFinalizedScenario ? 4 : 3, 100, 0, 0]; break;
+    case 'draws': {
+      if (BigInt(parsed.args[0]) === 2n) {
+        const zeroHash = '0x' + '00'.repeat(32);
+        const drawSeed = currentDrawStatus >= 2 ? seed2 : zeroHash;
+        const drawRoot = currentDrawStatus >= 3 ? draw2Root : zeroHash;
+        values = [200, 300, 2, drawSeed, 10, 100, 1, 0, drawRoot, currentDrawStatus >= 3 ? draw2Deadline - 28_800 : 0, bob, currentDrawStatus, 100, 0, 0];
+      } else {
+        values = [100, 200, 1, version === 1 ? seed1 : seed2, 10, 100, 1, 0, chainRoot, eventDeadline - 28_800, alice, isFinalizedScenario ? 4 : 3, 100, 0, 0];
+      }
+      break;
+    }
     default: throw new Error(`Unexpected call ${parsed.name}`);
   }
   return abi.encodeFunctionResult(parsed.fragment, values);
@@ -194,6 +228,50 @@ if (scenario === 'valid') {
   await assert.rejects(main(), /coverage failure/);
   assert.equal(health, 0);
   assert.ok((counts['http://head.invalid:challengeEndsAt'] || 0) > 0);
+} else if (scenario === 'finalized-advance') {
+  await assert.rejects(main(), /coverage failure/);
+  assert.equal(health, 0);
+  const pending = JSON.parse(fs.readFileSync(process.env.WATCHER_INDEPENDENT_STATE_FILE, 'utf8'));
+  const incidentId = Object.keys(pending.coverageIncidents)[0];
+  assert.ok(incidentId);
+  currentDrawId = 2n;
+  for (const [status, head] of [[1, start + 5], [2, start + 5], [3, start + 6], [4, start + 7]]) {
+    currentDrawStatus = status;
+    latest = head;
+    await assert.rejects(main(), /coverage failure/);
+    const persisted = JSON.parse(fs.readFileSync(process.env.WATCHER_INDEPENDENT_STATE_FILE, 'utf8'));
+    assert.equal(persisted.coverageIncidents[incidentId].acknowledgedAt, null);
+    assert.equal(health, 0, 'an earlier unresolved incident must block health at status ' + status);
+  }
+  process.env.WATCHER_ACKNOWLEDGED_COVERAGE_GAPS = incidentId;
+  await main();
+  assert.equal(health, 1, 'the past-draw incident can be acknowledged after draw advancement');
+} else if (scenario === 'finalized-reorg-ack') {
+  await assert.rejects(main(), /coverage failure/);
+  const first = JSON.parse(fs.readFileSync(process.env.WATCHER_INDEPENDENT_STATE_FILE, 'utf8'));
+  const firstIncidentId = Object.keys(first.coverageIncidents)[0];
+  process.env.WATCHER_ACKNOWLEDGED_COVERAGE_GAPS = firstIncidentId;
+  await main();
+  assert.equal(health, 1);
+  const oldRoot = chainRoot;
+  version = 2;
+  chainRoot = compute({ ...drawInput, seed: seed2, accounts: [{ address: bob, twab: '10' }] }).root;
+  assert.notEqual(chainRoot, oldRoot);
+  await assert.rejects(main(), /coverage failure/);
+  const replacement = JSON.parse(fs.readFileSync(process.env.WATCHER_INDEPENDENT_STATE_FILE, 'utf8'));
+  const incidents = Object.values(replacement.coverageIncidents);
+  assert.equal(incidents.length, 2, 'the superseded incident remains in the audit record');
+  const oldIncident = incidents.find((incident) => incident.id === firstIncidentId);
+  const newIncident = incidents.find((incident) => !incident.supersededAt);
+  assert.equal(oldIncident.resolution, 'replaced-by-canonical-evidence');
+  assert.ok(oldIncident.supersededAt);
+  assert.notEqual(newIncident.id, firstIncidentId);
+  assert.equal(newIncident.root, chainRoot);
+  assert.equal(newIncident.acknowledgedAt, null);
+  assert.equal(health, 1, 'the retained old token cannot approve replacement evidence');
+  process.env.WATCHER_ACKNOWLEDGED_COVERAGE_GAPS = newIncident.id;
+  await main();
+  assert.equal(health, 2, 'replacement evidence needs its own operator acknowledgment');
 } else if (scenario === 'finalized-upgrade') {
   await assert.rejects(main(), /coverage failure/);
   assert.equal(health, 0);
@@ -207,7 +285,10 @@ if (scenario === 'valid') {
     .reduce((sum, [, value]) => sum + value, 0);
   assert.equal(securityCallsAfterIdleRetry, securityCallsAfterRecovery, 'an unacknowledged idle retry must not reconstruct again');
   assert.equal(healthFailures, 1, 'an existing historical incident must not alert every cycle');
-  process.env.WATCHER_ACKNOWLEDGED_COVERAGE_GAPS = '1';
+  const pending = JSON.parse(fs.readFileSync(process.env.WATCHER_INDEPENDENT_STATE_FILE, 'utf8'));
+  const incidentIds = Object.keys(pending.coverageIncidents);
+  assert.equal(incidentIds.length, 1);
+  process.env.WATCHER_ACKNOWLEDGED_COVERAGE_GAPS = incidentIds[0];
   await main();
   assert.equal(health, 1, 'health recovers only after explicit operator acknowledgment');
   const securityCallsAfterAcknowledgment = Object.entries(counts)
@@ -217,7 +298,7 @@ if (scenario === 'valid') {
   const recovered = JSON.parse(fs.readFileSync(process.env.WATCHER_INDEPENDENT_STATE_FILE, 'utf8'));
   assert.equal(recovered.verifiedRoots['1'], undefined, 'historical recovery must not claim timely live verification');
   assert.ok(recovered.historicalFinalizedRoots['1']);
-  assert.ok(recovered.coverageIncidents['1'].acknowledgedAt);
+  assert.ok(recovered.coverageIncidents[incidentIds[0]].acknowledgedAt);
 } else if (scenario === 'finalized-invalid') {
   await assert.rejects(main(), /coverage failure/);
   assert.equal(health, 0);
