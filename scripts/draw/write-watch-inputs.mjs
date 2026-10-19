@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { Contract, FetchRequest, Interface, JsonRpcProvider, getAddress } from "ethers";
+import { isInsufficientHistoryError } from "./reconstruct-watcher-input.mjs";
 
 const DEPLOYMENT_FILE = process.env.DEPLOYMENT_FILE || "deployments/monad-testnet.json";
 const RPC_URL = process.env.WATCHER_RPC_URL || process.env.KEEPER_RPC_URL || process.env.RPC_URL || process.env.MONAD_TESTNET_RPC_URL;
@@ -748,6 +749,7 @@ export async function buildDrawInput({
     try {
       value = await twab.getTwabBetween(vaultAddress, account, draw.periodStart, draw.periodEnd, { blockTag: seedBlock });
     } catch (err) {
+      if (!isInsufficientHistoryError(err)) throw err;
       value = 0n;
     }
     if (value > 0n) accounts.push({ address: account, twab: value.toString() });

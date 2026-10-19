@@ -197,6 +197,28 @@ test("keeper balance health reads use KEEPER_READ_RPC_URL, not the transaction R
 test("keeper validates the paid write provider only when sending a transaction", () => { const source = readFileSync(new URL("../keeper-v5.js", import.meta.url), "utf8"); const runOnce = source.slice(source.indexOf("async function runOnce"), source.indexOf("async function main")); assert.equal(runOnce.includes("writeProvider.getNetwork"), false); assert.equal(source.includes("signer.provider.getNetwork()"), true); });
 
 
+test("keeper routes historical root reconstruction through the bounded archive provider", () => {
+  const source = readFileSync(new URL("../keeper-v5.js", import.meta.url), "utf8");
+  assert.match(source, /const ROOT_RPC_URL = process\.env\.KEEPER_ROOT_RPC_URL \|\| RPC_URL/);
+  assert.match(source, /buildAndPersistInput\(rootProvider, drawManagerAddress, drawId, fromBlock, eventCache\)/);
+  assert.doesNotMatch(source, /buildAndPersistInput\(provider, drawManagerAddress, drawId, fromBlock, eventCache\)/);
+});
+
+test("keeper skips archive reconstruction when every registered leaf is already claimed", () => {
+  const source = readFileSync(new URL("../keeper-v5.js", import.meta.url), "utf8");
+  const maybeClaim = source.slice(source.indexOf("async function maybeClaim"), source.indexOf("async function reconcileLifecycleDraw"));
+  const skipIndex = maybeClaim.indexOf("claimedByIndex.every(Boolean)");
+  const buildIndex = maybeClaim.indexOf("buildAndPersistInput(rootProvider");
+  assert.notEqual(skipIndex, -1);
+  assert.notEqual(buildIndex, -1);
+  assert.ok(skipIndex < buildIndex);
+});
+
+test("mainnet keeper persists reconstructed draw inputs across deployments", () => {
+  const manifest = readFileSync(new URL("./fly.v5.mainnet.toml", import.meta.url), "utf8");
+  assert.match(manifest, /DRAW_INPUT_DIR = \x22\/data\x22/);
+});
+
 test("keeper advances participant discovery during an idle loop", async () => {
   const calls = [];
   const eventCache = {
