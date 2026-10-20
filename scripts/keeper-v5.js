@@ -18,6 +18,7 @@ import { readActiveV5Deployment, resolveV5RuntimeTargets } from "./keeper/v5-dep
 const DEPLOYMENT_FILE = process.env.DEPLOYMENT_FILE || "deployments/monad-testnet.json";
 const RPC_URL = process.env.KEEPER_RPC_URL || process.env.RPC_URL || process.env.MONAD_TESTNET_RPC_URL;
 const READ_RPC_URL = process.env.KEEPER_READ_RPC_URL || RPC_URL;
+const ROOT_RPC_URL = process.env.KEEPER_ROOT_RPC_URL || RPC_URL;
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const DRAW_INPUT_DIR = process.env.DRAW_INPUT_DIR || process.env.WATCHER_DRAW_INPUT_DIR || "draw-inputs";
 const LOOP = process.env.KEEPER_LOOP === "true";
@@ -275,7 +276,7 @@ function readCachedInput(inputFile, drawManagerAddress, drawId) {
   }
 }
 
-async function buildAndPersistInput(provider, drawManagerAddress, drawId, fromBlock, eventCache) {
+async function buildAndPersistInput(rootProvider, drawManagerAddress, drawId, fromBlock, eventCache) {
   fs.mkdirSync(DRAW_INPUT_DIR, { recursive: true });
   const inputFile = path.join(DRAW_INPUT_DIR, `${drawId}.json`);
   const cached = readCachedInput(inputFile, drawManagerAddress, drawId);
@@ -284,8 +285,8 @@ async function buildAndPersistInput(provider, drawManagerAddress, drawId, fromBl
     return { input: cached, inputFile };
   }
 
-  const toBlock = await rpcRead("provider.getBlockNumber", () => provider.getBlockNumber());
-  const input = await buildDrawInput({ provider, drawManagerAddress, drawId: BigInt(drawId), fromBlock, toBlock, eventCache });
+  const toBlock = await rpcRead("rootProvider.getBlockNumber", () => rootProvider.getBlockNumber());
+  const input = await buildDrawInput({ provider: rootProvider, drawManagerAddress, drawId: BigInt(drawId), fromBlock, toBlock, eventCache });
   fs.writeFileSync(inputFile, JSON.stringify(input, null, 2) + "\n");
   return { input, inputFile };
 }
@@ -355,7 +356,7 @@ async function maybeRerequestSeed({ manager, signer, provider, drawId, draw }) {
   return true;
 }
 
-async function maybePropose({ manager, signer, provider, drawManagerAddress, drawId, fromBlock, eventCache }) {
+async function maybePropose({ manager, signer, provider, rootProvider, drawManagerAddress, drawId, fromBlock, eventCache }) {
   const draw = await rpcRead(`manager.draws(${drawId})`, () => manager.draws(drawId));
   if (Number(draw.status) !== 2) return false;
   const primaryProposer = getAddress(await rpcRead("manager.primaryProposer", () => manager.primaryProposer()));
@@ -364,7 +365,7 @@ async function maybePropose({ manager, signer, provider, drawManagerAddress, dra
     return false;
   }
 
-  const { input, inputFile } = await buildAndPersistInput(provider, drawManagerAddress, drawId, fromBlock, eventCache);
+  const { input, inputFile } = await buildAndPersistInput(rootProvider, drawManagerAddress, drawId, fromBlock, eventCache);
   const result = computeWithPythonParity(input);
   if (result.leaves.length === 0) throw new Error(`draw ${drawId} computed zero leaves`);
   await send(
@@ -391,7 +392,7 @@ async function maybeFinalize({ manager, signer, provider, drawId }) {
   return true;
 }
 
-async function maybeClaim({ manager, signer, provider, drawManagerAddress, claimManagerAddress, drawId, fromBlock, eventCache }) {
+async function maybeClaim({ manager, signer, provider, rootProvider, drawManagerAddress, claimManagerAddress, drawId, fromBlock, eventCache }) {
   const draw = await rpcRead(`manager.draws(${drawId})`, () => manager.draws(drawId));
   if (Number(draw.status) !== 4) return false;
   const claimManager = new Contract(claimManagerAddress, CLAIM_MANAGER_ABI, provider);
@@ -405,12 +406,28 @@ async function maybeClaim({ manager, signer, provider, drawManagerAddress, claim
     err.data = "0x3a35c2f9";
     throw err;
   }
-  const { input, inputFile } = await buildAndPersistInput(provider, drawManagerAddress, drawId, fromBlock, eventCache);
+  const leafCount = Number(distribution.leafCount);
+  if (!Number.isSafeInteger(leafCount) || leafCount < 1) {
+    throw new Error("distribution " + distributionId + " has invalid leaf count " + distribution.leafCount);
+  }
+  const claimedByIndex = [];
+  for (let leafIndex = 0; leafIndex < leafCount; leafIndex++) {
+    claimedByIndex.push(await rpcRead(
+      "claimManager.isClaimed(" + drawId + "," + leafIndex + ")",
+      () => claimManager.isClaimed(distributionId, leafIndex),
+    ));
+  }
+  if (claimedByIndex.every(Boolean)) {
+    console.log("draw " + drawId + " all " + leafCount + " leaves already claimed");
+    return false;
+  }
+
+  const { input, inputFile } = await buildAndPersistInput(rootProvider, drawManagerAddress, drawId, fromBlock, eventCache);
   const result = computeWithPythonParity(input);
   const pending = [];
   const proofs = [];
   for (const leaf of result.leaves) {
-    const claimed = await rpcRead(`claimManager.isClaimed(${drawId},${leaf.leafIndex})`, () => claimManager.isClaimed(distributionId, leaf.leafIndex));
+    const claimed = claimedByIndex[Number(leaf.leafIndex)];
     if (claimed) continue;
     pending.push({
       distributionId,
@@ -434,18 +451,18 @@ async function maybeClaim({ manager, signer, provider, drawManagerAddress, claim
   return true;
 }
 
-async function reconcileLifecycleDraw({ manager, signer, provider, drawManagerAddress, claimManagerAddress, drawId, draw, fromBlock, eventCache }) {
+async function reconcileLifecycleDraw({ manager, signer, provider, rootProvider, drawManagerAddress, claimManagerAddress, drawId, draw, fromBlock, eventCache }) {
   const status = Number(draw.status);
   if (status === 1) {
     return await maybeRerequestSeed({ manager, signer, provider, drawId, draw });
   }
   if (status === 2) {
-    return await maybePropose({ manager, signer, provider, drawManagerAddress, drawId, fromBlock, eventCache });
+    return await maybePropose({ manager, signer, provider, rootProvider, drawManagerAddress, drawId, fromBlock, eventCache });
   }
   if (status === 3) {
     const finalized = await maybeFinalize({ manager, signer, provider, drawId });
     if (!finalized) return false;
-    await maybeClaim({ manager, signer, provider, drawManagerAddress, claimManagerAddress, drawId, fromBlock, eventCache });
+    await maybeClaim({ manager, signer, provider, rootProvider, drawManagerAddress, claimManagerAddress, drawId, fromBlock, eventCache });
     return true;
   }
   return false;
@@ -475,6 +492,9 @@ async function runOnce() {
   const { drawManagerAddress, claimManagerAddress, fromBlock } = resolveV5RuntimeTargets(deployment);
   const writeProvider = new CountingJsonRpcProvider(RPC_URL, "write");
   const readProvider = new CountingJsonRpcProvider(READ_RPC_URL, "read");
+  const rootProvider = ROOT_RPC_URL === RPC_URL
+    ? writeProvider
+    : new CountingJsonRpcProvider(ROOT_RPC_URL, "root");
   const signer = new Wallet(PRIVATE_KEY, writeProvider);
   const manager = new Contract(drawManagerAddress, DRAW_MANAGER_ABI, readProvider);
   const eventCache = new DrawInputEventCache({
@@ -602,6 +622,7 @@ async function runOnce() {
       manager,
       signer,
       provider: readProvider,
+      rootProvider,
       drawManagerAddress,
       claimManagerAddress,
       drawId,
@@ -629,6 +650,7 @@ async function runOnce() {
           manager,
           signer,
           provider: readProvider,
+          rootProvider,
           drawManagerAddress,
           claimManagerAddress,
           drawId,
