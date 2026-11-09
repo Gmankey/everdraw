@@ -237,7 +237,7 @@ test("fixed windows persist completed progress and resume only the failed window
   const logProvider = {
     async getLogs({ fromBlock, toBlock }) {
       requested.push([Number(fromBlock), Number(toBlock)]);
-      if (failSecondWindow && Number(fromBlock) === 102) throw new Error("temporary upstream failure");
+      if (failSecondWindow && Number(fromBlock) === 102) throw new Error("qualification window failed");
       return [];
     },
   };
@@ -255,7 +255,7 @@ test("fixed windows persist completed progress and resume only the failed window
   });
   await assert.rejects(
     cache.syncThrough(logProvider, 105, { canonicalProvider, chunkSize: 2 }),
-    /temporary upstream failure/,
+    /qualification window failed/,
   );
   assert.equal(JSON.parse(fs.readFileSync(cacheFile, "utf8")).lastScannedBlock, 101);
   assert.deepEqual(requested, [[100, 101], [102, 103]]);
