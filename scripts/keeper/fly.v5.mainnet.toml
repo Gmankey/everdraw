@@ -34,7 +34,7 @@ primary_region = "sjc"
   WATCHER_LOGS_RPC_URL = "https://monad.gateway.tenderly.co"
   # Continuous reads use public Monad; RPC_URL remains the bounded transaction provider.
   KEEPER_READ_RPC_URL = "https://rpc.monad.xyz"
-  KEEPER_ROOT_RPC_URL = "https://rpc2.monad.xyz"
+  KEEPER_ROOT_RPC_URL = "https://rpc.monad.xyz"
   KEEPER_RPC_RUNTIME_LATCH_FILE = "/data/keeper-v5-rpc-incident.json"
   V5_KEEPER_EVENT_CACHE_FILE = "/data/keeper-v5-event-cache.json"
   V5_KEEPER_CLAIM_STATE_FILE = "/data/keeper-v5-claim-state.json"
