@@ -245,37 +245,26 @@ test("event-cache writer persists no orphaned participant state during an in-fli
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test("caller logs provider bisects ranges rejected by an RPC block cap", async () => {
+test("a rejected log window fails once without recursive replay or fallback", async () => {
   const requested = [];
   const provider = {
     async getLogs({ fromBlock, toBlock }) {
       requested.push([fromBlock, toBlock]);
-      if (toBlock - fromBlock + 1 > 10) {
-        throw new Error("eth_getLogs block range is limited to 10 blocks");
-      }
-      return [{ blockNumber: fromBlock }, { blockNumber: toBlock }];
+      throw new Error("eth_getLogs block range is limited to 10 blocks");
     },
   };
 
-  const logs = await getLogsRange(
-    provider,
-    { address: "0x0000000000000000000000000000000000000A11" },
-    1,
-    25,
+  await assert.rejects(
+    getLogsRange(
+      provider,
+      { address: "0x0000000000000000000000000000000000000A11" },
+      1,
+      25,
+    ),
+    /limited to 10 blocks/,
   );
-
-  assert.deepEqual(requested, [
-    [1, 25],
-    [1, 13],
-    [1, 7],
-    [8, 13],
-    [14, 25],
-    [14, 19],
-    [20, 25],
-  ]);
-  assert.equal(logs.length, 8);
+  assert.deepEqual(requested, [[1, 25]]);
 });
-
 
 test("seed lookup remains bounded after a multi-million-block weekly gap", async () => {
   const fromBlock = 1_000_000;
