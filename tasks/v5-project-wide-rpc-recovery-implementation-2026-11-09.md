@@ -41,15 +41,17 @@ Goldsky is independent of QuickNode and of the Tenderly discovery endpoint. The 
 
 `scripts/rpc/qualify-mainnet-provider.mjs` performs the full qualification, not a sample-only probe. It:
 
-- scans every V5 address from deploy block 105196182 through the shared candidate/canonical head in fixed 50,000-block windows;
+- scans every V5 address from deploy block 105196182 through the shared candidate/canonical head in fixed 10,000-block windows;
 - validates every returned log's block hash through QuickNode;
-- compares 24 evenly spaced 1,000-block log windows exactly between Goldsky and QuickNode;
+- compares 24 evenly spaced 100-block log windows exactly between Goldsky and QuickNode;
 - compares historical `DrawManager.vault()` state at five ages;
 - compares representative transaction receipts;
-- caps itself at 2,500 total JSON-RPC requests and does not use Alchemy;
+- serializes each provider at a minimum 75 ms interval, performs no retries or fallback, caps itself at 2,500 total JSON-RPC requests and does not use Alchemy;
 - emits a content-addressable evidence JSON artifact in CI.
 
 The contracts workflow uploads `rpc2-mainnet-qualification-<commit>`. A missing artifact or any mismatch fails CI. Qualification is therefore tied to the reviewed commit.
+
+Observed CI qualification for commit `69c8765a26dd5a5b301c010b51979eddaa6c611d`: **PASS**, 1,835 requests of the 2,500 hard cap. Artifact ID `13643364501`; artifact digest `sha256:2ffe6b8bb8a4dc405487a7a4749d4c94edc09a904c1bae337b13a14dff693264`; verdict `qualified-for-v5-independent-logs-and-historical-state`.
 
 ## Durable paid-RPC enforcement
 
