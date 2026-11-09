@@ -210,54 +210,21 @@ async function getLogsWithTimeout(provider, filter, from, to, label) {
   }
 }
 
-// Fetch logs across [from, to]:
-//  - adaptively bisect any sub-range the RPC rejects as too wide,
-//  - retry transient RPC errors with backoff (drpc is fast but intermittently flaky),
-//  - and, if the fast logs RPC still can't serve a window, fall back to the caller's provider
-//    (the official RPC: slow but reliable). So neither a range cap nor drpc flakiness can break
-//    log collection.
+// Fetch discovery logs from the explicitly configured log source only.
 export async function getLogsRange(provider, filter, from, to) {
   let lastErr;
   for (let attempt = 0; attempt < RPC_RETRY_ATTEMPTS; attempt++) {
     try {
-      return await getLogsWithTimeout(logsProvider(provider), filter, from, to, `logs fast ${from}-${to}`);
+      return await getLogsWithTimeout(logsProvider(provider), filter, from, to, `logs ${from}-${to}`);
     } catch (err) {
       lastErr = err;
-      if (isTransientError(err) && attempt < RPC_RETRY_ATTEMPTS - 1) {
-        const delay = Math.min(RPC_RETRY_MAX_DELAY_MS, RPC_RETRY_BASE_DELAY_MS * (2 ** attempt));
-        console.warn(`[logs ${from}-${to}] fast RPC failed attempt ${attempt + 1}/${RPC_RETRY_ATTEMPTS}: ${errMessage(err)}; retrying in ${delay}ms`);
-        await new Promise((r) => setTimeout(r, delay));
-        continue;
-      }
-      break;
+      if (!isTransientError(err) || attempt === RPC_RETRY_ATTEMPTS - 1) break;
+      const delay = Math.min(RPC_RETRY_MAX_DELAY_MS, RPC_RETRY_BASE_DELAY_MS * (2 ** attempt));
+      console.warn(`[logs ${from}-${to}] failure attempt ${attempt + 1}/${RPC_RETRY_ATTEMPTS}: ${errMessage(err)}; retrying in ${delay}ms`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
-  if (USE_CALLER_LOGS_PROVIDER) {
-    if (isRangeLimitError(lastErr) && to > from) {
-      const mid = Math.floor((from + to) / 2);
-      const left = await getLogsRange(provider, filter, from, mid);
-      const right = await getLogsRange(provider, filter, mid + 1, to);
-      return [...left, ...right];
-    }
-    throw lastErr;
-  }
-  // Fast logs RPC exhausted retries for this window — fall back to the caller's reliable provider.
-  console.warn(`[logs ${from}-${to}] falling back to caller RPC after fast RPC failure: ${errMessage(lastErr)}`);
-  countRpc('fallbackReasons', 'logs-rpc-exhausted');
-  try {
-    return await retryTransient(
-      () => getLogsWithTimeout(provider, filter, from, to, `logs fallback ${from}-${to}`),
-      `logs fallback ${from}-${to}`,
-    );
-  } catch (fallbackErr) {
-    if (isRangeLimitError(fallbackErr) && to > from) {
-      const mid = Math.floor((from + to) / 2);
-      const left = await getLogsRange(provider, filter, from, mid);
-      const right = await getLogsRange(provider, filter, mid + 1, to);
-      return [...left, ...right];
-    }
-    throw fallbackErr;
-  }
+  throw lastErr;
 }
 
 export async function getLogsRangeDirect(provider, filter, from, to, {
@@ -279,15 +246,13 @@ export async function getLogsRangeDirect(provider, filter, from, to, {
     } catch (error) {
       lastError = error;
       countRpc('errors', 'independent:eth_getLogs');
-      if (isRangeLimitError(error) && to > from) {
-        const mid = Math.floor((from + to) / 2);
-        const left = await getLogsRangeDirect(provider, filter, from, mid, {
-          attempts, timeoutMs, baseDelayMs, maxDelayMs, sleep,
-        });
-        const right = await getLogsRangeDirect(provider, filter, mid + 1, to, {
-          attempts, timeoutMs, baseDelayMs, maxDelayMs, sleep,
-        });
-        return [...left, ...right];
+      if (isRangeLimitError(error)) {
+        const capabilityError = new Error(
+          `Independent log window ${from}-${to} exceeds provider capability; reduce WATCHER_INDEPENDENT_LOG_CHUNK_SIZE`,
+        );
+        capabilityError.code = "RPC_LOG_RANGE_UNSUPPORTED";
+        capabilityError.cause = error;
+        throw capabilityError;
       }
       if (!isTransientError(error) || attempt === attempts) throw error;
       await sleep(Math.min(maxDelayMs, baseDelayMs * (2 ** (attempt - 1))));
