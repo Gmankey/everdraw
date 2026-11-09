@@ -35,4 +35,12 @@ jobs:
       - run: npm run keeper:v5:test
       - run: npm run draw:watch:test
       - run: npm run rpc:incident:test
+      - name: Qualify independent mainnet RPC
+        run: npm run rpc:qualify:mainnet
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rpc2-mainnet-qualification-${{ github.sha }}
+          path: tasks/evidence/rpc2-mainnet-qualification.json
+          if-no-files-found: error
       - run: forge test
