@@ -12,8 +12,24 @@ const SAMPLE_RANGE = Number(process.env.RPC_QUALIFY_SAMPLE_RANGE || "100");
 const SAMPLE_COUNT = Number(process.env.RPC_QUALIFY_SAMPLE_COUNT || "24");
 const MAX_REQUESTS = Number(process.env.RPC_QUALIFY_MAX_REQUESTS || "2500");
 const TIMEOUT_MS = Number(process.env.RPC_QUALIFY_TIMEOUT_MS || "30000");
+const MIN_REQUEST_INTERVAL_MS = Number(process.env.RPC_QUALIFY_MIN_REQUEST_INTERVAL_MS || "75");
+const rpcQueues = new Map();
+const rpcLastStartedAt = new Map();
 let requestCount = 0;
 let id = 0;
+
+function scheduleRpc(url, operation) {
+  const origin = new URL(url).origin;
+  const previous = rpcQueues.get(origin) || Promise.resolve();
+  const next = previous.catch(() => {}).then(async () => {
+    const waitMs = Math.max(0, (rpcLastStartedAt.get(origin) || 0) + MIN_REQUEST_INTERVAL_MS - Date.now());
+    if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+    rpcLastStartedAt.set(origin, Date.now());
+    return operation();
+  });
+  rpcQueues.set(origin, next);
+  return next;
+}
 
 function activeDeployment() {
   const manifest = JSON.parse(fs.readFileSync(DEPLOYMENT_FILE, "utf8"));
@@ -26,21 +42,29 @@ function activeDeployment() {
 async function rpc(url, method, params) {
   requestCount++;
   if (requestCount > MAX_REQUESTS) throw new Error(`Qualification request budget exceeded: ${MAX_REQUESTS}`);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: ++id, method, params }),
-      signal: controller.signal,
-    });
-    const body = await response.json();
-    if (!response.ok || body.error) throw new Error(`${new URL(url).hostname} ${method}: ${JSON.stringify(body.error || body)}`);
-    return body.result;
-  } finally {
-    clearTimeout(timer);
-  }
+  return scheduleRpc(url, async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: ++id, method, params }),
+        signal: controller.signal,
+      });
+      const text = await response.text();
+      let body;
+      try {
+        body = JSON.parse(text);
+      } catch {
+        throw new Error(`${new URL(url).hostname} ${method}: HTTP ${response.status} ${text.slice(0, 200)}`);
+      }
+      if (!response.ok || body.error) throw new Error(`${new URL(url).hostname} ${method}: ${JSON.stringify(body.error || body)}`);
+      return body.result;
+    } finally {
+      clearTimeout(timer);
+    }
+  });
 }
 
 function blockTag(number) {
