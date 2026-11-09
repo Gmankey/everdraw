@@ -9,8 +9,13 @@ import { buildWatcherDrawInput, ingestWatcherReconstructionLogs } from "./recons
 import { IndependentWatcherCache, rootNeedsIndependentVerification } from "./independent-watcher-cache.mjs";
 import { readActiveV5Deployment, resolveV5RuntimeTargets } from "../keeper/v5-deployment.mjs";
 
-const RPC_URL = process.env.WATCHER_RPC_URL || process.env.RPC_URL;
-const HEAD_RPC_URL = process.env.WATCHER_HEAD_RPC_URL || RPC_URL;
+const HISTORICAL_STATE_RPC_URL = process.env.WATCHER_HISTORICAL_STATE_RPC_URL
+  || process.env.WATCHER_RPC_URL
+  || process.env.RPC_URL;
+const INDEPENDENT_LOGS_RPC_URL = process.env.WATCHER_INDEPENDENT_LOGS_RPC_URL
+  || process.env.WATCHER_RPC_URL
+  || process.env.RPC_URL;
+const HEAD_RPC_URL = process.env.WATCHER_HEAD_RPC_URL || HISTORICAL_STATE_RPC_URL;
 const HEAD_RPC_TIMEOUT_MS = Number(process.env.WATCHER_HEAD_RPC_TIMEOUT_MS || "10000");
 const DEPLOYMENT_FILE = process.env.DEPLOYMENT_FILE || "deployments/monad-testnet.json";
 const EXPECTED_CHAIN_ID = BigInt(process.env.WATCHER_CHAIN_ID || "10143");
@@ -161,7 +166,8 @@ export function formatPrivilegedChange({ contractLabel, parsed, txHash }) {
 }
 
 function resolveConfig() {
-  if (!RPC_URL) throw new Error("WATCHER_RPC_URL/RPC_URL is required");
+  if (!HISTORICAL_STATE_RPC_URL) throw new Error("WATCHER_HISTORICAL_STATE_RPC_URL is required");
+  if (!INDEPENDENT_LOGS_RPC_URL) throw new Error("WATCHER_INDEPENDENT_LOGS_RPC_URL is required");
   const deployment = readActiveV5Deployment(DEPLOYMENT_FILE, { expectedChainId: EXPECTED_CHAIN_ID });
   const targets = resolveV5RuntimeTargets(deployment, {
     ...process.env,
@@ -322,7 +328,11 @@ export async function main() {
   // Current head/config reads may use a lightweight endpoint so archive stalls cannot
   // hide liveness, but they never supply participant reconstruction data.
   fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
-  const provider = new CountingJsonRpcProvider(RPC_URL, "security");
+  const stateProvider = new CountingJsonRpcProvider(HISTORICAL_STATE_RPC_URL, "historical-state");
+  const independentLogsProvider = new CountingJsonRpcProvider(
+    INDEPENDENT_LOGS_RPC_URL,
+    "independent-logs",
+  );
   const headProvider = new CountingJsonRpcProvider(
     HEAD_RPC_URL,
     "canonical",
@@ -373,12 +383,12 @@ export async function main() {
   let securityProviderValidated = false;
   const validateSecurityProvider = async () => {
     if (securityProviderValidated) return;
-    const securityChainId = (await retryTransient(() => provider.getNetwork(), "watcher security chain")).chainId;
+    const securityChainId = (await retryTransient(() => stateProvider.getNetwork(), "watcher security chain")).chainId;
     if (securityChainId !== EXPECTED_CHAIN_ID) {
       throw new Error(`Watcher security RPC chain mismatch: ${securityChainId} expected=${EXPECTED_CHAIN_ID}`);
     }
     const code = await retryTransient(
-      () => withRpcTimeout(provider.getCode(drawManagerAddress), "watcher security DrawManager bytecode"),
+      () => withRpcTimeout(stateProvider.getCode(drawManagerAddress), "watcher security DrawManager bytecode"),
       "watcher security DrawManager bytecode",
     );
     if (code === "0x") throw new Error(`Watcher security RPC has no DrawManager bytecode at ${drawManagerAddress}`);
@@ -386,13 +396,13 @@ export async function main() {
   };
   const verifyIndependentRoot = async ({ drawId, root, eventKind, throughBlock }) => {
     await validateSecurityProvider();
-    await independentCache.syncThrough(provider, throughBlock, { canonicalProvider: headProvider });
+    await independentCache.syncThrough(independentLogsProvider, throughBlock, { canonicalProvider: headProvider });
     const event = independentCache.assertEvent(eventKind, drawId, root);
     const seedBlock = independentCache.seedBlock(drawId);
     if (!seedBlock) throw new Error(`Independent RPC has no SeedReceived block for draw ${drawId}`);
     const input = await retryTransient(
       () => buildWatcherDrawInput({
-        provider,
+        provider: stateProvider,
         drawManagerAddress,
         drawId,
         seedBlock,
