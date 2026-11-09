@@ -199,7 +199,7 @@ test("keeper validates the paid write provider only when sending a transaction",
 
 test("keeper routes historical root reconstruction through the bounded archive provider", () => {
   const source = readFileSync(new URL("../keeper-v5.js", import.meta.url), "utf8");
-  assert.match(source, /const ROOT_RPC_URL = process\.env\.KEEPER_ROOT_RPC_URL \|\| RPC_URL/);
+  assert.match(source, /const ROOT_RPC_URL = process\.env\.KEEPER_ROOT_RPC_URL \|\| READ_RPC_URL/);
   assert.match(source, /buildAndPersistInput\(rootProvider, drawManagerAddress, drawId, fromBlock, eventCache\)/);
   assert.doesNotMatch(source, /buildAndPersistInput\(provider, drawManagerAddress, drawId, fromBlock, eventCache\)/);
 });

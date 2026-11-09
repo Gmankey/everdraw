@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process'
 import { setTimeout as sleep } from 'node:timers/promises'
+import fs from 'node:fs'
 import { V5RuntimeAlertPolicy } from './v5-runtime-alert-policy.mjs'
+import { paidRpcStopReason, writeRuntimeLatch } from './rpc-runtime-latch.mjs'
 
 const KEEPER_SCRIPT = process.env.KEEPER_V5_SCRIPT || 'scripts/keeper-v5.js'
 const RESTART_DELAY_MS = Number(process.env.KEEPER_RESTART_DELAY_MS || '5000')
@@ -10,6 +12,7 @@ const TELEGRAM_RETRIES = Number(process.env.TELEGRAM_RETRIES || '2')
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || ''
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || ''
 const HEALTHCHECK_FAIL_URL = process.env.KEEPER_HEALTHCHECK_FAIL_URL || process.env.KEEPER_WATCHDOG_HEALTHCHECK_FAIL_URL || ''
+const RPC_RUNTIME_LATCH_FILE = process.env.KEEPER_RPC_RUNTIME_LATCH_FILE || '/data/keeper-v5-rpc-incident.json'
 
 const policy = new V5RuntimeAlertPolicy({
   crashThreshold: Number(process.env.KEEPER_CRASH_ALERT_THRESHOLD || '3'),
@@ -19,6 +22,7 @@ const policy = new V5RuntimeAlertPolicy({
 
 let child = null
 let stopping = false
+let rpcIncidentLatched = false
 
 function log(message) {
   console.log(`${new Date().toISOString()} [keeper-v5-supervisor] ${message}`)
@@ -90,6 +94,18 @@ function observeStream(stream, output) {
     const lines = pending.split(/\r?\n/)
     pending = lines.pop() || ''
     for (const line of lines) {
+      const reason = paidRpcStopReason(line)
+      if (reason && !rpcIncidentLatched) {
+        rpcIncidentLatched = true
+        const state = writeRuntimeLatch(RPC_RUNTIME_LATCH_FILE, reason, line)
+        void alert({
+          key: 'paid-rpc-latched',
+          message: `keeper stopped without restart: ${state.reason}; auditor-approved recovery required`,
+          failureHealthcheck: true,
+        })
+        stop('SIGTERM')
+        continue
+      }
       const event = policy.observeLine(line)
       if (event) void alert(event)
     }
@@ -114,6 +130,11 @@ function stop(signal) {
 
 process.on('SIGINT', () => stop('SIGINT'))
 process.on('SIGTERM', () => stop('SIGTERM'))
+
+if (fs.existsSync(RPC_RUNTIME_LATCH_FILE)) {
+  log(`FATAL persistent RPC incident latch exists at ${RPC_RUNTIME_LATCH_FILE}; refusing automatic restart`)
+  process.exit(1)
+}
 
 log(`start telegram=${Boolean(TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID)} healthcheckFail=${Boolean(HEALTHCHECK_FAIL_URL)}`)
 if ((!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) && !HEALTHCHECK_FAIL_URL) {

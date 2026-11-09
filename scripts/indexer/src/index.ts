@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { Contract, JsonRpcProvider, parseEther } from 'ethers';
+import { Contract, FetchRequest, JsonRpcProvider, parseEther } from 'ethers';
 import { applySchema, openDatabase } from './db/database.js';
 import { createRawEventsRepo } from './repositories/rawEventsRepo.js';
 import { createRoundsRepo } from './repositories/roundsRepo.js';
@@ -68,7 +68,10 @@ async function main(): Promise<void> {
   });
 
   await runner.validateConfiguration();
-  const claimProofProvider = new JsonRpcProvider(runnerConfig.rpcUrl);
+  const claimProofRequest = new FetchRequest(runnerConfig.rpcUrl);
+  claimProofRequest.retryFunc = async () => false;
+  claimProofRequest.timeout = runnerConfig.rpcTimeoutMs ?? 10_000;
+  const claimProofProvider = new JsonRpcProvider(claimProofRequest);
   await assertProviderChainId(
     claimProofProvider,
     runnerConfig.chainId,

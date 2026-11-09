@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  actions: write
 
 concurrency:
   group: v5-root-watcher-mainnet
@@ -15,7 +14,7 @@ concurrency:
 
 jobs:
   recompute-mainnet-roots:
-    if: github.event_name == 'workflow_dispatch' || vars.V5_WATCHER_MAINNET_ENABLED == 'true'
+    if: vars.V5_WATCHER_MAINNET_ENABLED == 'true' && vars.V5_WATCHER_MAINNET_RECOVERY_APPROVED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -39,15 +38,16 @@ jobs:
         env:
           DEPLOYMENT_FILE: deployments/monad-mainnet.json
           WATCHER_CHAIN_ID: "143"
-          WATCHER_RPC_URL: ${{ secrets.V5_WATCHER_MAINNET_RPC_URL }}
-          WATCHER_LOGS_RPC_URL: ${{ secrets.V5_WATCHER_MAINNET_LOGS_RPC_URL || secrets.V5_WATCHER_MAINNET_RPC_URL }}
-          WATCHER_HEAD_RPC_URL: ${{ secrets.V5_WATCHER_MAINNET_HEAD_RPC_URL }}
+          WATCHER_HISTORICAL_STATE_RPC_URL: https://rpc2.monad.xyz
+          WATCHER_INDEPENDENT_LOGS_RPC_URL: https://rpc2.monad.xyz
+          WATCHER_LOGS_RPC_URL: ${{ secrets.V5_WATCHER_MAINNET_LOGS_RPC_URL }}
+          WATCHER_HEAD_RPC_URL: https://rpc.monad.xyz
           WATCHER_HEAD_RPC_TIMEOUT_MS: "10000"
           WATCHER_LOG_CHUNK_SIZE: "100"
           WATCHER_INDEPENDENT_LOG_CHUNK_SIZE: "1000"
-          WATCHER_LOG_CONCURRENCY: "2"
+          WATCHER_LOG_CONCURRENCY: "1"
           WATCHER_LOG_TIMEOUT_MS: "20000"
-          WATCHER_RPC_RETRY_ATTEMPTS: "8"
+          WATCHER_RPC_RETRY_ATTEMPTS: "2"
           WATCHER_RPC_RETRY_BASE_DELAY_MS: "500"
           WATCHER_RPC_RETRY_MAX_DELAY_MS: "10000"
           WATCHER_MIN_VETO_REMAINING_SEC: "3600"
@@ -67,6 +67,10 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
+          test -n "$WATCHER_HISTORICAL_STATE_RPC_URL" || exit 1
+          test -n "$WATCHER_INDEPENDENT_LOGS_RPC_URL" || exit 1
+          test -n "$WATCHER_LOGS_RPC_URL" || exit 1
+          test -n "$WATCHER_HEAD_RPC_URL" || exit 1
           set +e
           deadline=$((SECONDS + WATCHER_JOB_DURATION_SEC))
           last_success=0
@@ -90,9 +94,11 @@ jobs:
             if (( status == 0 )); then
               last_success=$now
             elif (( status == 124 )); then
-              echo "::warning::mainnet watcher cycle reached its ${cycle_budget}s budget; checkpointed progress will resume next cycle"
+              echo "::error::mainnet watcher cycle reached its ${cycle_budget}s budget; stopping with checkpoint retained"
+              exit 1
             else
-              echo "::warning::mainnet watcher cycle failed with exit code $status; retrying in ${WATCHER_POLL_INTERVAL_SEC}s"
+              echo "::error::mainnet watcher failed with exit code $status; stopping"
+              exit 1
             fi
 
             remaining=$((deadline - SECONDS))
@@ -115,8 +121,3 @@ jobs:
         with:
           path: .watcher-cache-mainnet
           key: v5-root-watcher-mainnet-${{ github.run_id }}
-      - name: Queue successor watcher
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh workflow run v5-watcher-mainnet.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME"

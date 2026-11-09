@@ -535,46 +535,28 @@ export function isLogRangeLimitError(error: unknown): boolean {
   return identifiesBlockResults && identifiesRange && identifiesLimit;
 }
 
-async function fetchLogsAdaptive(input: {
+async function fetchLogsWindow(input: {
   provider: AbstractProvider;
   rpcPolicy: RpcPolicy;
   addresses: string[];
   fromBlock: number;
   toBlock: number;
-  splitDepth?: number;
 }): Promise<any[]> {
-  const { provider, rpcPolicy, addresses, fromBlock, toBlock, splitDepth = 0 } = input;
+  const { provider, rpcPolicy, addresses, fromBlock, toBlock } = input;
   try {
     return await rpcPolicy.request({
       role: 'logs',
       method: 'eth_getLogs',
-      operation: () => provider.getLogs({
-        address: addresses,
-        fromBlock,
-        toBlock,
-      }),
+      operation: () => provider.getLogs({ address: addresses, fromBlock, toBlock }),
     });
   } catch (error) {
-    if (!isLogRangeLimitError(error) || fromBlock >= toBlock) throw error;
-    if (splitDepth >= 32) throw new Error(`Log range split depth exceeded for ${fromBlock}-${toBlock}`, { cause: error });
-    const midpoint = Math.floor((fromBlock + toBlock) / 2);
-    const left = await fetchLogsAdaptive({
-      provider,
-      rpcPolicy,
-      addresses,
-      fromBlock,
-      toBlock: midpoint,
-      splitDepth: splitDepth + 1,
-    });
-    const right = await fetchLogsAdaptive({
-      provider,
-      rpcPolicy,
-      addresses,
-      fromBlock: midpoint + 1,
-      toBlock,
-      splitDepth: splitDepth + 1,
-    });
-    return [...left, ...right];
+    if (isLogRangeLimitError(error)) {
+      throw new Error(
+        `Configured INDEXER_CHUNK_SIZE exceeds log-provider capability for ${fromBlock}-${toBlock}; no recursive replay was attempted`,
+        { cause: error },
+      );
+    }
+    throw error;
   }
 }
 
@@ -604,7 +586,7 @@ async function fetchChunk(input: {
   const blockCache = new Map<number, Block>();
   const allowedAddresses = new Set(contractAddresses.map((address) => address.toLowerCase()));
 
-  const rawLogs = await fetchLogsAdaptive({
+  const rawLogs = await fetchLogsWindow({
     provider: logsProvider,
     rpcPolicy,
     addresses: contractAddresses,
@@ -703,6 +685,7 @@ export class InstrumentedJsonRpcProvider extends JsonRpcProvider {
     timeoutMs = 10_000,
   ) {
     const request = new FetchRequest(url);
+    request.retryFunc = async () => false;
     request.timeout = timeoutMs;
     super(request);
   }

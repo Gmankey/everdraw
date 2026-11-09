@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import "dotenv/config";
+import { assertRpcIncidentPolicy, disableHiddenTransportRetries } from "./rpc/incident-policy.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -18,7 +19,7 @@ import { readActiveV5Deployment, resolveV5RuntimeTargets } from "./keeper/v5-dep
 const DEPLOYMENT_FILE = process.env.DEPLOYMENT_FILE || "deployments/monad-testnet.json";
 const RPC_URL = process.env.KEEPER_RPC_URL || process.env.RPC_URL || process.env.MONAD_TESTNET_RPC_URL;
 const READ_RPC_URL = process.env.KEEPER_READ_RPC_URL || RPC_URL;
-const ROOT_RPC_URL = process.env.KEEPER_ROOT_RPC_URL || RPC_URL;
+const ROOT_RPC_URL = process.env.KEEPER_ROOT_RPC_URL || READ_RPC_URL;
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const DRAW_INPUT_DIR = process.env.DRAW_INPUT_DIR || process.env.WATCHER_DRAW_INPUT_DIR || "draw-inputs";
 const LOOP = process.env.KEEPER_LOOP === "true";
@@ -53,12 +54,15 @@ export function rpcUsageSnapshot() { return JSON.parse(JSON.stringify(RPC_USAGE)
 export class CountingJsonRpcProvider extends JsonRpcProvider {
   constructor(url, role, network, options, timeoutMs = RPC_TIMEOUT_MS) {
     const request = new FetchRequest(url);
+    disableHiddenTransportRetries(request);
     request.timeout = timeoutMs;
     super(request, network, options);
     this.rpcRole = role;
+    this.rpcEndpoint = new URL(url).origin;
   }
 
   async _send(payload) {
+    assertRpcIncidentPolicy(this.rpcEndpoint);
     const requests = Array.isArray(payload) ? payload : [payload];
     for (const request of requests) countRpc("wireCalls", `${this.rpcRole}:${request.method}`);
     try {

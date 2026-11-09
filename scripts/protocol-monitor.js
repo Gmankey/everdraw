@@ -130,7 +130,7 @@ async function inspectPool(provider, address) {
 function formatReport(results, failures) {
   const lines = [
     `EverDraw protocol monitor ${failures.length ? 'FAIL' : 'OK'} at ${ts()}`,
-    `rpc=${RPC_URL}`,
+    `rpcHost=${new URL(RPC_URL).hostname}`,
     `pools=${results.length}`,
     '',
   ]

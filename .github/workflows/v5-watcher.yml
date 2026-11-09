@@ -9,7 +9,6 @@ on:
 
 permissions:
   contents: read
-  actions: write
 
 concurrency:
   group: v5-root-watcher-uat
@@ -47,7 +46,7 @@ jobs:
           WATCHER_LOG_CHUNK_SIZE: "100"
           WATCHER_LOG_CONCURRENCY: "1"
           WATCHER_LOG_TIMEOUT_MS: "20000"
-          WATCHER_RPC_RETRY_ATTEMPTS: "8"
+          WATCHER_RPC_RETRY_ATTEMPTS: "2"
           WATCHER_RPC_RETRY_BASE_DELAY_MS: "500"
           WATCHER_RPC_RETRY_MAX_DELAY_MS: "10000"
           WATCHER_MIN_VETO_REMAINING_SEC: "300"
@@ -89,9 +88,11 @@ jobs:
             if (( status == 0 )); then
               last_success=$now
             elif (( status == 124 )); then
-              echo "::warning::watcher cycle reached its ${cycle_budget}s budget; checkpointed progress will resume next cycle"
+              echo "::error::watcher cycle reached its ${cycle_budget}s budget; stopping with checkpoint retained"
+              exit 1
             else
-              echo "::warning::watcher cycle failed with exit code $status; retrying in ${WATCHER_POLL_INTERVAL_SEC}s"
+              echo "::error::watcher cycle failed with exit code $status; stopping"
+              exit 1
             fi
 
             remaining=$((deadline - SECONDS))
@@ -114,8 +115,3 @@ jobs:
         with:
           path: .watcher-cache
           key: v5-root-watcher-uat-${{ github.run_id }}
-      - name: Queue successor watcher
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh workflow run v5-watcher.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME"

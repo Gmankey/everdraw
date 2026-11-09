@@ -216,8 +216,9 @@ test("mainnet watcher is independently configured and schedule-gated", () => {
   assert.match(workflow, /vars\.V5_WATCHER_MAINNET_ENABLED == 'true'/);
   assert.match(workflow, /DEPLOYMENT_FILE: deployments\/monad-mainnet\.json/);
   assert.match(workflow, /WATCHER_CHAIN_ID: "143"/);
-  assert.match(workflow, /secrets\.V5_WATCHER_MAINNET_RPC_URL/);
-  assert.match(workflow, /secrets\.V5_WATCHER_MAINNET_HEAD_RPC_URL/);
+  assert.match(workflow, /WATCHER_HISTORICAL_STATE_RPC_URL: https:\/\/rpc2\.monad\.xyz/);
+  assert.match(workflow, /WATCHER_INDEPENDENT_LOGS_RPC_URL: https:\/\/rpc2\.monad\.xyz/);
+  assert.match(workflow, /WATCHER_HEAD_RPC_URL: https:\/\/rpc\.monad\.xyz/);
   assert.match(workflow, /secrets\.V5_WATCHER_MAINNET_HEALTHCHECK_URL/);
   assert.match(workflow, /\.watcher-cache-mainnet/);
   assert.match(workflow, /WATCHER_LOG_CHUNK_SIZE: "100"/);
@@ -225,9 +226,9 @@ test("mainnet watcher is independently configured and schedule-gated", () => {
   assert.match(workflow, /WATCHER_INDEPENDENT_LOG_CHUNK_SIZE: "1000"/);
   assert.match(workflow, /V5_WATCHER_MAINNET_ACKNOWLEDGED_COVERAGE_GAPS/);
   assert.match(workflow, /if: always\(\)/);
-  assert.match(workflow, /actions: write/);
-  assert.match(workflow, /Queue successor watcher/);
-  assert.match(workflow, /gh workflow run v5-watcher-mainnet.yml/);
+  assert.match(workflow, /V5_WATCHER_MAINNET_RECOVERY_APPROVED/);
+  assert.doesNotMatch(workflow, /actions: write/);
+  assert.doesNotMatch(workflow, /Queue successor watcher|gh workflow run/);
 });
 
 test("workflow uses configured logs RPC and a five-minute cadence", () => {
@@ -240,7 +241,7 @@ test("workflow uses configured logs RPC and a five-minute cadence", () => {
   assert.match(workflow, /WATCHER_HEAD_RPC_URL: https:\/\/testnet-rpc\.monad\.xyz/);
   assert.match(workflow, /WATCHER_HEAD_RPC_TIMEOUT_MS: "10000"/);
   assert.match(workflow, /V5_WATCHER_UAT_ACKNOWLEDGED_COVERAGE_GAPS/);
-  assert.match(watcher, /buildWatcherDrawInput\(\{\s*provider,/);
+  assert.match(watcher, /buildWatcherDrawInput\(\{\s*provider: stateProvider,/);
   assert.doesNotMatch(watcher, /DrawInputEventCache|buildDrawInput/);
   assert.match(watcher, /headProvider\.getBlockNumber\(\)/);
   assert.match(watcher, /shouldEnforceLiveWindow\(state\)/);
@@ -263,9 +264,8 @@ test("workflow uses configured logs RPC and a five-minute cadence", () => {
   assert.match(workflow, /WATCHER_SHUTDOWN_RESERVE_SEC: "180"/);
   assert.match(workflow, /timeout --signal=TERM --kill-after=15s/);
   assert.match(workflow, /SECONDS - last_success > WATCHER_MAX_STALE_SUCCESS_SEC/);
-  assert.match(workflow, /actions: write/);
-  assert.match(workflow, /Queue successor watcher/);
-  assert.match(workflow, /gh workflow run v5-watcher\.yml/);
+  assert.doesNotMatch(workflow, /actions: write/);
+  assert.doesNotMatch(workflow, /Queue successor watcher|gh workflow run/);
 });
 
 
