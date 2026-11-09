@@ -62,9 +62,9 @@ The gateway reserves conservative compute units before each outbound HTTP attemp
 - `keeper-write` role cap: 8,000,000 CU, critical;
 - `deployment` role cap: 3,000,000 CU, ordinary;
 - `ci-fork` role cap: 2,000,000 CU, ordinary;
-- every batch element is charged;
+- every batch element is charged at a deliberately conservative 1,000 CU per allowed method;
 - unknown methods, `eth_getLogs`, debug/trace methods and oversized batches are denied;
-- missing/corrupt ledger, period mismatch or lock contention fails closed;
+- missing/corrupt ledger, period mismatch, approved-config hash mismatch or lock contention fails closed;
 - HTTP 402/429 and provider quota/capacity responses set a durable latch;
 - there are no hidden HTTP retries and no gateway retry;
 - a billing-period replacement or unlatch requires the exact current state hash and an exact operator confirmation phrase.
@@ -121,7 +121,7 @@ Steady state has zero Alchemy log or historical-read load.
 - watcher: four scheduled runs/hour, approximately one or two Goldsky log windows per run plus public canonical hashes; paid CU = 0;
 - root proposal/finalization: weekly historical reconstruction on Goldsky; paid CU = 0;
 - fork CI: manual public Goldsky run; paid CU = 0;
-- keeper: minute reads and root reconstruction are public. Only transaction-triggered nonce/fee/estimate/send/receipt calls use the gateway. Even 100 conservatively charged 200-CU calls per draw are about 20,000 CU/week;
+- keeper: minute reads and root reconstruction are public. Only transaction-triggered nonce/fee/estimate/send/receipt calls use the gateway. Even 100 conservatively charged 1,000-CU calls per draw are about 100,000 CU/week;
 - deployment: manually invoked and capped at 3M CU.
 
 The conservative 15M gateway ceiling is therefore a catastrophe boundary, not an expected spend target.
@@ -161,7 +161,7 @@ After approval:
 
 1. create the gateway Fly app and persistent volume;
 2. copy the reviewed budget config to `/data`, replacing the placeholder period ID with the explicit provider billing period;
-3. initialize the ledger with `RPC_BUDGET_CONFIRM="INITIALIZE <period>"`;
+3. record the reviewed config SHA-256 as `RPC_BUDGET_CONFIG_SHA256` and initialize the ledger with `RPC_BUDGET_CONFIRM="INITIALIZE <period>"`;
 4. set only the gateway secrets: raw paid upstream URL and role-token JSON;
 5. rotate the Alchemy credential;
 6. remove the old raw credential from keeper, indexer, watcher Actions secrets, protocol monitor, fork workflow and operator shell files;
