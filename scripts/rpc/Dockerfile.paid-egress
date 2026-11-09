@@ -1,0 +1,10 @@
+FROM node:22-slim
+
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+COPY scripts/rpc ./scripts/rpc
+
+ENV NODE_ENV=production
+ENV PORT=8080
+CMD ["node", "scripts/rpc/paid-egress-gateway.mjs"]
