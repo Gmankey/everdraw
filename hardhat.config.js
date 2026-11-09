@@ -3,6 +3,16 @@ import "@nomicfoundation/hardhat-ethers";
 
 const PRIVATE_KEY = process.env.PRIVATE_KEY || "";
 
+function guardedMainnetRpcUrl() {
+  const value = process.env.MONAD_MAINNET_RPC_URL || "";
+  if (!value) return value;
+  const hostname = new URL(value).hostname.toLowerCase();
+  if (hostname === "alchemy.com" || hostname.endsWith(".alchemy.com")) {
+    throw new Error("Direct paid mainnet RPC is disabled; use a scoped budget-gateway URL");
+  }
+  return value;
+}
+
 /** @type {import('hardhat/config').HardhatUserConfig} */
 export default {
   solidity: {
@@ -26,7 +36,7 @@ export default {
       accounts: PRIVATE_KEY ? [PRIVATE_KEY] : []
     },
     monadMainnet: {
-      url: process.env.MONAD_MAINNET_RPC_URL || "",
+      url: guardedMainnetRpcUrl(),
       chainId: Number(process.env.MONAD_MAINNET_CHAIN_ID || 101),
       accounts: PRIVATE_KEY ? [PRIVATE_KEY] : []
     }
