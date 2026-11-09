@@ -59,20 +59,20 @@
     }
   },
   "methodCosts": {
-    "eth_chainId": 20,
-    "eth_getBalance": 50,
-    "eth_getTransactionCount": 50,
-    "eth_gasPrice": 50,
-    "eth_maxPriorityFeePerGas": 50,
-    "eth_feeHistory": 100,
-    "eth_call": 200,
-    "eth_estimateGas": 200,
-    "eth_sendRawTransaction": 200,
-    "eth_getTransactionReceipt": 100,
-    "eth_getCode": 100,
-    "eth_getStorageAt": 100,
-    "eth_blockNumber": 20,
-    "eth_getBlockByNumber": 100,
-    "eth_getTransactionByHash": 100
+    "eth_chainId": 1000,
+    "eth_getBalance": 1000,
+    "eth_getTransactionCount": 1000,
+    "eth_gasPrice": 1000,
+    "eth_maxPriorityFeePerGas": 1000,
+    "eth_feeHistory": 1000,
+    "eth_call": 1000,
+    "eth_estimateGas": 1000,
+    "eth_sendRawTransaction": 1000,
+    "eth_getTransactionReceipt": 1000,
+    "eth_getCode": 1000,
+    "eth_getStorageAt": 1000,
+    "eth_blockNumber": 1000,
+    "eth_getBlockByNumber": 1000,
+    "eth_getTransactionByHash": 1000
   }
 }
