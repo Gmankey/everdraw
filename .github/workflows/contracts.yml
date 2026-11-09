@@ -37,7 +37,7 @@ jobs:
       - run: npm run rpc:incident:test
       - name: Qualify independent mainnet RPC
         run: npm run rpc:qualify:mainnet
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
           name: rpc2-mainnet-qualification-${{ github.sha }}
