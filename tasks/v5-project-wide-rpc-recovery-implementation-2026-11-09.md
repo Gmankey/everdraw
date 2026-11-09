@@ -46,12 +46,12 @@ Goldsky is independent of QuickNode and of the Tenderly discovery endpoint. The 
 - compares 24 evenly spaced 100-block log windows exactly between Goldsky and QuickNode;
 - compares historical `DrawManager.vault()` state at five ages;
 - compares representative transaction receipts;
-- serializes each provider at a minimum 75 ms interval, performs no retries or fallback, caps itself at 2,500 total JSON-RPC requests and does not use Alchemy;
+- serializes each provider at a minimum 250 ms interval, performs no retries or fallback, caps itself at 2,500 total JSON-RPC requests and does not use Alchemy;
 - emits a content-addressable evidence JSON artifact in CI.
 
 The contracts workflow uploads `rpc2-mainnet-qualification-<commit>`. A missing artifact or any mismatch fails CI. Qualification is therefore tied to the reviewed commit.
 
-Observed CI qualification for commit `69c8765a26dd5a5b301c010b51979eddaa6c611d`: **PASS**, 1,835 requests of the 2,500 hard cap. Artifact ID `13643364501`; artifact digest `sha256:2ffe6b8bb8a4dc405487a7a4749d4c94edc09a904c1bae337b13a14dff693264`; verdict `qualified-for-v5-independent-logs-and-historical-state`.
+The independent reviewer must use the artifact produced by the final immutable PR head; earlier branch-head artifacts are superseded.
 
 ## Durable paid-RPC enforcement
 
