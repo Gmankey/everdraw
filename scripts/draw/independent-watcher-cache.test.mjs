@@ -226,3 +226,50 @@ test("coverage acknowledgment is retained only for identical canonical evidence"
     "changed root needs a new review",
   );
 });
+
+
+test("fixed windows persist completed progress and resume only the failed window", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "everdraw-independent-checkpoint-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const cacheFile = path.join(dir, "state.json");
+  const requested = [];
+  let failSecondWindow = true;
+  const logProvider = {
+    async getLogs({ fromBlock, toBlock }) {
+      requested.push([Number(fromBlock), Number(toBlock)]);
+      if (failSecondWindow && Number(fromBlock) === 102) throw new Error("temporary upstream failure");
+      return [];
+    },
+  };
+  const canonicalProvider = {
+    async getBlock(blockNumber) {
+      return { hash: "0x" + Number(blockNumber).toString(16).padStart(64, "0") };
+    },
+  };
+  let cache = new IndependentWatcherCache({
+    file: cacheFile,
+    chainId: 143n,
+    drawManagerAddress: manager,
+    vaultAddress: vault,
+    fromBlock: 100,
+  });
+  await assert.rejects(
+    cache.syncThrough(logProvider, 105, { canonicalProvider, chunkSize: 2 }),
+    /temporary upstream failure/,
+  );
+  assert.equal(JSON.parse(fs.readFileSync(cacheFile, "utf8")).lastScannedBlock, 101);
+  assert.deepEqual(requested, [[100, 101], [102, 103]]);
+
+  failSecondWindow = false;
+  requested.length = 0;
+  cache = new IndependentWatcherCache({
+    file: cacheFile,
+    chainId: 143n,
+    drawManagerAddress: manager,
+    vaultAddress: vault,
+    fromBlock: 100,
+  });
+  await cache.syncThrough(logProvider, 105, { canonicalProvider, chunkSize: 2 });
+  assert.deepEqual(requested, [[102, 103], [104, 105]]);
+  assert.equal(JSON.parse(fs.readFileSync(cacheFile, "utf8")).lastScannedBlock, 105);
+});
