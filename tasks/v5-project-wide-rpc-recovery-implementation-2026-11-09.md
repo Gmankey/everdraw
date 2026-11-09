@@ -109,7 +109,7 @@ Closed by deleting recursive bisection in watcher and indexer paths. Provider ca
 - Hardhat deploy/migration: rejects raw Alchemy;
 - mainnet indexer: public QuickNode plus Tenderly; fallback unset and rejected;
 - watcher: QuickNode/Tenderly/Goldsky only;
-- keeper: public reads, Goldsky reconstruction, scoped gateway for writes;
+- keeper: QuickNode reads/reconstruction and Tenderly logs; scoped gateway for writes. Watcher security reconstruction remains independently sourced from Goldsky;
 - legacy keeper/watcher: no live app is authorized; old credentials must be removed in the rollout;
 - manual tools: raw provider URL is not distributed. Use public endpoints or a scoped, time-bounded gateway token.
 
