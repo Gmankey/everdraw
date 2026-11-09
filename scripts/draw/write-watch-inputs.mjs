@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { Contract, FetchRequest, Interface, JsonRpcProvider, getAddress } from "ethers";
 import { isInsufficientHistoryError } from "./reconstruct-watcher-input.mjs";
+import { assertRpcIncidentPolicy, disableHiddenTransportRetries } from "../rpc/incident-policy.mjs";
 
 const DEPLOYMENT_FILE = process.env.DEPLOYMENT_FILE || "deployments/monad-testnet.json";
 const RPC_URL = process.env.WATCHER_RPC_URL || process.env.KEEPER_RPC_URL || process.env.RPC_URL || process.env.MONAD_TESTNET_RPC_URL;
@@ -58,12 +59,15 @@ export function rpcUsageSnapshot() {
 export class CountingJsonRpcProvider extends JsonRpcProvider {
   constructor(url, role, network, options, timeoutMs = LOG_TIMEOUT_MS) {
     const request = new FetchRequest(url);
+    disableHiddenTransportRetries(request);
     request.timeout = timeoutMs;
     super(request, network, options);
     this.rpcRole = role;
+    this.rpcEndpoint = new URL(url).origin;
   }
 
   async _send(payload) {
+    assertRpcIncidentPolicy(this.rpcEndpoint);
     const requests = Array.isArray(payload) ? payload : [payload];
     for (const request of requests) countRpc("wireCalls", `${this.rpcRole}:${request.method}`);
     try {
