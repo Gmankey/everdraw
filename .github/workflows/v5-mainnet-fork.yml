@@ -7,14 +7,14 @@ jobs:
   fork:
     runs-on: ubuntu-latest
     env:
-      MONAD_MAINNET_RPC_URL: ${{ secrets.MONAD_MAINNET_RPC_URL }}
+      MONAD_MAINNET_RPC_URL: https://rpc2.monad.xyz
       FOUNDRY_PROFILE: fork
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09
         with:
           version: v1.7.1
-      - name: Require archive RPC
+      - name: Require qualified historical-state RPC
         run: test -n "$MONAD_MAINNET_RPC_URL"
       - name: Run V5 against real mainnet shMON under Cancun
         run: forge test --match-path 'test/v5/PrizeVaultV5Fork.t.sol' --evm-version cancun
