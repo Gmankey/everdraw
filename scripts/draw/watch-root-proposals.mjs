@@ -383,9 +383,14 @@ export async function main() {
   let securityProviderValidated = false;
   const validateSecurityProvider = async () => {
     if (securityProviderValidated) return;
-    const securityChainId = (await retryTransient(() => stateProvider.getNetwork(), "watcher security chain")).chainId;
-    if (securityChainId !== EXPECTED_CHAIN_ID) {
-      throw new Error(`Watcher security RPC chain mismatch: ${securityChainId} expected=${EXPECTED_CHAIN_ID}`);
+    const [securityChainId, independentLogsChainId] = await Promise.all([
+      retryTransient(() => stateProvider.getNetwork(), "watcher historical-state chain").then((network) => network.chainId),
+      retryTransient(() => independentLogsProvider.getNetwork(), "watcher independent-logs chain").then((network) => network.chainId),
+    ]);
+    if (securityChainId !== EXPECTED_CHAIN_ID || independentLogsChainId !== EXPECTED_CHAIN_ID) {
+      throw new Error(
+        `Watcher security RPC chain mismatch: state=${securityChainId} logs=${independentLogsChainId} expected=${EXPECTED_CHAIN_ID}`,
+      );
     }
     const code = await retryTransient(
       () => withRpcTimeout(stateProvider.getCode(drawManagerAddress), "watcher security DrawManager bytecode"),
