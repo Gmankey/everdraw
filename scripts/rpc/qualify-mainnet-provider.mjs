@@ -93,10 +93,7 @@ async function main() {
   const windows = [];
   for (let start = fromBlock; start <= toBlock; start += RANGE) {
     const end = Math.min(toBlock, start + RANGE - 1);
-    const before = await rpc(CANONICAL_URL, "eth_getBlockByNumber", [blockTag(start), false]);
     const logs = await rpc(CANDIDATE_URL, "eth_getLogs", [{ address: addresses, fromBlock: blockTag(start), toBlock: blockTag(end) }]);
-    const after = await rpc(CANONICAL_URL, "eth_getBlockByNumber", [blockTag(end), false]);
-    if (!before?.hash || !after?.hash) throw new Error(`Missing canonical boundary ${start}-${end}`);
     for (const log of logs) {
       const canonical = await rpc(CANONICAL_URL, "eth_getBlockByNumber", [log.blockNumber, false]);
       if (!canonical?.hash || canonical.hash.toLowerCase() !== log.blockHash.toLowerCase()) {
@@ -104,20 +101,37 @@ async function main() {
       }
     }
     fullLogs.push(...logs);
-    windows.push({ fromBlock: start, toBlock: end, logCount: logs.length, startHash: before.hash, endHash: after.hash });
+    windows.push({ fromBlock: start, toBlock: end, logCount: logs.length });
   }
 
   const samples = [];
   for (const [start, end] of evenlySpacedRanges(fromBlock, toBlock, SAMPLE_COUNT, SAMPLE_RANGE)) {
     const filter = { address: addresses, fromBlock: blockTag(start), toBlock: blockTag(end) };
-    const [candidate, canonical] = await Promise.all([
+    const [candidate, canonical, candidateStart, canonicalStart, candidateEnd, canonicalEnd] = await Promise.all([
       rpc(CANDIDATE_URL, "eth_getLogs", [filter]),
       rpc(CANONICAL_URL, "eth_getLogs", [filter]),
+      rpc(CANDIDATE_URL, "eth_getBlockByNumber", [blockTag(start), false]),
+      rpc(CANONICAL_URL, "eth_getBlockByNumber", [blockTag(start), false]),
+      rpc(CANDIDATE_URL, "eth_getBlockByNumber", [blockTag(end), false]),
+      rpc(CANONICAL_URL, "eth_getBlockByNumber", [blockTag(end), false]),
     ]);
     const candidateDigest = digest(candidate);
     const canonicalDigest = digest(canonical);
     if (candidateDigest !== canonicalDigest) throw new Error(`Log completeness mismatch ${start}-${end}`);
-    samples.push({ fromBlock: start, toBlock: end, logCount: candidate.length, digest: candidateDigest });
+    if (!candidateStart?.hash || candidateStart.hash.toLowerCase() !== canonicalStart?.hash?.toLowerCase()) {
+      throw new Error(`Start boundary mismatch ${start}-${end}`);
+    }
+    if (!candidateEnd?.hash || candidateEnd.hash.toLowerCase() !== canonicalEnd?.hash?.toLowerCase()) {
+      throw new Error(`End boundary mismatch ${start}-${end}`);
+    }
+    samples.push({
+      fromBlock: start,
+      toBlock: end,
+      logCount: candidate.length,
+      digest: candidateDigest,
+      startHash: candidateStart.hash,
+      endHash: candidateEnd.hash,
+    });
   }
 
   const iface = new Interface(["function vault() view returns (address)"]);
