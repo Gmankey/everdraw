@@ -69,7 +69,7 @@ The gateway reserves conservative compute units before each outbound HTTP attemp
 - there are no hidden HTTP retries and no gateway retry;
 - a billing-period replacement or unlatch requires the exact current state hash and an exact operator confirmation phrase.
 
-The 15M ceiling intentionally remains below half of the 30M plan allowance and cannot be increased by a process restart. The 4M reserve cannot be consumed by deployment or CI roles. A new calendar month does nothing until the reviewed config period and ledger are explicitly replaced.
+The 15M ceiling is fixed at half of the 30M plan allowance and cannot be increased by a process restart. The 4M reserve cannot be consumed by deployment or CI roles. A new calendar month does nothing until the reviewed config period and ledger are explicitly replaced.
 
 The gateway Fly definition uses an auto-stop machine with zero minimum machines. It is not deployed by this PR.
 
