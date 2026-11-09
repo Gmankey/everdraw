@@ -54,6 +54,14 @@ try {
   assert.equal(config.v5Deployments.length, 1);
 
   resetEnv();
+  process.env.RPC_URL_FALLBACK = 'https://fallback.invalid';
+  assert.throws(() => getRunnerConfig(), /RPC_URL_FALLBACK is disabled/);
+
+  resetEnv();
+  process.env.RPC_URL = 'https://monad-mainnet.g.alchemy.com/v2/secret';
+  assert.throws(() => getRunnerConfig(), /Direct paid RPC denied/);
+
+  resetEnv();
   delete process.env.V5_DEPLOYMENTS_JSON;
   assert.throws(() => getRunnerConfig(), /Missing V5_DEPLOYMENTS_JSON/);
 
