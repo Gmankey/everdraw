@@ -32,10 +32,10 @@ Goldsky is independent of QuickNode and of the Tenderly discovery endpoint. The 
 
 | Role | Endpoint | Allowed workload |
 |---|---|---|
-| canonical head and block hashes | `rpc.monad.xyz` (QuickNode) | current block/code, range boundaries, log block hashes |
+| canonical head, block hashes and keeper state | `rpc.monad.xyz` (QuickNode) | current block/code, range boundaries, log block hashes and keeper reconstruction |
 | discovery logs | `monad.gateway.tenderly.co` | combined-address event discovery only |
 | independent logs | `rpc2.monad.xyz` (Goldsky) | fixed-window V5 event reconstruction |
-| historical state | `rpc2.monad.xyz` (Goldsky) | block-tagged `eth_call` for root reconstruction |
+| watcher historical state | `rpc2.monad.xyz` (Goldsky) | block-tagged `eth_call` for independent root reconstruction |
 | transaction broadcast | budget egress role `keeper-write` | nonce/fee/estimate/send/receipt only |
 | fork CI | `rpc2.monad.xyz` | bounded real-shMON fork reads |
 
