@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import "dotenv/config";
+import { assertRpcIncidentPolicy, disableHiddenTransportRetries } from "./rpc/incident-policy.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -53,12 +54,15 @@ export function rpcUsageSnapshot() { return JSON.parse(JSON.stringify(RPC_USAGE)
 export class CountingJsonRpcProvider extends JsonRpcProvider {
   constructor(url, role, network, options, timeoutMs = RPC_TIMEOUT_MS) {
     const request = new FetchRequest(url);
+    disableHiddenTransportRetries(request);
     request.timeout = timeoutMs;
     super(request, network, options);
     this.rpcRole = role;
+    this.rpcEndpoint = new URL(url).origin;
   }
 
   async _send(payload) {
+    assertRpcIncidentPolicy(this.rpcEndpoint);
     const requests = Array.isArray(payload) ? payload : [payload];
     for (const request of requests) countRpc("wireCalls", `${this.rpcRole}:${request.method}`);
     try {
