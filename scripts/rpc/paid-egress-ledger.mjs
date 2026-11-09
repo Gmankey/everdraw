@@ -76,11 +76,18 @@ export function initializeBudgetState(configFile, stateFile, { replace = false, 
 }
 
 export class BudgetLedger {
-  constructor({ configFile, stateFile }) {
+  constructor({ configFile, stateFile, expectedConfigHash = "" }) {
     this.configFile = configFile;
     this.stateFile = stateFile;
     this.lockFile = `${stateFile}.lock`;
-    this.config = validateBudgetConfig(readJsonStrict(configFile, "RPC budget config"));
+    const configBytes = fs.readFileSync(configFile);
+    this.configHash = "0x" + createHash("sha256").update(configBytes).digest("hex");
+    if (expectedConfigHash && this.configHash !== expectedConfigHash.toLowerCase()) {
+      const error = new Error("RPC budget config hash mismatch");
+      error.code = "RPC_BUDGET_STATE_UNAVAILABLE";
+      throw error;
+    }
+    this.config = validateBudgetConfig(JSON.parse(configBytes.toString("utf8")));
     this.snapshot();
   }
 
@@ -115,7 +122,7 @@ export class BudgetLedger {
 
   snapshot() {
     const state = this.#readState();
-    return { ...structuredClone(state), stateHash: stateHash(state) };
+    return { ...structuredClone(state), stateHash: stateHash(state), configHash: this.configHash };
   }
 
   estimate(roleName, payload) {
