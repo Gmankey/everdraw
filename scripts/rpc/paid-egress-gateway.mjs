@@ -88,9 +88,11 @@ export function createGatewayServer({ upstreamUrl, tokens, ledger, fetchImpl = f
 
 export function main() {
   const tokens = JSON.parse(process.env.RPC_GATEWAY_TOKENS_JSON || "{}");
+  if (!process.env.RPC_BUDGET_CONFIG_SHA256) throw new Error("RPC_BUDGET_CONFIG_SHA256 is required");
   const ledger = new BudgetLedger({
     configFile: process.env.RPC_BUDGET_CONFIG_FILE || "/data/rpc-budget-config.json",
     stateFile: process.env.RPC_BUDGET_STATE_FILE || "/data/rpc-budget-state.json",
+    expectedConfigHash: process.env.RPC_BUDGET_CONFIG_SHA256,
   });
   const server = createGatewayServer({
     upstreamUrl: process.env.RPC_PAID_UPSTREAM_URL,
