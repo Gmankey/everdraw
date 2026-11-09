@@ -8,6 +8,7 @@ primary_region = "sjc"
   PORT = "8080"
   RPC_BUDGET_CONFIG_FILE = "/data/rpc-budget-config.json"
   RPC_BUDGET_STATE_FILE = "/data/rpc-budget-state.json"
+  # RPC_BUDGET_CONFIG_SHA256 is a secret/approved deployment value.
   RPC_GATEWAY_UPSTREAM_TIMEOUT_MS = "20000"
   RPC_GATEWAY_BODY_LIMIT_BYTES = "1048576"
 
