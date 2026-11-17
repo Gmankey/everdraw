@@ -81,7 +81,7 @@ Scheduled monitoring and recovery are separate workflows sharing one concurrency
 
 The scheduled workflow runs one invocation only when normal monitoring is enabled and recovery approval is false. It cannot bootstrap missing/reorg-reset independent state. Whole-job limits are 20,000 block-work and 1,500 actual wire requests.
 
-The manual canary is environment-approved, bound to an immutable commit and approval record, and runs only while the schedule is disabled and recovery approval is true. It invokes the watcher once. Whole-job limits are 250,000 block-work, 5,000 actual wire requests and 720 seconds.
+The manual canary is environment-approved and checks out only the fixed trusted `staging` branch with credentials disabled. It requires that head to equal the immutable approved commit and records the approval reference. It runs only while the schedule is disabled and recovery approval is true, invokes the watcher once, and namespaces progress by the approved commit. Whole-job limits are 250,000 block-work, 5,000 actual wire requests and 720 seconds.
 
 Budgets include discovery, independent reconstruction, canonical validation, historical state and retries. Independent bootstrap/reorg reset requires explicit admission. Each completed chunk persists. A limit returns incomplete/unhealthy without a success heartbeat and never truncates participant or claim history.
 
@@ -166,7 +166,7 @@ Deploy only reviewed routing. Observe 24-48 hours for cursor advancement, bounde
 
 ### 4. Qualify provider
 
-After evidence-input approval, dispatch `v5-mainnet-rpc-qualification` once. Review completeness, request counts, pinned block, known identities, participant totals and reconstructed roots. Partial evidence does not authorize recovery.
+After evidence-input approval, confirm the approved commit is the current trusted `staging` head and dispatch `v5-mainnet-rpc-qualification` once. Review completeness, request counts, pinned block, known identities, participant totals and reconstructed roots. Partial evidence does not authorize recovery.
 
 ### 5. Authorized watcher catch-up
 

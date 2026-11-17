@@ -19,7 +19,7 @@ Keeper and Hardhat now use scoped bearer headers. Mainnet keeper requires the ex
 
 ### R330-02 HIGH - bounded catch-up
 
-A shared cumulative budget covers discovery, independent reconstruction, canonical checks, historical reads and retries. Bootstrap/reorg reset requires admission and persists each completed chunk. Scheduled and manual workflows are separate/mutually exclusive; the canary checks out an immutable commit and invokes the watcher once with 250,000 block-work and 5,000 request ceilings.
+A shared cumulative budget covers discovery, independent reconstruction, canonical checks, historical reads and retries. Bootstrap/reorg reset requires admission and persists each completed chunk. Scheduled and manual workflows are separate/mutually exclusive. The canary checks out only fixed trusted `staging` with credentials disabled, requires its head to equal the approved immutable commit, namespaces progress by that commit, and invokes the watcher once with 250,000 block-work and 5,000 request ceilings.
 
 ### R330-03 HIGH gate - exact qualification
 
@@ -35,7 +35,7 @@ Reservations and admin mutations share one lock. Same-period reset and redundant
 
 ### R330-06 MEDIUM - qualification spend
 
-Live qualification was removed from PR CI. The manual workflow has environment approval, immutable inputs, shared provider-period admission, cooldown, run ceiling, incremental artifact and always-persisted admission state.
+Live qualification was removed from PR CI. The manual workflow checks out only fixed trusted `staging` with credentials disabled and requires its head to equal the approved SHA. It has environment approval, immutable inputs, shared provider-period admission, cooldown, run ceiling, incremental artifact and always-persisted admission state.
 
 ### R330-07 MEDIUM - HTTP boundary
 
