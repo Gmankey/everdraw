@@ -9,6 +9,7 @@ primary_region = "sjc"
 # Runtime targets and sensitive values are Fly secrets, not TOML values:
 #   flyctl secrets set -a everdraw-keeper-v5-mainnet \
 #     RPC_URL='<budgeted RPC egress gateway /rpc/keeper-write>' \
+#     KEEPER_RPC_BEARER_TOKEN='<scoped keeper-write bearer token>' \
 #     PRIVATE_KEY='<primary proposer key>' \
 #     DRAW_MANAGER_ADDRESS='<committed V5 DrawManager>' \
 #     CLAIM_MANAGER_ADDRESS='<V5 ClaimManager>' \
@@ -58,7 +59,7 @@ primary_region = "sjc"
   TELEGRAM_TIMEOUT_MS = "8000"
   TELEGRAM_RETRIES = "2"
   # RPC_URL must be the scoped budget gateway endpoint, never a raw paid-provider URL.
-  # RPC_URL, PRIVATE_KEY, DRAW_MANAGER_ADDRESS, CLAIM_MANAGER_ADDRESS,
+  # RPC_URL, KEEPER_RPC_BEARER_TOKEN, PRIVATE_KEY, DRAW_MANAGER_ADDRESS, CLAIM_MANAGER_ADDRESS,
   # V5_KEEPER_FROM_BLOCK, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, and
   # KEEPER_HEALTHCHECK_URL and KEEPER_HEALTHCHECK_FAIL_URL are intentionally omitted. They are operator secrets.
 

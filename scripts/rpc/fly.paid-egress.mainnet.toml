@@ -11,6 +11,9 @@ primary_region = "sjc"
   # RPC_BUDGET_CONFIG_SHA256 is a secret/approved deployment value.
   RPC_GATEWAY_UPSTREAM_TIMEOUT_MS = "20000"
   RPC_GATEWAY_BODY_LIMIT_BYTES = "1048576"
+  RPC_GATEWAY_RESPONSE_LIMIT_BYTES = "4194304"
+  RPC_GATEWAY_REQUIRE_SINGLE_WRITER = "true"
+  RPC_GATEWAY_WRITER_LEASE_FILE = "/data/rpc-gateway-writer.json"
 
 [mounts]
   source = "everdraw_rpc_budget"
@@ -22,6 +25,10 @@ primary_region = "sjc"
   auto_stop_machines = "stop"
   auto_start_machines = true
   min_machines_running = 0
+
+  # The filesystem ledger is authoritative. Operate exactly one gateway machine
+  # attached to the one everdraw_rpc_budget volume; the rollout runbook verifies
+  # this before any client token is enabled.
 
   [[services.ports]]
     handlers = ["tls", "http"]

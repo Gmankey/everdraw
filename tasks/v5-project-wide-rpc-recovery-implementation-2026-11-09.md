@@ -1,136 +1,121 @@
 # EverDraw V5 project-wide RPC recovery
 
-Date: 2026-11-09  
-Status: implementation submitted for independent review; mainnet keeper remains stopped and mainnet watcher remains disabled.
+Updated: 2026-11-17
+Status: implementation complete; independent review required. Mainnet keeper remains stopped and the mainnet watcher remains disabled.
 
 ## Safety boundary
 
-This change does not restart or deploy any stopped mainnet component. Recovery remains:
+This change does not deploy or restart any mainnet component. Recovery order is fixed:
 
-1. independent review of this immutable commit;
-2. an explicitly authorized, bounded watcher catch-up;
-3. verification that root reconstruction, participant completeness, canonical hashes and veto time are covered;
-4. a separately coordinated keeper restart.
+1. independent review of one immutable commit;
+2. an auditor-authorized, one-shot, bounded watcher canary;
+3. verification of root reconstruction, participant completeness, canonical hashes, alerting and veto coverage;
+4. a separately approved keeper restart.
 
-An Alchemy quota reset never clears a latch or enables a workflow.
+An Alchemy quota reset never clears a latch, enables a workflow or restarts a service.
 
-## Provider qualification and role separation
+## Provider roles
 
-Monad's current network documentation identifies:
-
-- `rpc.monad.xyz` as QuickNode;
-- `rpc2.monad.xyz` as Goldsky Edge, with historical-state support;
-- `rpc1.monad.xyz` as Alchemy.
-
-References:
-
-- https://docs.monad.xyz/developer-essentials/network-information
-- https://docs.monad.xyz/tooling-and-infra/rpc-providers
-- https://goldsky.com/case-studies/monad
-
-Goldsky is independent of QuickNode and of the Tenderly discovery endpoint. The shipped routing is:
-
-| Role | Endpoint | Allowed workload |
+| Role | Endpoint | Workload |
 |---|---|---|
-| canonical head, block hashes and keeper state | `rpc.monad.xyz` (QuickNode) | current block/code, range boundaries, log block hashes and keeper reconstruction |
-| discovery logs | `monad.gateway.tenderly.co` | combined-address event discovery only |
-| independent logs | `rpc2.monad.xyz` (Goldsky) | fixed-window V5 event reconstruction |
-| watcher historical state | `rpc2.monad.xyz` (Goldsky) | block-tagged `eth_call` for independent root reconstruction |
-| transaction broadcast | budget egress role `keeper-write` | nonce/fee/estimate/send/receipt only |
-| fork CI | `rpc2.monad.xyz` | bounded real-shMON fork reads |
+| canonical head and hashes | `rpc.monad.xyz` | current state and canonical boundary/log hashes |
+| discovery logs | configured Tenderly endpoint | combined-address discovery only |
+| independent logs | qualified `rpc2.monad.xyz` | fixed-window independent event history |
+| historical state | qualified `rpc2.monad.xyz` | block-tagged root reconstruction calls |
+| paid transaction path | scoped egress gateway | nonce, fees, estimation, broadcast and receipts only |
 
-`scripts/rpc/qualify-mainnet-provider.mjs` performs the full qualification, not a sample-only probe. It:
+No log or historical-state role may fall back to Alchemy. Errors and incomplete windows are unhealthy and never become zero events.
 
-- scans every V5 address from deploy block 105196182 through the shared candidate/canonical head in fixed 10,000-block windows;
-- validates every returned log's block hash through QuickNode;
-- compares 24 evenly spaced 100-block log windows exactly between Goldsky and QuickNode;
-- compares historical `DrawManager.vault()` state at five ages;
-- compares representative transaction receipts;
-- serializes each provider at a minimum 250 ms interval, performs no retries or fallback, caps itself at 2,500 total JSON-RPC requests and does not use Alchemy;
-- emits a content-addressable evidence JSON artifact in CI.
+## Provider qualification
 
-The contracts workflow uploads `rpc2-mainnet-qualification-<commit>`. A missing artifact or any mismatch fails CI. Qualification is therefore tied to the reviewed commit.
+Qualification is manual and environment-approved in `.github/workflows/v5-rpc-qualification-mainnet.yml`. It is not run on pull requests or schedules.
 
-The independent reviewer must use the artifact produced by the final immutable PR head; earlier branch-head artifacts are superseded.
+The operator supplies an immutable approved commit, unique qualification ID, reviewed known-event evidence file, provider billing-period ID and shared provider-period request cap.
+
+The qualification script:
+
+- binds candidate, reference and canonical providers to chain 143 and one pinned final block/hash;
+- compares complete V5 event history and range boundaries;
+- verifies independently supplied nonempty seed, proposal, finalization, mint, transfer and burn identities and receipts;
+- reconstructs historical roots through candidate and reference using the complete participant set;
+- compares summed TWAB, prize legs and Merkle roots;
+- reserves every wire request in a durable provider-period admission ledger before sending it;
+- enforces a 10,000-request run ceiling, operator-supplied period ceiling, 250 ms minimum interval and 24-hour cooldown;
+- writes incremental evidence and marks interrupted or capped work incomplete.
+
+`scripts/rpc/mainnet-qualification-evidence.example.json` documents the reviewed input. A capability sample is not proof of complete history; the final artifact must be reviewed before recovery authorization.
 
 ## Durable paid-RPC enforcement
 
-All direct Alchemy URLs are rejected by keeper, watcher, indexer configuration and Hardhat mainnet configuration. The raw provider credential is permitted only in the paid egress gateway.
+Raw paid-provider URLs are rejected by keeper and Hardhat mainnet clients. Only the paid egress gateway receives the raw credential.
 
-The gateway reserves conservative compute units before each outbound HTTP attempt. Enforcement is durable in a persistent, atomic JSON ledger:
+The gateway:
 
-- account automated cap: 15,000,000 CU per explicitly named billing period;
-- non-borrowable critical reserve: 4,000,000 CU;
-- `keeper-write` role cap: 8,000,000 CU, critical;
-- `deployment` role cap: 3,000,000 CU, ordinary;
-- `ci-fork` role cap: 2,000,000 CU, ordinary;
-- every batch element is charged at a deliberately conservative 1,000 CU per allowed method;
-- unknown methods, `eth_getLogs`, debug/trace methods and oversized batches are denied;
-- missing/corrupt ledger, period mismatch, approved-config hash mismatch or lock contention fails closed;
-- HTTP 402/429 and provider quota/capacity responses set a durable latch;
-- there are no hidden HTTP retries and no gateway retry;
-- a billing-period replacement or unlatch requires the exact current state hash and an exact operator confirmation phrase.
+- requires long, role-scoped bearer tokens;
+- allows approved methods per role and denies `eth_getLogs`, trace/debug methods and oversized batches;
+- reserves conservative compute units before every outbound batch item;
+- validates schema, safe counters, role totals, reservations, caps and latch state;
+- fsyncs the temporary state and parent directory around atomic rename;
+- serializes reservations and every admin mutation under one lock;
+- rejects same-period resets, redundant unlatches and stale state hashes;
+- disables redirects, bounds request/response bodies and times the complete response body;
+- latches durably on quota/capacity responses;
+- exposes usage, latch and state hash without credentials.
 
-The 15M ceiling is fixed at half of the 30M plan allowance and cannot be increased by a process restart. The 4M reserve cannot be consumed by deployment or CI roles. A new calendar month does nothing until the reviewed config period and ledger are explicitly replaced.
+Fly must run exactly one gateway machine attached to exactly one persistent volume. A durable writer lease rejects a second writer. Machine replacement or stale-lease recovery is fail-closed and requires an operator-reviewed lease reset while all gateway machines are stopped.
 
-The gateway Fly definition uses an auto-stop machine with zero minimum machines. It is not deployed by this PR.
+Default controls are 15M CU per explicit billing period, a protected 4M CU reserve, 8M keeper-write, 3M deployment and 2M CI-fork caps. The provider account must retain its external hard limit.
+
+## Keeper write authentication
+
+Mainnet keeper requires:
+
+- `RPC_URL=https://everdraw-rpc-egress-mainnet.fly.dev/rpc/keeper-write`;
+- `KEEPER_RPC_BEARER_TOKEN` containing its dedicated token.
+
+Startup validates route, approved host, authentication and chain ID before lifecycle work. Missing/invalid credentials enter the persistent stop class. Tokens remain headers, never URL credentials or logs. Hardhat mainnet tasks use the same model with their own role token.
+
+## Bounded watcher execution
+
+Scheduled monitoring and recovery are separate workflows sharing one concurrency group.
+
+The scheduled workflow runs one invocation only when normal monitoring is enabled and recovery approval is false. It cannot bootstrap missing/reorg-reset independent state. Whole-job limits are 20,000 block-work and 1,500 actual wire requests.
+
+The manual canary is environment-approved, bound to an immutable commit and approval record, and runs only while the schedule is disabled and recovery approval is true. It invokes the watcher once. Whole-job limits are 250,000 block-work, 5,000 actual wire requests and 720 seconds.
+
+Budgets include discovery, independent reconstruction, canonical validation, historical state and retries. Independent bootstrap/reorg reset requires explicit admission. Each completed chunk persists. A limit returns incomplete/unhealthy without a success heartbeat and never truncates participant or claim history.
 
 ## Audit finding closure
 
-### F-1: independent log workload exceeded the allowance
+- **F-1:** paid log scans removed; exact production provider qualification added.
+- **F-2:** strict persistent gateway ledger, scoped roles, external hard cap and durable latch.
+- **F-3:** self-dispatch removed; one invocation per workflow; recovery and schedule separated.
+- **F-4:** no paid logs/history fallback; errors fail closed.
+- **F-5:** actual wire requests reserved and counted at the transport boundary.
+- **F-6:** fixed windows and per-chunk atomic progress; no recursive bisection.
+- **F-7:** public/scoped routes enforced across all RPC consumers.
+- **R330-01:** scoped bearer authentication, startup validation, redaction and real gateway integration test.
+- **R330-02:** cumulative whole-job budgets including independent cache and retries.
+- **R330-03:** known nonempty histories plus complete participant/root/TWAB reconstruction.
+- **R330-04:** corrupt structures rejected; durable fsync-backed atomic writes.
+- **R330-05:** admin/reservation mutations share one lock; multiprocess race regression.
+- **R330-06:** qualification is manual, approved, admitted, cooled down and capped.
+- **R330-07:** redirect denial, full-body timeout and response-size limit.
 
-Closed by removing paid log scans entirely. Goldsky handles fixed-window independent logs; Tenderly remains discovery only. The full-history qualification proves the range and completeness assumptions used by the watcher.
-
-### F-2: no durable account-wide breaker
-
-Closed by the gateway ledger and scoped bearer roles. Tests cover restart persistence, protected reserve, batch charging, missing/corrupt state, lock contention, method denial, quota latching and subsequent rejection.
-
-### F-3: scheduler amplification
-
-Closed by removing both watcher self-dispatch successors and `actions: write`. A failed or timed-out cycle exits once. Mainnet manual and scheduled execution both require `V5_WATCHER_MAINNET_ENABLED=true` and `V5_WATCHER_MAINNET_RECOVERY_APPROVED=true`.
-
-The keeper supervisor writes `/data/keeper-v5-rpc-incident.json` and stops without restart on quota/budget/state failures. It refuses to start while that file exists.
-
-### F-4: uncontrolled paid fallback
-
-Closed. Watcher roles are explicit. Discovery and independent log failures never fall back. The indexer rejects `RPC_URL_FALLBACK`, rejects direct Alchemy endpoints and pins production canonical/log endpoints in Fly configuration.
-
-### F-5: incomplete billed-attempt telemetry
-
-Closed at the paid boundary. Ethers transport retries are disabled. Reservations count each JSON-RPC batch item before the one permitted wire attempt. `/healthz` reports role usage, latch state and state hash without secrets.
-
-### F-6: recursive checkpoint replay
-
-Closed by deleting recursive bisection in watcher and indexer paths. Provider capability is a reviewed fixed window. Each successful watcher window is atomically checkpointed; a failure leaves the cursor on that exact window. Regression tests prove completed windows are not replayed after restart and indexer range failure does not advance its cursor.
-
-### F-7: secondary consumers and credentials
-
-- protocol monitor: hard-pinned to public QuickNode; reports hostname only;
-- mainnet fork CI: public qualified Goldsky;
-- indexer claim-proof reader: public canonical endpoint with hidden retries disabled;
-- Hardhat deploy/migration: rejects raw Alchemy;
-- mainnet indexer: public QuickNode plus Tenderly; fallback unset and rejected;
-- watcher: QuickNode/Tenderly/Goldsky only;
-- keeper: QuickNode reads/reconstruction and Tenderly logs; scoped gateway for writes. Watcher security reconstruction remains independently sourced from Goldsky;
-- legacy keeper/watcher: no live app is authorized; old credentials must be removed in the rollout;
-- manual tools: raw provider URL is not distributed. Use public endpoints or a scoped, time-bounded gateway token.
-
-## Workload estimate
+## Expected workload
 
 Steady state has zero Alchemy log or historical-read load.
 
-- indexer: 15-second polling, one combined-address Tenderly log window plus public canonical boundary/hash reads; paid CU = 0;
-- watcher: four scheduled runs/hour, approximately one or two Goldsky log windows per run plus public canonical hashes; paid CU = 0;
-- root proposal/finalization: weekly historical reconstruction on Goldsky; paid CU = 0;
-- fork CI: manual public Goldsky run; paid CU = 0;
-- keeper: minute reads and root reconstruction are public. Only transaction-triggered nonce/fee/estimate/send/receipt calls use the gateway. Even 100 conservatively charged 1,000-CU calls per draw are about 100,000 CU/week;
-- deployment: manually invoked and capped at 3M CU.
+- Indexer: 15-second combined-address discovery polling with public canonical checks; paid CU zero.
+- Scheduled watcher: four runs/hour, capped at 1,500 requests and 20,000 block-work per job; paid CU zero.
+- Manual catch-up: one approved invocation, maximum 5,000 requests and 250,000 block-work.
+- Qualification: manual only, maximum 10,000 requests plus shared provider-period cap.
+- Keeper: public reads; only transaction-triggered support calls use the paid gateway.
+- Deployment: manual only, capped at 3M CU.
 
-The conservative 15M gateway ceiling is therefore a catastrophe boundary, not an expected spend target.
+Observe method/provider counters, fallback reasons, indexing lag, watcher freshness and paid-ledger state. Alchemy usage must remain flat outside approved transaction work.
 
-## Reproducible tests
-
-From the reviewed commit:
+## Reproducible verification
 
 ```bash
 npm ci
@@ -142,89 +127,65 @@ npm --prefix scripts/indexer ci
 npm --prefix scripts/indexer test
 npm --prefix scripts/indexer run build
 
-npm run rpc:qualify:mainnet
+npm --prefix web ci
+MODE=test npm --prefix web run build
+
+npm --prefix docs-site ci
+npm --prefix docs-site run build
 ```
 
-Required regression coverage includes provider-role isolation, one outbound attempt, batch-item accounting, restart persistence, critical-reserve isolation, corruption/lock fail-closed behavior, quota latch, watcher fixed-window resume, in-flight reorg rejection, participant transfer completeness and indexer cursor preservation.
+Do not run live qualification until the auditor approves its exact evidence input and admission values.
 
-## Bounded rollout
+## Recovery runbook
 
-### 0. Keep containment
+### 0. Maintain containment
 
-Do not restart `everdraw-keeper-v5-mainnet`. Keep `V5_WATCHER_MAINNET_ENABLED=false` and `V5_WATCHER_MAINNET_RECOVERY_APPROVED=false`.
+- Keep the mainnet keeper stopped.
+- Keep `V5_WATCHER_MAINNET_ENABLED=false`.
+- Do not clear persistent keeper or gateway latches.
 
 ### 1. Independent review
 
-Auditor reviews the PR head, CI artifact and this runbook. Record the approved immutable commit. Do not accept a later mutable branch head.
+Approve one immutable commit and evidence report. Later code changes invalidate approval.
 
-### 2. Credential closure and gateway preparation
+### 2. Prepare gateway after approval
 
-After approval:
+1. Create one gateway app, one persistent volume and exactly one machine.
+2. Initialize the reviewed budget config/ledger for the explicit billing period.
+3. Configure the approved config SHA-256, raw paid URL and distinct long random role tokens only on the gateway.
+4. Set the provider account hard limit.
+5. Rotate the old paid credential and remove it from all other apps, Actions and operator files.
+6. Configure keeper gateway URL/token but do not start it.
+7. Verify the writer lease, `/healthz`, zero usage and state hash.
 
-1. create the gateway Fly app and persistent volume;
-2. copy the reviewed budget config to `/data`, replacing the placeholder period ID with the explicit provider billing period;
-3. record the reviewed config SHA-256 as `RPC_BUDGET_CONFIG_SHA256` and initialize the ledger with `RPC_BUDGET_CONFIRM="INITIALIZE <period>"`;
-4. set only the gateway secrets: raw paid upstream URL and role-token JSON;
-5. rotate the Alchemy credential;
-6. remove the old raw credential from keeper, indexer, watcher Actions secrets, protocol monitor, fork workflow and operator shell files;
-7. issue distinct random tokens for keeper/deployment/CI; do not reuse them;
-8. point keeper `RPC_URL` to `https://everdraw-rpc-egress-mainnet.fly.dev/rpc/keeper-write`.
-
-Verify `/healthz`, state hash, zero usage and auto-stop behavior. Do not start keeper.
+Rollback: stop the sole gateway, revoke the affected role token, preserve the volume/ledger, and do not reset the writer lease without recorded review.
 
 ### 3. Indexer canary
 
-Deploy indexer routing only. It is already running, so use rolling deployment. Confirm for 24-48 hours:
+Deploy only reviewed routing. Observe 24-48 hours for cursor advancement, bounded lag, no fallback, no secret leakage and flat Alchemy usage. Never restore raw paid fallback.
 
-- cursor advances and lag remains bounded;
-- no fallback is configured;
-- `rpc.monad.xyz` supplies canonical reads;
-- Tenderly supplies combined-address logs;
-- Alchemy dashboard remains flat;
-- no secrets appear in logs.
+### 4. Qualify provider
 
-Rollback: restore the previous indexer image while retaining public canonical/Tenderly secrets. Never restore raw paid fallback.
+After evidence-input approval, dispatch `v5-mainnet-rpc-qualification` once. Review completeness, request counts, pinned block, known identities, participant totals and reconstructed roots. Partial evidence does not authorize recovery.
 
-### 4. Authorized watcher catch-up
+### 5. Authorized watcher catch-up
 
-Only after auditor authorization:
+1. Keep scheduled watcher disabled.
+2. Set recovery approval true.
+3. Dispatch `v5-root-watcher-mainnet-canary` once with approved commit/reference.
+4. Review block/request totals, cursors, canonical evidence and root result.
+5. Repeat only under new explicit authorization.
 
-1. confirm `V5_WATCHER_MAINNET_ENABLED=false`;
-2. set public/Tenderly endpoints and reviewed cache key;
-3. set `V5_WATCHER_MAINNET_RECOVERY_APPROVED=true`;
-4. set `V5_WATCHER_MAINNET_ENABLED=true`;
-5. dispatch exactly one run;
-6. verify the cursor advances by no more than `WATCHER_MAX_BLOCKS_PER_RUN=250000`;
-7. inspect the qualification/canonical evidence and root result before another run.
+Any disagreement, cache reset, cap, incomplete window or insufficient veto time is unhealthy. Preserve evidence and stop.
 
-If any endpoint disagrees, any window is incomplete, or veto time is insufficient: disable both variables, preserve caches/artifacts and do not advance or report healthy.
+### 6. Security coverage
 
-### 5. Security coverage
+Require full watcher catch-up, matched roots, complete participants, canonical boundaries, healthy dead-man alert, working veto path and untouched gateway reserve.
 
-Before keeper restart, require:
+### 7. Coordinated keeper restart
 
-- watcher fully caught up with no unacknowledged gap;
-- every observed proposal reconstructed to the same root;
-- participant set includes historical deposits and transfers;
-- canonical boundary/log hashes match;
-- dead-man health is green;
-- veto alert and operator path remain available;
-- paid ledger is healthy and critical reserve untouched.
-
-### 6. Coordinated keeper restart
-
-Requires a separate auditor approval. Remove any persistent keeper RPC incident latch only after recording its contents and the approved state hash. Start one keeper machine. Observe a complete lifecycle before declaring recovery.
+Requires separate auditor approval. Record any keeper latch and approved gateway state hash before clearing it. Start one keeper machine and observe a complete lifecycle.
 
 ## Rollback
 
-At any stage:
-
-1. stop the keeper;
-2. set both watcher enable/recovery variables false;
-3. preserve watcher caches, indexer DB and gateway ledger;
-4. revoke the affected scoped token, not the account-wide provider key;
-5. roll back the application image;
-6. do not clear budget or quota latches;
-7. resume only from a new recorded auditor approval.
-
-Unknown, stale or unverifiable state is unhealthy. An RPC error is never interpreted as zero logs.
+Stop keeper, disable watcher, preserve caches/DB/ledger, revoke only affected scoped tokens, roll back the image and leave budget/quota latches intact. Unknown state is unhealthy.

@@ -4,6 +4,7 @@ import path from "node:path";
 export function paidRpcStopReason(line) {
   const text = String(line).toLowerCase();
   if (/rpc_budget_(exhausted|latched|state_unavailable|locked)/.test(text)) return "paid-rpc-budget";
+  if (/rpc_auth_failed|write gateway authentication rejected|http 401|status 401/.test(text)) return "paid-rpc-authentication";
   if (/quota exceeded|monthly capacity|compute unit limit/.test(text)) return "paid-provider-quota";
   return "";
 }

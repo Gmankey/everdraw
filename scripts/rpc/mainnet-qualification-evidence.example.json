@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 2,
+  "chainId": "143",
+  "deploymentRole": "EverDraw V5 mainnet beta - ADR-0045 draw-manager activation",
+  "finalBlock": 0,
+  "finalBlockHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "knownEvents": [
+    {
+      "kind": "seed",
+      "txHash": "0x...",
+      "logIndex": 0,
+      "blockNumber": 0,
+      "blockHash": "0x...",
+      "address": "0x...",
+      "topic0": "0x..."
+    },
+    { "kind": "proposal", "txHash": "0x...", "logIndex": 0, "blockNumber": 0, "blockHash": "0x...", "address": "0x...", "topic0": "0x..." },
+    { "kind": "finalization", "txHash": "0x...", "logIndex": 0, "blockNumber": 0, "blockHash": "0x...", "address": "0x...", "topic0": "0x..." },
+    { "kind": "mint", "txHash": "0x...", "logIndex": 0, "blockNumber": 0, "blockHash": "0x...", "address": "0x...", "topic0": "0x..." },
+    { "kind": "transfer", "txHash": "0x...", "logIndex": 0, "blockNumber": 0, "blockHash": "0x...", "address": "0x...", "topic0": "0x..." },
+    { "kind": "burn", "txHash": "0x...", "logIndex": 0, "blockNumber": 0, "blockHash": "0x...", "address": "0x...", "topic0": "0x..." }
+  ],
+  "draws": [
+    {
+      "drawId": "0",
+      "seedBlock": 0,
+      "root": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ]
+}

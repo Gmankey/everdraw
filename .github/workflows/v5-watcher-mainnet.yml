@@ -3,7 +3,6 @@ name: v5-root-watcher-mainnet
 on:
   schedule:
     - cron: "7,22,37,52 * * * *"
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -14,7 +13,7 @@ concurrency:
 
 jobs:
   recompute-mainnet-roots:
-    if: vars.V5_WATCHER_MAINNET_ENABLED == 'true' && vars.V5_WATCHER_MAINNET_RECOVERY_APPROVED == 'true'
+    if: vars.V5_WATCHER_MAINNET_ENABLED == 'true' && vars.V5_WATCHER_MAINNET_RECOVERY_APPROVED != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -58,6 +57,10 @@ jobs:
           WATCHER_CYCLE_TIMEOUT_SEC: "300"
           WATCHER_SHUTDOWN_RESERVE_SEC: "90"
           WATCHER_MAX_BLOCKS_PER_RUN: "250000"
+          WATCHER_MAX_TOTAL_BLOCKS_PER_JOB: "20000"
+          WATCHER_MAX_RPC_REQUESTS_PER_JOB: "1500"
+          WATCHER_MODE: scheduled
+          WATCHER_ALLOW_INDEPENDENT_BOOTSTRAP: "false"
           WATCHER_STATE_FILE: .watcher-cache-mainnet/state.json
           WATCHER_INDEPENDENT_STATE_FILE: .watcher-cache-mainnet/independent-state.json
           WATCHER_HEALTHCHECKS_PING_URL: ${{ secrets.V5_WATCHER_MAINNET_HEALTHCHECK_URL }}
@@ -71,51 +74,7 @@ jobs:
           test -n "$WATCHER_INDEPENDENT_LOGS_RPC_URL" || exit 1
           test -n "$WATCHER_LOGS_RPC_URL" || exit 1
           test -n "$WATCHER_HEAD_RPC_URL" || exit 1
-          set +e
-          deadline=$((SECONDS + WATCHER_JOB_DURATION_SEC))
-          last_success=0
-
-          while (( SECONDS < deadline )); do
-            remaining=$((deadline - SECONDS))
-            if (( remaining <= WATCHER_SHUTDOWN_RESERVE_SEC )); then
-              break
-            fi
-
-            cycle_budget=$WATCHER_CYCLE_TIMEOUT_SEC
-            max_cycle_budget=$((remaining - WATCHER_SHUTDOWN_RESERVE_SEC))
-            if (( cycle_budget > max_cycle_budget )); then
-              cycle_budget=$max_cycle_budget
-            fi
-
-            timeout --signal=TERM --kill-after=15s "${cycle_budget}s" npm run draw:watch
-            status=$?
-            now=$SECONDS
-
-            if (( status == 0 )); then
-              last_success=$now
-            elif (( status == 124 )); then
-              echo "::error::mainnet watcher cycle reached its ${cycle_budget}s budget; stopping with checkpoint retained"
-              exit 1
-            else
-              echo "::error::mainnet watcher failed with exit code $status; stopping"
-              exit 1
-            fi
-
-            remaining=$((deadline - SECONDS))
-            if (( remaining <= 0 )); then
-              break
-            fi
-            sleep_for=$WATCHER_POLL_INTERVAL_SEC
-            if (( sleep_for > remaining )); then
-              sleep_for=$remaining
-            fi
-            sleep "$sleep_for"
-          done
-
-          if (( last_success == 0 || SECONDS - last_success > WATCHER_MAX_STALE_SUCCESS_SEC )); then
-            echo "::error::mainnet watcher had no successful chain-head scan in the final ${WATCHER_MAX_STALE_SUCCESS_SEC}s"
-            exit 1
-          fi
+          timeout --signal=TERM --kill-after=15s "${WATCHER_CYCLE_TIMEOUT_SEC}s" npm run draw:watch
       - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         if: always()
         with:

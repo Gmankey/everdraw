@@ -23,6 +23,7 @@ import {
   participantAccountsFromLogs,
   retryTransient,
 } from "./write-watch-inputs.mjs";
+import { WatcherJobBudget } from "./watcher-job-budget.mjs";
 
 
 test("a proposed or finalized root cannot be healthy until independently verified", () => {
@@ -212,6 +213,7 @@ test("watcher canonical checkpoint detects reorg replacement", async () => {
 
 test("mainnet watcher is independently configured and schedule-gated", () => {
   const workflow = fs.readFileSync(new URL("../../.github/workflows/v5-watcher-mainnet.yml", import.meta.url), "utf8");
+  const canary = fs.readFileSync(new URL("../../.github/workflows/v5-watcher-mainnet-canary.yml", import.meta.url), "utf8");
   assert.ok(workflow.includes(`cron: "7,22,37,52 * * * *"`));
   assert.match(workflow, /vars\.V5_WATCHER_MAINNET_ENABLED == 'true'/);
   assert.match(workflow, /DEPLOYMENT_FILE: deployments\/monad-mainnet\.json/);
@@ -227,8 +229,29 @@ test("mainnet watcher is independently configured and schedule-gated", () => {
   assert.match(workflow, /V5_WATCHER_MAINNET_ACKNOWLEDGED_COVERAGE_GAPS/);
   assert.match(workflow, /if: always\(\)/);
   assert.match(workflow, /V5_WATCHER_MAINNET_RECOVERY_APPROVED/);
+  assert.doesNotMatch(workflow, /workflow_dispatch/);
+  assert.equal((workflow.match(/npm run draw:watch/g) || []).length, 1);
+  assert.match(workflow, /WATCHER_MODE: scheduled/);
+  assert.match(workflow, /WATCHER_ALLOW_INDEPENDENT_BOOTSTRAP: "false"/);
+  assert.match(canary, /workflow_dispatch/);
+  assert.match(canary, /environment: v5-mainnet-recovery/);
+  assert.match(canary, /group: v5-root-watcher-mainnet/);
+  assert.match(canary, /WATCHER_MODE: manual-canary/);
+  assert.match(canary, /WATCHER_ALLOW_INDEPENDENT_BOOTSTRAP: "true"/);
+  assert.equal((canary.match(/npm run draw:watch/g) || []).length, 1);
   assert.doesNotMatch(workflow, /actions: write/);
   assert.doesNotMatch(workflow, /Queue successor watcher|gh workflow run/);
+});
+
+test("watcher job budget is cumulative across roles and fails before overrun", () => {
+  const budget = new WatcherJobBudget({ maxRequests: 3, maxBlocks: 5 });
+  budget.reserveRequests("canonical", 1);
+  budget.reserveRequests("discovery", 2);
+  assert.throws(() => budget.reserveRequests("independent", 1), { code: "WATCHER_JOB_REQUEST_BUDGET_EXHAUSTED" });
+  assert.equal(budget.reserveRange("discovery", 100, 110), 104);
+  assert.throws(() => budget.reserveRange("independent", 105, 110), { code: "WATCHER_JOB_BLOCK_BUDGET_EXHAUSTED" });
+  assert.deepEqual(budget.snapshot().requestRoles, { canonical: 1, discovery: 2 });
+  assert.deepEqual(budget.snapshot().blockRoles, { discovery: 5 });
 });
 
 test("workflow uses configured logs RPC and a five-minute cadence", () => {

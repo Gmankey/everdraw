@@ -57,18 +57,20 @@ export function rpcUsageSnapshot() {
 }
 
 export class CountingJsonRpcProvider extends JsonRpcProvider {
-  constructor(url, role, network, options, timeoutMs = LOG_TIMEOUT_MS) {
+  constructor(url, role, network, options, timeoutMs = LOG_TIMEOUT_MS, jobBudget) {
     const request = new FetchRequest(url);
     disableHiddenTransportRetries(request);
     request.timeout = timeoutMs;
     super(request, network, options);
     this.rpcRole = role;
     this.rpcEndpoint = new URL(url).origin;
+    this.jobBudget = jobBudget;
   }
 
   async _send(payload) {
     assertRpcIncidentPolicy(this.rpcEndpoint);
     const requests = Array.isArray(payload) ? payload : [payload];
+    this.jobBudget?.reserveRequests(this.rpcRole, requests.length);
     for (const request of requests) countRpc("wireCalls", `${this.rpcRole}:${request.method}`);
     try {
       const responses = await super._send(payload);

@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 import http from "node:http";
 import { timingSafeEqual } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { BudgetLedger } from "./paid-egress-ledger.mjs";
 
 const BODY_LIMIT = Number(process.env.RPC_GATEWAY_BODY_LIMIT_BYTES || "1048576");
+const RESPONSE_LIMIT = Number(process.env.RPC_GATEWAY_RESPONSE_LIMIT_BYTES || "4194304");
 const TIMEOUT_MS = Number(process.env.RPC_GATEWAY_UPSTREAM_TIMEOUT_MS || "20000");
 
 function secureEqual(left, right) {
@@ -34,7 +37,88 @@ function providerQuotaFailure(status, body) {
     || text.includes("compute unit") || text.includes("monthly capacity") || text.includes("quota exceeded");
 }
 
-export function createGatewayServer({ upstreamUrl, tokens, ledger, fetchImpl = fetch }) {
+async function readResponseBody(response, controller, limit = RESPONSE_LIMIT) {
+  const declaredLength = Number(response.headers.get("content-length") || "0");
+  if (Number.isFinite(declaredLength) && declaredLength > limit) {
+    controller.abort();
+    throw Object.assign(new Error("Upstream response exceeded configured limit"), {
+      code: "RPC_UPSTREAM_RESPONSE_TOO_LARGE",
+      status: 502,
+    });
+  }
+  if (!response.body) return Buffer.alloc(0);
+  const reader = response.body.getReader();
+  const chunks = [];
+  let length = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      length += value.byteLength;
+      if (length > limit) {
+        controller.abort();
+        throw Object.assign(new Error("Upstream response exceeded configured limit"), {
+          code: "RPC_UPSTREAM_RESPONSE_TOO_LARGE",
+          status: 502,
+        });
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks, length);
+}
+
+export function validateGatewayTokens(tokens, roleNames) {
+  if (!tokens || typeof tokens !== "object" || Array.isArray(tokens)) throw new Error("RPC gateway tokens are invalid");
+  for (const role of roleNames) {
+    if (typeof tokens[role] !== "string" || tokens[role].length < 32) {
+      throw new Error(`RPC gateway token is missing or too short for role ${role}`);
+    }
+  }
+}
+
+export function assertSingleWriterLease({ leaseFile, instanceId }) {
+  if (!leaseFile || !instanceId) throw new Error("RPC gateway single-writer lease configuration is missing");
+  fs.mkdirSync(path.dirname(leaseFile), { recursive: true });
+  if (fs.existsSync(leaseFile)) {
+    let lease;
+    try {
+      lease = JSON.parse(fs.readFileSync(leaseFile, "utf8"));
+    } catch {
+      throw new Error("RPC gateway single-writer lease is corrupt");
+    }
+    if (lease.version !== 1 || lease.instanceId !== instanceId) {
+      throw new Error(`RPC gateway single-writer lease belongs to another instance: ${lease.instanceId || "unknown"}`);
+    }
+    return lease;
+  }
+  const lease = { version: 1, instanceId, createdAt: new Date().toISOString() };
+  const handle = fs.openSync(leaseFile, "wx", 0o600);
+  try {
+    fs.writeFileSync(handle, JSON.stringify(lease, null, 2) + "\n");
+    fs.fsyncSync(handle);
+  } finally {
+    fs.closeSync(handle);
+  }
+  const directory = fs.openSync(path.dirname(leaseFile), "r");
+  try {
+    fs.fsyncSync(directory);
+  } finally {
+    fs.closeSync(directory);
+  }
+  return lease;
+}
+
+export function createGatewayServer({
+  upstreamUrl,
+  tokens,
+  ledger,
+  fetchImpl = fetch,
+  timeoutMs = TIMEOUT_MS,
+  responseLimit = RESPONSE_LIMIT,
+}) {
   if (!upstreamUrl) throw new Error("RPC_PAID_UPSTREAM_URL is required");
   return http.createServer(async (req, res) => {
     if (req.method === "GET" && req.url === "/healthz") {
@@ -64,24 +148,34 @@ export function createGatewayServer({ upstreamUrl, tokens, ledger, fetchImpl = f
       const payload = JSON.parse(raw);
       ledger.reserve(role, payload);
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
       let response;
+      let responseBody;
       try {
         response = await fetchImpl(upstreamUrl, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: raw,
           signal: controller.signal,
+          redirect: "manual",
         });
+        if (response.status >= 300 && response.status < 400) {
+          controller.abort();
+          throw Object.assign(new Error("Upstream redirect refused"), {
+            code: "RPC_UPSTREAM_REDIRECT_DENIED",
+            status: 502,
+          });
+        }
+        responseBody = await readResponseBody(response, controller, responseLimit);
       } finally {
         clearTimeout(timer);
       }
-      const responseBody = await response.text();
       if (providerQuotaFailure(response.status, responseBody)) ledger.latch(`upstream quota/capacity response status=${response.status}`);
       res.writeHead(response.status, { "content-type": response.headers.get("content-type") || "application/json", "cache-control": "no-store" });
       res.end(responseBody);
     } catch (error) {
-      json(res, error.status || 503, { error: error.code || "RPC_GATEWAY_FAILURE", message: error.message });
+      const code = error?.name === "AbortError" ? "RPC_UPSTREAM_TIMEOUT" : (error.code || "RPC_GATEWAY_FAILURE");
+      json(res, error.status || 503, { error: code });
     }
   });
 }
@@ -94,6 +188,13 @@ export function main() {
     stateFile: process.env.RPC_BUDGET_STATE_FILE || "/data/rpc-budget-state.json",
     expectedConfigHash: process.env.RPC_BUDGET_CONFIG_SHA256,
   });
+  validateGatewayTokens(tokens, Object.keys(ledger.config.roles));
+  if (process.env.RPC_GATEWAY_REQUIRE_SINGLE_WRITER === "true") {
+    assertSingleWriterLease({
+      leaseFile: process.env.RPC_GATEWAY_WRITER_LEASE_FILE || "/data/rpc-gateway-writer.json",
+      instanceId: process.env.FLY_MACHINE_ID,
+    });
+  }
   const server = createGatewayServer({
     upstreamUrl: process.env.RPC_PAID_UPSTREAM_URL,
     tokens,

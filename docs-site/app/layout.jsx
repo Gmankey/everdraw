@@ -42,7 +42,7 @@ export default async function RootLayout({ children }) {
           nextThemes={{ defaultTheme: 'dark' }}
           sidebar={{ defaultMenuCollapseLevel: 1, toggleButton: true }}
         >
-          {children}
+          {children ?? null}
         </Layout>
       </body>
     </html>

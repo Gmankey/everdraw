@@ -1,18 +1,22 @@
 import assert from "node:assert/strict";
 import http from "node:http";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import {
   CountingJsonRpcProvider,
+  assertWriteRpcConfiguration,
   claimDrawIds,
   firstRecentDrawId,
   rpcUsageSnapshot,
   syncParticipantEventCache,
+  validateWriteProvider,
 } from "../keeper-v5.js";
+import { BudgetLedger, initializeBudgetState } from "../rpc/paid-egress-ledger.mjs";
+import { createGatewayServer } from "../rpc/paid-egress-gateway.mjs";
 import {
   ClaimRetryState,
   claimFinalizedDrawSafely,
@@ -177,6 +181,69 @@ test("keeper wire telemetry counts actual ethers transport calls and errors", as
   );
 });
 
+test("keeper authenticates through the actual scoped write gateway", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "everdraw-keeper-gateway-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const configFile = join(dir, "config.json");
+  const stateFile = join(dir, "state.json");
+  const methods = [
+    "eth_chainId",
+    "eth_getTransactionCount",
+    "eth_estimateGas",
+    "eth_sendRawTransaction",
+    "eth_getTransactionReceipt",
+  ];
+  writeFileSync(configFile, JSON.stringify({
+    version: 1,
+    periodId: "test",
+    accountCapCu: 10000,
+    criticalReserveCu: 0,
+    maxBatchItems: 10,
+    roles: { "keeper-write": { capCu: 10000, critical: true, methods } },
+    methodCosts: Object.fromEntries(methods.map((method) => [method, 100])),
+  }));
+  initializeBudgetState(configFile, stateFile);
+  const token = "keeper-test-token-with-at-least-32-characters";
+  const upstream = http.createServer(async (request, response) => {
+    let raw = "";
+    for await (const chunk of request) raw += chunk;
+    const call = JSON.parse(raw);
+    const results = {
+      eth_chainId: "0x8f",
+      eth_getTransactionCount: "0x2",
+      eth_estimateGas: "0x5208",
+      eth_sendRawTransaction: "0x" + "ab".repeat(32),
+      eth_getTransactionReceipt: null,
+    };
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({ jsonrpc: "2.0", id: call.id, result: results[call.method] }));
+  });
+  await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => upstream.close(resolve)));
+  const gateway = createGatewayServer({
+    upstreamUrl: `http://127.0.0.1:${upstream.address().port}`,
+    tokens: { "keeper-write": token },
+    ledger: new BudgetLedger({ configFile, stateFile }),
+  });
+  await new Promise((resolve) => gateway.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => gateway.close(resolve)));
+  const url = `http://127.0.0.1:${gateway.address().port}/rpc/keeper-write`;
+  assertWriteRpcConfiguration({ url, bearerToken: token, expectedChainId: 143n, gatewayHost: "127.0.0.1" });
+  const provider = new CountingJsonRpcProvider(url, "write-test", 143, { staticNetwork: true, batchMaxCount: 1 }, 1000, token);
+  t.after(() => provider.destroy());
+  assert.equal(await validateWriteProvider(provider, 143n), 143n);
+  assert.equal(await provider.send("eth_getTransactionCount", [DRAW_MANAGER, "latest"]), "0x2");
+  assert.equal(await provider.send("eth_estimateGas", [{ from: DRAW_MANAGER, to: CLAIM_MANAGER }]), "0x5208");
+  assert.equal(await provider.send("eth_sendRawTransaction", ["0x01"]), "0x" + "ab".repeat(32));
+  assert.equal(await provider.send("eth_getTransactionReceipt", ["0x" + "ab".repeat(32)]), null);
+  const snapshot = new BudgetLedger({ configFile, stateFile }).snapshot();
+  assert.equal(snapshot.roles["keeper-write"].requests, 5);
+
+  const rejected = new CountingJsonRpcProvider(url, "write-rejected", 143, { staticNetwork: true, batchMaxCount: 1 }, 1000, "wrong-token-with-at-least-32-characters");
+  t.after(() => rejected.destroy());
+  await assert.rejects(validateWriteProvider(rejected, 143n), /RPC_AUTH_FAILED/);
+});
+
 test("managed keeper refuses to start without its required success heartbeat", () => {
   const result = spawnSync(process.execPath, ["-e", "import('./scripts/keeper-v5.js')"], {
     cwd: process.cwd(),
@@ -194,7 +261,7 @@ test("managed keeper refuses to start without its required success heartbeat", (
 
 test("keeper includes ClaimLeaf.kind in claimMany payloads", () => { const source = readFileSync(new URL("../keeper-v5.js", import.meta.url), "utf8"); assert.equal(source.includes("kind: leaf.kind"), true); });
 test("keeper balance health reads use KEEPER_READ_RPC_URL, not the transaction RPC", () => { const source = readFileSync(new URL("../keeper-v5.js", import.meta.url), "utf8"); assert.equal(source.includes("readProvider.getBalance(signer.address)"), true); assert.equal(source.includes("writeProvider.getBalance(signer.address)"), false); });
-test("keeper validates the paid write provider only when sending a transaction", () => { const source = readFileSync(new URL("../keeper-v5.js", import.meta.url), "utf8"); const runOnce = source.slice(source.indexOf("async function runOnce"), source.indexOf("async function main")); assert.equal(runOnce.includes("writeProvider.getNetwork"), false); assert.equal(source.includes("signer.provider.getNetwork()"), true); });
+test("keeper validates scoped gateway authentication before lifecycle reads", () => { const source = readFileSync(new URL("../keeper-v5.js", import.meta.url), "utf8"); const runOnce = source.slice(source.indexOf("async function runOnce"), source.indexOf("async function main")); assert.equal(runOnce.includes("await validateWriteProvider(writeProvider)"), true); });
 
 
 test("keeper routes historical root reconstruction through the bounded archive provider", () => {
