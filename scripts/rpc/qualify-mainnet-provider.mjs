@@ -162,6 +162,7 @@ async function rpc(url, method, params) {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ jsonrpc: "2.0", id: ++id, method, params }),
+        redirect: "error",
         signal: controller.signal,
       });
       const text = await response.text();
@@ -179,18 +180,27 @@ async function rpc(url, method, params) {
   });
 }
 
-class QualificationProvider extends JsonRpcProvider {
-  constructor(url) {
+export class QualificationProvider extends JsonRpcProvider {
+  constructor(url, reserveRequest = reserveQualificationRequest) {
     const request = new FetchRequest(url);
+    const sendOnce = request.getUrlFunc;
+    request.getUrlFunc = async (outbound, signal) => {
+      const response = await sendOnce(outbound, signal);
+      if (response.statusCode >= 300 && response.statusCode < 400) {
+        throw new Error(`Qualification RPC redirect refused: HTTP ${response.statusCode}`);
+      }
+      return response;
+    };
     disableHiddenTransportRetries(request);
     request.timeout = TIMEOUT_MS;
     super(request, 143, { staticNetwork: true, batchMaxCount: 1 });
     this.qualificationUrl = url;
+    this.reserveRequest = reserveRequest;
   }
 
   async _send(payload) {
     const requests = Array.isArray(payload) ? payload : [payload];
-    reserveQualificationRequests(requests.length);
+    await Promise.all(requests.map(() => this.reserveRequest()));
     return scheduleRpc(this.qualificationUrl, () => super._send(payload));
   }
 }
