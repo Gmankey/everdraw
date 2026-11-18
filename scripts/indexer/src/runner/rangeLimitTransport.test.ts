@@ -8,7 +8,7 @@ import { createRawEventsRepo } from '../repositories/rawEventsRepo.js';
 import { createIndexerStateRepo } from '../repositories/indexerStateRepo.js';
 import { createIndexerRunner, isLogRangeLimitError } from './service.js';
 
-test('real ethers range-limit wrappers are bisected sequentially', async (t) => {
+test('range-limit failure does not recursively replay or advance the checkpoint', async (t) => {
   const ranges: Array<[number, number]> = [];
   let active = 0;
   let maxActive = 0;
@@ -87,11 +87,13 @@ test('real ethers range-limit wrappers are bisected sequentially', async (t) => 
     deriveWalletStatsService: service,
   });
 
-  await runner.syncOnce();
-  assert.deepEqual(ranges[0], [100, 106]);
-  assert.ok(ranges.slice(1).some(([from, to]) => to - from + 1 <= 2));
-  assert.equal(maxActive, 1, 'recursive splitting must not fan out concurrent requests');
-  assert.equal((await runner.getStatus()).lastScannedBlock, 106);
+  await assert.rejects(
+    runner.syncOnce(),
+    /INDEXER_CHUNK_SIZE exceeds log-provider capability/,
+  );
+  assert.deepEqual(ranges, [[100, 106]]);
+  assert.equal(maxActive, 1);
+  assert.equal((await runner.getStatus()).lastScannedBlock, 99);
 });
 
 test('quota and compute-unit errors are not misclassified as block-range limits', () => {

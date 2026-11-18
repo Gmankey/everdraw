@@ -41,6 +41,9 @@
     "keeper:v5:status": "flyctl status -a everdraw-keeper-v5",
     "keeper:v5:restart": "flyctl machine restart -a everdraw-keeper-v5",
     "protocol:monitor": "node scripts/protocol-monitor.js",
+    "rpc:incident:test": "node --test scripts/rpc/*.test.mjs scripts/keeper/rpc-runtime-latch.test.mjs",
+    "rpc:qualify:mainnet": "node scripts/rpc/qualify-mainnet-provider.mjs",
+    "rpc:budget:status": "node scripts/rpc/rpc-budget-admin.mjs status",
     "draw:fuzz": "node scripts/draw/differential-fuzz.mjs",
     "draw:load100k": "node scripts/draw/load-100k.mjs",
     "draw:watch": "node scripts/draw/watch-root-proposals.mjs",
@@ -60,12 +63,15 @@
     "ethers": {
       "ws": "8.21.0"
     },
-    "adm-zip": "0.6.0",
+    "adm-zip": "0.6.1",
     "cookie": "0.7.2",
     "diff": "9.0.0",
-    "serialize-javascript": "7.1.1",
+    "follow-redirects": "1.16.2",
+    "glob": "14.0.6",
+    "minimatch": "11.0.9",
+    "serialize-javascript": "7.1.4",
     "tmp": "0.2.7",
-    "undici": "6.28.0",
+    "undici": "6.29.1",
     "uuid": "11.1.1"
   }
 }

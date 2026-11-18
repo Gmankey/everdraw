@@ -29,7 +29,8 @@ for (const name of [
 Object.assign(process.env, {
   DEPLOYMENT_FILE: 'deployments/monad-mainnet.json',
   WATCHER_CHAIN_ID: '143',
-  WATCHER_RPC_URL: 'http://security.invalid',
+  WATCHER_HISTORICAL_STATE_RPC_URL: 'http://state.invalid',
+  WATCHER_INDEPENDENT_LOGS_RPC_URL: 'http://security.invalid',
   WATCHER_HEAD_RPC_URL: 'http://head.invalid',
   WATCHER_LOGS_RPC_URL: 'http://discovery.invalid',
   WATCHER_STATE_FILE: path.join(temp, 'state.json'),
@@ -40,6 +41,10 @@ Object.assign(process.env, {
   WATCHER_INDEPENDENT_LOG_CHUNK_SIZE: '100',
   WATCHER_RPC_RETRY_ATTEMPTS: '1',
   WATCHER_LOG_CONCURRENCY: '1',
+  WATCHER_MODE: 'manual-canary',
+  WATCHER_ALLOW_INDEPENDENT_BOOTSTRAP: 'true',
+  WATCHER_MAX_TOTAL_BLOCKS_PER_JOB: '1000',
+  WATCHER_MAX_RPC_REQUESTS_PER_JOB: '1000',
 });
 
 const alice = '0x00000000000000000000000000000000000000a1';
@@ -235,7 +240,7 @@ if (scenario === 'valid') {
   const incidentId = Object.keys(pending.coverageIncidents)[0];
   assert.ok(incidentId);
   currentDrawId = 2n;
-  for (const [status, head] of [[1, start + 5], [2, start + 5], [3, start + 6], [4, start + 7]]) {
+  for (const [status, head] of [[1, start + 4], [2, start + 5], [3, start + 6], [4, start + 7]]) {
     currentDrawStatus = status;
     latest = head;
     await assert.rejects(main(), /coverage failure/);
@@ -316,10 +321,11 @@ if (scenario === 'valid') {
 } else {
   await main();
   assert.equal(health, 1);
-  const securityCalls = Object.entries(counts)
-    .filter(([key]) => key.startsWith('http://security.invalid:'))
+  const historicalStateCalls = Object.entries(counts)
+    .filter(([key]) => key.startsWith('http://state.invalid:'))
     .reduce((sum, [, value]) => sum + value, 0);
-  assert.equal(securityCalls, 0, 'an idle no-root cycle must not call the paid security provider');
+  assert.equal(historicalStateCalls, 0, 'an idle no-root cycle must not perform historical-state reconstruction');
+  assert.ok((counts['http://security.invalid:eth_getLogs'] || 0) > 0, 'independent participant completeness still advances while idle');
 }
 
 console.log(JSON.stringify({ scenario, health, counts }));

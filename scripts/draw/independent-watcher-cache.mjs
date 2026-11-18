@@ -140,10 +140,24 @@ export class IndependentWatcherCache {
   async syncThrough(logProvider, targetBlock, {
     canonicalProvider = logProvider,
     chunkSize = Number(process.env.WATCHER_INDEPENDENT_LOG_CHUNK_SIZE || "1000"),
+    jobBudget,
+    allowBootstrap = false,
   } = {}) {
-    await this.ensureCanonical(canonicalProvider);
+    const canonical = await this.ensureCanonical(canonicalProvider);
     const from = Math.max(this.scope.fromBlock, Number(this.state.lastScannedBlock) + 1);
-    if (from > Number(targetBlock)) return;
+    if (from > Number(targetBlock)) {
+      return { complete: true, lastScannedBlock: this.state.lastScannedBlock, targetBlock: Number(targetBlock), reorgReset: !canonical };
+    }
+    if (from === this.scope.fromBlock && !allowBootstrap) {
+      const error = new Error(
+        `WATCHER_INDEPENDENT_BOOTSTRAP_REQUIRED from=${from} target=${Number(targetBlock)}`,
+      );
+      error.code = "WATCHER_INDEPENDENT_BOOTSTRAP_REQUIRED";
+      throw error;
+    }
+    const boundedTarget = jobBudget
+      ? jobBudget.reserveRange("independent-reconstruction", from, Number(targetBlock))
+      : Number(targetBlock);
     const filter = {
       address: [this.scope.vaultAddress, this.scope.drawManagerAddress],
       topics: [topics],
@@ -152,7 +166,7 @@ export class IndependentWatcherCache {
       canonicalProvider,
       filter,
       from,
-      Number(targetBlock),
+      boundedTarget,
       "watcher-independent",
       {
         chunkSize,
@@ -199,6 +213,16 @@ export class IndependentWatcherCache {
         },
       },
     );
+    return {
+      complete: boundedTarget === Number(targetBlock),
+      lastScannedBlock: this.state.lastScannedBlock,
+      targetBlock: Number(targetBlock),
+      reorgReset: !canonical,
+    };
+  }
+
+  lastScannedBlock() {
+    return Number(this.state.lastScannedBlock);
   }
 
   assertEvent(kind, drawId, root) {

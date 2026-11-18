@@ -4,13 +4,20 @@ import os from "node:os";
 import path from "node:path";
 import { Contract, Interface, JsonRpcProvider, getAddress } from "ethers";
 import { spawnSync } from "node:child_process";
-import { CountingJsonRpcProvider, assertCanonicalLogBatch, queryLogsChunked, redactRpcSecrets, retryTransient, rpcUsageSnapshot } from "./write-watch-inputs.mjs";
+import { CountingJsonRpcProvider, assertCanonicalLogBatch, getLogsRangeDirect, queryLogsChunked, redactRpcSecrets, retryTransient, rpcUsageSnapshot } from "./write-watch-inputs.mjs";
 import { buildWatcherDrawInput, ingestWatcherReconstructionLogs } from "./reconstruct-watcher-input.mjs";
 import { IndependentWatcherCache, rootNeedsIndependentVerification } from "./independent-watcher-cache.mjs";
+import { WatcherJobBudget } from "./watcher-job-budget.mjs";
 import { readActiveV5Deployment, resolveV5RuntimeTargets } from "../keeper/v5-deployment.mjs";
 
-const RPC_URL = process.env.WATCHER_RPC_URL || process.env.RPC_URL;
-const HEAD_RPC_URL = process.env.WATCHER_HEAD_RPC_URL || RPC_URL;
+const HISTORICAL_STATE_RPC_URL = process.env.WATCHER_HISTORICAL_STATE_RPC_URL
+  || process.env.WATCHER_RPC_URL
+  || process.env.RPC_URL;
+const INDEPENDENT_LOGS_RPC_URL = process.env.WATCHER_INDEPENDENT_LOGS_RPC_URL
+  || process.env.WATCHER_RPC_URL
+  || process.env.RPC_URL;
+const HEAD_RPC_URL = process.env.WATCHER_HEAD_RPC_URL || HISTORICAL_STATE_RPC_URL;
+const DISCOVERY_LOGS_RPC_URL = process.env.WATCHER_LOGS_RPC_URL;
 const HEAD_RPC_TIMEOUT_MS = Number(process.env.WATCHER_HEAD_RPC_TIMEOUT_MS || "10000");
 const DEPLOYMENT_FILE = process.env.DEPLOYMENT_FILE || "deployments/monad-testnet.json";
 const EXPECTED_CHAIN_ID = BigInt(process.env.WATCHER_CHAIN_ID || "10143");
@@ -19,6 +26,10 @@ const CONFIGURED_FROM_BLOCK = process.env.WATCHER_FROM_BLOCK || process.env.V5_W
 const STATE_FILE = process.env.WATCHER_STATE_FILE || path.join(os.tmpdir(), "everdraw-v5-watcher-state.json");
 const INDEPENDENT_STATE_FILE = process.env.WATCHER_INDEPENDENT_STATE_FILE || `${STATE_FILE}.independent`;
 const MAX_BLOCKS_PER_RUN = Number(process.env.WATCHER_MAX_BLOCKS_PER_RUN || "250000");
+const MAX_TOTAL_BLOCKS_PER_JOB = Number(process.env.WATCHER_MAX_TOTAL_BLOCKS_PER_JOB || MAX_BLOCKS_PER_RUN);
+const MAX_RPC_REQUESTS_PER_JOB = Number(process.env.WATCHER_MAX_RPC_REQUESTS_PER_JOB || "5000");
+const WATCHER_MODE = process.env.WATCHER_MODE || (EXPECTED_CHAIN_ID === 143n ? "scheduled" : "standard");
+const ALLOW_INDEPENDENT_BOOTSTRAP = process.env.WATCHER_ALLOW_INDEPENDENT_BOOTSTRAP === "true";
 const CLAIM_PROOF_URL = process.env.WATCHER_CLAIM_PROOF_URL;
 const CLAIM_PROOF_TOKEN = process.env.WATCHER_CLAIM_PROOF_TOKEN;
 const REQUIRE_CLAIM_PROOF_PUBLISH = process.env.WATCHER_REQUIRE_CLAIM_PROOF_PUBLISH === 'true';
@@ -161,7 +172,8 @@ export function formatPrivilegedChange({ contractLabel, parsed, txHash }) {
 }
 
 function resolveConfig() {
-  if (!RPC_URL) throw new Error("WATCHER_RPC_URL/RPC_URL is required");
+  if (!HISTORICAL_STATE_RPC_URL) throw new Error("WATCHER_HISTORICAL_STATE_RPC_URL is required");
+  if (!INDEPENDENT_LOGS_RPC_URL) throw new Error("WATCHER_INDEPENDENT_LOGS_RPC_URL is required");
   const deployment = readActiveV5Deployment(DEPLOYMENT_FILE, { expectedChainId: EXPECTED_CHAIN_ID });
   const targets = resolveV5RuntimeTargets(deployment, {
     ...process.env,
@@ -318,17 +330,57 @@ export function withRpcTimeout(promise, label, timeoutMs = HEAD_RPC_TIMEOUT_MS) 
 
 export async function main() {
   const { deployment, drawManagerAddress, fromBlock } = resolveConfig();
+  if (!DISCOVERY_LOGS_RPC_URL) throw new Error("WATCHER_LOGS_RPC_URL is required");
+  if (EXPECTED_CHAIN_ID === 143n) {
+    if (!new Set(["scheduled", "manual-canary"]).has(WATCHER_MODE)) {
+      throw new Error("Mainnet WATCHER_MODE must be scheduled or manual-canary");
+    }
+    if (WATCHER_MODE === "scheduled" && ALLOW_INDEPENDENT_BOOTSTRAP) {
+      throw new Error("Scheduled mainnet monitoring cannot admit an independent-cache bootstrap");
+    }
+    if (WATCHER_MODE === "manual-canary" && !ALLOW_INDEPENDENT_BOOTSTRAP) {
+      throw new Error("Manual mainnet canary requires WATCHER_ALLOW_INDEPENDENT_BOOTSTRAP=true");
+    }
+  }
+  const jobBudget = new WatcherJobBudget({
+    maxRequests: MAX_RPC_REQUESTS_PER_JOB,
+    maxBlocks: MAX_TOTAL_BLOCKS_PER_JOB,
+  });
   // Historical block-tag reads and reconstruction use the independent watcher RPC.
   // Current head/config reads may use a lightweight endpoint so archive stalls cannot
   // hide liveness, but they never supply participant reconstruction data.
   fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
-  const provider = new CountingJsonRpcProvider(RPC_URL, "security");
+  const stateProvider = new CountingJsonRpcProvider(
+    HISTORICAL_STATE_RPC_URL,
+    "historical-state",
+    undefined,
+    undefined,
+    undefined,
+    jobBudget,
+  );
+  const independentLogsProvider = new CountingJsonRpcProvider(
+    INDEPENDENT_LOGS_RPC_URL,
+    "independent-logs",
+    undefined,
+    undefined,
+    undefined,
+    jobBudget,
+  );
+  const discoveryLogsProvider = new CountingJsonRpcProvider(
+    DISCOVERY_LOGS_RPC_URL,
+    "discovery-logs",
+    undefined,
+    undefined,
+    undefined,
+    jobBudget,
+  );
   const headProvider = new CountingJsonRpcProvider(
     HEAD_RPC_URL,
     "canonical",
     undefined,
     undefined,
     HEAD_RPC_TIMEOUT_MS,
+    jobBudget,
   );
   const headChainId = (await retryTransient(() => headProvider.getNetwork(), "watcher head chain")).chainId;
   if (headChainId !== EXPECTED_CHAIN_ID) throw new Error(`Watcher head RPC chain mismatch: ${headChainId} expected=${EXPECTED_CHAIN_ID}`);
@@ -373,12 +425,17 @@ export async function main() {
   let securityProviderValidated = false;
   const validateSecurityProvider = async () => {
     if (securityProviderValidated) return;
-    const securityChainId = (await retryTransient(() => provider.getNetwork(), "watcher security chain")).chainId;
-    if (securityChainId !== EXPECTED_CHAIN_ID) {
-      throw new Error(`Watcher security RPC chain mismatch: ${securityChainId} expected=${EXPECTED_CHAIN_ID}`);
+    const [securityChainId, independentLogsChainId] = await Promise.all([
+      retryTransient(() => stateProvider.getNetwork(), "watcher historical-state chain").then((network) => network.chainId),
+      retryTransient(() => independentLogsProvider.getNetwork(), "watcher independent-logs chain").then((network) => network.chainId),
+    ]);
+    if (securityChainId !== EXPECTED_CHAIN_ID || independentLogsChainId !== EXPECTED_CHAIN_ID) {
+      throw new Error(
+        `Watcher security RPC chain mismatch: state=${securityChainId} logs=${independentLogsChainId} expected=${EXPECTED_CHAIN_ID}`,
+      );
     }
     const code = await retryTransient(
-      () => withRpcTimeout(provider.getCode(drawManagerAddress), "watcher security DrawManager bytecode"),
+      () => withRpcTimeout(stateProvider.getCode(drawManagerAddress), "watcher security DrawManager bytecode"),
       "watcher security DrawManager bytecode",
     );
     if (code === "0x") throw new Error(`Watcher security RPC has no DrawManager bytecode at ${drawManagerAddress}`);
@@ -386,13 +443,24 @@ export async function main() {
   };
   const verifyIndependentRoot = async ({ drawId, root, eventKind, throughBlock }) => {
     await validateSecurityProvider();
-    await independentCache.syncThrough(provider, throughBlock, { canonicalProvider: headProvider });
+    const sync = await independentCache.syncThrough(independentLogsProvider, throughBlock, {
+      canonicalProvider: headProvider,
+      jobBudget,
+      allowBootstrap: ALLOW_INDEPENDENT_BOOTSTRAP,
+    });
+    if (!sync.complete) {
+      const error = new Error(
+        `WATCHER_INCOMPLETE independent cursor=${sync.lastScannedBlock} target=${sync.targetBlock}`,
+      );
+      error.code = "WATCHER_INCOMPLETE";
+      throw error;
+    }
     const event = independentCache.assertEvent(eventKind, drawId, root);
     const seedBlock = independentCache.seedBlock(drawId);
     if (!seedBlock) throw new Error(`Independent RPC has no SeedReceived block for draw ${drawId}`);
     const input = await retryTransient(
       () => buildWatcherDrawInput({
-        provider,
+        provider: stateProvider,
         drawManagerAddress,
         drawId,
         seedBlock,
@@ -418,7 +486,35 @@ export async function main() {
 
   const scanFromBlock = Math.max(fromBlock, Number(state?.lastScannedBlock || fromBlock - 1) + 1);
   if (!Number.isSafeInteger(MAX_BLOCKS_PER_RUN) || MAX_BLOCKS_PER_RUN < 1) throw new Error("WATCHER_MAX_BLOCKS_PER_RUN must be a positive integer");
-  const runEnd = Math.min(scanFromBlock + MAX_BLOCKS_PER_RUN - 1, latest);
+  const independentPrerequisite = scanFromBlock - 1;
+  if (independentCache.lastScannedBlock() < independentPrerequisite) {
+    const sync = await independentCache.syncThrough(independentLogsProvider, independentPrerequisite, {
+      canonicalProvider: headProvider,
+      jobBudget,
+      allowBootstrap: ALLOW_INDEPENDENT_BOOTSTRAP,
+    });
+    if (!sync.complete) {
+      const error = new Error(
+        `WATCHER_INCOMPLETE independent bootstrap cursor=${sync.lastScannedBlock} target=${sync.targetBlock}`,
+      );
+      error.code = "WATCHER_INCOMPLETE";
+      error.alreadyAlarmed = true;
+      console.warn(`${error.message}; jobBudget=${JSON.stringify(jobBudget.snapshot())}`);
+      throw error;
+    }
+  }
+  const remainingBlockBudget = jobBudget.snapshot().maxBlocks - jobBudget.snapshot().blocks;
+  const discoveryAllowance = Math.min(MAX_BLOCKS_PER_RUN, Math.floor(remainingBlockBudget / 2));
+  if (scanFromBlock <= latest && discoveryAllowance < 1) {
+    const error = new Error("WATCHER_INCOMPLETE no block budget remains for paired discovery and independent reconstruction");
+    error.code = "WATCHER_INCOMPLETE";
+    error.alreadyAlarmed = true;
+    throw error;
+  }
+  const discoveryTarget = Math.min(scanFromBlock + discoveryAllowance - 1, latest);
+  const runEnd = scanFromBlock <= latest
+    ? jobBudget.reserveRange("discovery", scanFromBlock, discoveryTarget)
+    : latest;
   let reconstruction = {
     accounts: [...(state?.participantAccounts || [])],
     seedBlocks: { ...(state?.seedBlocks || {}) },
@@ -484,18 +580,37 @@ export async function main() {
   if (scanFromBlock <= latest) {
     const seedTopic = iface.getEvent("SeedReceived").topicHash;
     const transferTopic = iface.getEvent("Transfer").topicHash;
+    const discoveryFilter = {
+      address: monitoredAddresses,
+      topics: [[rootTopic, finalizedTopic, seedTopic, transferTopic, ...privilegedTopics.keys()]],
+    };
     await queryLogsChunked(
       headProvider,
-      {
-        address: monitoredAddresses,
-        topics: [[rootTopic, finalizedTopic, seedTopic, transferTopic, ...privilegedTopics.keys()]],
-      },
+      discoveryFilter,
       scanFromBlock,
       runEnd,
       "watcher-events",
       {
+        getLogs: (start, end) => getLogsRangeDirect(
+          discoveryLogsProvider,
+          discoveryFilter,
+          start,
+          end,
+        ),
         onBatch: async ({ windows, logs, canonical }) => {
           const batchEnd = windows[windows.length - 1][1];
+          const independentSync = await independentCache.syncThrough(independentLogsProvider, batchEnd, {
+            canonicalProvider: headProvider,
+            jobBudget,
+            allowBootstrap: ALLOW_INDEPENDENT_BOOTSTRAP,
+          });
+          if (!independentSync.complete) {
+            const error = new Error(
+              `WATCHER_INCOMPLETE independent cursor=${independentSync.lastScannedBlock} target=${independentSync.targetBlock}`,
+            );
+            error.code = "WATCHER_INCOMPLETE";
+            throw error;
+          }
           reconstruction = ingestWatcherReconstructionLogs({
             logs,
             vaultAddress,
@@ -685,7 +800,13 @@ export async function main() {
     }
   }
   if (!caughtUp) {
-    console.warn(`watcher bootstrap incomplete: cursor ${runEnd}, chain head ${latest}; healthcheck remains unconfirmed`);
+    const error = new Error(
+      `WATCHER_INCOMPLETE discovery cursor=${runEnd} chainHead=${latest}; healthcheck remains unconfirmed`,
+    );
+    error.code = "WATCHER_INCOMPLETE";
+    error.alreadyAlarmed = true;
+    console.warn(`${error.message}; jobBudget=${JSON.stringify(jobBudget.snapshot())}`);
+    throw error;
   }
   if (coverageFailures.length > 0) {
     const err = new Error(`Watcher found ${coverageFailures.length} coverage failure(s)`);
@@ -729,6 +850,7 @@ export async function main() {
   if (caughtUp && HEALTHCHECKS_PING_URL) await fetch(HEALTHCHECKS_PING_URL).catch(() => {});
   console.log(`watcher checked ${checked} RootProposed events through block ${runEnd} (scan start ${scanFromBlock}, chain head ${latest})`);
   console.log(`watcher rpc usage ${JSON.stringify(rpcUsageSnapshot())}`);
+  console.log(`watcher job budget ${JSON.stringify(jobBudget.snapshot())}`);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

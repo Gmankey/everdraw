@@ -27,7 +27,7 @@ jobs:
       - run: npm ci
       - name: Run read-only protocol monitor
         env:
-          RPC_URL: ${{ secrets.MONAD_MAINNET_RPC_URL || 'https://rpc.monad.xyz' }}
+          RPC_URL: https://rpc.monad.xyz
           PROTOCOL_MONITOR_HEALTHCHECK_URL: ${{ secrets.PROTOCOL_MONITOR_HEALTHCHECK_URL }}
           PROTOCOL_MONITOR_HEALTHCHECK_FAIL_URL: ${{ secrets.PROTOCOL_MONITOR_HEALTHCHECK_FAIL_URL }}
         run: npm run protocol:monitor

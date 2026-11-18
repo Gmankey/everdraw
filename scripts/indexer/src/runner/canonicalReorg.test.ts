@@ -317,10 +317,14 @@ const adaptiveRunner = createIndexerRunner({
   deriveWalletRoundsService: { rebuildFromRaw() {} },
   deriveWalletStatsService: { rebuild() {} },
 });
-await adaptiveRunner.syncOnce();
-assert.equal((await adaptiveRunner.getStatus()).lastScannedBlock, 106);
+await assert.rejects(
+  adaptiveRunner.syncOnce(),
+  /no recursive replay was attempted/,
+  'an unsupported configured range must fail closed instead of recursively amplifying requests',
+);
+assert.equal((await adaptiveRunner.getStatus()).lastScannedBlock, 99);
 assert.equal(
   createRawEventsRepo(adaptiveDb).getRange(100, 106).length,
-  7,
-  'adaptive range splitting must preserve every event',
+  0,
+  'a failed fixed window must not partially commit events or advance its checkpoint',
 );

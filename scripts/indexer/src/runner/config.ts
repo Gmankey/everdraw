@@ -47,6 +47,13 @@ export function getRunnerConfig(): RunnerConfig {
 
   if (!rpcUrl) throw new Error('Missing RPC_URL');
   if (!logsRpcUrl) throw new Error('Missing INDEXER_LOGS_RPC_URL');
+  if (rpcUrlFallback) throw new Error('RPC_URL_FALLBACK is disabled; indexer provider roles must not spill into paid RPC');
+  for (const [role, endpoint] of [['canonical', rpcUrl], ['logs', logsRpcUrl]] as const) {
+    const hostname = new URL(endpoint).hostname.toLowerCase();
+    if (hostname === 'alchemy.com' || hostname.endsWith('.alchemy.com')) {
+      throw new Error(`Direct paid RPC denied for indexer ${role} role`);
+    }
+  }
   if (!poolAddresses.length) throw new Error('Missing POOL_ADDRESSES');
   if (!deployBlock) throw new Error('Missing START_BLOCK');
   if (!Number.isInteger(chainId) || chainId <= 0) throw new Error('Missing or invalid INDEXER_CHAIN_ID');
@@ -99,7 +106,7 @@ export function getRunnerConfig(): RunnerConfig {
     rpcRetryAttempts: positiveInteger('INDEXER_RPC_RETRY_ATTEMPTS', 3),
     rpcRetryBaseDelayMs: positiveInteger('INDEXER_RPC_RETRY_BASE_DELAY_MS', 500),
     rpcRetryMaxDelayMs: positiveInteger('INDEXER_RPC_RETRY_MAX_DELAY_MS', 5_000),
-    fallbackMaxRequestsPerHour: nonNegativeInteger('INDEXER_FALLBACK_MAX_REQUESTS_PER_HOUR', 0),
+    fallbackMaxRequestsPerHour: 0,
     fallbackCooldownMs: nonNegativeInteger('INDEXER_FALLBACK_COOLDOWN_MS', 60_000),
     chainId,
     poolAddresses,

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import "dotenv/config";
+import { assertRpcIncidentPolicy, disableHiddenTransportRetries } from "./rpc/incident-policy.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -18,7 +19,8 @@ import { readActiveV5Deployment, resolveV5RuntimeTargets } from "./keeper/v5-dep
 const DEPLOYMENT_FILE = process.env.DEPLOYMENT_FILE || "deployments/monad-testnet.json";
 const RPC_URL = process.env.KEEPER_RPC_URL || process.env.RPC_URL || process.env.MONAD_TESTNET_RPC_URL;
 const READ_RPC_URL = process.env.KEEPER_READ_RPC_URL || RPC_URL;
-const ROOT_RPC_URL = process.env.KEEPER_ROOT_RPC_URL || RPC_URL;
+const ROOT_RPC_URL = process.env.KEEPER_ROOT_RPC_URL || READ_RPC_URL;
+const WRITE_RPC_BEARER_TOKEN = process.env.KEEPER_RPC_BEARER_TOKEN || process.env.RPC_GATEWAY_BEARER_TOKEN || "";
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const DRAW_INPUT_DIR = process.env.DRAW_INPUT_DIR || process.env.WATCHER_DRAW_INPUT_DIR || "draw-inputs";
 const LOOP = process.env.KEEPER_LOOP === "true";
@@ -51,14 +53,18 @@ function countRpc(bucket, key) { RPC_USAGE[bucket][key] = (RPC_USAGE[bucket][key
 export function rpcUsageSnapshot() { return JSON.parse(JSON.stringify(RPC_USAGE)); }
 
 export class CountingJsonRpcProvider extends JsonRpcProvider {
-  constructor(url, role, network, options, timeoutMs = RPC_TIMEOUT_MS) {
+  constructor(url, role, network, options, timeoutMs = RPC_TIMEOUT_MS, bearerToken = "") {
     const request = new FetchRequest(url);
+    disableHiddenTransportRetries(request);
     request.timeout = timeoutMs;
+    if (bearerToken) request.setHeader("authorization", `Bearer ${bearerToken}`);
     super(request, network, options);
     this.rpcRole = role;
+    this.rpcEndpoint = new URL(url).origin;
   }
 
   async _send(payload) {
+    assertRpcIncidentPolicy(this.rpcEndpoint);
     const requests = Array.isArray(payload) ? payload : [payload];
     for (const request of requests) countRpc("wireCalls", `${this.rpcRole}:${request.method}`);
     try {
@@ -72,6 +78,70 @@ export class CountingJsonRpcProvider extends JsonRpcProvider {
       for (const request of requests) countRpc("wireErrors", `${this.rpcRole}:${request.method}`);
       throw error;
     }
+  }
+}
+
+export function assertWriteRpcConfiguration({
+  url,
+  bearerToken,
+  expectedChainId = EXPECTED_CHAIN_ID,
+  gatewayHost = process.env.KEEPER_RPC_GATEWAY_HOST || "everdraw-rpc-egress-mainnet.fly.dev",
+}) {
+  if (!url) throw new Error("Missing KEEPER_RPC_URL/RPC_URL/MONAD_TESTNET_RPC_URL");
+  const parsed = new URL(url);
+  if (parsed.username || parsed.password) throw new Error("RPC_AUTH_FAILED: credentials must not be embedded in the RPC URL");
+  const isKeeperGateway = parsed.pathname === "/rpc/keeper-write";
+  if (expectedChainId === 143n && !isKeeperGateway) {
+    throw new Error("RPC_AUTH_FAILED: mainnet keeper writes require the scoped /rpc/keeper-write gateway");
+  }
+  if (isKeeperGateway && (typeof bearerToken !== "string" || bearerToken.length < 32)) {
+    throw new Error("RPC_AUTH_FAILED: KEEPER_RPC_BEARER_TOKEN is missing or too short");
+  }
+  if (expectedChainId === 143n && isKeeperGateway && parsed.hostname !== gatewayHost) {
+    throw new Error(`RPC_AUTH_FAILED: refusing to send the keeper token to unapproved host ${parsed.hostname}`);
+  }
+  if (!isKeeperGateway && bearerToken) {
+    throw new Error("RPC_AUTH_FAILED: refusing to send a gateway bearer token to a non-gateway endpoint");
+  }
+}
+
+export async function validateWriteProvider(provider, expectedChainId = EXPECTED_CHAIN_ID) {
+  try {
+    const chainId = BigInt(await provider.send("eth_chainId", []));
+    if (chainId !== expectedChainId) throw new Error(`wrong chain id ${chainId}; expected ${expectedChainId}`);
+    return chainId;
+  } catch (error) {
+    const message = errorMessage(error).toLowerCase();
+    if (message.includes("401") || message.includes("unauthorized") || message.includes("forbidden")) {
+      throw new Error("RPC_AUTH_FAILED: write gateway authentication rejected");
+    }
+    throw error;
+  }
+}
+
+export async function createKeeperWriteRuntime({
+  url = RPC_URL,
+  bearerToken = WRITE_RPC_BEARER_TOKEN,
+  privateKey = PRIVATE_KEY,
+  expectedChainId = EXPECTED_CHAIN_ID,
+  gatewayHost = process.env.KEEPER_RPC_GATEWAY_HOST || "everdraw-rpc-egress-mainnet.fly.dev",
+} = {}) {
+  assertWriteRpcConfiguration({ url, bearerToken, expectedChainId, gatewayHost });
+  if (!privateKey) throw new Error("Missing PRIVATE_KEY for keeper signer");
+  const provider = new CountingJsonRpcProvider(
+    url,
+    "write",
+    Number(expectedChainId),
+    { staticNetwork: true, batchMaxCount: 1 },
+    RPC_TIMEOUT_MS,
+    bearerToken,
+  );
+  try {
+    await validateWriteProvider(provider, expectedChainId);
+    return { provider, signer: new Wallet(privateKey, provider) };
+  } catch (error) {
+    provider.destroy();
+    throw error;
   }
 }
 
@@ -485,17 +555,14 @@ export async function syncParticipantEventCache({
   });
 }
 
-async function runOnce() {
-  if (!RPC_URL) throw new Error("Missing KEEPER_RPC_URL/RPC_URL/MONAD_TESTNET_RPC_URL");
-  if (!PRIVATE_KEY) throw new Error("Missing PRIVATE_KEY for keeper signer");
+async function runOnce(writeRuntime) {
   const deployment = readDeployment();
   const { drawManagerAddress, claimManagerAddress, fromBlock } = resolveV5RuntimeTargets(deployment);
-  const writeProvider = new CountingJsonRpcProvider(RPC_URL, "write");
+  const { provider: writeProvider, signer } = writeRuntime;
   const readProvider = new CountingJsonRpcProvider(READ_RPC_URL, "read");
   const rootProvider = ROOT_RPC_URL === RPC_URL
     ? writeProvider
     : new CountingJsonRpcProvider(ROOT_RPC_URL, "root");
-  const signer = new Wallet(PRIVATE_KEY, writeProvider);
   const manager = new Contract(drawManagerAddress, DRAW_MANAGER_ABI, readProvider);
   const eventCache = new DrawInputEventCache({
     file: KEEPER_EVENT_CACHE_FILE || path.join(DRAW_INPUT_DIR, "keeper-v5-event-cache.json"),
@@ -694,17 +761,22 @@ async function runOnce() {
 }
 
 async function main() {
-  do {
-    try {
-      const acted = await runOnce();
-      console.log(`keeper loop ok acted=${acted}`);
-    } catch (err) {
-      console.error(`[keeper-v5] RPC_USAGE ${JSON.stringify(rpcUsageSnapshot())}`);
-      await ping(false, redactRpcSecrets(err.stack || err.message));
-      throw err;
-    }
-    if (LOOP) await new Promise((resolve) => setTimeout(resolve, INTERVAL_MS));
-  } while (LOOP);
+  const writeRuntime = await createKeeperWriteRuntime();
+  try {
+    do {
+      try {
+        const acted = await runOnce(writeRuntime);
+        console.log(`keeper loop ok acted=${acted}`);
+      } catch (err) {
+        console.error(`[keeper-v5] RPC_USAGE ${JSON.stringify(rpcUsageSnapshot())}`);
+        await ping(false, redactRpcSecrets(err.stack || err.message));
+        throw err;
+      }
+      if (LOOP) await new Promise((resolve) => setTimeout(resolve, INTERVAL_MS));
+    } while (LOOP);
+  } finally {
+    writeRuntime.provider.destroy();
+  }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

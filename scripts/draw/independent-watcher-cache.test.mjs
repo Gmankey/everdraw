@@ -8,6 +8,7 @@ import {
   coverageIncidentId,
   IndependentWatcherCache,
 } from "./independent-watcher-cache.mjs";
+import { WatcherJobBudget } from "./watcher-job-budget.mjs";
 
 const vault = "0x0000000000000000000000000000000000000011";
 const manager = "0x0000000000000000000000000000000000000022";
@@ -59,7 +60,7 @@ test("independent cache fails closed when the discovery provider saw a proposal 
     log(vault, 100, "Transfer", [zero, alice, 1n]),
     log(manager, 101, "SeedReceived", [1n, 9n, root]),
   ];
-  await cache.syncThrough(provider(securityLogs), 103, { chunkSize: 4 });
+  await cache.syncThrough(provider(securityLogs), 103, { chunkSize: 4, allowBootstrap: true });
   assert.throws(
     () => cache.assertEvent("proposals", 1n, root),
     /missing\/mismatched proposals event/,
@@ -85,7 +86,7 @@ test("independent cache accepts and persists a canonically verified proposal", a
     vaultAddress: vault,
     fromBlock: 100,
   });
-  await cache.syncThrough(provider(securityLogs), 103, { chunkSize: 4 });
+  await cache.syncThrough(provider(securityLogs), 103, { chunkSize: 4, allowBootstrap: true });
   assert.equal(cache.assertEvent("proposals", 1n, root).blockNumber, 102);
   const proposalEvidence = await cache.assertEvidenceCanonical(provider(securityLogs), "proposals", 1n, root);
   const finalizationEvidence = await cache.assertEvidenceCanonical(provider(securityLogs), "finalizations", 1n, root);
@@ -120,7 +121,7 @@ test("historical finalized integrity remains distinct from timely proposal verif
     vaultAddress: vault,
     fromBlock: 100,
   });
-  await cache.syncThrough(provider(securityLogs), 103, { chunkSize: 4 });
+  await cache.syncThrough(provider(securityLogs), 103, { chunkSize: 4, allowBootstrap: true });
   const proposalEvidence = await cache.assertEvidenceCanonical(provider(securityLogs), "proposals", 1n, root);
   const finalizationEvidence = await cache.assertEvidenceCanonical(provider(securityLogs), "finalizations", 1n, root);
   const recoveryEvidence = { proposalEvidence, finalizationEvidence };
@@ -225,4 +226,130 @@ test("coverage acknowledgment is retained only for identical canonical evidence"
     [changedId],
     "changed root needs a new review",
   );
+});
+
+
+test("fixed windows persist completed progress and resume only the failed window", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "everdraw-independent-checkpoint-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const cacheFile = path.join(dir, "state.json");
+  const requested = [];
+  let failSecondWindow = true;
+  const logProvider = {
+    async getLogs({ fromBlock, toBlock }) {
+      requested.push([Number(fromBlock), Number(toBlock)]);
+      if (failSecondWindow && Number(fromBlock) === 102) throw new Error("qualification window failed");
+      return [];
+    },
+  };
+  const canonicalProvider = {
+    async getBlock(blockNumber) {
+      return { hash: "0x" + Number(blockNumber).toString(16).padStart(64, "0") };
+    },
+  };
+  let cache = new IndependentWatcherCache({
+    file: cacheFile,
+    chainId: 143n,
+    drawManagerAddress: manager,
+    vaultAddress: vault,
+    fromBlock: 100,
+  });
+  await assert.rejects(
+    cache.syncThrough(logProvider, 105, { canonicalProvider, chunkSize: 2, allowBootstrap: true }),
+    /qualification window failed/,
+  );
+  assert.equal(JSON.parse(fs.readFileSync(cacheFile, "utf8")).lastScannedBlock, 101);
+  assert.deepEqual(requested, [[100, 101], [102, 103]]);
+
+  failSecondWindow = false;
+  requested.length = 0;
+  cache = new IndependentWatcherCache({
+    file: cacheFile,
+    chainId: 143n,
+    drawManagerAddress: manager,
+    vaultAddress: vault,
+    fromBlock: 100,
+  });
+  await cache.syncThrough(logProvider, 105, { canonicalProvider, chunkSize: 2 });
+  assert.deepEqual(requested, [[102, 103], [104, 105]]);
+  assert.equal(JSON.parse(fs.readFileSync(cacheFile, "utf8")).lastScannedBlock, 105);
+});
+
+test("missing independent cache requires an explicitly admitted bootstrap", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "everdraw-independent-admission-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const cache = new IndependentWatcherCache({
+    file: path.join(dir, "state.json"),
+    chainId: 143n,
+    drawManagerAddress: manager,
+    vaultAddress: vault,
+    fromBlock: 100,
+  });
+  await assert.rejects(cache.syncThrough(provider([]), 110), { code: "WATCHER_INDEPENDENT_BOOTSTRAP_REQUIRED" });
+});
+
+test("admitted bootstrap persists bounded progress and counts actual provider requests", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "everdraw-independent-budget-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const cacheFile = path.join(dir, "state.json");
+  const budget = new WatcherJobBudget({ maxRequests: 20, maxBlocks: 4 });
+  const calls = [];
+  const boundedProvider = {
+    async getBlock(blockNumber) {
+      budget.reserveRequests("canonical", 1);
+      calls.push(["block", Number(blockNumber)]);
+      return { hash: "0x" + Number(blockNumber).toString(16).padStart(64, "0") };
+    },
+    async getLogs({ fromBlock, toBlock }) {
+      budget.reserveRequests("independent-logs", 1);
+      calls.push(["logs", Number(fromBlock), Number(toBlock)]);
+      return [];
+    },
+  };
+  const cache = new IndependentWatcherCache({
+    file: cacheFile,
+    chainId: 143n,
+    drawManagerAddress: manager,
+    vaultAddress: vault,
+    fromBlock: 100,
+  });
+  const result = await cache.syncThrough(boundedProvider, 110, {
+    canonicalProvider: boundedProvider,
+    chunkSize: 2,
+    jobBudget: budget,
+    allowBootstrap: true,
+  });
+  assert.equal(result.complete, false);
+  assert.equal(result.lastScannedBlock, 103);
+  assert.equal(JSON.parse(fs.readFileSync(cacheFile, "utf8")).lastScannedBlock, 103);
+  assert.equal(budget.snapshot().blocks, 4);
+  assert.equal(budget.snapshot().requests, calls.length);
+  assert.ok(calls.length > 0);
+});
+
+test("a reorg reset requires a new bounded bootstrap admission", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "everdraw-independent-reorg-admission-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const cacheFile = path.join(dir, "state.json");
+  let cache = new IndependentWatcherCache({
+    file: cacheFile,
+    chainId: 143n,
+    drawManagerAddress: manager,
+    vaultAddress: vault,
+    fromBlock: 100,
+  });
+  await cache.syncThrough(provider([]), 101, { chunkSize: 2, allowBootstrap: true });
+  cache = new IndependentWatcherCache({
+    file: cacheFile,
+    chainId: 143n,
+    drawManagerAddress: manager,
+    vaultAddress: vault,
+    fromBlock: 100,
+  });
+  const reorged = {
+    async getBlock() { return { hash: "0x" + "ff".repeat(32) }; },
+    async getLogs() { return []; },
+  };
+  await assert.rejects(cache.syncThrough(reorged, 105), { code: "WATCHER_INDEPENDENT_BOOTSTRAP_REQUIRED" });
+  assert.equal(JSON.parse(fs.readFileSync(cacheFile, "utf8")).lastScannedBlock, 99);
 });
