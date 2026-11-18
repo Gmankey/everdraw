@@ -14,6 +14,9 @@ primary_region = "sjc"
   RPC_GATEWAY_RESPONSE_LIMIT_BYTES = "4194304"
   RPC_GATEWAY_REQUIRE_SINGLE_WRITER = "true"
   RPC_GATEWAY_WRITER_LEASE_FILE = "/data/rpc-gateway-writer.json"
+  RPC_QUALIFICATION_POLICY_FILE = "/data/qualification-admission-policy.json"
+  RPC_QUALIFICATION_STATE_FILE = "/data/qualification-admission-state.json"
+  # RPC_QUALIFICATION_POLICY_SHA256 and RPC_QUALIFICATION_ADMISSION_TOKEN are secrets.
 
 [mounts]
   source = "everdraw_rpc_budget"

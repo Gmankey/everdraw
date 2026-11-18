@@ -119,6 +119,32 @@ export async function validateWriteProvider(provider, expectedChainId = EXPECTED
   }
 }
 
+export async function createKeeperWriteRuntime({
+  url = RPC_URL,
+  bearerToken = WRITE_RPC_BEARER_TOKEN,
+  privateKey = PRIVATE_KEY,
+  expectedChainId = EXPECTED_CHAIN_ID,
+  gatewayHost = process.env.KEEPER_RPC_GATEWAY_HOST || "everdraw-rpc-egress-mainnet.fly.dev",
+} = {}) {
+  assertWriteRpcConfiguration({ url, bearerToken, expectedChainId, gatewayHost });
+  if (!privateKey) throw new Error("Missing PRIVATE_KEY for keeper signer");
+  const provider = new CountingJsonRpcProvider(
+    url,
+    "write",
+    Number(expectedChainId),
+    { staticNetwork: true, batchMaxCount: 1 },
+    RPC_TIMEOUT_MS,
+    bearerToken,
+  );
+  try {
+    await validateWriteProvider(provider, expectedChainId);
+    return { provider, signer: new Wallet(privateKey, provider) };
+  } catch (error) {
+    provider.destroy();
+    throw error;
+  }
+}
+
 const DRAW_MANAGER_ABI = [
   "function vault() view returns (address)",
   "function twabController() view returns (address)",
@@ -529,24 +555,14 @@ export async function syncParticipantEventCache({
   });
 }
 
-async function runOnce() {
-  assertWriteRpcConfiguration({ url: RPC_URL, bearerToken: WRITE_RPC_BEARER_TOKEN });
-  if (!PRIVATE_KEY) throw new Error("Missing PRIVATE_KEY for keeper signer");
+async function runOnce(writeRuntime) {
   const deployment = readDeployment();
   const { drawManagerAddress, claimManagerAddress, fromBlock } = resolveV5RuntimeTargets(deployment);
-  const writeProvider = new CountingJsonRpcProvider(
-    RPC_URL,
-    "write",
-    undefined,
-    undefined,
-    RPC_TIMEOUT_MS,
-    WRITE_RPC_BEARER_TOKEN,
-  );
+  const { provider: writeProvider, signer } = writeRuntime;
   const readProvider = new CountingJsonRpcProvider(READ_RPC_URL, "read");
   const rootProvider = ROOT_RPC_URL === RPC_URL
     ? writeProvider
     : new CountingJsonRpcProvider(ROOT_RPC_URL, "root");
-  const signer = new Wallet(PRIVATE_KEY, writeProvider);
   const manager = new Contract(drawManagerAddress, DRAW_MANAGER_ABI, readProvider);
   const eventCache = new DrawInputEventCache({
     file: KEEPER_EVENT_CACHE_FILE || path.join(DRAW_INPUT_DIR, "keeper-v5-event-cache.json"),
@@ -555,7 +571,6 @@ async function runOnce() {
   const claimState = new ClaimRetryState(
     KEEPER_CLAIM_STATE_FILE || path.join(DRAW_INPUT_DIR, "keeper-v5-claim-state.json"),
   );
-  await validateWriteProvider(writeProvider);
   const network = await rpcRead("readProvider.getNetwork", () => readProvider.getNetwork());
   if (network.chainId !== EXPECTED_CHAIN_ID) throw new Error(`wrong chain id ${network.chainId}; expected ${EXPECTED_CHAIN_ID}`);
 
@@ -746,17 +761,22 @@ async function runOnce() {
 }
 
 async function main() {
-  do {
-    try {
-      const acted = await runOnce();
-      console.log(`keeper loop ok acted=${acted}`);
-    } catch (err) {
-      console.error(`[keeper-v5] RPC_USAGE ${JSON.stringify(rpcUsageSnapshot())}`);
-      await ping(false, redactRpcSecrets(err.stack || err.message));
-      throw err;
-    }
-    if (LOOP) await new Promise((resolve) => setTimeout(resolve, INTERVAL_MS));
-  } while (LOOP);
+  const writeRuntime = await createKeeperWriteRuntime();
+  try {
+    do {
+      try {
+        const acted = await runOnce(writeRuntime);
+        console.log(`keeper loop ok acted=${acted}`);
+      } catch (err) {
+        console.error(`[keeper-v5] RPC_USAGE ${JSON.stringify(rpcUsageSnapshot())}`);
+        await ping(false, redactRpcSecrets(err.stack || err.message));
+        throw err;
+      }
+      if (LOOP) await new Promise((resolve) => setTimeout(resolve, INTERVAL_MS));
+    } while (LOOP);
+  } finally {
+    writeRuntime.provider.destroy();
+  }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

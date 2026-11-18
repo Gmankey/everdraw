@@ -2,7 +2,7 @@
 
 Date: 2026-11-17 (Australia/Sydney)
 Prior audited head: `6532e59d16339cb4cb81e586ac8dd4ce8820a98b`
-Status: ready for independent re-audit after the final immutable hash is inserted.
+Status: superseded by `tasks/v5-pr330-r330-08-09-remediation-handoff-2026-11-18.md` after the 2026-11-18 re-audit identified R330-08 and R330-09.
 
 ## Operational state
 

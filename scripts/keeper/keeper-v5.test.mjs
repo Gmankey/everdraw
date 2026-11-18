@@ -9,6 +9,7 @@ import test from "node:test";
 import {
   CountingJsonRpcProvider,
   assertWriteRpcConfiguration,
+  createKeeperWriteRuntime,
   claimDrawIds,
   firstRecentDrawId,
   rpcUsageSnapshot,
@@ -244,6 +245,55 @@ test("keeper authenticates through the actual scoped write gateway", async (t) =
   await assert.rejects(validateWriteProvider(rejected, 143n), /RPC_AUTH_FAILED/);
 });
 
+test("idle keeper cycles reuse one startup-validated write provider", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "everdraw-keeper-idle-gateway-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const configFile = join(dir, "config.json");
+  const stateFile = join(dir, "state.json");
+  writeFileSync(configFile, JSON.stringify({
+    version: 1,
+    periodId: "test",
+    accountCapCu: 10000,
+    criticalReserveCu: 0,
+    maxBatchItems: 1,
+    roles: { "keeper-write": { capCu: 10000, critical: true, methods: ["eth_chainId"] } },
+    methodCosts: { eth_chainId: 100 },
+  }));
+  initializeBudgetState(configFile, stateFile);
+  const token = "keeper-idle-token-with-at-least-32-characters";
+  let upstreamAttempts = 0;
+  const gateway = createGatewayServer({
+    upstreamUrl: "https://upstream.invalid",
+    tokens: { "keeper-write": token },
+    ledger: new BudgetLedger({ configFile, stateFile }),
+    fetchImpl: async () => {
+      upstreamAttempts++;
+      return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: "0x8f" }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+  await new Promise((resolve) => gateway.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => gateway.close(resolve)));
+  const url = `http://127.0.0.1:${gateway.address().port}/rpc/keeper-write`;
+  const options = {
+    url,
+    bearerToken: token,
+    privateKey: "0x" + "11".repeat(32),
+    expectedChainId: 143n,
+    gatewayHost: "127.0.0.1",
+  };
+
+  const runtime = await createKeeperWriteRuntime(options);
+  for (let cycle = 0; cycle < 3; cycle++) await Promise.resolve(runtime);
+  assert.equal(new BudgetLedger({ configFile, stateFile }).snapshot().roles["keeper-write"].requests, 1);
+  assert.equal(upstreamAttempts, 1);
+  runtime.provider.destroy();
+
+  const restarted = await createKeeperWriteRuntime(options);
+  assert.equal(new BudgetLedger({ configFile, stateFile }).snapshot().roles["keeper-write"].requests, 2);
+  assert.equal(upstreamAttempts, 2);
+  restarted.provider.destroy();
+});
+
 test("managed keeper refuses to start without its required success heartbeat", () => {
   const result = spawnSync(process.execPath, ["-e", "import('./scripts/keeper-v5.js')"], {
     cwd: process.cwd(),
@@ -261,7 +311,13 @@ test("managed keeper refuses to start without its required success heartbeat", (
 
 test("keeper includes ClaimLeaf.kind in claimMany payloads", () => { const source = readFileSync(new URL("../keeper-v5.js", import.meta.url), "utf8"); assert.equal(source.includes("kind: leaf.kind"), true); });
 test("keeper balance health reads use KEEPER_READ_RPC_URL, not the transaction RPC", () => { const source = readFileSync(new URL("../keeper-v5.js", import.meta.url), "utf8"); assert.equal(source.includes("readProvider.getBalance(signer.address)"), true); assert.equal(source.includes("writeProvider.getBalance(signer.address)"), false); });
-test("keeper validates scoped gateway authentication before lifecycle reads", () => { const source = readFileSync(new URL("../keeper-v5.js", import.meta.url), "utf8"); const runOnce = source.slice(source.indexOf("async function runOnce"), source.indexOf("async function main")); assert.equal(runOnce.includes("await validateWriteProvider(writeProvider)"), true); });
+test("keeper validates scoped gateway authentication once before entering the lifecycle loop", () => {
+  const source = readFileSync(new URL("../keeper-v5.js", import.meta.url), "utf8");
+  const runOnce = source.slice(source.indexOf("async function runOnce"), source.indexOf("async function main"));
+  const main = source.slice(source.indexOf("async function main"));
+  assert.equal(runOnce.includes("validateWriteProvider"), false);
+  assert.equal(main.includes("const writeRuntime = await createKeeperWriteRuntime()"), true);
+});
 
 
 test("keeper routes historical root reconstruction through the bounded archive provider", () => {

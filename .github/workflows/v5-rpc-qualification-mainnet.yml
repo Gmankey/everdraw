@@ -15,14 +15,6 @@ on:
         description: Reviewed known-event evidence file in the approved commit
         required: true
         type: string
-      provider_period:
-        description: Provider billing period identifier approved for this run (for example 2026-11)
-        required: true
-        type: string
-      provider_account_request_cap:
-        description: Shared request cap for every qualification in this provider period
-        required: true
-        type: number
 
 permissions:
   contents: read
@@ -52,13 +44,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: .rpc-qualification-admission
-          key: v5-rpc-qualification-${{ inputs.provider_period }}-${{ inputs.qualification_id }}-${{ github.run_id }}
-          restore-keys: |
-            v5-rpc-qualification-${{ inputs.provider_period }}-
-      - run: mkdir -p .rpc-qualification-admission tasks/evidence
+      - run: mkdir -p tasks/evidence
       - run: npm ci
       - name: Qualify exact production log and historical-state methods
         env:
@@ -70,10 +56,9 @@ jobs:
           RPC_QUALIFY_ID: ${{ inputs.qualification_id }}
           RPC_QUALIFY_EVIDENCE_INPUT_FILE: ${{ inputs.evidence_input_path }}
           RPC_QUALIFY_OUTPUT_FILE: tasks/evidence/rpc2-mainnet-qualification.json
-          RPC_QUALIFY_ADMISSION_FILE: .rpc-qualification-admission/state.json
-          RPC_QUALIFY_PROVIDER_PERIOD: ${{ inputs.provider_period }}
-          RPC_QUALIFY_ACCOUNT_REQUEST_CAP: ${{ inputs.provider_account_request_cap }}
-          RPC_QUALIFY_COOLDOWN_SEC: "86400"
+          RPC_QUALIFY_ADMISSION_URL: ${{ secrets.V5_RPC_QUALIFY_ADMISSION_URL }}
+          RPC_QUALIFY_ADMISSION_TOKEN: ${{ secrets.V5_RPC_QUALIFY_ADMISSION_TOKEN }}
+          RPC_QUALIFY_PROVIDER_IDENTITY: ${{ vars.V5_RPC_QUALIFY_PROVIDER_IDENTITY }}
           RPC_QUALIFY_MAX_REQUESTS: "10000"
           RPC_QUALIFY_LOG_RANGE: "50000"
           RPC_QUALIFY_MIN_REQUEST_INTERVAL_MS: "250"
@@ -84,8 +69,3 @@ jobs:
           name: rpc2-mainnet-qualification-${{ inputs.qualification_id }}-${{ inputs.approved_commit }}
           path: tasks/evidence/rpc2-mainnet-qualification.json
           if-no-files-found: warn
-      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
-        if: always()
-        with:
-          path: .rpc-qualification-admission
-          key: v5-rpc-qualification-${{ inputs.provider_period }}-${{ inputs.qualification_id }}-${{ github.run_id }}

@@ -15,10 +15,9 @@ const OUTPUT_FILE = process.env.RPC_QUALIFY_OUTPUT_FILE || "tasks/evidence/rpc2-
 const INPUT_FILE = process.env.RPC_QUALIFY_EVIDENCE_INPUT_FILE;
 const APPROVED_COMMIT = process.env.RPC_QUALIFY_APPROVED_COMMIT;
 const QUALIFICATION_ID = process.env.RPC_QUALIFY_ID;
-const ADMISSION_FILE = process.env.RPC_QUALIFY_ADMISSION_FILE;
-const PROVIDER_PERIOD = process.env.RPC_QUALIFY_PROVIDER_PERIOD;
-const ACCOUNT_REQUEST_CAP = Number(process.env.RPC_QUALIFY_ACCOUNT_REQUEST_CAP || "15000");
-const COOLDOWN_SEC = Number(process.env.RPC_QUALIFY_COOLDOWN_SEC || "86400");
+const ADMISSION_URL = process.env.RPC_QUALIFY_ADMISSION_URL;
+const ADMISSION_TOKEN = process.env.RPC_QUALIFY_ADMISSION_TOKEN;
+const APPROVED_PROVIDER_IDENTITY = process.env.RPC_QUALIFY_PROVIDER_IDENTITY;
 const RANGE = Number(process.env.RPC_QUALIFY_LOG_RANGE || "10000");
 const MAX_REQUESTS = Number(process.env.RPC_QUALIFY_MAX_REQUESTS || "2500");
 const TIMEOUT_MS = Number(process.env.RPC_QUALIFY_TIMEOUT_MS || "30000");
@@ -28,6 +27,7 @@ const rpcLastStartedAt = new Map();
 let requestCount = 0;
 let id = 0;
 let admissionState;
+let admissionQueue = Promise.resolve();
 let progressEvidence;
 
 function required(value, label) {
@@ -58,82 +58,56 @@ function atomicWriteJson(file, value) {
   }
 }
 
-function withAdmissionLock(operation) {
-  const lockFile = `${ADMISSION_FILE}.lock`;
-  let handle;
-  try {
-    handle = fs.openSync(lockFile, "wx", 0o600);
-    fs.writeFileSync(handle, `${process.pid}\n`);
-    fs.fsyncSync(handle);
-  } catch (error) {
-    if (handle != null) fs.closeSync(handle);
-    if (error?.code === "EEXIST") throw new Error("Qualification admission ledger is locked by another process");
-    throw error;
+function providerIdentity() {
+  const origins = [CANDIDATE_URL, REFERENCE_URL, CANONICAL_URL].map((url) => new URL(url).origin.toLowerCase());
+  if (new Set(origins).size !== origins.length) throw new Error("Qualification candidate, reference and canonical providers must be distinct");
+  return "0x" + createHash("sha256").update(JSON.stringify(origins)).digest("hex");
+}
+
+async function admissionRequest(action, payload) {
+  required(ADMISSION_URL, "RPC_QUALIFY_ADMISSION_URL");
+  if (typeof ADMISSION_TOKEN !== "string" || ADMISSION_TOKEN.length < 32) throw new Error("RPC_QUALIFY_ADMISSION_TOKEN is missing or too short");
+  const admissionEndpoint = new URL(ADMISSION_URL);
+  if (admissionEndpoint.protocol !== "https:" && !["127.0.0.1", "localhost"].includes(admissionEndpoint.hostname)) {
+    throw new Error("RPC_QUALIFY_ADMISSION_URL must use HTTPS");
   }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    return operation();
+    const response = await fetch(`${ADMISSION_URL.replace(/\/$/, "")}/${action}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${ADMISSION_TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify(payload),
+      redirect: "error",
+      signal: controller.signal,
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(`Qualification admission refused: ${result.error || response.status}`);
+    return result;
   } finally {
-    fs.closeSync(handle);
-    fs.unlinkSync(lockFile);
+    clearTimeout(timer);
   }
 }
 
-function initializeAdmission() {
-  required(ADMISSION_FILE, "RPC_QUALIFY_ADMISSION_FILE");
-  required(PROVIDER_PERIOD, "RPC_QUALIFY_PROVIDER_PERIOD");
-  if (!Number.isSafeInteger(ACCOUNT_REQUEST_CAP) || ACCOUNT_REQUEST_CAP < 1) throw new Error("Invalid RPC_QUALIFY_ACCOUNT_REQUEST_CAP");
-  if (!Number.isSafeInteger(COOLDOWN_SEC) || COOLDOWN_SEC < 0) throw new Error("Invalid RPC_QUALIFY_COOLDOWN_SEC");
-  fs.mkdirSync(ADMISSION_FILE.split("/").slice(0, -1).join("/") || ".", { recursive: true });
-  withAdmissionLock(() => {
-    if (fs.existsSync(ADMISSION_FILE)) {
-      admissionState = JSON.parse(fs.readFileSync(ADMISSION_FILE, "utf8"));
-      if (
-        admissionState.version !== 1
-        || admissionState.periodId !== PROVIDER_PERIOD
-        || !Number.isSafeInteger(admissionState.usedRequests)
-        || admissionState.usedRequests < 0
-        || admissionState.usedRequests > ACCOUNT_REQUEST_CAP
-        || typeof admissionState.qualifications !== "object"
-        || admissionState.qualifications == null
-      ) throw new Error("Qualification admission state is invalid or belongs to another provider period");
-    } else {
-      admissionState = { version: 1, periodId: PROVIDER_PERIOD, usedRequests: 0, qualifications: {} };
-    }
-    const previousStarts = Object.values(admissionState.qualifications)
-      .map((entry) => Date.parse(entry.startedAt))
-      .filter(Number.isFinite);
-    if (!admissionState.qualifications[QUALIFICATION_ID] && previousStarts.length > 0) {
-      const latest = Math.max(...previousStarts);
-      if (Date.now() - latest < COOLDOWN_SEC * 1000) throw new Error("Qualification provider cooldown is still active");
-    }
-    admissionState.qualifications[QUALIFICATION_ID] ||= {
-      sourceHead: currentCommit(),
-      startedAt: new Date().toISOString(),
-      requests: 0,
-    };
-    if (admissionState.qualifications[QUALIFICATION_ID].sourceHead !== currentCommit()) {
-      throw new Error("Qualification ID is already bound to another source commit");
-    }
-    atomicWriteJson(ADMISSION_FILE, admissionState);
+async function initializeAdmission() {
+  const identity = providerIdentity();
+  if (identity !== required(APPROVED_PROVIDER_IDENTITY, "RPC_QUALIFY_PROVIDER_IDENTITY").toLowerCase()) {
+    throw new Error("Qualification provider set does not match the reviewed identity");
+  }
+  admissionState = await admissionRequest("start", {
+    qualificationId: QUALIFICATION_ID,
+    sourceCommit: currentCommit(),
+    providerIdentity: identity,
   });
 }
 
-function reserveQualificationRequests(count) {
-  const amount = Number(count);
-  if (!Number.isSafeInteger(amount) || amount < 1) throw new Error("Invalid qualification request count");
-  if (requestCount + amount > MAX_REQUESTS) throw new Error(`Qualification request budget exceeded: ${MAX_REQUESTS}`);
-  withAdmissionLock(() => {
-    admissionState = JSON.parse(fs.readFileSync(ADMISSION_FILE, "utf8"));
-    if (admissionState.periodId !== PROVIDER_PERIOD || !admissionState.qualifications?.[QUALIFICATION_ID]) {
-      throw new Error("Qualification admission changed during execution");
-    }
-    if (admissionState.usedRequests + amount > ACCOUNT_REQUEST_CAP) throw new Error("Qualification provider-period request budget exceeded");
-    requestCount += amount;
-    admissionState.usedRequests += amount;
-    admissionState.qualifications[QUALIFICATION_ID].requests += amount;
-    admissionState.qualifications[QUALIFICATION_ID].updatedAt = new Date().toISOString();
-    atomicWriteJson(ADMISSION_FILE, admissionState);
+async function reserveQualificationRequest() {
+  admissionQueue = admissionQueue.then(async () => {
+    if (requestCount + 1 > MAX_REQUESTS) throw new Error(`Qualification request budget exceeded: ${MAX_REQUESTS}`);
+    admissionState = await admissionRequest("reserve", { qualificationId: QUALIFICATION_ID, count: 1 });
+    requestCount += 1;
   });
+  return admissionQueue;
 }
 
 function persistProgress(patch = {}) {
@@ -179,7 +153,7 @@ function activeDeployment() {
 }
 
 async function rpc(url, method, params) {
-  reserveQualificationRequests(1);
+  await reserveQualificationRequest();
   return scheduleRpc(url, async () => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -277,10 +251,10 @@ async function main() {
   required(QUALIFICATION_ID, "RPC_QUALIFY_ID");
   const sourceHead = currentCommit();
   if (sourceHead !== APPROVED_COMMIT) throw new Error(`Qualification source mismatch: ${sourceHead} != ${APPROVED_COMMIT}`);
-  initializeAdmission();
   const qualificationInput = readQualificationInput();
   const deployment = activeDeployment();
   if (qualificationInput.deploymentRole !== deployment.role) throw new Error("Qualification deployment role mismatch");
+  await initializeAdmission();
   const addresses = Object.values(deployment.addresses).filter((value) => /^0x[0-9a-fA-F]{40}$/.test(value)).map(getAddress);
   const fromBlock = Number(deployment.startBlock);
   progressEvidence = {
@@ -298,9 +272,9 @@ async function main() {
     completedWindows: [],
     requestCount,
     maxRequests: MAX_REQUESTS,
-    providerPeriod: PROVIDER_PERIOD,
+    providerIdentity: APPROVED_PROVIDER_IDENTITY,
     providerPeriodUsedRequests: admissionState.usedRequests,
-    providerPeriodRequestCap: ACCOUNT_REQUEST_CAP,
+    providerPeriodRequestCap: admissionState.accountRequestCap,
   };
   persistProgress();
   const [candidateChain, referenceChain, canonicalChain, candidateHeadHex, referenceHeadHex, canonicalHeadHex] = await Promise.all([
@@ -461,9 +435,9 @@ async function main() {
     reconstructedDraws,
     requestCount,
     maxRequests: MAX_REQUESTS,
-    providerPeriod: PROVIDER_PERIOD,
+    providerIdentity: APPROVED_PROVIDER_IDENTITY,
     providerPeriodUsedRequests: admissionState.usedRequests,
-    providerPeriodRequestCap: ACCOUNT_REQUEST_CAP,
+    providerPeriodRequestCap: admissionState.accountRequestCap,
     status: "qualified",
     verdict: "qualified-for-v5-independent-logs-and-historical-state",
   };

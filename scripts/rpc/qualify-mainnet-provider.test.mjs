@@ -46,10 +46,10 @@ test("live qualification is manual, admitted, resumable and reconstructs exact r
   assert.match(workflow, /workflow_dispatch/);
   assert.doesNotMatch(workflow, /schedule:/);
   assert.match(workflow, /environment: v5-mainnet-rpc-qualification/);
-  assert.match(workflow, /RPC_QUALIFY_ADMISSION_FILE/);
-  assert.match(workflow, /RPC_QUALIFY_PROVIDER_PERIOD/);
-  assert.match(workflow, /actions\/cache\/save/);
-  assert.match(workflow, /if: always\(\)/);
+  assert.match(workflow, /RPC_QUALIFY_ADMISSION_URL/);
+  assert.match(workflow, /RPC_QUALIFY_ADMISSION_TOKEN/);
+  assert.match(workflow, /RPC_QUALIFY_PROVIDER_IDENTITY/);
+  assert.doesNotMatch(workflow, /actions\/cache/);
   assert.doesNotMatch(contracts, /rpc:qualify:mainnet/);
   assert.match(source, /Full-history log mismatch/);
   assert.match(source, /buildWatcherDrawInput\(\{[\s\S]*provider: candidateProvider/);
@@ -57,5 +57,6 @@ test("live qualification is manual, admitted, resumable and reconstructs exact r
   assert.match(source, /reconstructed root mismatch/);
   assert.match(source, /persistProgress\(\{[\s\S]*completedThroughBlock/);
   assert.match(source, /status: "incomplete"/);
-  assert.match(source, /withAdmissionLock/);
+  assert.match(source, /await admissionRequest\("reserve"/);
+  assert.doesNotMatch(source, /usedRequests: 0, qualifications/);
 });

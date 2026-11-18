@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "periodId": "SET-PROVIDER-BILLING-PERIOD-EXPLICITLY",
+  "providerIdentity": "0xSET-REVIEWED-PROVIDER-SET-HASH",
+  "accountRequestCap": 15000,
+  "attemptRequestCap": 10000,
+  "cooldownSec": 86400
+}

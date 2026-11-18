@@ -30,7 +30,7 @@ No log or historical-state role may fall back to Alchemy. Errors and incomplete 
 
 Qualification is manual and environment-approved in `.github/workflows/v5-rpc-qualification-mainnet.yml`. It is not run on pull requests or schedules.
 
-The operator supplies an immutable approved commit, unique qualification ID, reviewed known-event evidence file, provider billing-period ID and shared provider-period request cap.
+The operator supplies an immutable approved commit, unique qualification ID and reviewed known-event evidence file. The reviewed provider identity, billing period, aggregate cap, attempt cap and cooldown live in the gateway's immutable-hash-checked qualification policy.
 
 The qualification script:
 
@@ -39,8 +39,10 @@ The qualification script:
 - verifies independently supplied nonempty seed, proposal, finalization, mint, transfer and burn identities and receipts;
 - reconstructs historical roots through candidate and reference using the complete participant set;
 - compares summed TWAB, prize legs and Merkle roots;
-- reserves every wire request in a durable provider-period admission ledger before sending it;
-- enforces a 10,000-request run ceiling, operator-supplied period ceiling, 250 ms minimum interval and 24-hour cooldown;
+- reserves every wire request through the gateway's authoritative persistent-volume admission ledger before sending it;
+- fails closed when that state is missing, corrupt, stale-policy-bound or capped;
+- resumes an identical admitted ID without resetting usage, while new IDs obey the remaining period allowance and 24-hour cooldown;
+- enforces a 10,000-request run ceiling, 15,000-request provider-period ceiling and 250 ms minimum interval;
 - writes incremental evidence and marks interrupted or capped work incomplete.
 
 `scripts/rpc/mainnet-qualification-evidence.example.json` documents the reviewed input. A capability sample is not proof of complete history; the final artifact must be reviewed before recovery authorization.
@@ -73,7 +75,7 @@ Mainnet keeper requires:
 - `RPC_URL=https://everdraw-rpc-egress-mainnet.fly.dev/rpc/keeper-write`;
 - `KEEPER_RPC_BEARER_TOKEN` containing its dedicated token.
 
-Startup validates route, approved host, authentication and chain ID before lifecycle work. Missing/invalid credentials enter the persistent stop class. Tokens remain headers, never URL credentials or logs. Hardhat mainnet tasks use the same model with their own role token.
+Startup validates route, approved host, authentication and chain ID once per process, then reuses the static-network write provider for every loop. Idle loops therefore reserve no write allowance. A process restart performs one new validation. Missing/invalid credentials enter the persistent stop class. Tokens remain headers, never URL credentials or logs. Hardhat mainnet tasks use the same model with their own role token.
 
 ## Bounded watcher execution
 
@@ -101,6 +103,8 @@ Budgets include discovery, independent reconstruction, canonical validation, his
 - **R330-05:** admin/reservation mutations share one lock; multiprocess race regression.
 - **R330-06:** qualification is manual, approved, admitted, cooled down and capped.
 - **R330-07:** redirect denial, full-body timeout and response-size limit.
+- **R330-08:** one startup validation and one reused static-network write provider; idle loops make no paid write calls.
+- **R330-09:** Actions cache removed from qualification accounting; gateway persistent-volume admission fails closed and reserves before each upstream request.
 
 ## Expected workload
 
@@ -110,7 +114,7 @@ Steady state has zero Alchemy log or historical-read load.
 - Scheduled watcher: four runs/hour, capped at 1,500 requests and 20,000 block-work per job; paid CU zero.
 - Manual catch-up: one approved invocation, maximum 5,000 requests and 250,000 block-work.
 - Qualification: manual only, maximum 10,000 requests plus shared provider-period cap.
-- Keeper: public reads; only transaction-triggered support calls use the paid gateway.
+- Keeper: one paid chain/auth validation per process start, public recurring reads, then only transaction-triggered support calls use the paid gateway.
 - Deployment: manual only, capped at 3M CU.
 
 Observe method/provider counters, fallback reasons, indexing lag, watcher freshness and paid-ledger state. Alchemy usage must remain flat outside approved transaction work.
@@ -151,12 +155,12 @@ Approve one immutable commit and evidence report. Later code changes invalidate 
 ### 2. Prepare gateway after approval
 
 1. Create one gateway app, one persistent volume and exactly one machine.
-2. Initialize the reviewed budget config/ledger for the explicit billing period.
-3. Configure the approved config SHA-256, raw paid URL and distinct long random role tokens only on the gateway.
+2. Initialize both the reviewed paid budget ledger and qualification admission ledger for the explicit billing period. Missing state is a hard failure, never an automatic zero balance.
+3. Configure both approved policy SHA-256 values, the raw paid URL, distinct role tokens and a distinct qualification-admission token only on the gateway.
 4. Set the provider account hard limit.
 5. Rotate the old paid credential and remove it from all other apps, Actions and operator files.
 6. Configure keeper gateway URL/token but do not start it.
-7. Verify the writer lease, `/healthz`, zero usage and state hash.
+7. Verify the writer lease, `/healthz`, both state hashes, qualification provider identity and zero usage.
 
 Rollback: stop the sole gateway, revoke the affected role token, preserve the volume/ledger, and do not reset the writer lease without recorded review.
 
@@ -166,7 +170,7 @@ Deploy only reviewed routing. Observe 24-48 hours for cursor advancement, bounde
 
 ### 4. Qualify provider
 
-After evidence-input approval, confirm the approved commit is the current trusted `staging` head and dispatch `v5-mainnet-rpc-qualification` once. Review completeness, request counts, pinned block, known identities, participant totals and reconstructed roots. Partial evidence does not authorize recovery.
+After evidence-input approval, create and protect the `v5-mainnet-rpc-qualification` and `v5-mainnet-recovery` GitHub environments, confirm the approved commit is the current trusted `staging` head, verify the gateway admission policy/state hashes, and dispatch `v5-mainnet-rpc-qualification` once. Review completeness, request counts, pinned block, known identities, participant totals and reconstructed roots. Partial evidence does not authorize recovery.
 
 ### 5. Authorized watcher catch-up
 

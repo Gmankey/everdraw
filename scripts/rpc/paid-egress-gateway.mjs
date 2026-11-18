@@ -4,6 +4,7 @@ import { timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { BudgetLedger } from "./paid-egress-ledger.mjs";
+import { QualificationAdmissionLedger } from "./qualification-admission-ledger.mjs";
 
 const BODY_LIMIT = Number(process.env.RPC_GATEWAY_BODY_LIMIT_BYTES || "1048576");
 const RESPONSE_LIMIT = Number(process.env.RPC_GATEWAY_RESPONSE_LIMIT_BYTES || "4194304");
@@ -118,12 +119,15 @@ export function createGatewayServer({
   fetchImpl = fetch,
   timeoutMs = TIMEOUT_MS,
   responseLimit = RESPONSE_LIMIT,
+  qualificationAdmission,
+  qualificationToken = "",
 }) {
   if (!upstreamUrl) throw new Error("RPC_PAID_UPSTREAM_URL is required");
   return http.createServer(async (req, res) => {
     if (req.method === "GET" && req.url === "/healthz") {
       try {
         const state = ledger.snapshot();
+        const qualification = qualificationAdmission?.snapshot();
         return json(res, state.latched ? 503 : 200, {
           ok: !state.latched,
           periodId: state.periodId,
@@ -132,9 +136,33 @@ export function createGatewayServer({
           latchReason: state.latchReason,
           roles: state.roles,
           stateHash: state.stateHash,
+          qualification: qualification ? {
+            periodId: qualification.periodId,
+            providerIdentity: qualification.providerIdentity,
+            usedRequests: qualification.usedRequests,
+            stateHash: qualification.stateHash,
+          } : null,
         });
       } catch (error) {
         return json(res, 503, { ok: false, error: error.code || "RPC_BUDGET_STATE_UNAVAILABLE" });
+      }
+    }
+    if (req.method === "POST" && req.url?.startsWith("/admission/provider-qualification/")) {
+      const supplied = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+      if (!qualificationAdmission || !qualificationToken || !secureEqual(qualificationToken, supplied)) {
+        return json(res, 401, { error: "unauthorized" });
+      }
+      try {
+        const payload = JSON.parse(await readBody(req));
+        if (req.url === "/admission/provider-qualification/start") {
+          return json(res, 200, qualificationAdmission.start(payload));
+        }
+        if (req.url === "/admission/provider-qualification/reserve") {
+          return json(res, 200, qualificationAdmission.reserve(payload.qualificationId, payload.count));
+        }
+        return json(res, 404, { error: "not found" });
+      } catch (error) {
+        return json(res, 503, { error: error.code || "RPC_QUALIFICATION_ADMISSION_UNAVAILABLE" });
       }
     }
     const match = req.url?.match(/^\/rpc\/([a-z0-9-]+)$/);
@@ -189,6 +217,15 @@ export function main() {
     expectedConfigHash: process.env.RPC_BUDGET_CONFIG_SHA256,
   });
   validateGatewayTokens(tokens, Object.keys(ledger.config.roles));
+  const qualificationToken = process.env.RPC_QUALIFICATION_ADMISSION_TOKEN || "";
+  if (qualificationToken.length < 32) throw new Error("RPC_QUALIFICATION_ADMISSION_TOKEN is missing or too short");
+  if (Object.values(tokens).includes(qualificationToken)) throw new Error("Qualification admission token must be distinct from RPC role tokens");
+  if (!process.env.RPC_QUALIFICATION_POLICY_SHA256) throw new Error("RPC_QUALIFICATION_POLICY_SHA256 is required");
+  const qualificationAdmission = new QualificationAdmissionLedger({
+    policyFile: process.env.RPC_QUALIFICATION_POLICY_FILE || "/data/qualification-admission-policy.json",
+    stateFile: process.env.RPC_QUALIFICATION_STATE_FILE || "/data/qualification-admission-state.json",
+    expectedPolicyHash: process.env.RPC_QUALIFICATION_POLICY_SHA256,
+  });
   if (process.env.RPC_GATEWAY_REQUIRE_SINGLE_WRITER === "true") {
     assertSingleWriterLease({
       leaseFile: process.env.RPC_GATEWAY_WRITER_LEASE_FILE || "/data/rpc-gateway-writer.json",
@@ -199,6 +236,8 @@ export function main() {
     upstreamUrl: process.env.RPC_PAID_UPSTREAM_URL,
     tokens,
     ledger,
+    qualificationAdmission,
+    qualificationToken,
   });
   const port = Number(process.env.PORT || "8080");
   server.listen(port, "0.0.0.0", () => console.log(`paid RPC egress gateway listening on :${port}`));
